@@ -1,5 +1,5 @@
 #!/bin/bash
-# M6 acceptance, run on the installed node after it lands (NORTH-STAR.md).
-# His node and a second node exchange messages over public Nostr relays, in Messages. Neither
-echo "M6: NOT YET"
-exit 1
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Installed-node acceptance only; this worker never runs it.
+set -euo pipefail
+exec node "$(dirname -- "${BASH_SOURCE[0]}")/run.mjs" m6 "$@"
