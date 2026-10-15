@@ -13,7 +13,7 @@ pub const OPERATION_CONTENT_DOMAIN: &str = "aukora:operation-content:v1";
 /// C2 Kira associated-data tag, followed by NUL and u32be length-prefixed fields.
 pub const KIRA_AEAD_DOMAIN: &str = "aukora:kira-aead:v1";
 /// Fingerprint digest: SHA-256 of `"pentora.display.v1" || 0x00 || head`, where
-/// `head` is the 32 raw bytes of the Aura head hash.
+/// `head` is the 32-byte display snapshot head committing to the Aura sources.
 pub const PENTORA_DISPLAY_DOMAIN: &str = "pentora.display.v1";
 /// C2 export convention name; its leaf prefix is the byte `0x00`, not this text.
 pub const RFC6962_LEAF_CONVENTION: &str = "rfc6962-leaf-sha256-0x00-prefixed-v1";

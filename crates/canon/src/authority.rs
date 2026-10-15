@@ -5,6 +5,9 @@ use core::fmt;
 
 mod codec;
 mod proof;
+mod standing;
+
+pub use standing::{StandingUseContext, VerifiedStandingUse};
 
 use crate::{
     alg::{AlgorithmId, PublicKey, Signature, Signatures},
@@ -254,12 +257,13 @@ impl fmt::Display for AuthorizationChallenge {
     }
 }
 
-/// The closed C6 risk vocabulary; neither value grants authority.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The closed C6 risk vocabulary; the default is critical, never authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CardRisk {
     /// A card whose exact `risk` value is `routine`.
     Routine,
     /// A card whose exact `risk` value is `critical`.
+    #[default]
     Critical,
 }
 
@@ -503,80 +507,6 @@ impl VerifiedProof {
     }
 }
 
-/// Checked standing-use metadata returned from locked storage; data, not authority.
-/// Constructing this value cannot create a `VerifiedStandingUse`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StandingUseContext {
-    /// Current binding epoch, equal to the epoch of the owner-signed standing grant.
-    pub epoch: u64,
-    /// Exact operation-content digest rebuilt from the locked proposal bytes.
-    pub operation: OperationDigest,
-    /// Next use, exactly the locked consumed count plus one and within the signed cap.
-    pub use_number: u64,
-}
-
-/// A single checked use of an existing owner-signed standing permission.
-/// Fields are private and the capability is not cloneable. It carries no fresh
-/// passkey proof: the full `VerifiedProof` was recorded when the permission was
-/// granted. A permission id, digest, snapshot or fingerprint alone cannot create it.
-#[derive(Debug)]
-pub struct VerifiedStandingUse {
-    permission_id: ProposalId,
-    permission_digest: Digest32,
-    proposal: ProposalId,
-    action: OwnerOperation,
-    context: StandingUseContext,
-    transaction_id: Digest32,
-}
-
-impl VerifiedStandingUse {
-    /// The sole constructor; call `txn.check_standing_use` under the active authority
-    /// transaction. Retain the requested id, digest, proposal and action together with
-    /// the checked context and `txn.transaction_id()`. Refuse a missing, revoked,
-    /// expired, exhausted or stale-epoch permission, digest mismatch or out-of-scope
-    /// operation. No new passkey assertion or counter update is required. Checking
-    /// alone consumes nothing; only `AuthorityTxn::append_standing` counts the use.
-    pub fn verify<T: AuthorityTxn + ?Sized>(
-        _txn: &mut T,
-        _permission_id: &ProposalId,
-        _permission_digest: Digest32,
-        _proposal: &ProposalId,
-        _action: OwnerOperation,
-    ) -> Result<Self> {
-        todo!("row 36")
-    }
-
-    /// Id of the proposal that granted the standing permission, not this use's proposal.
-    pub const fn permission_id(&self) -> &ProposalId {
-        &self.permission_id
-    }
-
-    /// Commitment to the exact stored owner-signed standing permission bytes.
-    pub const fn permission_digest(&self) -> Digest32 {
-        self.permission_digest
-    }
-
-    /// Locked proposal whose operation was checked against the standing scope.
-    pub const fn proposal(&self) -> &ProposalId {
-        &self.proposal
-    }
-
-    /// Exact owner action checked against the standing permission's signed scope.
-    pub const fn action(&self) -> OwnerOperation {
-        self.action
-    }
-
-    /// Checked epoch, operation commitment and next use number; never a capability.
-    pub const fn context(&self) -> &StandingUseContext {
-        &self.context
-    }
-
-    /// Identity of the single active transaction allowed to count and append this use.
-    pub const fn transaction_id(&self) -> Digest32 {
-        self.transaction_id
-    }
-}
-
 /// An unsigned append request; having this data never authorizes its append.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingAuthorityRecord {
@@ -652,7 +582,8 @@ pub enum LifecycleKind {
     GateRefuse,
     /// The operation expired without performing its proposed effect.
     GateExpire,
-    /// Settle or retire already-consumed work; never authorize or repeat an effect.
+    /// Record an already-consumed crash as incomplete, failed or conflict.
+    /// Never retire, resume retirement, authorize or repeat an effect.
     GateRecover {
         /// Digest of the exact approval recorded by the prior gate consumption.
         consumed_approval: Digest32,
@@ -893,6 +824,9 @@ pub trait AuthorityTxn {
     /// `OwnerOperation::Permission` proof. Retain the full verified proof with the
     /// permission's signed scope, maximum use count and expiry; a digest alone is
     /// insufficient. Later uses cannot change any of those owner-signed bounds.
+    /// Retirement requires a fresh `OwnerOperation::Retire` proof and only transitions
+    /// proposed work to retired; an unknown outcome is never retirable. Resume an
+    /// interrupted retirement only here, retaining its single receipt and burned ids.
     fn append(
         &mut self,
         proof: VerifiedProof,
@@ -904,10 +838,12 @@ pub trait AuthorityTxn {
     /// recorded full grant-time `VerifiedProof` over the exact standing permission,
     /// not an unrelated permission proof. Check the current owner binding and epoch,
     /// nonrevocation, expiry against the trusted clock and consumed count below the
-    /// owner-signed cap. Rebuild the requested proposal's exact operation and action
-    /// from locked gate state and check them against the signed scope. Refuse unknown
-    /// actions and any attempt to grant, renew or loosen standing permissions. Return
-    /// count plus one without overflow. This check neither consumes nor appends;
+    /// owner-signed cap. Rebuild the proposal's exact operation, action and risk from
+    /// locked gate state and check them against the signed scope. Accept only routine
+    /// `Apply`; refuse `Retire`, `Release`, `Grant`, `Permission` and unknown actions,
+    /// even when named in the scope. Missing risk is critical. Refuse any grant,
+    /// renewal or loosening. Return the locked risk and count plus one without
+    /// overflow. This check neither consumes nor appends;
     /// it cannot extend scope, increase the cap or move expiry.
     fn check_standing_use(
         &mut self,
@@ -922,6 +858,8 @@ pub trait AuthorityTxn {
     /// the bound signed record atomically in this transaction.
     /// Recheck transaction identity, permission id/digest, current binding/epoch,
     /// revocation, trusted-clock expiry, scope and signed cap under the same lock.
+    /// Accept only a still-routine `Apply`; refuse `Retire`, `Release`, `Grant`,
+    /// `Permission`, unknown actions and missing or critical risk, regardless of scope.
     /// Require the capability's use number to equal the stored count plus one and
     /// refuse any reused capability or already-consumed proposal. Bind row kind,
     /// action, body and operation to the checked proposal and exact operation digest;
@@ -937,18 +875,41 @@ pub trait AuthorityTxn {
         record: PendingAuthorityRecord,
     ) -> Result<AuthorityRecord>;
 
+    /// Revoke a stored standing permission without a new passkey assertion.
+    /// Under this transaction's lock, resolve the granting proposal and exact digest
+    /// against the current owner and epoch. Missing, foreign or mismatched grants
+    /// refuse; an already-revoked matching grant is an idempotent success.
+    /// Only set its revoked flag to true. Preserve the grant proof, scope, cap,
+    /// expiry, epoch and consumed count; never grant, renew, loosen, consume a
+    /// proposal or persist a passkey counter. Subsequent standing checks and appends
+    /// must observe the revocation in this transaction. Commit or roll back with the
+    /// containing transaction; an unavailable adapter refuses without changing state.
+    fn revoke_standing(
+        &mut self,
+        _permission_id: &ProposalId,
+        _permission_digest: Digest32,
+    ) -> Result<()> {
+        Err(crate::codes::CANON_STANDING_REVOCATION_UNAVAILABLE)
+    }
+
     /// Record only the closed `LifecycleKind` observations without a new owner proof.
     /// Validate epoch, sequence, predecessor and operation id. Refusal and expiry must
-    /// be terminal and unique; propose/review cannot be terminal. This method only
-    /// accepts `GateRecover` in `Settle` or `Terminal`, with the same consumed approval
+    /// be terminal and unique; propose/review cannot be terminal. This method accepts
+    /// `GateRecover` only in `Settle` or `Terminal`, with the same consumed approval
     /// digest in the kind and body. Resolve that digest in locked storage and require
     /// an already-consumed approval for this exact operation and its recorded epoch;
-    /// missing, unconsumed or unrelated approvals refuse. Recovery may only settle
-    /// or retire that work and must obey the unique terminal rule; it cannot reapply
-    /// target bytes or authorize a new effect. It only appends evidence: it cannot
-    /// consume an approval, persist a passkey counter,
-    /// apply a target, grant capabilities or change credentials, floors, permissions
-    /// or any other authority. Readers must never infer authorization from these rows.
+    /// missing, unconsumed or unrelated approvals refuse. Recovery accepts only body
+    /// states `incomplete`, `failed` or `conflict` and obeys the unique terminal rule.
+    /// Refuse `retired`, `applied`, `unknown` and every other state. Retirement and its
+    /// resumption require `append` with a fresh `OwnerOperation::Retire` proof.
+    /// `GateRefuse` and `GateExpire` close unconsumed work, including an interrupted
+    /// proposal with no consumed approval. These and completed `GateRecover` release
+    /// the target reservation atomically, allowing a later proposal. A still-live
+    /// review blocks a replacement until owner-authorized retirement; these paths
+    /// cannot bypass it. Recovery remains available to settle consumed work.
+    /// Lifecycle evidence cannot consume an approval, persist a passkey counter,
+    /// apply target bytes, grant capabilities or change credentials, floors or
+    /// permissions. Readers must never infer authorization from these rows.
     fn append_lifecycle(&mut self, observation: LifecycleRecord) -> Result<AuthorityRecord>;
 
     /// Append only a closed `FactKind` with `Phase::Fact` and no operation id. Sign and

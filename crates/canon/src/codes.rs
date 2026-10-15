@@ -29,6 +29,9 @@ macro_rules! registry {
 
 registry! {
     CANON_AUTHORIZATION_STATE_UNAVAILABLE => ("canon", "authorization-state-unavailable", "The authority transaction cannot establish live authorization state."),
+    CANON_STANDING_REVOCATION_UNAVAILABLE => ("canon", "standing-revocation-unavailable", "The authority transaction has no standing-permission revocation adapter."),
+    GATE_STANDING_ACTION => ("gate", "standing-action", "Standing permission permits only a routine Apply action."),
+    GATE_STANDING_CRITICAL => ("gate", "standing-critical", "A critical proposal requires its own exact owner proof."),
     AUMLOK_BACKUP_ELIGIBILITY_CHANGED => ("aumlok", "backup-eligibility-changed", "Pinned refusal token `aumlok:backup-eligibility-changed`."),
     AUMLOK_CHALLENGE_OR_ORIGIN_MISMATCH => ("aumlok", "challenge-or-origin-mismatch", "Pinned refusal token `aumlok:challenge-or-origin-mismatch`."),
     AUMLOK_CLIENT_DATA_INVALID => ("aumlok", "client-data-invalid", "Pinned refusal token `aumlok:client-data-invalid`."),
