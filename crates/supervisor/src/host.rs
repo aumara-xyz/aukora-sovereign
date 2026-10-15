@@ -31,6 +31,7 @@ pub struct Host {
     pub ledger: Arc<HostLedger>,
     pub documents: DocumentRoot,
     sessions: File,
+    claim_service: Mutex<Option<supervisor::claim::HostClaimService>>,
     assets: Arc<Mutex<Assets>>,
     pub runtime: Arc<crate::adapters::runtime::RuntimeAdapter>,
     pub health: Arc<crate::health::HealthCollector>,
@@ -180,6 +181,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         ledger,
         documents,
         sessions,
+        claim_service: Mutex::new(None),
         assets,
         runtime,
         health,
@@ -191,6 +193,32 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
 }
 
 impl Host {
+    fn consume_host_claim(&self, request: &AdmittedRequest) -> Result<http::Response<Vec<u8>>> {
+        if OwnerRoute::resolve(request.role(), request.method(), request.path())?
+            != OwnerRoute::Claim
+        {
+            return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
+        }
+        let mut service = self
+            .claim_service
+            .lock()
+            .map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;
+        // Retain the first validated commitment until this host stops.
+        if service.is_none() {
+            *service = Some(supervisor::claim::HostClaimService::from_host(
+                &self.config.config_directory()?,
+                self.sessions()?,
+            )?);
+        }
+        frontdoor::claim::consume_claim(
+            service.as_mut().ok_or(codes::AUMLOK_CLAIM_UNKNOWN)?,
+            request,
+            self.state.node,
+            now()?,
+        )?
+        .into_http_response()
+    }
+
     pub fn listener_started(self: &Arc<Self>) {
         self.runtime.host_listener_bound();
         tokio::spawn(self.health.clone().run());
@@ -231,6 +259,9 @@ impl Host {
     ) -> Result<http::Response<Vec<u8>>> {
         if !request.path().starts_with("/api/") {
             return self.asset(&request, headers);
+        }
+        if request.role() == HostRole::Owner && request.path() == "/api/claim" {
+            return self.consume_host_claim(&request);
         }
         if request.role() == HostRole::Owner {
             let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;

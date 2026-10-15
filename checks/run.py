@@ -122,11 +122,11 @@ COVERAGE_PINS = {
     "crates/aura/src/schema.rs": "1e6573208564388f26392a6b218acaf85f173365d2ad621c0d87bde6a4d4240b",
 }
 CLAIM_PINS = {
-    "crates/aumlok/src/claim.rs": "2fe5431686448fed49bf3ab541f61bf7951f65018735a93cd0cc5fdd41f91872",
+    "crates/aumlok/src/claim.rs": "02924d4a65bfcf3a904938973f8c596630463d717eb41465395bf19dc34cc6b4",
     "crates/aumlok/src/lib.rs": "7500b1e26a2be7663bd7e4726b509cc81c3eef6caea2b0e7e2b32fd4831b93b1",
     "crates/frontdoor/src/claim.rs": "f85a1b29a5ca44fe21056f1d1c869615ee18ec168bdf86bf6c5011bc28201432",
     "crates/frontdoor/src/session.rs": "36aacaf049a32545026acaabdfe6d29f7e8cd3841658daaf05f1fd0157b3741c",
-    "crates/supervisor/src/claim.rs": "9b87561caf6513a1ef478d3936b8e5a955a175f4d61fcc1a811a1865d8aceb0a",
+    "crates/supervisor/src/claim.rs": "32a694f8c7d8fb4b1bbee9e5419fe7dbd0cc2684789e22eb14787992c5f633e6",
     "crates/supervisor/src/lib.rs": "81d9f14180c122fb8c8022c0b7188575551441a9ca44f06f158ad237871aed52",
 }
 
@@ -308,7 +308,7 @@ def claim_source_guards():
             or not isinstance(destinations[0].right.value, str)
             or pathlib.PurePosixPath(destinations[0].right.value).name != "claim.sha256"):
         raise ValueError("claim: spawn's host destination changed")
-    reader = read_source("crates/supervisor/src/claim.rs")
+    reader = read_source("crates/aumlok/src/claim.rs")
     if not re.search(r'openat\(\s*directory,\s*"claim\.sha256",', reader):
         raise ValueError("claim: reader must consume spawn's host commitment file")
 
@@ -322,7 +322,15 @@ def claim_source_guards():
                 raise ValueError(f"{path}: missing or reordered claim boundary")
             offset = found + len(expected)
 
+    if re.search(r"\bfn\s+from_host_digest\b", read_source("crates/aumlok/src/claim.rs")):
+        raise ValueError("claim: a commitment may only be read from the host's file, never built from a digest")
     ordered("crates/aumlok/src/claim.rs", 'pub struct HostClaimCommitment(Digest32);',
+            'pub fn from_host(directory: &std::fs::File) -> Result<Self> {',
+            'if !parent.is_dir() || parent.uid() != 0 || parent.mode() & 0o022 != 0 { return Err(AUMLOK_CLAIM_UNKNOWN); }',
+            'OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK',
+            '|| metadata.uid() != 0 || metadata.mode() & 0o7777 != 0o440 || metadata.nlink() != 1 || metadata.len() != 65',
+            "if contents[64] != b'\\n'",
+            'Digest32::from_hex(text)',
             'pub fn verify(&self, token: &[u8]) -> Result<()> {',
             'if token.len() != 43 { return Err(AUMLOK_CLAIM_UNKNOWN); }',
             'URL_SAFE_NO_PAD.decode(token).map_err(|_| AUMLOK_CLAIM_UNKNOWN)?',
@@ -332,14 +340,7 @@ def claim_source_guards():
             'if !bool::from(self.0.as_bytes().ct_eq(actual.as_bytes())) { return Err(AUMLOK_CLAIM_UNKNOWN); }',
             'Ok(())')
     ordered("crates/supervisor/src/claim.rs", 'pub fn from_host(directory: &File, sessions: DurableSessions) -> Result<Self> {',
-            'if !meta.is_dir() || meta.uid() != 0 || meta.mode() & 0o022 != 0 { return Err(codes::AUMLOK_CLAIM_UNKNOWN); }',
-            'OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK',
-            'if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o7777 != 0o440 || meta.nlink() != 1 || meta.len() != 65',
-            'file.take(66).read_to_end(&mut bytes).map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;',
-            "if bytes.len() != 65 || bytes[64] != b'\\n' { return Err(codes::AUMLOK_CLAIM_UNKNOWN); }",
-            'let text = std::str::from_utf8(&bytes[..64]).map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;',
-            'let digest = Digest32::from_hex(text).map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;',
-            'commitment: HostClaimCommitment::from_host_digest(digest),',
+            'commitment: HostClaimCommitment::from_host(directory)?,',
             'impl ClaimService for HostClaimService {',
             'self.sessions.consume_host_claim(request, &self.commitment, now_ms)')
     ordered("crates/frontdoor/src/session.rs", 'pub fn consume_host_claim(',
