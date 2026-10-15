@@ -1,26 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! One pinned module, one proposal import, bounded linear memory, fuel and elapsed time.
+//! A closed ABI for the pinned cell. Host state contains proposal data only.
 
 use crate::input::{CellInput, CellKey, INPUT_BUDGET_BYTES};
 use canon::{authority::CellCommitment, codes, digest::Digest32, Refusal, Result};
-use sha2::{Digest, Sha256};
 use std::{
-    sync::mpsc::{self, RecvTimeoutError, Sender},
+    sync::mpsc::{self, Sender},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 use wasmtime::{
-    Caller, Config, Engine, ExternType, Linker, Memory, Module, Store, StoreLimits,
-    StoreLimitsBuilder, Trap, ValType,
+    Caller, Config, Engine, Extern, ExternType, Func, FuncType, Instance, Module, Store,
+    StoreLimits, StoreLimitsBuilder, Trap, UpdateDeadline, ValType,
 };
 
 pub const MODULE_SHA256: &str = "34ce6cab618b626243e876befb49ccf8a6780dc836e757484886b34ae977a438";
 pub const MODULE_BYTES: &[u8; 101] = include_bytes!("../cell/memory-put-proposal.wasm");
 pub const FUEL_LIMIT: u64 = 50_000;
 pub const DEADLINE_MILLIS: u64 = 100;
-const TICK_MILLIS: u64 = 5;
 
-/// Output of a completed cell call, not permission to change storage.
+/// A completed proposal call. Possession of this value grants no authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CellOutput {
     commitments: CellCommitment,
@@ -33,7 +31,7 @@ impl CellOutput {
         self.commitments
     }
 
-    /// Canonical `{key,value}` plus exactly one LF, including that LF in its digest.
+    /// Canonical `{key,value}` followed by one LF, which is included in the digest.
     pub fn effect_body(&self) -> &[u8] {
         &self.effect_body
     }
@@ -43,71 +41,116 @@ impl CellOutput {
     }
 }
 
-struct Host {
-    limits: StoreLimits,
-    emitted: Option<CellInput>,
-    refusal: Option<Refusal>,
+struct Invocation {
+    expected: CellInput,
+    deliveries: u8,
+    failure: Option<Refusal>,
+    cutoff: Instant,
+    resources: StoreLimits,
 }
 
-impl Host {
-    fn new() -> Self {
-        Self {
-            limits: StoreLimitsBuilder::new()
-                .memory_size(INPUT_BUDGET_BYTES)
-                .memories(1)
-                .tables(0)
-                .instances(1)
-                .trap_on_grow_failure(true)
-                .build(),
-            emitted: None,
-            refusal: None,
+impl Invocation {
+    fn deliver(caller: &mut Caller<'_, Self>, spans: [i32; 4]) -> Result<i32> {
+        if caller.data().deliveries != 0 {
+            return Err(codes::WASMCELL_PROPOSAL_ALREADY_EMITTED);
         }
+        caller.data_mut().deliveries = 1;
+        if Instant::now() >= caller.data().cutoff {
+            return Err(codes::WASMCELL_EXECUTION_TIMEOUT);
+        }
+
+        let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+            return Err(codes::WASMCELL_MEMORY_EXPORT_INVALID);
+        };
+        let linear = memory.data(&*caller);
+        let mut slices = Vec::with_capacity(2);
+        for (pair, refusal) in spans.chunks_exact(2).zip([
+            codes::WASMCELL_KEY_RANGE_INVALID,
+            codes::WASMCELL_VALUE_RANGE_INVALID,
+        ]) {
+            let start = usize::try_from(pair[0]).map_err(|_| refusal)?;
+            let count = usize::try_from(pair[1]).map_err(|_| refusal)?;
+            let finish = start.checked_add(count).ok_or(refusal)?;
+            slices.push(linear.get(start..finish).ok_or(refusal)?);
+        }
+        let name = std::str::from_utf8(slices[0]).map_err(|_| codes::WASMCELL_KEY_UTF8_INVALID)?;
+        let delivered = CellInput::from_canonical(CellKey::new(name.to_owned())?, slices[1])?;
+        if delivered != caller.data().expected {
+            return Err(codes::WASMCELL_ARGUMENTS_BINDING_MISMATCH);
+        }
+        Ok(1)
     }
 }
 
-/// Compiles only the embedded pin. A call creates a fresh store and linear memory.
+/// One engine and one immutable pinned module; every invocation has a fresh store.
 pub struct Runner {
     engine: Engine,
     module: Module,
     module_digest: Digest32,
-    stop: Option<Sender<()>>,
-    ticker: Option<JoinHandle<()>>,
 }
 
 impl Runner {
     pub fn new() -> Result<Self> {
-        let module_digest = sha256(MODULE_BYTES);
+        let module_digest = Digest32::sha256(MODULE_BYTES);
         if module_digest.to_string() != MODULE_SHA256 {
             return Err(codes::WASMCELL_MODULE_DIGEST_MISMATCH);
         }
-        let mut config = Config::new();
-        config
-            .consume_fuel(true)
-            .epoch_interruption(true)
-            .wasm_multi_memory(false)
-            .wasm_memory64(false)
-            .max_wasm_stack(64 * 1024);
-        let engine = Engine::new(&config).map_err(|_| codes::WASMCELL_RUNTIME)?;
-        let module =
-            Module::new(&engine, MODULE_BYTES).map_err(|_| codes::WASMCELL_MODULE_INVALID)?;
-        validate_inventory(&module)?;
-        let (stop, receiver) = mpsc::channel();
-        let clock_engine = engine.clone();
-        let ticker = thread::Builder::new()
-            .name("wasmcell-deadline".into())
-            .spawn(move || loop {
-                match receiver.recv_timeout(Duration::from_millis(TICK_MILLIS)) {
-                    Err(RecvTimeoutError::Timeout) => clock_engine.increment_epoch(),
-                    Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+        let mut configuration = Config::default();
+        configuration.consume_fuel(true);
+        configuration.epoch_interruption(true);
+        configuration.wasm_multi_memory(false);
+        configuration.wasm_memory64(false);
+        configuration.max_wasm_stack(65_536);
+        let engine = Engine::new(&configuration).map_err(|_| codes::WASMCELL_RUNTIME)?;
+        let module = Module::from_binary(&engine, MODULE_BYTES)
+            .map_err(|_| codes::WASMCELL_MODULE_INVALID)?;
+
+        let abi = FuncType::new(&engine, [const { ValType::I32 }; 4], [ValType::I32]);
+        let imports: Vec<_> = module.imports().collect();
+        let [proposal] = imports.as_slice() else {
+            return Err(codes::WASMCELL_IMPORT_INVENTORY);
+        };
+        if proposal.module() != "aukora" || proposal.name() != "propose_memory_put" {
+            return Err(codes::WASMCELL_IMPORT_INVENTORY);
+        }
+        match proposal.ty() {
+            ExternType::Func(kind) if FuncType::eq(&kind, &abi) => {}
+            _ => return Err(codes::WASMCELL_IMPORT_INVENTORY),
+        }
+
+        let mut exported_memory = false;
+        let mut exported_entry = false;
+        for export in module.exports() {
+            match (export.name(), export.ty()) {
+                ("memory", ExternType::Memory(kind)) => {
+                    let limit = kind.maximum().ok_or(codes::WASMCELL_MEMORY_UNBOUNDED)?;
+                    if kind.minimum() != 1
+                        || limit != 1
+                        || kind.is_64()
+                        || kind.is_shared()
+                        || kind.page_size() != INPUT_BUDGET_BYTES as u64
+                    {
+                        return Err(codes::WASMCELL_MEMORY_LIMIT);
+                    }
+                    exported_memory = true;
                 }
-            })
-            .map_err(|_| codes::WASMCELL_RUNTIME)?;
+                ("memory_put", ExternType::Func(kind)) if FuncType::eq(&kind, &abi) => {
+                    exported_entry = true;
+                }
+                ("memory", _) => return Err(codes::WASMCELL_MEMORY_EXPORT_INVALID),
+                _ => return Err(codes::WASMCELL_EXPORT_INVENTORY),
+            }
+        }
+        if !exported_memory {
+            return Err(codes::WASMCELL_MEMORY_EXPORT_INVALID);
+        }
+        if !exported_entry {
+            return Err(codes::WASMCELL_EXPORT_INVENTORY);
+        }
         Ok(Self {
             engine,
             module,
             module_digest,
-            stop: Some(stop),
-            ticker: Some(ticker),
         })
     }
 
@@ -115,199 +158,155 @@ impl Runner {
         self.module_digest
     }
 
-    /// Host callbacks can only emit one proposal; there is no storage or WASI import.
+    /// The sole host function checks the emitted arguments against the staged input.
     pub fn run(&self, input: &CellInput) -> Result<CellOutput> {
-        let started = Instant::now();
-        let mut store = Store::new(&self.engine, Host::new());
-        store.limiter(|state| &mut state.limits);
+        let cutoff = Instant::now() + Duration::from_millis(DEADLINE_MILLIS);
+        let frame = Invocation {
+            expected: input.clone(),
+            deliveries: 0,
+            failure: None,
+            cutoff,
+            resources: StoreLimitsBuilder::new()
+                .memory_size(INPUT_BUDGET_BYTES)
+                .memories(1)
+                .instances(1)
+                .tables(0)
+                .trap_on_grow_failure(true)
+                .build(),
+        };
+        let mut store = Store::new(&self.engine, frame);
+        store.limiter(|frame| &mut frame.resources);
         store
             .set_fuel(FUEL_LIMIT)
             .map_err(|_| codes::WASMCELL_RUNTIME)?;
-        store.set_epoch_deadline(DEADLINE_MILLIS / TICK_MILLIS);
-        store.epoch_deadline_trap();
-        let mut linker = Linker::new(&self.engine);
-        linker
-            .func_wrap(
-                "aukora",
-                "propose_memory_put",
-                |mut caller: Caller<'_, Host>,
-                 kp: i32,
-                 kn: i32,
-                 vp: i32,
-                 vn: i32|
-                 -> wasmtime::Result<i32> {
-                    match capture(&mut caller, kp, kn, vp, vn) {
-                        Ok(()) => Ok(1),
-                        Err(refusal) => {
-                            caller.data_mut().refusal = Some(refusal);
-                            Err(wasmtime::Error::msg(refusal.to_string()))
-                        }
-                    }
-                },
+        store.set_epoch_deadline(1);
+        store.epoch_deadline_callback(|context| {
+            if Instant::now() >= context.data().cutoff {
+                Err(wasmtime::Error::msg(
+                    codes::WASMCELL_EXECUTION_TIMEOUT.to_string(),
+                ))
+            } else {
+                Ok(UpdateDeadline::Continue(1))
+            }
+        });
+        let _deadline = Deadline::arm(self.engine.clone(), cutoff)?;
+        let proposal = Func::wrap(
+            &mut store,
+            |mut caller: Caller<'_, Invocation>,
+             a: i32,
+             b: i32,
+             c: i32,
+             d: i32|
+             -> wasmtime::Result<i32> {
+                let result = Invocation::deliver(&mut caller, [a, b, c, d]);
+                if let Err(code) = result {
+                    caller.data_mut().failure = Some(code);
+                }
+                result.map_err(|code| wasmtime::Error::msg(code.to_string()))
+            },
+        );
+
+        let execution = (|| -> wasmtime::Result<i32> {
+            let cell = Instance::new(&mut store, &self.module, &[Extern::Func(proposal)])?;
+            let entry =
+                cell.get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "memory_put")?;
+            let memory = cell
+                .get_memory(&mut store, "memory")
+                .ok_or_else(|| wasmtime::Error::msg("wasmcell:memory-export-invalid"))?;
+            let mut staged = Vec::with_capacity(input.budgeted_bytes());
+            staged.extend_from_slice(input.key().as_str().as_bytes());
+            staged.extend_from_slice(input.value_bytes());
+            memory.data_mut(&mut store)[..staged.len()].copy_from_slice(&staged);
+            let key_end = input.key().as_str().len() as i32;
+            entry.call(
+                &mut store,
+                (0, key_end, key_end, input.value_bytes().len() as i32),
             )
-            .map_err(|_| codes::WASMCELL_RUNTIME)?;
-        let instance = linker
-            .instantiate(&mut store, &self.module)
-            .map_err(runtime_refusal)?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or(codes::WASMCELL_MEMORY_EXPORT_INVALID)?;
-        let key_bytes = input.key().as_str().as_bytes();
-        memory
-            .write(&mut store, 0, key_bytes)
-            .map_err(|_| codes::WASMCELL_KEY_RANGE_INVALID)?;
-        memory
-            .write(&mut store, key_bytes.len(), input.value_bytes())
-            .map_err(|_| codes::WASMCELL_VALUE_RANGE_INVALID)?;
-        let key_length =
-            i32::try_from(key_bytes.len()).map_err(|_| codes::WASMCELL_PROPOSAL_TOO_LARGE)?;
-        let value_length = i32::try_from(input.value_bytes().len())
-            .map_err(|_| codes::WASMCELL_PROPOSAL_TOO_LARGE)?;
-        let entry = instance
-            .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "memory_put")
-            .map_err(|_| codes::WASMCELL_EXPORT_INVENTORY)?;
-        let returned = entry.call(&mut store, (0, key_length, key_length, value_length));
-        if let Some(refusal) = store.data().refusal {
-            return Err(refusal);
+        })();
+
+        if let Some(code) = store.data().failure {
+            return Err(code);
         }
-        let returned = returned.map_err(runtime_refusal)?;
-        if started.elapsed() >= Duration::from_millis(DEADLINE_MILLIS) {
+        if Instant::now() >= cutoff {
             return Err(codes::WASMCELL_EXECUTION_TIMEOUT);
         }
-        if returned != 1 {
+        let status = execution.map_err(|error| {
+            if matches!(error.downcast_ref::<Trap>(), Some(Trap::OutOfFuel)) {
+                codes::WASMCELL_FUEL_EXHAUSTED
+            } else {
+                codes::WASMCELL_RUNTIME
+            }
+        })?;
+        if status != 1 || store.data().deliveries != 1 {
             return Err(codes::WASMCELL_PROPOSAL_NOT_EMITTED);
         }
-        let emitted = store
-            .data_mut()
-            .emitted
-            .take()
-            .ok_or(codes::WASMCELL_PROPOSAL_NOT_EMITTED)?;
-        if emitted.canonical_bytes() != input.canonical_bytes() {
-            return Err(codes::WASMCELL_ARGUMENTS_BINDING_MISMATCH);
-        }
-        let mut effect_body = emitted.canonical_bytes().to_vec();
-        let input_sha256 = sha256(&effect_body);
+        let mut effect_body = input.canonical_bytes().to_vec();
         effect_body.push(b'\n');
-        Ok(CellOutput {
+        let output = CellOutput {
             commitments: CellCommitment {
                 module_sha256: self.module_digest,
-                input_sha256,
-                effect_sha256: sha256(&effect_body),
+                input_sha256: Digest32::sha256(input.canonical_bytes()),
+                effect_sha256: Digest32::sha256(&effect_body),
             },
             effect_body,
             budgeted_bytes: input.budgeted_bytes(),
-        })
+        };
+        if Instant::now() >= cutoff {
+            return Err(codes::WASMCELL_EXECUTION_TIMEOUT);
+        }
+        Ok(output)
     }
 
-    /// Recompute all commitments and bytes. Claimed guest evidence cannot skip the cell.
+    /// Recompute bytes and all three commitments before comparing guest evidence.
     pub fn rerun(
         &self,
         input: &CellInput,
         claimed: CellCommitment,
         effect_body: &[u8],
     ) -> Result<CellOutput> {
-        let output = self.run(input)?;
-        if output.commitments != claimed || output.effect_body != effect_body {
-            return Err(codes::WASMCELL_EVIDENCE_MISMATCH);
+        let checked = self.run(input)?;
+        if checked.commitments() == claimed && checked.effect_body() == effect_body {
+            Ok(checked)
+        } else {
+            Err(codes::WASMCELL_EVIDENCE_MISMATCH)
         }
-        Ok(output)
     }
 }
 
-impl Drop for Runner {
+/// Each call schedules its own interrupt; concurrent calls share no elapsed counter.
+struct Deadline {
+    cancel: Option<Sender<()>>,
+    task: Option<JoinHandle<()>>,
+}
+
+impl Deadline {
+    fn arm(engine: Engine, cutoff: Instant) -> Result<Self> {
+        let (cancel, wake) = mpsc::channel();
+        let task = thread::Builder::new()
+            .name("wasmcell-cutoff".into())
+            .spawn(move || {
+                if matches!(
+                    wake.recv_timeout(cutoff.saturating_duration_since(Instant::now())),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    engine.increment_epoch();
+                }
+            })
+            .map_err(|_| codes::WASMCELL_RUNTIME)?;
+        Ok(Self {
+            cancel: Some(cancel),
+            task: Some(task),
+        })
+    }
+}
+
+impl Drop for Deadline {
     fn drop(&mut self) {
-        self.stop.take();
-        if let Some(ticker) = self.ticker.take() {
-            let _ = ticker.join();
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
+        if let Some(task) = self.task.take() {
+            let _ = task.join();
         }
     }
-}
-
-fn validate_inventory(module: &Module) -> Result<()> {
-    let mut imports = module.imports();
-    let imported = imports.next().ok_or(codes::WASMCELL_IMPORT_INVENTORY)?;
-    if imports.next().is_some()
-        || imported.module() != "aukora"
-        || imported.name() != "propose_memory_put"
-        || !proposal_signature(imported.ty())
-    {
-        return Err(codes::WASMCELL_IMPORT_INVENTORY);
-    }
-    if module.exports().count() != 2 {
-        return Err(codes::WASMCELL_EXPORT_INVENTORY);
-    }
-    let export = module
-        .get_export("memory_put")
-        .ok_or(codes::WASMCELL_EXPORT_INVENTORY)?;
-    if !proposal_signature(export) {
-        return Err(codes::WASMCELL_EXPORT_INVENTORY);
-    }
-    let Some(ExternType::Memory(memory)) = module.get_export("memory") else {
-        return Err(codes::WASMCELL_MEMORY_EXPORT_INVALID);
-    };
-    let maximum = memory.maximum().ok_or(codes::WASMCELL_MEMORY_UNBOUNDED)?;
-    if memory.is_64()
-        || memory.is_shared()
-        || memory.page_size() != INPUT_BUDGET_BYTES as u64
-        || memory.minimum() != 1
-        || maximum != 1
-    {
-        return Err(codes::WASMCELL_MEMORY_LIMIT);
-    }
-    Ok(())
-}
-
-fn proposal_signature(export: ExternType) -> bool {
-    let ExternType::Func(function) = export else {
-        return false;
-    };
-    function.params().len() == 4
-        && function.params().all(|kind| matches!(kind, ValType::I32))
-        && function.results().len() == 1
-        && function.results().all(|kind| matches!(kind, ValType::I32))
-}
-
-fn capture(caller: &mut Caller<'_, Host>, kp: i32, kn: i32, vp: i32, vn: i32) -> Result<()> {
-    if caller.data().emitted.is_some() {
-        return Err(codes::WASMCELL_PROPOSAL_ALREADY_EMITTED);
-    }
-    let memory = caller
-        .get_export("memory")
-        .and_then(|export| export.into_memory())
-        .ok_or(codes::WASMCELL_MEMORY_EXPORT_INVALID)?;
-    let key = read_range(&memory, caller, kp, kn, codes::WASMCELL_KEY_RANGE_INVALID)?;
-    let value = read_range(&memory, caller, vp, vn, codes::WASMCELL_VALUE_RANGE_INVALID)?;
-    let key = std::str::from_utf8(&key).map_err(|_| codes::WASMCELL_KEY_UTF8_INVALID)?;
-    let input = CellInput::from_canonical(CellKey::new(key.into())?, &value)?;
-    caller.data_mut().emitted = Some(input);
-    Ok(())
-}
-
-fn read_range(
-    memory: &Memory,
-    caller: &Caller<'_, Host>,
-    offset: i32,
-    length: i32,
-    refusal: Refusal,
-) -> Result<Vec<u8>> {
-    let offset = usize::try_from(offset).map_err(|_| refusal)?;
-    let length = usize::try_from(length).map_err(|_| refusal)?;
-    let end = offset.checked_add(length).ok_or(refusal)?;
-    memory
-        .data(caller)
-        .get(offset..end)
-        .map(<[u8]>::to_vec)
-        .ok_or(refusal)
-}
-
-fn runtime_refusal(error: wasmtime::Error) -> Refusal {
-    match error.downcast_ref::<Trap>() {
-        Some(Trap::Interrupt) => codes::WASMCELL_EXECUTION_TIMEOUT,
-        Some(Trap::OutOfFuel) => codes::WASMCELL_FUEL_EXHAUSTED,
-        _ => codes::WASMCELL_RUNTIME,
-    }
-}
-
-pub(crate) fn sha256(bytes: &[u8]) -> Digest32 {
-    Digest32::from_bytes(Sha256::digest(bytes).into())
 }

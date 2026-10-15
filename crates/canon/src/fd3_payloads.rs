@@ -387,3 +387,22 @@ pub struct RefusalReply {
     /// Literal human-readable next-step text.
     pub next: String,
 }
+
+impl Propose {
+    /// Decode canonical padded RFC 4648 replacement bytes within the C4 limit.
+    /// This validates encoding only; target policy and authorization remain external.
+    pub fn replacement_bytes(&self) -> crate::Result<Vec<u8>> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+
+        if self.new_bytes_b64.len() > 87_384 {
+            return Err(crate::codes::FRAME_INVALID_FIELD);
+        }
+        let bytes = STANDARD
+            .decode(&self.new_bytes_b64)
+            .map_err(|_| crate::codes::FRAME_INVALID_FIELD)?;
+        if bytes.len() > 65_536 || STANDARD.encode(&bytes) != self.new_bytes_b64 {
+            return Err(crate::codes::FRAME_INVALID_FIELD);
+        }
+        Ok(bytes)
+    }
+}

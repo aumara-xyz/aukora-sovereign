@@ -176,3 +176,84 @@ pub trait SnapshotService: Send + Sync {
     fn status(&self) -> ServiceFuture<'_, StatusReply>;
     fn organs(&self) -> ServiceFuture<'_, OrgansReply>;
 }
+
+/// Runs the pinned cell for the theme target selected by trusted boot configuration.
+/// Other target policy and all owner authorization remain with the gate.
+pub struct PinnedCellService {
+    runner: wasmcell::Runner,
+    theme_target: String,
+}
+
+impl PinnedCellService {
+    pub fn new(runner: wasmcell::Runner, theme_target: String) -> Result<Self> {
+        wasmcell::ThemeInput::new(
+            wasmcell::theme::THEME_ADAPTER_VERSION,
+            theme_target.clone(),
+            b"{}",
+        )?;
+        Ok(Self {
+            runner,
+            theme_target,
+        })
+    }
+
+    fn inspect_theme_proposal(&self, proposal: &Propose) -> Result<wasmcell::ThemeProposal> {
+        if proposal.target != self.theme_target {
+            return Err(canon::codes::WASMCELL_EVIDENCE_MISMATCH);
+        }
+        let claimed = proposal
+            .cell
+            .ok_or(canon::codes::WASMCELL_EVIDENCE_MISMATCH)?;
+        self.runner.inspect_theme(
+            wasmcell::theme::THEME_ADAPTER_VERSION,
+            proposal.target.clone(),
+            &proposal.replacement_bytes()?,
+            claimed,
+        )
+    }
+
+    /// Recomputes the configured theme effect against this transaction's owner proof.
+    pub fn rerun_theme_before_apply(
+        &self,
+        proposal: &Propose,
+        proof: &canon::authority::VerifiedProof,
+    ) -> Result<wasmcell::ThemeRerun> {
+        let inspected = self.inspect_theme_proposal(proposal)?;
+        self.runner.rerun_theme_before_apply(&inspected, proof)
+    }
+}
+
+impl CellService for PinnedCellService {
+    fn proposal(&self, proposal: &Propose) -> Result<()> {
+        if proposal.target == self.theme_target {
+            self.inspect_theme_proposal(proposal).map(|_| ())
+        } else if proposal.cell.is_some() {
+            Err(canon::codes::WASMCELL_EVIDENCE_MISMATCH)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn memory(&self, request: &MemoryPut) -> Result<()> {
+        use canon::{digest::Digest32, json::Value};
+
+        let mut fields = vec![
+            ("category".into(), Value::text(request.category.clone())?),
+            ("statement".into(), Value::text(request.statement.clone())?),
+        ];
+        if let Some(quote) = &request.quote {
+            fields.push(("quote".into(), Value::text(quote.clone())?));
+        }
+        let value = Value::object(fields)?;
+        let key = wasmcell::CellKey::new(format!(
+            "memory:{}",
+            Digest32::sha256(&canon::json::to_canonical(&value))
+        ))?;
+        let input = wasmcell::CellInput::new(key, value)?;
+        let output = self.runner.run(&input)?;
+        if output.commitments() != request.cell {
+            return Err(canon::codes::WASMCELL_EVIDENCE_MISMATCH);
+        }
+        Ok(())
+    }
+}
