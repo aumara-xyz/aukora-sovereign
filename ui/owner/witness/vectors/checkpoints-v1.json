@@ -1,0 +1,120 @@
+{
+  "schema": "aukora-owner-browser-checkpoint-vectors-v1",
+  "checkpoint": {
+    "schema": "aukora-owner-browser-head-v1",
+    "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+    "treeSize": 1,
+    "root": "61dcf74dbc807584c61a5e02bc2c041934ed7085d4774b86dbe4a164be8d79db"
+  },
+  "observations": [
+    {
+      "name": "first-head",
+      "previous": null,
+      "presented": {
+        "schema": "aukora-aura-presented-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "61dcf74dbc807584c61a5e02bc2c041934ed7085d4774b86dbe4a164be8d79db",
+        "retainedTreeSize": 0,
+        "proofFromPrevious": []
+      },
+      "expected": { "state": "first", "treeSize": 1 },
+      "retainsPresentedRoot": true
+    },
+    {
+      "name": "same-head",
+      "previous": {
+        "schema": "aukora-owner-browser-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "61dcf74dbc807584c61a5e02bc2c041934ed7085d4774b86dbe4a164be8d79db"
+      },
+      "presented": {
+        "schema": "aukora-aura-presented-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "61dcf74dbc807584c61a5e02bc2c041934ed7085d4774b86dbe4a164be8d79db",
+        "retainedTreeSize": 1,
+        "proofFromPrevious": []
+      },
+      "expected": { "state": "extension", "treeSize": 1 },
+      "retainsPresentedRoot": true
+    },
+    {
+      "name": "rollback",
+      "previous": {
+        "schema": "aukora-owner-browser-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 2,
+        "root": "db9f51a4d9852a912e00e555b290482fef56d901c9dccd90d1ea36c06a373edc"
+      },
+      "presented": {
+        "schema": "aukora-aura-presented-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "61dcf74dbc807584c61a5e02bc2c041934ed7085d4774b86dbe4a164be8d79db",
+        "retainedTreeSize": 2,
+        "proofFromPrevious": []
+      },
+      "expected": { "state": "alarm", "reason": "rollback" },
+      "retainsPresentedRoot": false
+    },
+    {
+      "name": "same-size-fork",
+      "previous": {
+        "schema": "aukora-owner-browser-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "61dcf74dbc807584c61a5e02bc2c041934ed7085d4774b86dbe4a164be8d79db"
+      },
+      "presented": {
+        "schema": "aukora-aura-presented-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "0000000000000000000000000000000000000000000000000000000000000000",
+        "retainedTreeSize": 1,
+        "proofFromPrevious": []
+      },
+      "expected": { "state": "alarm", "reason": "fork" },
+      "retainsPresentedRoot": false
+    },
+    {
+      "name": "connected-extension",
+      "previous": {
+        "schema": "aukora-owner-browser-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "61dcf74dbc807584c61a5e02bc2c041934ed7085d4774b86dbe4a164be8d79db"
+      },
+      "presented": {
+        "schema": "aukora-aura-presented-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 2,
+        "root": "db9f51a4d9852a912e00e555b290482fef56d901c9dccd90d1ea36c06a373edc",
+        "retainedTreeSize": 1,
+        "proofFromPrevious": ["ff287821b528026decfc38b761616f342b8607b34135afe3a62ff8fa90f52ed2"]
+      },
+      "expected": { "state": "extension", "treeSize": 2 },
+      "retainsPresentedRoot": true
+    },
+    {
+      "name": "unconnected-power-of-two-prefix",
+      "previous": {
+        "schema": "aukora-owner-browser-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 1,
+        "root": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "presented": {
+        "schema": "aukora-aura-presented-head-v1",
+        "leafConvention": "rfc6962-leaf-sha256-0x00-prefixed-v1",
+        "treeSize": 2,
+        "root": "db9f51a4d9852a912e00e555b290482fef56d901c9dccd90d1ea36c06a373edc",
+        "retainedTreeSize": 1,
+        "proofFromPrevious": ["ff287821b528026decfc38b761616f342b8607b34135afe3a62ff8fa90f52ed2"]
+      },
+      "expected": { "state": "alarm", "reason": "undetermined" },
+      "retainsPresentedRoot": false
+    }
+  ]
+}
