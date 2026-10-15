@@ -1,0 +1,31 @@
+{
+  "schema": "lingwa-content-contract-v1",
+  "canonVersion": "canon-v16",
+  "curriculum": {
+    "name": "curriculum.json",
+    "sha256": "770b3b8e1f84baedd6b0a02fb7eb8895f390a5356fa1d74832e4e20540a53367",
+    "version": "lingwa-curriculum-v1"
+  },
+  "sources": [
+    {
+      "name": "canon-v16.json",
+      "sha256": "2d9ffed46912a7860b16c282d071bfed4c5555ee78c0bf8623e77d793531eb7e"
+    },
+    {
+      "name": "readers-v1.json",
+      "sha256": "e4c1b35fa4087cb2f692e1c3f4a831d3ef39b22ddef21849c56634b9bda1224c"
+    }
+  ],
+  "counts": {
+    "lessons": 84,
+    "words": 948,
+    "readers": 6,
+    "explanations": 263,
+    "wordSteps": 847,
+    "questions": 354
+  },
+  "unassignedWordDay": 0,
+  "unassignedWords": 24,
+  "missingExample": "paired empty strings",
+  "uncategorizedWords": "empty string"
+}

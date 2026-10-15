@@ -1,0 +1,60 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+[hidden] { display: none !important; }
+body { color: var(--text, #e8eaed); background: var(--base, #111520); font-family: var(--font-interface, system-ui, sans-serif); }
+.lingwa-app { min-width: 0; padding: 24px; }
+.lingwa-app button, .lingwa-app input, .lingwa-app textarea { font: inherit; }
+.lingwa-app button { white-space: normal; overflow-wrap: anywhere; background: var(--control, #ffffff09); border-color: var(--border, #ffffff1a); }
+.lingwa-app :is(button, input, textarea, summary):focus-visible { outline: 2px solid var(--mint, #81d4b4); outline-offset: 3px; }
+.lingwa-app summary { cursor: pointer; padding: 12px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.lingwa-app p { white-space: pre-line; }
+.lingwa-header { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.lingwa-header h1 { margin: 0; font-size: var(--type-title, 22px); }
+.lingwa-header p { margin: 4px 0; }
+.lingwa-count { white-space: nowrap; color: var(--mint, #81d4b4); font-size: var(--type-small, 12px); }
+.lingwa-muted { color: var(--secondary, #b8bcc4); font-size: var(--type-small, 12px); }
+.lingwa-notice { padding: 10px 12px; border: 1px solid var(--border, #ffffff1a); border-radius: var(--control-radius, 8px); color: var(--secondary, #b8bcc4); font-size: var(--type-small, 12px); }
+.lingwa-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0; }
+.lingwa-tabs button { flex: 1 1 auto; padding: 10px; }
+.lingwa-tabs button[aria-pressed="true"], .lingwa-app .lingwa-primary { color: var(--violet, #c4aaff); border-color: var(--violet, #c4aaff); background: var(--control-active, #c4aaff1f); }
+.lingwa-content:focus { outline: none; }
+.lingwa-card, .lingwa-tier { padding: 16px; margin-block: 12px; border: 1px solid var(--border, #ffffff1a); border-radius: var(--radius, 14px); background: var(--lane, #ffffff0b); }
+.lingwa-card h2, .lingwa-card h3 { margin-top: 0; }
+.lingwa-card { border-block-end: 1px solid var(--border, #ffffff1a); }
+.lingwa-tier > summary { font-weight: 600; color: var(--mint, #81d4b4); }
+.lingwa-tier-1 > summary { color: var(--blue, #96b4ff); }
+.lingwa-tier-2 > summary { color: var(--violet, #c4aaff); }
+.lingwa-week { border-top: 1px solid var(--border, #ffffff1a); padding-inline: 8px; }
+.lingwa-days { padding: 0; list-style: none; margin: 0; display: grid; gap: 6px; }
+.lingwa-lesson { display: flex; gap: 12px; justify-content: space-between; align-items: center; width: 100%; text-align: start; }
+.lingwa-lesson span { flex-shrink: 0; }
+.lingwa-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; }
+.lingwa-options { display: grid; gap: 10px; margin-block: 16px; }
+.lingwa-options button { width: 100%; text-align: start; }
+.lingwa-flip { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 190px; width: 100%; }
+.lingwa-word { display: block; font-size: 32px; color: var(--violet, #c4aaff); overflow-wrap: anywhere; }
+.lingwa-pronunciation { font-size: 16px; color: var(--blue, #96b4ff); }
+.lingwa-answer { text-align: center; padding: 8px; }
+.lingwa-example { border-inline-start: 2px solid var(--violet, #c4aaff); padding-inline-start: 14px; margin-block: 16px; }
+.lingwa-auma { color: var(--mint, #81d4b4); font-size: 17px; }
+.lingwa-progress { display: block; width: 100%; height: 8px; margin-top: 20px; accent-color: var(--mint, #81d4b4); }
+.lingwa-app .lingwa-good { border-color: var(--mint, #81d4b4); color: var(--mint, #81d4b4); opacity: 1; }
+.lingwa-app .lingwa-bad { border-color: var(--failed, #f2555a); color: var(--failed, #f2555a); opacity: 1; }
+.lingwa-feedback { min-height: 24px; }
+.lingwa-flag { border-top: 1px solid var(--border, #ffffff1a); margin-top: 20px; font-size: var(--type-small, 12px); }
+.lingwa-flag summary { color: var(--secondary, #b8bcc4); }
+.lingwa-reader-link { width: 100%; text-align: start; color: var(--mint, #81d4b4); }
+.lingwa-reading-line { border-bottom: 1px solid var(--border, #ffffff1a); }
+.lingwa-reading-line p { margin-inline-start: 16px; }
+.lingwa-search { display: block; width: 100%; margin-top: 8px; }
+.lingwa-entry { padding: 6px 12px; border-bottom: 1px solid var(--border, #ffffff1a); }
+.lingwa-entry summary strong { display: inline-block; color: var(--mint, #81d4b4); min-width: 90px; margin-inline-end: 12px; }
+.lingwa-tiles { display: flex; flex-wrap: wrap; gap: 8px; min-height: 50px; margin-block: 12px; }
+.lingwa-footer { margin-top: 24px; border-top: 1px solid var(--border, #ffffff1a); }
+.lingwa-export { width: 100%; font-family: var(--font-mono, monospace); }
+@media (max-width: 480px) {
+  .lingwa-app { padding: 14px; }
+  .lingwa-header { align-items: start; flex-wrap: wrap; }
+  .lingwa-tabs button { flex-basis: 40%; }
+  .lingwa-card, .lingwa-tier { padding: 12px; }
+  .lingwa-lesson { flex-wrap: wrap; gap: 4px; }
+}
