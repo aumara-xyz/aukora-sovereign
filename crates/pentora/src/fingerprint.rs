@@ -99,3 +99,12 @@ pub fn pentora_expand(root32: &[u8]) -> Result<Expansion> {
         trits,
     })
 }
+
+impl Expansion {
+    /// Pair a digest with the trits another display derivation read from it. The relationship
+    /// bloom is the only caller; its domain tag and trit reading live in `bloom`, and
+    /// `pentora_expand` stays the one derivation of the node fingerprint.
+    pub(crate) const fn from_parts(digest: Digest32, trits: [FingerprintTrit; TRIT_COUNT]) -> Self {
+        Self { digest, trits }
+    }
+}

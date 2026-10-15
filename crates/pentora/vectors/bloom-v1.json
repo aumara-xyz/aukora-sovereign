@@ -1,0 +1,155 @@
+{
+  "schema": "pentora-bloom-v1-vectors",
+  "format_version": 1,
+  "domain": "pentora.bloom.v1",
+  "label": "Relationship bloom — display only",
+  "derivation": {
+    "identity": "exactly 32 raw bytes, written as 64 lowercase hex digits; any other length refuses pentora:identity-invalid",
+    "pair": "two identities that differ; both lengths are checked first, the first identity before the second, then equal identities refuse pentora:identities-equal",
+    "order": "low and high are the two identities in bytewise order, so first and second may be given in either order",
+    "digest": "sha256(UTF-8 bytes of domain || 0x00 || low || high)",
+    "commitment": "a 32-byte commitment is drawn as it is, with no further hash; all zero refuses pentora:commitment-empty",
+    "trits": "N is the big-endian integer of the digest; trit i is floor(N / 3^i) mod 3 for i = 0..109",
+    "text": "trits is 110 characters, each 0, 1 or 2; character i is wire byte i of the expansion",
+    "cells": "trit i is drawn on the i-th non-centre cell: global cell i for i below 55, global cell i + 1 from 55"
+  },
+  "pairs": [
+    {
+      "name": "ascending-small",
+      "first": "0000000000000000000000000000000000000000000000000000000000000001",
+      "second": "0000000000000000000000000000000000000000000000000000000000000002",
+      "low": "0000000000000000000000000000000000000000000000000000000000000001",
+      "high": "0000000000000000000000000000000000000000000000000000000000000002",
+      "digest": "9cd410588517db44f8f1c95d544339f3cb9c00c1df7a95e6732cd9da9a36441c",
+      "trits": "01002121001200100200122202011200110202110220111121120110210010101011122201022222001021212022211112120101101021"
+    },
+    {
+      "name": "ascending-small-reversed",
+      "reverse_of": "ascending-small",
+      "first": "0000000000000000000000000000000000000000000000000000000000000002",
+      "second": "0000000000000000000000000000000000000000000000000000000000000001",
+      "low": "0000000000000000000000000000000000000000000000000000000000000001",
+      "high": "0000000000000000000000000000000000000000000000000000000000000002",
+      "digest": "9cd410588517db44f8f1c95d544339f3cb9c00c1df7a95e6732cd9da9a36441c",
+      "trits": "01002121001200100200122202011200110202110220111121120110210010101011122201022222001021212022211112120101101021"
+    },
+    {
+      "name": "first-byte-decides",
+      "first": "0100000000000000000000000000000000000000000000000000000000000000",
+      "second": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "low": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "high": "0100000000000000000000000000000000000000000000000000000000000000",
+      "digest": "82a966ae7646c774111595a9713e2012c3b182c8f097b4a33adc505095b19ad9",
+      "trits": "01001001001022000011212001101221201210102102010220102220211110101001222111011220112010001100212102022212110102"
+    },
+    {
+      "name": "first-byte-decides-reversed",
+      "reverse_of": "first-byte-decides",
+      "first": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "second": "0100000000000000000000000000000000000000000000000000000000000000",
+      "low": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "high": "0100000000000000000000000000000000000000000000000000000000000000",
+      "digest": "82a966ae7646c774111595a9713e2012c3b182c8f097b4a33adc505095b19ad9",
+      "trits": "01001001001022000011212001101221201210102102010220102220211110101001222111011220112010001100212102022212110102"
+    },
+    {
+      "name": "last-byte-decides",
+      "first": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+      "second": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa02",
+      "low": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+      "high": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa02",
+      "digest": "874f980e74c6646b3d46a9794016c54e286f956c245ec3e0d52dd162e1b22757",
+      "trits": "21202210001111200112222211202210020120110102111110202000101201111000222010110002001101111211112002112220221202"
+    },
+    {
+      "name": "extremes",
+      "first": "0000000000000000000000000000000000000000000000000000000000000000",
+      "second": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "low": "0000000000000000000000000000000000000000000000000000000000000000",
+      "high": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "digest": "1c08c25c6c18b80aa5352f54c9bddb67b3e80ae0cc7310b3f4aca7668487d47d",
+      "trits": "21220211211122010212022002020202002002121211000121021212001012202112112012112010210012102111201002221120001020"
+    },
+    {
+      "name": "extremes-reversed",
+      "reverse_of": "extremes",
+      "first": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "second": "0000000000000000000000000000000000000000000000000000000000000000",
+      "low": "0000000000000000000000000000000000000000000000000000000000000000",
+      "high": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "digest": "1c08c25c6c18b80aa5352f54c9bddb67b3e80ae0cc7310b3f4aca7668487d47d",
+      "trits": "21220211211122010212022002020202002002121211000121021212001012202112112012112010210012102111201002221120001020"
+    },
+    {
+      "name": "signed-byte-trap",
+      "first": "8000000000000000000000000000000000000000000000000000000000000000",
+      "second": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "low": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "high": "8000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "797980ada0aa906642dad7fefe9842b39ed0965ae1495f43db1d26a06ed292f8",
+      "trits": "02110211112001121220211122021010111022112202211212012020101001002101110112100110020200102212002222102011101000"
+    },
+    {
+      "name": "signed-byte-trap-reversed",
+      "reverse_of": "signed-byte-trap",
+      "first": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "second": "8000000000000000000000000000000000000000000000000000000000000000",
+      "low": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "high": "8000000000000000000000000000000000000000000000000000000000000000",
+      "digest": "797980ada0aa906642dad7fefe9842b39ed0965ae1495f43db1d26a06ed292f8",
+      "trits": "02110211112001121220211122021010111022112202211212012020101001002101110112100110020200102212002222102011101000"
+    },
+    {
+      "name": "little-endian-trap",
+      "first": "0100000000000000000000000000000000000000000000000000000000000000",
+      "second": "0000000000000000000000000000000000000000000000000000000000000002",
+      "low": "0000000000000000000000000000000000000000000000000000000000000002",
+      "high": "0100000000000000000000000000000000000000000000000000000000000000",
+      "digest": "e2b822036cb533939b62d5b2c278889348f5fab4c1740f4cfd78845eb4887502",
+      "trits": "02120100011212101002101200000000201222100000202121000110201110002221202000110211102000021111021221220110212221"
+    },
+    {
+      "name": "hashed-names",
+      "first": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
+      "second": "81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9",
+      "low": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
+      "high": "81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9",
+      "digest": "da3cbb07c67a1badc4cf32efdab985a62acbfe8efc153793105808a325cc2ddc",
+      "trits": "21211011010111000121000201100110202220201001011000210022101201110220102202022102120110110012222002202202201110"
+    },
+    {
+      "name": "hashed-names-reversed",
+      "reverse_of": "hashed-names",
+      "first": "81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9",
+      "second": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
+      "low": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
+      "high": "81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9",
+      "digest": "da3cbb07c67a1badc4cf32efdab985a62acbfe8efc153793105808a325cc2ddc",
+      "trits": "21211011010111000121000201100110202220201001011000210022101201110220102202022102120110110012222002202202201110"
+    },
+    {
+      "name": "one-bit-apart",
+      "first": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
+      "second": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e91",
+      "low": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
+      "high": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e91",
+      "digest": "314612fd5d27d3c430355933b4e741b9c2b88d241db4e07fa653253c424e308e",
+      "trits": "20111200000112012112000021220012212012012020111110211000220001202111002220220021120001211011112120221012020211"
+    }
+  ],
+  "refusals": [
+    {"name": "identical", "first": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90", "second": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90", "refusal": "pentora:identities-equal"},
+    {"name": "first-short", "first": "00000000000000000000000000000000000000000000000000000000000000", "second": "81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9", "refusal": "pentora:identity-invalid"},
+    {"name": "second-short", "first": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90", "second": "00000000000000000000000000000000000000000000000000000000000000", "refusal": "pentora:identity-invalid"},
+    {"name": "second-long", "first": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90", "second": "000000000000000000000000000000000000000000000000000000000000000000", "refusal": "pentora:identity-invalid"},
+    {"name": "first-empty", "first": "", "second": "81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9", "refusal": "pentora:identity-invalid"},
+    {"name": "both-empty", "first": "", "second": "", "refusal": "pentora:identity-invalid"},
+    {"name": "length-before-equal", "first": "11111111111111111111111111111111111111111111111111111111111111", "second": "11111111111111111111111111111111111111111111111111111111111111", "refusal": "pentora:identity-invalid"}
+  ],
+  "commitments": [
+    {"name": "sha256-abc", "commitment": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "trits": "10012221022022122101012002002021221222202112020202201102202002220122111021001122222012110001000022012220122200"},
+    {"name": "one", "commitment": "0000000000000000000000000000000000000000000000000000000000000001", "trits": "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"},
+    {"name": "max", "commitment": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "trits": "02120222021000201111211200021222212122102000012001111202120211012101002000201201012021210012111220201122011200"},
+    {"name": "zero", "commitment": "0000000000000000000000000000000000000000000000000000000000000000", "refusal": "pentora:commitment-empty"}
+  ]
+}
