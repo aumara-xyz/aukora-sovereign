@@ -1,0 +1,61 @@
+{
+  "schema": "aukora.copresence.exchange-start.v2",
+  "local_selection": {
+    "participant": {
+      "node": "00000000000000000000000000000001",
+      "device_key": "0466d10f775d8eb1738b7a8bc7bd10aaba40434757716dd61da05f6644a5bbea556a1e330f63c42aa02e8aebeaa70eec07e73a7821aefc8064552157423e710ed5",
+      "device_epoch": 0,
+      "session_id": "00000000000000000000000000000011",
+      "attempt_sequence": 1
+    },
+    "method": "screen-to-screen",
+    "required_layers": {
+      "sound": false,
+      "motion": false,
+      "intent_ack": false
+    }
+  },
+  "now_seconds": 1,
+  "journal": {
+    "initial_sequence": 1,
+    "begin_before_decode": true,
+    "finish_each_reserved_ticket_once": true
+  },
+  "cases": [
+    {
+      "name": "malformed first frame is counted",
+      "input_utf8": "{",
+      "expect": "copresence:json_parse_error",
+      "begun": 1,
+      "finished": "Refused"
+    },
+    {
+      "name": "remote method cannot replace local screen choice",
+      "input_utf8": "{\"body\":{\"body\":{\"frame_index\":0,\"method\":\"remote\",\"nonce_commitment\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"participant\":{\"attempt_sequence\":1,\"device_epoch\":0,\"device_key\":\"0466d10f775d8eb1738b7a8bc7bd10aaba40434757716dd61da05f6644a5bbea556a1e330f63c42aa02e8aebeaa70eec07e73a7821aefc8064552157423e710ed5\",\"node\":\"00000000000000000000000000000001\",\"session_id\":\"00000000000000000000000000000011\"},\"required_layers\":{\"intent_ack\":false,\"motion\":false,\"sound\":false},\"t_seconds\":1,\"type\":\"FACE\"},\"signature\":\"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"},\"schema\":\"aukora.copresence.frame.v1\"}",
+      "expect": "copresence:method-mismatch",
+      "begun": 1,
+      "finished": "Refused"
+    },
+    {
+      "name": "frame cannot replace required local layers",
+      "local_required_layers": {
+        "sound": true,
+        "motion": false,
+        "intent_ack": false
+      },
+      "input_utf8": "{\"body\":{\"body\":{\"frame_index\":0,\"method\":\"screen-to-screen\",\"nonce_commitment\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"participant\":{\"attempt_sequence\":1,\"device_epoch\":0,\"device_key\":\"0466d10f775d8eb1738b7a8bc7bd10aaba40434757716dd61da05f6644a5bbea556a1e330f63c42aa02e8aebeaa70eec07e73a7821aefc8064552157423e710ed5\",\"node\":\"00000000000000000000000000000001\",\"session_id\":\"00000000000000000000000000000011\"},\"required_layers\":{\"intent_ack\":false,\"motion\":false,\"sound\":false},\"t_seconds\":1,\"type\":\"FACE\"},\"signature\":\"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"},\"schema\":\"aukora.copresence.frame.v1\"}",
+      "expect": "copresence:method-mismatch",
+      "begun": 1,
+      "finished": "Refused"
+    },
+    {
+      "name": "invalid first signature is counted",
+      "input_utf8": "{\"body\":{\"body\":{\"frame_index\":0,\"method\":\"screen-to-screen\",\"nonce_commitment\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"participant\":{\"attempt_sequence\":1,\"device_epoch\":0,\"device_key\":\"0466d10f775d8eb1738b7a8bc7bd10aaba40434757716dd61da05f6644a5bbea556a1e330f63c42aa02e8aebeaa70eec07e73a7821aefc8064552157423e710ed5\",\"node\":\"00000000000000000000000000000001\",\"session_id\":\"00000000000000000000000000000011\"},\"required_layers\":{\"intent_ack\":false,\"motion\":false,\"sound\":false},\"t_seconds\":1,\"type\":\"FACE\"},\"signature\":\"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"},\"schema\":\"aukora.copresence.frame.v1\"}",
+      "expect": "copresence:signature",
+      "begun": 1,
+      "finished": "Refused"
+    }
+  ],
+  "completion": "Accepted receipts finish with Accepted; successful frame observations finish with Abandoned; initial exchange tickets finish on bloom, refusal or explicit abandon. Interrupted tickets remain counted.",
+  "authority": "none"
+}

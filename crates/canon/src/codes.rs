@@ -28,6 +28,13 @@ macro_rules! registry {
 }
 
 registry! {
+    AURA_OBSERVATION_AUTHORITY_STAGED => ("aura", "observation-authority-staged", "The observation transaction contains authority changes or non-fact writes."),
+    AURA_OBSERVATION_BODY => ("aura", "observation-body", "A retained refusal fact has an invalid payload."),
+    AURA_OBSERVATION_CONTEXT => ("aura", "observation-context", "Observation records disagree with the retained ledger context."),
+    AURA_OBSERVATION_DUPLICATE => ("aura", "observation-duplicate", "A refusal attempt appears more than once in committed facts."),
+    AURA_OBSERVATION_KEY => ("aura", "observation-key", "The observation lookup key is not a canonical positive ordinal."),
+    AURA_OBSERVATION_NAMESPACE => ("aura", "observation-namespace", "The observation namespace or lookup operation is unknown."),
+    AURA_OBSERVATION_OVERFLOW => ("aura", "observation-overflow", "An observation count exceeds its integer bound."),
     NOSTR_BINDING_INVALID => ("nostr", "binding-invalid", "The binding version or distinct role keys are invalid."),
     NOSTR_BINDING_AUTHORITY => ("nostr", "binding-authority", "The binding authority coordinates, append clock or approval expiry are invalid."),
     NOSTR_BINDING_TRANSACTION => ("nostr", "binding-transaction", "The binding proof belongs to a different authority transaction."),
@@ -400,7 +407,10 @@ pub const COPRESENCE_CODES: &[Refusal] = &[
     Refusal::new("copresence", "bad_owner_signature"),
     Refusal::new("copresence", "ceremony-window"),
     Refusal::new("copresence", "ceremony_window_exceeded"),
+    Refusal::new("copresence", "context-expired"),
     Refusal::new("copresence", "context-mismatch"),
+    Refusal::new("copresence", "context-owner"),
+    Refusal::new("copresence", "context-scopes"),
     Refusal::new("copresence", "core-mismatch"),
     Refusal::new("copresence", "exchange-closed"),
     Refusal::new("copresence", "face-mismatch"),

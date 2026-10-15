@@ -7,8 +7,8 @@
 use crate::{PublicKeyBytes, Refusal, Result, SignatureBytes};
 use canon::{digest::Digest32, ids::NodeId};
 
-mod codec;
-mod crypto;
+pub(crate) mod codec;
+pub(crate) mod crypto;
 mod exchange;
 
 pub const RECEIPT_SCHEMA: &str = "aukora.copresence.hardened.v1";
@@ -23,7 +23,7 @@ pub const FRAME_ROTATION_MS: u64 = 1_000;
 pub const FRAME_FRESHNESS_SECONDS: u64 = 5;
 pub const MAX_WINDOW_SECONDS: u64 = 10;
 
-/// Method is carried in the first signed frame and in the final core context.
+/// The local selection fixes the method before the first signed frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Method {
     ScreenToScreen,
@@ -49,7 +49,7 @@ pub struct Participant {
     pub attempt_sequence: u64,
 }
 
-/// Full context includes both identities, epochs, sessions and attempt counters.
+/// Frozen v1 node/device context; v2 adds owner subjects, scopes and expiry.
 /// Purpose is inert text. Intent is the digest of the exact acknowledged text.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Context {
@@ -210,6 +210,14 @@ impl VerifiedReceipt {
     }
 }
 
+/// Trusted local choices recorded before receiving a frame.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalSelection {
+    pub participant: Participant,
+    pub method: Method,
+    pub required_layers: RequiredLayers,
+}
+
 /// Private state keeps the selected method out of post-start mutation APIs.
 pub struct Exchange {
     method: Method,
@@ -235,9 +243,19 @@ impl Exchange {
         }
     }
 
-    /// Counts before validating the local first frame.
-    pub fn begin(face: Face, journal: &mut dyn AttemptJournal) -> Result<Self> {
-        exchange::begin(face, journal)
+    /// Counts before decoding the local signed FACE; all choices come from local state.
+    pub fn begin(
+        selected: LocalSelection,
+        first_frame_bytes: &[u8],
+        now_seconds: u64,
+        journal: &mut dyn AttemptJournal,
+    ) -> Result<Self> {
+        exchange::begin(selected, first_frame_bytes, now_seconds, journal)
+    }
+
+    /// Close an interrupted exchange with a durable abandoned outcome.
+    pub fn abandon(&mut self, journal: &mut dyn AttemptJournal) -> Result<()> {
+        exchange::abandon(self, journal)
     }
 
     /// Each input is a new counted attempt, including invalid frame bytes.

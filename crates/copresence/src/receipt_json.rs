@@ -17,6 +17,8 @@ pub enum Value {
     Null,
     Boolean(bool),
     Number(f64),
+    /// A nonnegative integer spelling that fits exactly in the retained type.
+    Integer(u64),
     Text(Vec<u16>),
     Array(Vec<Value>),
     Object(Vec<(Vec<u16>, Value)>),
@@ -50,6 +52,7 @@ impl Value {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Number(number) => Some(*number),
+            Self::Integer(number) => Some(*number as f64),
             _ => None,
         }
     }
@@ -66,7 +69,7 @@ impl Value {
     }
 
     pub fn is_number(&self) -> bool {
-        matches!(self, Self::Number(_))
+        matches!(self, Self::Number(_) | Self::Integer(_))
     }
 
     pub fn is_boolean(&self) -> bool {
@@ -199,7 +202,7 @@ impl Scanner<'_> {
         }
         let value = match first {
             b'"' => Value::Text(self.quoted()?),
-            b'-' | b'0'..=b'9' => Value::Number(self.numeric()?),
+            b'-' | b'0'..=b'9' => self.numeric()?,
             b'n' => {
                 self.word("null")?;
                 Value::Null
@@ -234,7 +237,7 @@ impl Scanner<'_> {
         (self.offset > start).then_some(()).ok_or(INVALID)
     }
 
-    fn numeric(&mut self) -> Result<f64> {
+    fn numeric(&mut self) -> Result<Value> {
         let begin = self.offset;
         if self.byte() == Some(b'-') {
             self.offset += 1;
@@ -264,7 +267,13 @@ impl Scanner<'_> {
         if self.strict && !number.is_finite() {
             return Err(INVALID);
         }
-        Ok(number)
+        let spelling = &self.source[begin..self.offset];
+        if spelling.bytes().all(|byte| byte.is_ascii_digit()) {
+            if let Ok(integer) = spelling.parse::<u64>() {
+                return Ok(Value::Integer(integer));
+            }
+        }
+        Ok(Value::Number(number))
     }
 
     fn unicode_escape(&mut self) -> Result<u16> {

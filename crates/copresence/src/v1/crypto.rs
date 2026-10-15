@@ -5,26 +5,26 @@ use crate::Side;
 use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
-pub(super) const MAX_INTEGER: u64 = 9_007_199_254_740_991;
+pub(crate) const MAX_INTEGER: u64 = 9_007_199_254_740_991;
 
-pub(super) const fn refusal(reason: &'static str) -> Refusal {
+pub(crate) const fn refusal(reason: &'static str) -> Refusal {
     Refusal {
         organ: "copresence",
         reason,
     }
 }
 
-pub(super) fn hash(bytes: &[u8]) -> Digest32 {
+pub(crate) fn hash(bytes: &[u8]) -> Digest32 {
     Digest32::from_bytes(Sha256::digest(bytes).into())
 }
 
-pub(super) fn domain(tag: &str) -> Vec<u8> {
+pub(crate) fn domain(tag: &str) -> Vec<u8> {
     let mut bytes = Vec::from(tag.as_bytes());
     bytes.push(0);
     bytes
 }
 
-pub(super) fn integer(value: u64) -> Result<()> {
+pub(crate) fn integer(value: u64) -> Result<()> {
     if value > MAX_INTEGER {
         Err(refusal("integer-range"))
     } else {
@@ -32,7 +32,7 @@ pub(super) fn integer(value: u64) -> Result<()> {
     }
 }
 
-pub(super) fn validate_participant(value: &Participant) -> Result<()> {
+pub(crate) fn validate_participant(value: &Participant) -> Result<()> {
     integer(value.device_epoch)?;
     integer(value.attempt_sequence)?;
     if value.attempt_sequence == 0 {
@@ -45,7 +45,7 @@ pub(super) fn validate_participant(value: &Participant) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn validate_context(value: &Context) -> Result<()> {
+pub(crate) fn validate_context(value: &Context) -> Result<()> {
     validate_participant(&value.a)?;
     validate_participant(&value.b)?;
     if value.a.device_key == value.b.device_key || value.a.session_id == value.b.session_id {
@@ -60,7 +60,7 @@ pub(super) fn validate_context(value: &Context) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn participant_bytes(value: &Participant, bytes: &mut Vec<u8>) {
+pub(crate) fn participant_bytes(value: &Participant, bytes: &mut Vec<u8>) {
     bytes.extend_from_slice(value.node.as_bytes());
     bytes.extend_from_slice(&value.device_key.0);
     bytes.extend_from_slice(&value.device_epoch.to_be_bytes());
@@ -68,7 +68,7 @@ pub(super) fn participant_bytes(value: &Participant, bytes: &mut Vec<u8>) {
     bytes.extend_from_slice(&value.attempt_sequence.to_be_bytes());
 }
 
-pub(super) const fn method(value: Method) -> u8 {
+pub(crate) const fn method(value: Method) -> u8 {
     match value {
         Method::ScreenToScreen => 0,
         Method::Remote => 1,
@@ -76,7 +76,7 @@ pub(super) const fn method(value: Method) -> u8 {
     }
 }
 
-pub(super) const fn layers(value: RequiredLayers) -> u8 {
+pub(crate) const fn layers(value: RequiredLayers) -> u8 {
     value.sound as u8 | ((value.motion as u8) << 1) | ((value.intent_ack as u8) << 2)
 }
 
@@ -87,7 +87,7 @@ fn option(value: Option<Digest32>, bytes: &mut Vec<u8>) {
     }
 }
 
-pub(super) fn context(value: &Context) -> Result<Digest32> {
+pub(crate) fn context(value: &Context) -> Result<Digest32> {
     validate_context(value)?;
     let mut bytes = domain(CONTEXT_DOMAIN);
     participant_bytes(&value.a, &mut bytes);
@@ -100,14 +100,14 @@ pub(super) fn context(value: &Context) -> Result<Digest32> {
     Ok(hash(&bytes))
 }
 
-pub(super) fn nonce(participant: &Participant, nonce: &[u8; 32]) -> Digest32 {
+pub(crate) fn nonce(participant: &Participant, nonce: &[u8; 32]) -> Digest32 {
     let mut bytes = domain(NONCE_DOMAIN);
     participant_bytes(participant, &mut bytes);
     bytes.extend_from_slice(nonce);
     hash(&bytes)
 }
 
-pub(super) fn core(value: &CoreInput) -> Result<Digest32> {
+pub(crate) fn core(value: &CoreInput) -> Result<Digest32> {
     integer(value.t_a_seconds)?;
     integer(value.t_b_seconds)?;
     let context = context(&value.context)?;
@@ -137,7 +137,7 @@ pub(super) fn core(value: &CoreInput) -> Result<Digest32> {
     Ok(hash(&bytes))
 }
 
-pub(super) fn verify(
+pub(crate) fn verify(
     key: PublicKeyBytes,
     digest: Digest32,
     signature: SignatureBytes,
@@ -148,7 +148,7 @@ pub(super) fn verify(
         .map_err(|_| refusal("signature"))
 }
 
-pub(super) fn frame(value: &FrameBody) -> Result<Digest32> {
+pub(crate) fn frame(value: &FrameBody) -> Result<Digest32> {
     let encoded = codec::unsigned(value)?;
     let mut bytes = domain(FRAME_DOMAIN);
     bytes.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
@@ -156,7 +156,7 @@ pub(super) fn frame(value: &FrameBody) -> Result<Digest32> {
     Ok(hash(&bytes))
 }
 
-pub(super) fn transcript(frames: [&[u8]; 4]) -> Digest32 {
+pub(crate) fn transcript(frames: [&[u8]; 4]) -> Digest32 {
     let mut bytes = domain(TRANSCRIPT_DOMAIN);
     bytes.extend_from_slice(&4_u32.to_be_bytes());
     for frame in frames {
@@ -166,7 +166,7 @@ pub(super) fn transcript(frames: [&[u8]; 4]) -> Digest32 {
     hash(&bytes)
 }
 
-pub(super) fn fresh(timestamp: u64, now: u64, maximum_age: u64) -> Result<()> {
+pub(crate) fn fresh(timestamp: u64, now: u64, maximum_age: u64) -> Result<()> {
     integer(timestamp)?;
     let age = now.checked_sub(timestamp).ok_or(refusal("future-frame"))?;
     if age > maximum_age {
@@ -175,7 +175,7 @@ pub(super) fn fresh(timestamp: u64, now: u64, maximum_age: u64) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn validate_ticket(ticket: &AttemptTicket, session: [u8; 16]) -> Result<()> {
+pub(crate) fn validate_ticket(ticket: &AttemptTicket, session: [u8; 16]) -> Result<()> {
     if ticket.sequence == 0 || ticket.local_session != session {
         Err(refusal("attempt-ticket"))
     } else {
@@ -183,7 +183,7 @@ pub(super) fn validate_ticket(ticket: &AttemptTicket, session: [u8; 16]) -> Resu
     }
 }
 
-pub(super) fn verify_body(body: &ReceiptBody, now: u64) -> Result<Digest32> {
+pub(crate) fn verify_body(body: &ReceiptBody, now: u64) -> Result<Digest32> {
     let digest = core(&body.core)?;
     fresh(body.core.t_b_seconds, now, MAX_WINDOW_SECONDS)?;
     verify(body.core.context.b.device_key, digest, body.sig_b)?;

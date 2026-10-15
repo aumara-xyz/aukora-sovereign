@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Row 137: contact labels carry evidence, never approval or permissions.
 
-use crate::{v0, v1, Result, UNIMPLEMENTED};
+use crate::{v0, v1, v2, Result};
 use canon::digest::Digest32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,13 +58,51 @@ impl PairingEvidence {
 /// A local screen capture and signed screen method are both required by the
 /// new contract. Remote, relayed and imported captures cannot claim local met.
 pub fn from_hardened(
-    _receipt: &v1::VerifiedReceipt,
-    _source: CaptureSource,
+    receipt: &v2::VerifiedReceipt,
+    exchange: &v1::Exchange,
+    source: CaptureSource,
 ) -> Result<PairingEvidence> {
-    Err(UNIMPLEMENTED)
+    let core = &receipt.body().exchange_receipt.core;
+    if exchange.verified_core() != Some((v1::core_digest(core)?, core.t_b_seconds)) {
+        return Err(crate::Refusal {
+            organ: "copresence",
+            reason: "core-mismatch",
+        });
+    }
+    let method = receipt.body().context.exchange.method;
+    let label = match source {
+        CaptureSource::RemoteChannel => PairingLabel::Remote,
+        CaptureSource::RelayedChannel => PairingLabel::Relayed,
+        CaptureSource::LocalScreenCamera | CaptureSource::ImportedReceipt => match method {
+            v1::Method::Remote => PairingLabel::Remote,
+            v1::Method::Relayed => PairingLabel::Relayed,
+            v1::Method::ScreenToScreen if source == CaptureSource::LocalScreenCamera => {
+                PairingLabel::MetInPerson
+            }
+            v1::Method::ScreenToScreen => PairingLabel::UnverifiedMethod,
+        },
+    };
+    Ok(PairingEvidence {
+        label,
+        receipt: receipt.digest(),
+        source,
+    })
 }
 
 /// V0 does not sign its method; legacy receipts retain an unverified-method label.
-pub fn from_legacy(_receipt: &v0::VerifiedReceipt) -> Result<PairingEvidence> {
-    Err(UNIMPLEMENTED)
+pub fn from_legacy(receipt: &v0::VerifiedReceipt) -> Result<PairingEvidence> {
+    Ok(PairingEvidence {
+        label: PairingLabel::UnverifiedMethod,
+        receipt: receipt.core(),
+        source: CaptureSource::ImportedReceipt,
+    })
+}
+
+/// The v1 core omits owner subjects, scopes and expiry; it cannot prove local pairing.
+pub fn from_v1(receipt: &v1::VerifiedReceipt) -> Result<PairingEvidence> {
+    Ok(PairingEvidence {
+        label: PairingLabel::UnverifiedMethod,
+        receipt: receipt.digest(),
+        source: CaptureSource::ImportedReceipt,
+    })
 }

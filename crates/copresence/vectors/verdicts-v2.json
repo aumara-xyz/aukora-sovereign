@@ -1,0 +1,222 @@
+{
+  "schema": "aukora.copresence.verdict-table.v2",
+  "receipt_reader": "copresence decimal JSON with exact unsigned integer timestamp spellings",
+  "supersedes": "verdicts-v1.json",
+  "intent_text": {
+    "file": "buzz-seam-fixtures/TEXT.txt",
+    "remove_one_trailing_lf": true
+  },
+  "telemetry": "Optional telemetry cannot reject a cryptographically valid receipt; malformed telemetry is UNDETERMINED. Sentinel claims never authorize.",
+  "cases": [
+    {
+      "file": "receipts/genuine.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "UNDETERMINED"
+      }
+    },
+    {
+      "file": "receipts/spacetime_genuine.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "CONSISTENT_CLAIMED"
+      }
+    },
+    {
+      "file": "receipts/spacetime_contradiction.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "SUSPICIOUS"
+      }
+    },
+    {
+      "file": "receipts/spacetime_spoofed_acc0.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "SUSPICIOUS"
+      }
+    },
+    {
+      "file": "receipts/audio_genuine.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "CONSISTENT_CLAIMED"
+      }
+    },
+    {
+      "file": "receipts/audio_nonce_mismatch.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "SUSPICIOUS"
+      }
+    },
+    {
+      "file": "receipts/audio_relay_delayed.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "SUSPICIOUS"
+      }
+    },
+    {
+      "file": "receipts/sig_a_garbage.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:sig_A_invalid"
+      }
+    },
+    {
+      "file": "receipts/sig_b_tampered.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:sig_B_invalid"
+      }
+    },
+    {
+      "file": "receipts/pk_b_swapped.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:sig_A_invalid"
+      }
+    },
+    {
+      "file": "receipts/window_11s.json",
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:ceremony_window_exceeded"
+      }
+    },
+    {
+      "file": "buzz-seam-fixtures/good.json",
+      "operation": "intent-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "UNDETERMINED"
+      }
+    },
+    {
+      "file": "buzz-seam-fixtures/fail-wrong-text.json",
+      "operation": "intent-v0",
+      "expect": {
+        "refusal": "copresence:intent_mismatch"
+      }
+    },
+    {
+      "file": "buzz-seam-fixtures/fail-missing-ack.json",
+      "operation": "intent-v0",
+      "expect": {
+        "refusal": "copresence:no_owner_signature"
+      }
+    },
+    {
+      "file": "buzz-seam-fixtures/fail-bad-ack-signature.json",
+      "operation": "intent-v0",
+      "expect": {
+        "refusal": "copresence:bad_owner_signature"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_number_spelling": {
+        "field": "t_A",
+        "spelling": "1791537966.0"
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:timestamp_encoding_error"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_number_spelling": {
+        "field": "t_A",
+        "spelling": "1791537966e0"
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:timestamp_encoding_error"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_number_spelling": {
+        "field": "t_B",
+        "spelling": "1791537970.0"
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:timestamp_encoding_error"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_number_spelling": {
+        "field": "t_B",
+        "spelling": "1791537970e0"
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:timestamp_encoding_error"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_number_spelling": {
+        "field": "t_A",
+        "spelling": "-0"
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:timestamp_encoding_error"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_number_spelling": {
+        "field": "t_B",
+        "spelling": "18446744073709551616"
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "refusal": "copresence:timestamp_encoding_error"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_optional_telemetry": {
+        "geo_A": {
+          "lat": 91,
+          "lon": 0
+        },
+        "geo_B": {
+          "lat": 0,
+          "lon": 0
+        }
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "UNDETERMINED"
+      }
+    },
+    {
+      "file": "receipts/genuine.json",
+      "replace_optional_telemetry": {
+        "audio": {
+          "delay_ms": "unknown"
+        }
+      },
+      "operation": "receipt-v0",
+      "expect": {
+        "receipt": "accepted",
+        "sentinel": "UNDETERMINED"
+      }
+    }
+  ]
+}

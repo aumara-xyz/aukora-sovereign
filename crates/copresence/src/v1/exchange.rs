@@ -22,39 +22,72 @@ pub(super) struct State {
     verified: Option<(Digest32, u64)>,
 }
 
-pub(super) fn begin(face: Face, journal: &mut dyn AttemptJournal) -> Result<Exchange> {
-    let ticket = journal.begin(face.participant.session_id)?;
+pub(super) fn begin(
+    selected: LocalSelection,
+    bytes: &[u8],
+    now: u64,
+    journal: &mut dyn AttemptJournal,
+) -> Result<Exchange> {
+    let ticket = journal.begin(selected.participant.session_id)?;
     let result = (|| {
-        crypto::validate_ticket(&ticket, face.participant.session_id)?;
-        crypto::validate_participant(&face.participant)?;
-        crypto::integer(face.t_seconds)?;
-        crypto::integer(face.frame_index)?;
+        crypto::validate_ticket(&ticket, selected.participant.session_id)?;
+        let signed = codec::read_frame(bytes)?;
+        let FrameBody::Face(face) = &signed.body else {
+            return Err(crypto::refusal("frame-order"));
+        };
+        if face.method != selected.method || face.required_layers != selected.required_layers {
+            return Err(crypto::refusal("method-mismatch"));
+        }
+        if face.participant != selected.participant {
+            return Err(crypto::refusal("local-face-mismatch"));
+        }
         if ticket.sequence != face.participant.attempt_sequence {
             return Err(crypto::refusal("attempt-sequence"));
         }
-        Ok(())
+        crypto::fresh(face.t_seconds, now, FRAME_FRESHNESS_SECONDS)?;
+        crypto::verify(
+            face.participant.device_key,
+            crypto::frame(&signed.body)?,
+            signed.signature,
+        )?;
+        Ok(face.clone())
     })();
-    if let Err(reason) = result {
-        journal.finish(ticket, AttemptOutcome::Refused(reason))?;
-        return Err(reason);
-    }
+    let face = match result {
+        Ok(face) => face,
+        Err(reason) => {
+            journal.finish(ticket, AttemptOutcome::Refused(reason))?;
+            return Err(reason);
+        }
+    };
     Ok(Exchange {
-        method: face.method,
+        method: selected.method,
         stage: Stage::Face,
         state: State {
-            local: face,
+            local: face.clone(),
             ticket: Some(ticket),
-            local_face: None,
+            local_face: Some(Observed {
+                value: face.clone(),
+                bytes: bytes.to_vec(),
+            }),
             peer_face: None,
             context: None,
             seen_a: None,
             seen_b: None,
             handshake: None,
-            last_local: None,
+            last_local: Some((face.frame_index, face.t_seconds)),
             last_peer: None,
             verified: None,
         },
     })
+}
+
+pub(super) fn abandon(exchange: &mut Exchange, journal: &mut dyn AttemptJournal) -> Result<()> {
+    exchange.stage = Stage::Refused;
+    exchange.state.verified = None;
+    if let Some(ticket) = exchange.state.ticket.take() {
+        journal.finish(ticket, AttemptOutcome::Abandoned)?;
+    }
+    Ok(())
 }
 
 pub(super) fn observe(
@@ -68,6 +101,9 @@ pub(super) fn observe(
         Err(reason) => {
             exchange.stage = Stage::Refused;
             exchange.state.verified = None;
+            if let Some(initial) = exchange.state.ticket.take() {
+                journal.finish(initial, AttemptOutcome::Refused(reason))?;
+            }
             return Err(reason);
         }
     };
@@ -82,6 +118,9 @@ pub(super) fn observe(
     if let Err(reason) = journal.finish(ticket, outcome) {
         exchange.stage = Stage::Refused;
         exchange.state.verified = None;
+        if let Some(initial) = exchange.state.ticket.take() {
+            journal.finish(initial, AttemptOutcome::Refused(reason))?;
+        }
         return Err(reason);
     }
     match result {

@@ -18,6 +18,7 @@ mod authority;
 mod epochs;
 mod floor;
 mod io;
+mod observations;
 mod proposals;
 
 /// Signing keys remain with the supervisor's signing service.
@@ -109,7 +110,9 @@ impl Ledger {
             return Err(refusal("signer-changed"));
         }
         let state = self.verified.clone();
+        let observation_start_changes = transaction.total_changes();
         Ok(LedgerTxn {
+            observation_start_changes,
             transaction,
             services,
             identity: Digest32::from_bytes(random),
@@ -187,6 +190,7 @@ impl Ledger {
 }
 
 pub struct LedgerTxn<'a> {
+    observation_start_changes: u64,
     transaction: rusqlite::Transaction<'a>,
     services: TransactionServices<'a>,
     identity: Digest32,

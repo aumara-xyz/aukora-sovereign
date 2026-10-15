@@ -3,6 +3,31 @@
 
 use super::*;
 
+/// Aura's versioned body wrapper binds the observation to the returned record.
+/// Historical bare bodies retain the same exact observation comparison.
+pub(super) fn record_body_matches(
+    record: &canon::authority::AuthorityRecord,
+    observation: &Value,
+) -> Result<bool> {
+    if record.body == *observation {
+        return Ok(true);
+    }
+    let previous = record
+        .authority
+        .previous_hash
+        .map(|hash| hash.to_string())
+        .unwrap_or_else(|| canon::domain::AURA_RECORD_DOMAIN.to_owned());
+    let wrapped = Value::checked_object(vec![
+        ("schema".into(), text("aukora-aura-authority-body-v1")?),
+        ("algorithm".into(), text(record.algorithm.wire_name())?),
+        ("epoch".into(), number(record.authority.epoch)?),
+        ("sequence".into(), number(record.authority.sequence)?),
+        ("previous_hash".into(), text(&previous)?),
+        ("payload".into(), observation.clone()),
+    ])?;
+    Ok(record.body == wrapped)
+}
+
 /// The fact namespace indexes the committed messaging refusal rows by their
 /// one-based ordinal, in Aura sequence order. Each value is {body,sequence}.
 /// The attempt namespace must resolve the same committed row by its attempt id.

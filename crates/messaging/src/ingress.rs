@@ -212,7 +212,7 @@ fn append_refusal_attempt<T: AuthorityTxn + ?Sized>(
         || record.phase != Phase::Fact
         || record.operation.is_some()
         || record.actor != "messaging"
-        || record.body != body
+        || !refusal_audit::record_body_matches(&record, &body)?
     {
         return Err(refuse("refusal-record"));
     }

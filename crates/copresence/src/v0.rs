@@ -3,6 +3,7 @@
 
 use crate::{
     receipt_json::{self, Value},
+    verdict::SentinelVerdict,
     PublicKeyBytes, Refusal, Result,
 };
 use canon::digest::Digest32;
@@ -37,8 +38,9 @@ pub struct VerifiedReceipt {
     core: Digest32,
     pk_a: PublicKeyBytes,
     pk_b: PublicKeyBytes,
-    t_a_seconds: f64,
-    t_b_seconds: f64,
+    t_a_seconds: u64,
+    t_b_seconds: u64,
+    sentinel: SentinelVerdict,
 }
 
 impl VerifiedReceipt {
@@ -50,8 +52,13 @@ impl VerifiedReceipt {
         (self.pk_a, self.pk_b)
     }
 
-    pub const fn timestamps_seconds(&self) -> (f64, f64) {
+    pub const fn timestamps_seconds(&self) -> (u64, u64) {
         (self.t_a_seconds, self.t_b_seconds)
+    }
+
+    /// A verdict on unverified optional observations, never an authorization.
+    pub const fn sentinel(&self) -> SentinelVerdict {
+        self.sentinel
     }
 }
 
@@ -100,8 +107,8 @@ pub fn core_digest(input: &CoreInput) -> Result<Digest32> {
     ))
 }
 
-/// V0 verification entry point. Refusal order and telemetry coercions follow
-/// the pinned corpus; no hardened restrictions are retrofitted onto v0.
+/// V0 signatures retain their byte layout. Timestamps require unsigned integer
+/// spellings; self-reported sentinel observations remain accepted evidence.
 pub fn verify_receipt(bytes: &[u8]) -> Result<VerifiedReceipt> {
     validate(bytes).map(|(_, receipt)| receipt)
 }
@@ -180,7 +187,11 @@ pub fn verify_intent(
         )?;
     }
     if let Some(max_age) = options.max_age_seconds {
-        let age = options.now_seconds - receipt.t_b_seconds;
+        require(
+            max_age.is_finite() && options.now_seconds.is_finite(),
+            "stale_receipt",
+        )?;
+        let age = options.now_seconds - receipt.t_b_seconds as f64;
         require(
             max_age >= 0.0 && age.partial_cmp(&max_age) != Some(std::cmp::Ordering::Greater),
             "stale_receipt",
@@ -306,7 +317,7 @@ fn verify_signature(key: &PublicKeyBytes, message: &[u8], bytes: &[u8; 64]) -> b
 fn validate(bytes: &[u8]) -> Result<(Value, VerifiedReceipt)> {
     let value = receipt_json::read_legacy(bytes)?;
     require(
-        matches!(field(&value, "v"), Value::Number(n) if *n == 0.0),
+        field(&value, "v").as_f64() == Some(0.0),
         "unsupported_version",
     )?;
     for name in [
@@ -314,35 +325,28 @@ fn validate(bytes: &[u8]) -> Result<(Value, VerifiedReceipt)> {
     ] {
         require(!matches!(field(&value, name), Value::Null), "missing_field")?;
     }
-    let (Value::Number(t_a), Value::Number(t_b)) = (field(&value, "t_A"), field(&value, "t_B"))
+    require(
+        field(&value, "t_A").is_number() && field(&value, "t_B").is_number(),
+        "timestamps_must_be_numbers",
+    )?;
+    let (Value::Integer(t_a), Value::Integer(t_b)) = (field(&value, "t_A"), field(&value, "t_B"))
     else {
-        return Err(error("timestamps_must_be_numbers"));
+        return Err(error("timestamp_encoding_error"));
     };
-    let elapsed = t_b - t_a;
-    require(
-        elapsed.partial_cmp(&0.0) != Some(std::cmp::Ordering::Less),
-        "negative_time_skew",
-    )?;
-    require(
-        elapsed.partial_cmp(&(MAX_WINDOW_SECONDS as f64)) != Some(std::cmp::Ordering::Greater),
-        "ceremony_window_exceeded",
-    )?;
+    let elapsed = t_b.checked_sub(*t_a).ok_or(error("negative_time_skew"))?;
+    require(elapsed <= MAX_WINDOW_SECONDS, "ceremony_window_exceeded")?;
     let pk_a = public_key(field(&value, "pk_A"), true)?;
     let pk_b = public_key(field(&value, "pk_B"), false)?;
     let nonce_a =
         hex_bytes::<NONCE_BYTES>(field(&value, "nonce_A")).ok_or(error("malformed_nonce_A"))?;
     let nonce_b =
         hex_bytes::<NONCE_BYTES>(field(&value, "nonce_B")).ok_or(error("malformed_nonce_B"))?;
-    require(
-        t_b.is_finite() && t_b.fract() == 0.0 && (0.0..18_446_744_073_709_551_616.0).contains(t_b),
-        "timestamp_encoding_error",
-    )?;
     let core = core_digest(&CoreInput {
         pk_a,
         pk_b,
         nonce_a,
         nonce_b,
-        t_b_seconds: *t_b as u64,
+        t_b_seconds: *t_b,
     })?;
     let sig_a = hex_bytes::<64>(field(&value, "sig_A")).ok_or(error("malformed_signature_A"))?;
     let sig_b = hex_bytes::<64>(field(&value, "sig_B")).ok_or(error("malformed_signature_B"))?;
@@ -354,13 +358,15 @@ fn validate(bytes: &[u8]) -> Result<(Value, VerifiedReceipt)> {
         verify_signature(&pk_b, core.as_bytes(), &sig_b),
         "sig_B_invalid",
     )?;
-    telemetry(&value)?;
+    // Malformed optional observations remain undetermined evidence.
+    let sentinel = telemetry(&value).unwrap_or(SentinelVerdict::Undetermined);
     let receipt = VerifiedReceipt {
         core,
         pk_a,
         pk_b,
         t_a_seconds: *t_a,
         t_b_seconds: *t_b,
+        sentinel,
     };
     Ok((value, receipt))
 }
@@ -370,6 +376,7 @@ fn truthy(value: &Value) -> bool {
         Value::Null => false,
         Value::Boolean(b) => *b,
         Value::Number(n) => *n != 0.0 && !n.is_nan(),
+        Value::Integer(n) => *n != 0,
         Value::Text(s) => !s.is_empty(),
         _ => true,
     }
@@ -398,6 +405,7 @@ fn js_string(value: &Value) -> String {
             Value::Text(s) => output.push_str(&String::from_utf16_lossy(s)),
             Value::Object(_) => output.push_str("[object Object]"),
             Value::Number(n) => output.push_str(&number_text(*n)),
+            Value::Integer(n) => output.push_str(&number_text(*n as f64)),
         }
     }
     output
@@ -455,6 +463,7 @@ fn js_number(value: &Value) -> f64 {
             }
         }
         Value::Number(n) => *n,
+        Value::Integer(n) => *n as f64,
         Value::Object(_) => f64::NAN,
         other => {
             let text = js_string(other);
@@ -524,9 +533,12 @@ fn coercible(value: &Value) -> bool {
     true
 }
 
-fn telemetry(value: &Value) -> Result<()> {
+fn telemetry(value: &Value) -> Result<SentinelVerdict> {
+    let mut observed = false;
+    let mut suspicious = false;
     let (a, b) = (field(value, "geo_A"), field(value, "geo_B"));
     if truthy(a) && truthy(b) {
+        observed = true;
         let coordinates = [
             field(a, "lat"),
             field(a, "lon"),
@@ -534,9 +546,15 @@ fn telemetry(value: &Value) -> Result<()> {
             field(b, "lon"),
         ];
         require(
-            coordinates.iter().all(|v| matches!(v, Value::Number(_))),
+            coordinates.iter().all(|v| v.is_number()),
             "invalid_geo_coordinates",
         )?;
+        let coordinates_are_bounded = coordinates.iter().enumerate().all(|(index, coordinate)| {
+            let number = js_number(coordinate);
+            let limit = if index % 2 == 0 { 90.0 } else { 180.0 };
+            number.is_finite() && (-limit..=limit).contains(&number)
+        });
+        require(coordinates_are_bounded, "invalid_geo_coordinates")?;
         let default = Value::Number(15.0);
         let (acc_a, acc_b) = (
             present(a, "acc").unwrap_or(&default),
@@ -547,9 +565,10 @@ fn telemetry(value: &Value) -> Result<()> {
             "telemetry_coercion_error",
         )?;
         require(
-            !(js_number(acc_a) < 1.0 || js_number(acc_b) < 1.0),
-            "suspicious_spoofed_accuracy",
+            js_number(acc_a).is_finite() && js_number(acc_b).is_finite(),
+            "invalid_geo_coordinates",
         )?;
+        suspicious |= js_number(acc_a) < 1.0 || js_number(acc_b) < 1.0;
         let radians = |number: f64| (number * std::f64::consts::PI) / 180.0;
         let lat_a = radians(js_number(coordinates[0]));
         let lat_b = radians(js_number(coordinates[2]));
@@ -559,13 +578,11 @@ fn telemetry(value: &Value) -> Result<()> {
             (d_lat / 2.0).sin().powi(2) + lat_a.cos() * lat_b.cos() * (d_lon / 2.0).sin().powi(2);
         let distance = 12_742_000.0 * hav.sqrt().atan2((1.0 - hav).sqrt());
         let bound = js_number(&js_add(&js_add(acc_a, acc_b), &Value::Number(50.0)));
-        let verdict = field(value, "sentinel_verdict");
-        let consistent =
-            text_is(verdict, "CONSISTENT_CLAIMED") || text_is(verdict, "GENUINE_LOCAL_PROXIMITY");
         require(
-            !(consistent && distance > bound),
-            "suspicious_spacetime_contradiction",
+            distance.is_finite() && bound.is_finite(),
+            "invalid_geo_coordinates",
         )?;
+        suspicious |= distance > bound;
     }
     let audio = field(value, "audio");
     if truthy(audio) {
@@ -577,18 +594,20 @@ fn telemetry(value: &Value) -> Result<()> {
                 matches!(matched, Value::Boolean(_)),
                 "invalid_audio_matched",
             )?;
-            require(
-                !matches!(matched, Value::Boolean(false)),
-                "suspicious_audio_nonce_mismatch",
-            )?;
+            observed = true;
+            suspicious |= matches!(matched, Value::Boolean(false));
         }
         if let Some(delay) = present(audio, "delay_ms") {
-            let Value::Number(delay) = delay else {
-                return Err(error("invalid_audio_delay"));
-            };
-            require(*delay >= 5.0, "suspicious_audio_delay_impossible")?;
-            require(*delay <= 150.0, "suspicious_audio_relay_detected")?;
+            let delay = delay.as_f64().ok_or(error("invalid_audio_delay"))?;
+            observed = true;
+            suspicious |= !(5.0..=150.0).contains(&delay);
         }
     }
-    Ok(())
+    Ok(if suspicious {
+        SentinelVerdict::Suspicious
+    } else if observed {
+        SentinelVerdict::ConsistentClaimed
+    } else {
+        SentinelVerdict::Undetermined
+    })
 }

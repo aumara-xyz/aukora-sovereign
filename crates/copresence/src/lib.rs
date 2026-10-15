@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Co-presence evidence contracts. No receipt grants authority.
 //!
-//! Wave 0 declares the legacy reader, hardened exchange and contact evidence.
-//! Verification and state transitions return `copresence:unimplemented` until
-//! their wave-1 bodies exist. No function currently verifies a receipt.
+//! Receipt verifiers retain legacy bytes and separate device evidence from authority.
 #![forbid(unsafe_code)]
 
 pub mod met;
 pub mod receipt_json;
 pub mod v0;
 pub mod v1;
+pub mod v2;
 pub mod verdict;
 
 pub use canon::{Refusal, Result};

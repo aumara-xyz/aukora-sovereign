@@ -1,0 +1,131 @@
+{
+  "schema": "aukora.copresence.hardened-format.v2",
+  "receipt_envelope": {
+    "schema": "aukora.copresence.hardened.v2",
+    "body_keys": [
+      "context",
+      "exchange_receipt",
+      "sig_a",
+      "sig_b",
+      "intent_ack"
+    ]
+  },
+  "context_keys": [
+    "exchange",
+    "owner_a",
+    "owner_b",
+    "scopes",
+    "expires_at_seconds"
+  ],
+  "exchange_receipt": "Complete unchanged aukora.copresence.hardened.v1 envelope; all inner signatures are verified before the two complete-context signatures.",
+  "encoding": {
+    "context_preimage": [
+      "ASCII copresence.context.v2",
+      "00",
+      "canonical JSON of complete context"
+    ],
+    "core_preimage": [
+      "ASCII copresence.receipt.v2",
+      "00",
+      "context_digest:32",
+      "unchanged_v1_core_digest:32"
+    ],
+    "intent_ack_preimage": [
+      "ASCII copresence.intent-ack.v3",
+      "00",
+      "v2_core_digest:32",
+      "v2_context_digest:32",
+      "intent:32",
+      "by:1 (00=A, 01=B)"
+    ],
+    "signature": "P-256 ECDSA with SHA-256 over the 32 digest bytes as message, P1363 r||s",
+    "scopes": "1..32 unique bytewise-sorted ASCII names, each 1..128 alphanumeric or ._:- bytes",
+    "expiry": "exclusive unsigned integer seconds; t_B and verification time must precede it"
+  },
+  "layout_vector": {
+    "context": {
+      "exchange": {
+        "a": {
+          "node": "00000000000000000000000000000001",
+          "device_key": "0466d10f775d8eb1738b7a8bc7bd10aaba40434757716dd61da05f6644a5bbea556a1e330f63c42aa02e8aebeaa70eec07e73a7821aefc8064552157423e710ed5",
+          "device_epoch": 0,
+          "session_id": "00000000000000000000000000000011",
+          "attempt_sequence": 1
+        },
+        "b": {
+          "node": "00000000000000000000000000000002",
+          "device_key": "046216a6c80e4225cfea0dfdd8835013d35b7c413d8687c9ca1844f84586ad1ca918606372966259896840a5f4a73621fe96921c9df71231d081eb891056717a0e",
+          "device_epoch": 0,
+          "session_id": "00000000000000000000000000000022",
+          "attempt_sequence": 1
+        },
+        "method": "screen-to-screen",
+        "required_layers": {
+          "sound": false,
+          "motion": false,
+          "intent_ack": true
+        },
+        "purpose": "pair",
+        "intent": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "owner_a": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+      "owner_b": "aukora:1:2222222222222222222222222222222222222222222222222222222222222222",
+      "scopes": [
+        "contact:pair",
+        "device:pair"
+      ],
+      "expires_at_seconds": 30
+    },
+    "context_preimage_hex": "636f70726573656e63652e636f6e746578742e7632007b2265786368616e6765223a7b2261223a7b22617474656d70745f73657175656e6365223a312c226465766963655f65706f6368223a302c226465766963655f6b6579223a2230343636643130663737356438656231373338623761386263376264313061616261343034333437353737313664643631646130356636363434613562626561353536613165333330663633633432616130326538616562656161373065656330376537336137383231616566633830363435353231353734323365373130656435222c226e6f6465223a223030303030303030303030303030303030303030303030303030303030303031222c2273657373696f6e5f6964223a223030303030303030303030303030303030303030303030303030303030303131227d2c2262223a7b22617474656d70745f73657175656e6365223a312c226465766963655f65706f6368223a302c226465766963655f6b6579223a2230343632313661366338306534323235636665613064666464383833353031336433356237633431336438363837633963613138343466383435383661643163613931383630363337323936363235393839363834306135663461373336323166653936393231633964663731323331643038316562383931303536373137613065222c226e6f6465223a223030303030303030303030303030303030303030303030303030303030303032222c2273657373696f6e5f6964223a223030303030303030303030303030303030303030303030303030303030303232227d2c22696e74656e74223a2233333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333222c226d6574686f64223a2273637265656e2d746f2d73637265656e222c22707572706f7365223a2270616972222c2272657175697265645f6c6179657273223a7b22696e74656e745f61636b223a747275652c226d6f74696f6e223a66616c73652c22736f756e64223a66616c73657d7d2c22657870697265735f61745f7365636f6e6473223a33302c226f776e65725f61223a2261756b6f72613a313a31313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c226f776e65725f62223a2261756b6f72613a313a32323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232222c2273636f706573223a5b22636f6e746163743a70616972222c226465766963653a70616972225d7d",
+    "context_sha256": "db9c0516bf8ee5bd1c4582ca55a53b844fbc8cd2c6ec04d14314c2f1d2e036ef",
+    "inner_core": {
+      "nonce_a": "4444444444444444444444444444444444444444444444444444444444444444",
+      "nonce_b": "5555555555555555555555555555555555555555555555555555555555555555",
+      "t_a_seconds": 1,
+      "t_b_seconds": 2,
+      "transcript": "6666666666666666666666666666666666666666666666666666666666666666",
+      "channels": {
+        "sound": null,
+        "motion": null
+      }
+    },
+    "v1_core_sha256": "90fc0f166eba6b27022c22029b522370a38f04283c906114c54ef5b5c7e19959",
+    "core_preimage_hex": "636f70726573656e63652e726563656970742e763200db9c0516bf8ee5bd1c4582ca55a53b844fbc8cd2c6ec04d14314c2f1d2e036ef90fc0f166eba6b27022c22029b522370a38f04283c906114c54ef5b5c7e19959",
+    "core_sha256": "da0375ec68c9248de4bad8e4a7f5b2683ff778b875cbc16544586f834a32e78e",
+    "intent_ack_by": "B",
+    "intent_ack_preimage_hex": "636f70726573656e63652e696e74656e742d61636b2e763300da0375ec68c9248de4bad8e4a7f5b2683ff778b875cbc16544586f834a32e78edb9c0516bf8ee5bd1c4582ca55a53b844fbc8cd2c6ec04d14314c2f1d2e036ef333333333333333333333333333333333333333333333333333333333333333301",
+    "intent_ack_sha256": "3dda391cbd0612ab32aa9daebeeb218b03dfb58364f9ec435af797c66e80cc13"
+  },
+  "refusal_cases": [
+    {
+      "change": "expected owner_a differs",
+      "expect": "copresence:context-mismatch"
+    },
+    {
+      "change": "scopes are duplicated or unsorted",
+      "expect": "copresence:context-scopes"
+    },
+    {
+      "change": "owner subject is malformed",
+      "expect": "copresence:context-owner"
+    },
+    {
+      "change": "now_seconds equals expires_at_seconds",
+      "expect": "copresence:context-expired"
+    },
+    {
+      "change": "t_b_seconds equals expires_at_seconds",
+      "expect": "copresence:context-expired"
+    },
+    {
+      "change": "required complete-context intent acknowledgement is absent",
+      "expect": "copresence:intent-ack-required"
+    },
+    {
+      "change": "complete-context intent acknowledgement names the v1 core",
+      "expect": "copresence:intent-mismatch"
+    }
+  ],
+  "pairing": "A met-in-person label additionally requires a matching completed local exchange, a signed screen-to-screen method, and a host LocalScreenCamera source. Imported v0 or v1 evidence cannot get that label.",
+  "authority": "none"
+}

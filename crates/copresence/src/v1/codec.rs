@@ -6,16 +6,16 @@ use crate::{
     Side,
 };
 
-fn text(value: impl AsRef<str>) -> Value {
+pub(crate) fn text(value: impl AsRef<str>) -> Value {
     Value::Text(value.as_ref().encode_utf16().collect())
 }
 
-fn number(value: u64) -> Result<Value> {
+pub(crate) fn number(value: u64) -> Result<Value> {
     crypto::integer(value)?;
     Ok(Value::Number(value as f64))
 }
 
-fn object<const N: usize>(fields: [(&str, Value); N]) -> Value {
+pub(crate) fn object<const N: usize>(fields: [(&str, Value); N]) -> Value {
     Value::Object(
         fields
             .into_iter()
@@ -24,7 +24,7 @@ fn object<const N: usize>(fields: [(&str, Value); N]) -> Value {
     )
 }
 
-fn hex_value(bytes: &[u8]) -> Value {
+pub(crate) fn hex_value(bytes: &[u8]) -> Value {
     text(hex::encode(bytes))
 }
 
@@ -63,7 +63,7 @@ fn layers_value(value: RequiredLayers) -> Value {
     ])
 }
 
-fn context_value(value: &Context) -> Result<Value> {
+pub(crate) fn context_value(value: &Context) -> Result<Value> {
     crypto::validate_context(value)?;
     Ok(object([
         ("a", participant_value(&value.a)?),
@@ -141,11 +141,11 @@ fn body_value(value: &FrameBody) -> Result<Value> {
     }
 }
 
-pub(super) fn unsigned(value: &FrameBody) -> Result<Vec<u8>> {
+pub(crate) fn unsigned(value: &FrameBody) -> Result<Vec<u8>> {
     canonical(&body_value(value)?)
 }
 
-pub(super) fn encode_frame(frame: &SignedFrame) -> Result<Vec<u8>> {
+pub(crate) fn encode_frame(frame: &SignedFrame) -> Result<Vec<u8>> {
     canonical(&object([
         ("schema", text(FRAME_SCHEMA)),
         (
@@ -158,7 +158,7 @@ pub(super) fn encode_frame(frame: &SignedFrame) -> Result<Vec<u8>> {
     ]))
 }
 
-pub(super) fn read_frame(bytes: &[u8]) -> Result<SignedFrame> {
+pub(crate) fn read_frame(bytes: &[u8]) -> Result<SignedFrame> {
     let value = read_hardened(bytes, HARDENED_LIMITS)?;
     fields(&value, &["schema", "body"])?;
     if string(get(&value, "schema")?)? != FRAME_SCHEMA {
@@ -261,7 +261,7 @@ fn parse_body(value: &Value) -> Result<FrameBody> {
     }
 }
 
-pub(super) fn read_receipt(bytes: &[u8]) -> Result<ReceiptBody> {
+pub(crate) fn read_receipt(bytes: &[u8]) -> Result<ReceiptBody> {
     let value = read_hardened(bytes, HARDENED_LIMITS)?;
     fields(&value, &["schema", "body"])?;
     if string(get(&value, "schema")?)? != RECEIPT_SCHEMA {
@@ -293,7 +293,7 @@ pub(super) fn read_receipt(bytes: &[u8]) -> Result<ReceiptBody> {
     })
 }
 
-fn fields(value: &Value, expected: &[&str]) -> Result<()> {
+pub(crate) fn fields(value: &Value, expected: &[&str]) -> Result<()> {
     let Value::Object(entries) = value else {
         return Err(crypto::refusal("field-type"));
     };
@@ -303,7 +303,7 @@ fn fields(value: &Value, expected: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn get<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
+pub(crate) fn get<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
     let Value::Object(entries) = value else {
         return Err(crypto::refusal("field-type"));
     };
@@ -315,14 +315,14 @@ fn get<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
         .ok_or(crypto::refusal("field-missing"))
 }
 
-fn string(value: &Value) -> Result<String> {
+pub(crate) fn string(value: &Value) -> Result<String> {
     let Value::Text(units) = value else {
         return Err(crypto::refusal("field-type"));
     };
     String::from_utf16(units).map_err(|_| crypto::refusal("string"))
 }
 
-fn raw<const N: usize>(value: &Value) -> Result<[u8; N]> {
+pub(crate) fn raw<const N: usize>(value: &Value) -> Result<[u8; N]> {
     let value = string(value)?;
     if value.len() != N * 2
         || !value
@@ -347,7 +347,11 @@ fn optional_digest(value: &Value) -> Result<Option<Digest32>> {
     }
 }
 
-fn uint(value: &Value) -> Result<u64> {
+pub(crate) fn uint(value: &Value) -> Result<u64> {
+    if let Value::Integer(value) = value {
+        crypto::integer(*value)?;
+        return Ok(*value);
+    }
     let Value::Number(value) = value else {
         return Err(crypto::refusal("field-type"));
     };
@@ -417,7 +421,7 @@ fn participant(value: &Value) -> Result<Participant> {
     Ok(value)
 }
 
-fn context(value: &Value) -> Result<Context> {
+pub(crate) fn context(value: &Value) -> Result<Context> {
     fields(
         value,
         &["a", "b", "method", "required_layers", "purpose", "intent"],
@@ -465,7 +469,7 @@ fn core(value: &Value) -> Result<CoreInput> {
     Ok(value)
 }
 
-fn canonical(value: &Value) -> Result<Vec<u8>> {
+pub(crate) fn canonical(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     write(value, &mut bytes)?;
     if bytes.len() > HARDENED_LIMITS.max_bytes {
@@ -503,7 +507,9 @@ fn write(value: &Value, bytes: &mut Vec<u8>) -> Result<()> {
     match value {
         Value::Null => bytes.extend_from_slice(b"null"),
         Value::Boolean(value) => bytes.extend_from_slice(if *value { b"true" } else { b"false" }),
-        Value::Number(_) => bytes.extend_from_slice(uint(value)?.to_string().as_bytes()),
+        Value::Number(_) | Value::Integer(_) => {
+            bytes.extend_from_slice(uint(value)?.to_string().as_bytes())
+        }
         Value::Text(value) => quoted(value, bytes)?,
         Value::Array(values) => {
             bytes.push(b'[');
@@ -531,4 +537,30 @@ fn write(value: &Value, bytes: &mut Vec<u8>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Encodes the frozen receipt envelope without adding context fields.
+pub(crate) fn encode_receipt(body: &ReceiptBody) -> Result<Vec<u8>> {
+    let ack = match &body.intent_ack {
+        None => Value::Null,
+        Some(ack) => object([
+            ("by", side_value(ack.by)),
+            ("intent", digest_value(ack.intent)),
+            ("core", digest_value(ack.core)),
+            ("context", digest_value(ack.context)),
+            ("signature", hex_value(&ack.signature.0)),
+        ]),
+    };
+    canonical(&object([
+        ("schema", text(RECEIPT_SCHEMA)),
+        (
+            "body",
+            object([
+                ("core", core_value(&body.core)?),
+                ("sig_a", hex_value(&body.sig_a.0)),
+                ("sig_b", hex_value(&body.sig_b.0)),
+                ("intent_ack", ack),
+            ]),
+        ),
+    ]))
 }

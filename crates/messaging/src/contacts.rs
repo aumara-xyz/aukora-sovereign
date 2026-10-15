@@ -24,16 +24,38 @@ pub enum PairingMethod {
     Unknown,
 }
 
-/// Public data retained from a verified receipt; this does not add a contact.
-/// Messaging has no dependency on the verifier and accepts this only through the
-/// supervisor's checked adapter, with both endpoint keys matched to the receipt.
+/// A bounded receipt reference parsed from an action or retained contact record.
+/// Parsing checks representation, not co-presence. Before staging a contact,
+/// `MessagingTxn::check_pairing` verifies the receipt, both keys and channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PairingEvidence {
-    pub receipt_digest: Digest32,
-    pub local_key: PublicKey,
-    pub remote_key: PublicKey,
-    pub method: PairingMethod,
-    pub verified_at_ms: u64,
+    receipt_digest: Digest32,
+    local_key: PublicKey,
+    remote_key: PublicKey,
+    method: PairingMethod,
+    verified_at_ms: u64,
+}
+
+impl PairingEvidence {
+    pub const fn receipt_digest(&self) -> Digest32 {
+        self.receipt_digest
+    }
+
+    pub const fn local_key(&self) -> PublicKey {
+        self.local_key
+    }
+
+    pub const fn remote_key(&self) -> PublicKey {
+        self.remote_key
+    }
+
+    pub const fn method(&self) -> PairingMethod {
+        self.method
+    }
+
+    pub const fn verified_at_ms(&self) -> u64 {
+        self.verified_at_ms
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

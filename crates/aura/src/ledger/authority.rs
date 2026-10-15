@@ -170,6 +170,18 @@ impl AuthorityTxn for LedgerTxn<'_> {
         })
     }
 
+    fn committed_observation_state(
+        &mut self,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Option<Value>> {
+        self.read_committed_observation(namespace, key)
+    }
+
+    fn commit_observations(&mut self) -> Result<()> {
+        self.commit_fact_observations()
+    }
+
     fn check_standing_use(
         &mut self,
         _permission_id: &ProposalId,

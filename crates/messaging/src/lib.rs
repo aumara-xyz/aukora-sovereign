@@ -259,7 +259,7 @@ pub fn apply_owner_action<T: MessagingTxn + ?Sized>(
         OwnerAction::Contact(ContactChange::Add(draft)) => {
             if let Some(pairing) = &draft.pairing {
                 txn.check_pairing(pairing)?;
-                if pairing.remote_key != draft.key {
+                if pairing.remote_key() != draft.key {
                     return Err(refuse("pairing-mismatch"));
                 }
             }
