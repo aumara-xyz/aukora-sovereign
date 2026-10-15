@@ -28,6 +28,10 @@ macro_rules! registry {
 }
 
 registry! {
+    BROKER_STREAMING_UNAVAILABLE => ("broker", "streaming-unavailable", "The host has no model streaming adapter; no stream reservation was admitted."),
+    BROKER_GRANT_PROJECTION_UNAVAILABLE => ("broker", "grant-projection-unavailable", "Retained broker history has no available active-grant projection."),
+    SUPERVISOR_PUBLIC_COUNTERS_UNAVAILABLE => ("supervisor", "public-counters-unavailable", "Owning-organ public counter projections are unavailable."),
+    LAUNCHER_GUEST_PROVISIONING_UNAVAILABLE => ("launcher", "guest-provisioning-unavailable", "Trusted guest cage provisioning and attack-driver resources are unavailable."),
     FRONTDOOR_SITE_HOST => ("frontdoor", "site-host", "The site host does not match its isolated serving boundary."),
     FRONTDOOR_SITE_TRANSPORT => ("frontdoor", "site-transport", "The site transport does not match its configured trusted HTTPS proxy."),
     FRONTDOOR_SITE_METHOD => ("frontdoor", "site-method", "The site request method is not GET or HEAD."),

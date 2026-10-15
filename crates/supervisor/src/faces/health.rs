@@ -21,7 +21,6 @@ pub fn call(source: &dyn HealthRead, method: &str, params: &Value) -> Result<Val
         "health.snapshot" => {
             wire::exact(params, &[])?;
             let bytes = source.snapshot()?;
-            canon::health::decode_snapshot(&bytes)?;
             wire::bounded(wire::event(SessionEvent::HealthSnapshot(
                 OpaqueHealthSnapshot::new(bytes)?,
             ))?)
@@ -34,9 +33,9 @@ pub fn call(source: &dyn HealthRead, method: &str, params: &Value) -> Result<Val
             if (offset == 0) != expected.is_none() || offset % PAGE_BYTES != 0 {
                 return Err(refuse("health-page-invalid"));
             }
-            let bytes = source.snapshot()?;
-            canon::health::decode_snapshot(&bytes)?;
-            let digest = Digest32::sha256(&bytes);
+            let snapshot = OpaqueHealthSnapshot::new(source.snapshot()?)?;
+            let bytes = snapshot.as_bytes();
+            let digest = Digest32::sha256(bytes);
             if let Some(expected) = expected {
                 if Digest32::from_hex(expected)? != digest {
                     return Err(refuse("health-snapshot-changed"));

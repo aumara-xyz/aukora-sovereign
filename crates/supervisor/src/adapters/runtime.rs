@@ -51,7 +51,7 @@ impl GuestPlan for UnavailableGuestPlan {
         _: std::os::fd::OwnedFd,
         _: std::os::fd::OwnedFd,
     ) -> Result<LaunchRequest> {
-        Err(codes::SUPERVISOR_NOT_READY)
+        Err(codes::LAUNCHER_GUEST_PROVISIONING_UNAVAILABLE)
     }
     fn before_agent_start(&self, _: &BootFacts) -> Result<()> {
         Err(canon::Refusal {

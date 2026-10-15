@@ -138,6 +138,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         },
     )?);
     let runner = wasmcell::Runner::new()?;
+    let kira = Arc::new(crate::adapters::kira::KiraAdapter::new(ledger.clone())?);
     let snapshots = Arc::new(crate::adapters::snapshot::SnapshotAdapter::new(
         ledger.clone(),
         Arc::new(crate::adapters::snapshot::UnavailablePublicSnapshots),
@@ -162,7 +163,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
             ledger: ledger.clone(),
             gate,
             broker,
-            kira: Arc::new(crate::adapters::kira::UnavailableKira),
+            kira,
             cell: Arc::new(supervisor::services::PinnedCellService::new(
                 runner,
                 "theme".into(),
@@ -173,7 +174,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         assets.clone(),
         Arc::new(crate::adapters::runtime::UnavailableGuestPlan),
     ));
-    let data = crate::data::HostData::new(transcripts, health.clone(), ledger.clone());
+    let data = crate::data::HostData::new(transcripts, health.clone(), ledger.clone())?;
     let host = Arc::new(Host {
         approvals: crate::approvals::ApprovalFeed::new(ledger.clone()),
         config,
@@ -252,6 +253,9 @@ impl Host {
         )
     }
 
+    /// Called from `web`'s blocking worker with a Tokio runtime entered. Data and
+    /// face reads synchronously wait for async organ ports and cannot run on a
+    /// Tokio runtime worker thread.
     pub fn dispatch(
         &self,
         request: AdmittedRequest,

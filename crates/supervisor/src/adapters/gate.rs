@@ -45,10 +45,10 @@ impl GateAdapter {
         std::thread::Builder::new()
             .name("sovereign-gate".into())
             .spawn(move || {
-                let opened = (|| {
+                let opened = host.serialize_gate(|| {
                     let store = ConfinedStore::open(directory, config.targets.clone())?;
                     Gate::open(aura::Ledger::open(&path)?, store, config, host.services())
-                })();
+                });
                 let mut gate = match opened {
                     Ok(gate) => {
                         if ready_send.send(Ok(())).is_err() {
@@ -75,38 +75,43 @@ impl GateAdapter {
         &self,
         context: gate::health::ObservationContext,
     ) -> ServiceFuture<'_, Vec<canon::health::HealthEvidence>> {
+        let host = Arc::clone(&self.ledger);
         let (send, receive) = tokio::sync::oneshot::channel();
         let queued = self
             .sender
             .try_send(Box::new(move |gate| {
-                let evidence = gate::health::health(
-                    gate::health::ObservationSources {
-                        ledger: gate.ledger(),
-                        configuration: gate.config(),
-                        targets: gate.target_store(),
-                    },
-                    context,
-                );
+                let evidence = host.serialize_gate(|| {
+                    Ok(gate::health::health(
+                        gate::health::ObservationSources {
+                            ledger: gate.ledger(),
+                            configuration: gate.config(),
+                            targets: gate.target_store(),
+                        },
+                        context,
+                    ))
+                });
                 let _ = send.send(evidence);
             }))
             .map_err(|_| codes::SUPERVISOR_NOT_READY);
         Box::pin(async move {
             queued?;
-            receive.await.map_err(|_| codes::SUPERVISOR_NOT_READY)
+            receive.await.map_err(|_| codes::SUPERVISOR_NOT_READY)?
         })
     }
     fn submit<T: Send + 'static>(
         &self,
         scope: PrincipalScope,
-        operation: impl for<'a> FnOnce(&mut Gate<'a, ConfinedStore>) -> Result<T> + Send + 'static,
+        operation: impl for<'a> FnOnce(
+                &mut Gate<'a, ConfinedStore>,
+                &mut super::ledger::GateLedger<'_>,
+            ) -> Result<T>
+            + Send
+            + 'static,
     ) -> ServiceFuture<'_, T> {
         let host = Arc::clone(&self.ledger);
         let (send, receive) = tokio::sync::oneshot::channel();
         let job: Job = Box::new(move |gate| {
-            let result = host
-                .scoped(scope, |_| Ok(()))
-                .and_then(|()| operation(gate))
-                .and_then(|value| host.scoped(scope, |_| Ok(value)));
+            let result = host.gate_scoped(scope, |ledger| operation(gate, ledger));
             let _ = send.send(result);
         });
         let queued = self
@@ -126,7 +131,7 @@ impl GateService for GateAdapter {
         _: &'a FrameId,
         request: canon::fd3_payloads::sites::SiteProposal,
     ) -> ServiceFuture<'a, Accepted> {
-        self.submit(scope, move |gate| {
+        self.submit(scope, move |gate, _| {
             let proposal = gate.propose(
                 gate::target::sites::proposal_request(&request)?,
                 &mut NoInjection,
@@ -145,7 +150,7 @@ impl GateService for GateAdapter {
         _: &'a FrameId,
         request: Propose,
     ) -> ServiceFuture<'a, Accepted> {
-        self.submit(scope, move |gate| {
+        self.submit(scope, move |gate, _| {
             let bytes = request.replacement_bytes()?;
             let proposal = gate.propose(
                 ProposalRequest {
@@ -168,9 +173,8 @@ impl GateService for GateAdapter {
         })
     }
     fn read(&self, scope: PrincipalScope, request: Read) -> ServiceFuture<'_, ReadReply> {
-        let host = Arc::clone(&self.ledger);
-        self.submit(scope, move |gate| {
-            host.scoped(scope, |_| {
+        self.submit(scope, move |gate, ledger| {
+            ledger.transaction(|_| {
                 let observed = gate
                     .target_store()
                     .observe(&TargetId::new(request.target.clone())?)?;
@@ -208,11 +212,10 @@ impl GateService for GateAdapter {
         proposal: ProposalId,
         action: OwnerOperation,
     ) -> ServiceFuture<'_, OwnerReview> {
-        let host = Arc::clone(&self.ledger);
-        self.submit(scope, move |gate| {
-            host.scoped(scope, |txn| require_proposal_scope(txn, proposal, scope))?;
+        self.submit(scope, move |gate, ledger| {
+            ledger.transaction(|txn| require_proposal_scope(txn, proposal, scope))?;
             let review = gate.review(proposal, action, &mut NoInjection)?;
-            let authorization = host.scoped(scope, |txn| {
+            let authorization = ledger.transaction(|txn| {
                 require_proposal_scope(txn, proposal, scope)?;
                 txn.rebuild_authorization(&proposal, action)
             })?;
@@ -234,9 +237,8 @@ impl GateService for GateAdapter {
         action: OwnerOperation,
         assertion: OwnerAssertion,
     ) -> ServiceFuture<'_, Outcome> {
-        let host = Arc::clone(&self.ledger);
-        self.submit(scope, move |gate| {
-            host.scoped(scope, |txn| require_proposal_scope(txn, proposal, scope))?;
+        self.submit(scope, move |gate, ledger| {
+            ledger.transaction(|txn| require_proposal_scope(txn, proposal, scope))?;
             let result = match action {
                 OwnerOperation::Apply => gate.apply(proposal, assertion, &mut NoInjection),
                 OwnerOperation::Retire => gate.retire(proposal, assertion, &mut NoInjection),

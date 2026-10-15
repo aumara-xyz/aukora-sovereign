@@ -399,6 +399,45 @@ fn refusal(reason: &'static str) -> canon::Refusal {
         reason,
     }
 }
+
+impl LedgerTxn<'_> {
+    /// Observe retained Kira-table absence under the active transaction.
+    /// This cannot prove empty memory without also verifying the complete Aura history.
+    pub fn kira_retention_empty(&self) -> Result<bool> {
+        use rusqlite::OptionalExtension;
+        self.active()?;
+        for (table, query) in [
+            ("kira_notes_v1", "SELECT EXISTS(SELECT 1 FROM kira_notes_v1)"),
+            (
+                "kira_demotions_v1",
+                "SELECT EXISTS(SELECT 1 FROM kira_demotions_v1)",
+            ),
+        ] {
+            let kind: Option<String> = self
+                .transaction
+                .query_row(
+                    "SELECT type FROM sqlite_master WHERE name=?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(sql)?;
+            match kind.as_deref() {
+                None => continue,
+                Some("table") => {}
+                _ => return Err(canon::codes::KIRA_STORE_CORRUPT),
+            }
+            let present: bool = self
+                .transaction
+                .query_row(query, [], |row| row.get(0))
+                .map_err(sql)?;
+            if present {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
 fn sql(_: rusqlite::Error) -> canon::Refusal {
     refusal("storage")
 }

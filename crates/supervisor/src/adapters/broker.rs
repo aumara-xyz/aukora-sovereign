@@ -28,6 +28,9 @@ use supervisor::{
 type PendingCall = tokio::task::JoinHandle<Result<ModelReply>>;
 struct Calls {
     closed: bool,
+    draining: bool,
+    disconnected: bool,
+    drain_result: Option<Result<()>>,
     recovery: Result<()>,
     scope: Option<PrincipalScope>,
     entries: BTreeMap<RequestId, PendingCall>,
@@ -46,6 +49,9 @@ impl BrokerAdapter {
             ledger,
             calls: Arc::new(Mutex::new(Calls {
                 closed: true,
+                draining: false,
+                disconnected: false,
+                drain_result: None,
                 recovery: Err(codes::BROKER_SETTLE_PENDING),
                 scope: None,
                 entries: BTreeMap::new(),
@@ -55,6 +61,12 @@ impl BrokerAdapter {
     /// Crash recovery settles retained reservations; it never resends model input.
     pub fn recover(&self) -> Result<()> {
         let mut calls = self.calls.lock().map_err(|_| codes::BROKER_STATE)?;
+        self.recover_calls(&mut calls)
+    }
+    fn recover_calls(&self, calls: &mut Calls) -> Result<()> {
+        if calls.draining {
+            return Err(codes::BROKER_BUSY);
+        }
         calls.closed = true;
         let result = (|| {
             if !calls.entries.is_empty() {
@@ -75,12 +87,25 @@ impl BrokerAdapter {
         calls.recovery = result;
         if result.is_ok() {
             calls.closed = false;
+            calls.disconnected = false;
+            calls.drain_result = None;
             calls.scope = None;
         }
         result
     }
     pub fn recovery_state(&self) -> Result<()> {
         self.calls.lock().map_err(|_| codes::BROKER_STATE)?.recovery
+    }
+    /// Retry only recovery of retained reservations, never a provider request.
+    fn ensure_recovered(&self) -> Result<()> {
+        let mut calls = self.calls.lock().map_err(|_| codes::BROKER_STATE)?;
+        if calls.disconnected || calls.draining {
+            return Err(codes::BROKER_BUSY);
+        }
+        if calls.recovery.is_err() {
+            self.recover_calls(&mut calls)?;
+        }
+        Ok(())
     }
 }
 impl BrokerService for BrokerAdapter {
@@ -91,6 +116,7 @@ impl BrokerService for BrokerAdapter {
         call: ModelCall,
     ) -> ServiceFuture<'a, ModelReply> {
         Box::pin(async move {
+            self.ensure_recovered()?;
             let request_id = RequestId::from_bytes(random()?);
             let receiver = {
                 let mut calls = self.calls.lock().map_err(|_| codes::BROKER_STATE)?;
@@ -128,10 +154,14 @@ impl BrokerService for BrokerAdapter {
                         }
                         Err(code) => Err(code),
                     };
-                    if result.is_err() {
+                    {
                         let mut calls = calls_state.lock().map_err(|_| codes::BROKER_STATE)?;
-                        calls.closed = true;
-                        calls.recovery = Err(codes::BROKER_SETTLE_PENDING);
+                        if result.is_err() {
+                            calls.closed = true;
+                            calls.recovery = Err(codes::BROKER_SETTLE_PENDING);
+                        }
+                        // A dropped reply future must not retain a finished call forever.
+                        calls.entries.remove(&request_id);
                     }
                     let _ = sender.send(result.clone());
                     result
@@ -150,16 +180,22 @@ impl BrokerService for BrokerAdapter {
         })
     }
     fn streaming_ready(&self) -> Result<()> {
-        Err(codes::BROKER_SETTLE_PENDING)
+        Err(codes::BROKER_STREAMING_UNAVAILABLE)
     }
     fn start(&self, _: PrincipalScope, _: ModelStart) -> ServiceFuture<'_, ModelStarted> {
-        Box::pin(async { Err(codes::BROKER_SETTLE_PENDING) })
+        Box::pin(async { Err(codes::BROKER_STREAMING_UNAVAILABLE) })
     }
     fn next(&self, _: PrincipalScope, _: StreamHandle) -> ServiceFuture<'_, BrokerEvent> {
-        Box::pin(async { Err(codes::BROKER_SETTLE_PENDING) })
+        Box::pin(async { Err(codes::BROKER_STREAMING_UNAVAILABLE) })
+    }
+    fn poll(&self, _: PrincipalScope, _: StreamHandle) -> ServiceFuture<'_, Option<BrokerEvent>> {
+        Box::pin(async { Err(codes::BROKER_STREAMING_UNAVAILABLE) })
+    }
+    fn delivered(&self, _: PrincipalScope, _: StreamHandle, _: u64) -> ServiceFuture<'_, ()> {
+        Box::pin(async { Err(codes::BROKER_STREAMING_UNAVAILABLE) })
     }
     fn cancel(&self, _: PrincipalScope, _: ModelCancel) -> ServiceFuture<'_, ModelEnd> {
-        Box::pin(async { Err(codes::BROKER_SETTLE_PENDING) })
+        Box::pin(async { Err(codes::BROKER_STREAMING_UNAVAILABLE) })
     }
     fn disconnect(&self, scope: PrincipalScope) -> ServiceFuture<'_, ()> {
         Box::pin(async move {
@@ -168,25 +204,48 @@ impl BrokerService for BrokerAdapter {
                 if state.scope.is_some_and(|current| current != scope) {
                     return Err(codes::AUMLOK_BINDING_REQUIRED);
                 }
+                if state.draining {
+                    return Err(codes::BROKER_BUSY);
+                }
+                if let Some(result) = state.drain_result {
+                    return result;
+                }
                 state.closed = true;
+                state.disconnected = true;
+                state.draining = true;
                 std::mem::take(&mut state.entries)
             };
-            let mut failure = None;
-            for (_, task) in tasks {
-                match task.await {
-                    Ok(Ok(_)) => (),
-                    Ok(Err(error)) => {
-                        failure.get_or_insert(error);
-                    }
-                    Err(_) => {
-                        failure.get_or_insert(codes::BROKER_SETTLE_PENDING);
+            let calls = Arc::clone(&self.calls);
+            let (send, receive) = tokio::sync::oneshot::channel();
+            // Cleanup outlives a disconnected router dropping this reply future.
+            tokio::spawn(async move {
+                let mut failure = None;
+                for (_, task) in tasks {
+                    match task.await {
+                        Ok(Ok(_)) => (),
+                        Ok(Err(error)) => {
+                            failure.get_or_insert(error);
+                        }
+                        Err(_) => {
+                            failure.get_or_insert(codes::BROKER_SETTLE_PENDING);
+                        }
                     }
                 }
-            }
-            if let Some(error) = failure {
-                return Err(error);
-            }
-            Ok(())
+                let result = match calls.lock() {
+                    Ok(mut state) => {
+                        state.draining = false;
+                        let result = failure.map_or(state.recovery, Err);
+                        if result.is_err() {
+                            state.recovery = Err(codes::BROKER_SETTLE_PENDING);
+                        }
+                        state.drain_result = Some(result);
+                        result
+                    }
+                    Err(_) => Err(codes::BROKER_STATE),
+                };
+                let _ = send.send(result);
+            });
+            receive.await.map_err(|_| codes::BROKER_SETTLE_PENDING)?
         })
     }
 }

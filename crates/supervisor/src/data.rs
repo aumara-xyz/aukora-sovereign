@@ -7,6 +7,7 @@ use canon::{
     digest::Digest32,
     fd4::{ChatCommand, SessionEvent},
     frame::Frame,
+    ids::AppId,
     provenance::{Provenance, Source},
     Result,
 };
@@ -33,6 +34,7 @@ pub struct HostData {
     sessions: Arc<supervisor::session::DurableSessions>,
     health: Arc<HealthCollector>,
     ledger: Arc<HostLedger>,
+    producer: AppId,
     queues: Mutex<BTreeMap<Digest32, Queue>>,
 }
 
@@ -41,15 +43,21 @@ impl HostData {
         sessions: Arc<supervisor::session::DurableSessions>,
         health: Arc<HealthCollector>,
         ledger: Arc<HostLedger>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let mut producer = [0; canon::ids::RANDOM_ID_BYTES];
+        getrandom::fill(&mut producer).map_err(|_| codes::SUPERVISOR_STATE)?;
+        Ok(Self {
             sessions,
             health,
             ledger,
+            producer: AppId::from_bytes(producer),
             queues: Mutex::new(BTreeMap::new()),
-        }
+        })
     }
 
+    /// Requires the host's `spawn_blocking` request task with its live-session lock held.
+    /// The entered Tokio runtime drives session futures; a runtime worker must not
+    /// call this synchronous method because its `Handle::block_on` would panic.
     pub fn dispatch(
         &self,
         session: &BoundSession<'_>,
@@ -81,6 +89,9 @@ impl HostData {
             bytes: 0,
             events: VecDeque::new(),
         });
+        if queue.scope != scope {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
         match endpoint {
             DataEndpoint::Event => {
                 let bytes = queue
@@ -100,19 +111,18 @@ impl HostData {
                         reason: "queue-full",
                     });
                 }
-                let command = canon::fd4::decode_command(
-                    payload,
-                    Provenance {
-                        source: Source::Owner,
-                    },
-                )?;
-                let body = tokio::runtime::Handle::current()
-                    .block_on(self.command(scope, command.body))?;
+                let ingress = Provenance {
+                    source: Source::Owner,
+                };
+                let command = canon::fd4::decode_command(payload, ingress.clone())?;
+                let body = tokio::runtime::Handle::try_current()
+                    .map_err(|_| codes::SUPERVISOR_NOT_READY)?
+                    .block_on(self.command(scope, ingress, command.body))?;
                 let event = Frame {
                     v: canon::fd4::VERSION,
                     id: command.id,
                     provenance: Provenance {
-                        source: Source::Owner,
+                        source: Source::App(self.producer),
                     },
                     body,
                 };
@@ -124,7 +134,12 @@ impl HostData {
         }
     }
 
-    async fn command(&self, scope: PrincipalScope, request: ChatCommand) -> Result<SessionEvent> {
+    async fn command(
+        &self,
+        scope: PrincipalScope,
+        ingress: Provenance,
+        request: ChatCommand,
+    ) -> Result<SessionEvent> {
         match request {
             ChatCommand::CreateSession(request) => Ok(SessionEvent::Created(
                 self.sessions.create(scope, request).await?,
@@ -136,15 +151,7 @@ impl HostData {
                 self.sessions.list(scope, request).await?,
             )),
             ChatCommand::AppendSession(request) => Ok(SessionEvent::Appended(
-                self.sessions
-                    .append(
-                        scope,
-                        Provenance {
-                            source: Source::Owner,
-                        },
-                        request,
-                    )
-                    .await?,
+                self.sessions.append(scope, ingress, request).await?,
             )),
             ChatCommand::FlushSession(request) => Ok(SessionEvent::Flushed(
                 self.sessions.flush(scope, request).await?,

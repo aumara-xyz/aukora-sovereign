@@ -13,10 +13,7 @@ use canon::{
     Result,
 };
 use std::sync::Arc;
-use supervisor::{
-    ingress::BindingState,
-    services::{ServiceFuture, SnapshotService},
-};
+use supervisor::services::{ServiceFuture, SnapshotService};
 
 pub struct PublicCounters {
     pub aumlok: AumlokStatus,
@@ -39,10 +36,14 @@ pub trait PublicSnapshots: Send + Sync {
 pub struct UnavailablePublicSnapshots;
 impl PublicSnapshots for UnavailablePublicSnapshots {
     fn counters(&self, _: &mut aura::LedgerTxn<'_>) -> Result<PublicCounters> {
-        Err(codes::SUPERVISOR_NOT_READY)
+        Err(codes::SUPERVISOR_PUBLIC_COUNTERS_UNAVAILABLE)
     }
-    fn active_grant(&self, _: &mut aura::LedgerTxn<'_>) -> Result<Option<ActiveGrant>> {
-        Err(codes::SUPERVISOR_NOT_READY)
+    fn active_grant(&self, transaction: &mut aura::LedgerTxn<'_>) -> Result<Option<ActiveGrant>> {
+        if transaction.broker_history_empty()? {
+            Ok(None)
+        } else {
+            Err(codes::BROKER_GRANT_PROJECTION_UNAVAILABLE)
+        }
     }
     fn ready(&self) -> bool {
         false
@@ -74,15 +75,18 @@ impl SnapshotAdapter {
 impl SnapshotService for SnapshotAdapter {
     fn status(&self) -> ServiceFuture<'_, StatusReply> {
         Box::pin(async {
-            let bound = matches!(self.ledger.binding()?, BindingState::Bound(_));
-            let grant = self
-                .ledger
-                .transaction(|txn| self.public.active_grant(txn))?;
-            Ok(StatusReply {
-                ready: bound && self.public.ready(),
-                bound,
-                grant_id: grant.as_ref().map(|grant| grant.id.clone()),
-                grant_remaining: grant.map(|grant| grant.remaining),
+            self.ledger.transaction(|txn| {
+                let bound = txn.current_version()?.epoch > 0;
+                if bound {
+                    txn.gate_owner_subject()?;
+                }
+                let grant = self.public.active_grant(txn)?;
+                Ok(StatusReply {
+                    ready: bound && self.public.ready(),
+                    bound,
+                    grant_id: grant.as_ref().map(|grant| grant.id.clone()),
+                    grant_remaining: grant.map(|grant| grant.remaining),
+                })
             })
         })
     }
@@ -95,9 +99,6 @@ impl SnapshotService for SnapshotAdapter {
                     .sequence
                     .checked_sub(1)
                     .ok_or(codes::AURA_UNVERIFIED)?;
-                if sequence > 65_536 {
-                    return Err(codes::SUPERVISOR_NOT_READY);
-                }
                 let mut sources = [
                     empty(AuraSourceName::GateLedger, SourceAbsence::GateLedgerEmpty),
                     empty(AuraSourceName::KiraChain, SourceAbsence::KiraLedgerEmpty),

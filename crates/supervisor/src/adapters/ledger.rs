@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! One serialized Aura connection and a fact-only launcher recorder.
+//! Host and gate Aura connections share one process writer lock.
 
 use canon::{
     alg::AlgorithmId,
@@ -34,6 +34,23 @@ pub struct HostLedger {
     ledger: Mutex<aura::Ledger>,
     pub signer: Arc<dyn aura::RecordSigner + Send + Sync>,
     pub clock: Arc<dyn aura::TrustedClock + Send + Sync>,
+}
+/// A scoped view of the host connection while a gate job holds the writer lock.
+pub struct GateLedger<'a> {
+    host: &'a HostLedger,
+    ledger: &'a mut aura::Ledger,
+    scope: PrincipalScope,
+}
+impl GateLedger<'_> {
+    pub fn transaction<T>(
+        &mut self,
+        operation: impl FnOnce(&mut aura::LedgerTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.host.on_connection(self.ledger, true, |txn| {
+            HostLedger::require_scope(txn, self.scope)?;
+            operation(txn)
+        })
+    }
 }
 impl HostLedger {
     pub fn open(
@@ -75,6 +92,14 @@ impl HostLedger {
             .ledger
             .lock()
             .map_err(|_| codes::SUPERVISOR_NOT_READY)?;
+        self.on_connection(&mut ledger, commit, operation)
+    }
+    fn on_connection<T>(
+        &self,
+        ledger: &mut aura::Ledger,
+        commit: bool,
+        operation: impl FnOnce(&mut aura::LedgerTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
         struct TransactionClock(i64);
         impl aura::TrustedClock for TransactionClock {
             fn now_ms(&self) -> Result<i64> {
@@ -91,6 +116,35 @@ impl HostLedger {
         if commit {
             transaction.commit()?;
         }
+        Ok(result)
+    }
+    /// Gate owns its connection, but cannot use it while a host transaction runs.
+    pub fn serialize_gate<T>(&self, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+        let _writer = self
+            .ledger
+            .lock()
+            .map_err(|_| codes::SUPERVISOR_NOT_READY)?;
+        operation()
+    }
+    /// Keep the writer lock across scope checks and the complete gate operation.
+    /// SQLite's immediate transactions also exclude writers in other processes.
+    pub fn gate_scoped<T>(
+        &self,
+        scope: PrincipalScope,
+        operation: impl FnOnce(&mut GateLedger<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let mut ledger = self
+            .ledger
+            .lock()
+            .map_err(|_| codes::SUPERVISOR_NOT_READY)?;
+        let mut connection = GateLedger {
+            host: self,
+            ledger: &mut ledger,
+            scope,
+        };
+        connection.transaction(|_| Ok(()))?;
+        let result = operation(&mut connection)?;
+        connection.transaction(|_| Ok(()))?;
         Ok(result)
     }
     pub fn binding(&self) -> Result<BindingState> {

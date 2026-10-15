@@ -55,7 +55,9 @@ impl HostFaces {
         self
     }
 
-    /// Called on the host's blocking request task while its live-session lock is held.
+    /// Requires the host's `spawn_blocking` request task with its live-session lock held.
+    /// The entered Tokio runtime drives organ futures; a runtime worker must not call
+    /// this synchronous method because its `Handle::block_on` would panic.
     pub fn dispatch(
         &self,
         session: &BoundSession<'_>,
