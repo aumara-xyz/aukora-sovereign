@@ -81,25 +81,92 @@ pub struct ObservationSources<'a> {
     pub targets: &'a dyn crate::target::TargetStore,
 }
 
-pub fn health(
-    _sources: ObservationSources<'_>,
-    context: ObservationContext,
-) -> Vec<HealthEvidence> {
+pub fn health(sources: ObservationSources<'_>, context: ObservationContext) -> Vec<HealthEvidence> {
+    let limits = aura::export::ExportLimits {
+        max_bytes: 16 * 1024 * 1024,
+        max_rows: 65_536,
+    };
+    let observation = sources.ledger.export_cold_proof(limits).and_then(|proof| {
+        proof.canonical_bytes(limits)?;
+        Ok(proof)
+    });
     PRIVATE_CHECKS
         .iter()
         .chain(CORNER_CHECKS.iter())
-        .map(|spec| HealthEvidence {
-            v: canon::health::HEALTH_FORMAT_VERSION,
-            algorithm: AlgorithmId::Sha256,
-            check: spec.check,
-            reporter: spec.owner,
-            epoch: context.epoch,
-            sequence: context.sequence,
-            observed_at_ms: context.observed_at_ms,
-            expires_at_ms: context.observed_at_ms.saturating_add(spec.freshness_ms),
-            cell: Cell::Failed,
-            reason: HealthReason::Unwritten,
-            commitment: context.commitment,
+        .map(|spec| {
+            let (cell, reason) = if spec.check == OPERATION_TERMINALS.check
+                || spec.check == CONSUMPTION_ONCE.check
+                || spec.check == CHAIN_HEAD.check
+            {
+                match &observation {
+                    Err(_) => (Cell::Undetermined, HealthReason::Unreachable),
+                    Ok(proof) => match check_context(proof, context) {
+                        Err(reason) => (Cell::Undetermined, reason),
+                        Ok(()) => {
+                            let result = if spec.check == OPERATION_TERMINALS.check {
+                                crate::coverage::check_ledger_rows(&proof.rows).map(|_| ())
+                            } else if spec.check == CONSUMPTION_ONCE.check {
+                                crate::coverage::check_consumption_rows(&proof.rows)
+                            } else {
+                                Ok(())
+                            };
+                            if result.is_ok() {
+                                (Cell::Verified, HealthReason::Satisfied)
+                            } else {
+                                (Cell::Failed, HealthReason::InvariantFailed)
+                            }
+                        }
+                    },
+                }
+            } else {
+                (Cell::Failed, HealthReason::Unwritten)
+            };
+            HealthEvidence {
+                v: canon::health::HEALTH_FORMAT_VERSION,
+                algorithm: AlgorithmId::Sha256,
+                check: spec.check,
+                reporter: spec.owner,
+                epoch: context.epoch,
+                sequence: context.sequence,
+                observed_at_ms: context.observed_at_ms,
+                expires_at_ms: context.observed_at_ms.saturating_add(spec.freshness_ms),
+                cell,
+                reason,
+                commitment: context.commitment,
+            }
         })
         .collect()
+}
+
+fn check_context(
+    proof: &aura::export::ColdProofV1,
+    context: ObservationContext,
+) -> core::result::Result<(), HealthReason> {
+    if proof.head.sequence != context.sequence {
+        return Err(HealthReason::ContextMismatch);
+    }
+    let mut epoch = None;
+    for row in proof.rows.iter().rev() {
+        if matches!(
+            row.body.get("schema").map(canon::json::Value::view),
+            Some(canon::json::ValueView::Text(
+                aura::record::AUTHORITY_BODY_SCHEMA
+            ))
+        ) {
+            let body = aura::record::AuthorityBodyV1::parse(&row.body)
+                .map_err(|_| HealthReason::InvalidEvidence)?;
+            if body.authority.sequence != row.sequence
+                || body.authority.previous_hash != row.previous
+            {
+                return Err(HealthReason::ContextMismatch);
+            }
+            epoch = Some(body.authority.epoch);
+            break;
+        }
+    }
+    match epoch {
+        Some(epoch) if epoch == context.epoch => Ok(()),
+        Some(_) => Err(HealthReason::ContextMismatch),
+        None => Err(HealthReason::NotChecked),
+    }
 }

@@ -230,3 +230,76 @@ impl AuthorityTxn for LedgerTxn<'_> {
         crate::unavailable()
     }
 }
+
+impl LedgerTxn<'_> {
+    /// Read the latest recorded owner subject without creating an authority proof.
+    pub fn gate_owner_subject(&self) -> Result<canon::ids::SubjectId> {
+        let operation: String = self.transaction.query_row(
+            "SELECT op FROM aura WHERE kind IN ('aumlok.enrol','aumlok.bind') AND phase='terminal' ORDER BY seq DESC LIMIT 1",
+            [], |row| row.get(0),
+        ).map_err(|_| canon::Refusal { organ: "aura", reason: "owner-subject" })?;
+        let operation = OperationId::from_hex(&operation)?;
+        let record = self.gate_terminal(&operation)?.ok_or(canon::codes::AURA_UNVERIFIED)?;
+        if !matches!(record.kind, canon::authority::Kind::AumlokEnrol | canon::authority::Kind::AumlokBind)
+            || record.authority.epoch != self.current_version()?.epoch {
+            return Err(canon::codes::AURA_UNVERIFIED);
+        }
+        let body = gate_payload(&record.body);
+        match body.get("subject").map(canon::json::Value::view) {
+            Some(canon::json::ValueView::Text(subject)) => canon::ids::SubjectId::parse(subject),
+            _ => Err(canon::Refusal { organ: "aura", reason: "owner-subject" }),
+        }
+    }
+
+    /// Read the operation's unique terminal for an idempotent lifecycle reply.
+    pub fn gate_terminal(&self, operation: &OperationId) -> Result<Option<AuthorityRecord>> {
+        use rusqlite::OptionalExtension;
+        let row: Option<(String, String)> = self.transaction.query_row(
+            "SELECT hash,body FROM aura WHERE op=?1 AND phase='terminal'",
+            [operation.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|_| canon::codes::AURA_TRANSACTION)?;
+        row.map(|(hash, body)| {
+            let body = canon::json::parse_strict(body.as_bytes())?;
+            let wrapper = crate::record::AuthorityBodyV1::parse(&body)?;
+            let record = self.record_at(wrapper.authority)?;
+            if record.hash != Digest32::from_hex(&hash)? || record.operation != Some(*operation)
+                || record.phase != canon::authority::Phase::Terminal {
+                return Err(canon::codes::AURA_UNVERIFIED);
+            }
+            Ok(record)
+        }).transpose()
+    }
+
+    /// A rule suggestion may cite only an actual batch with a later recorded review.
+    pub fn gate_reviewed_batch(&self, operation: &OperationId, target: &str) -> Result<bool> {
+        use rusqlite::OptionalExtension;
+        let rows: Option<(String, String)> = self.transaction.query_row(
+            "SELECT p.body,r.body FROM aura p JOIN aura r ON r.op=p.op WHERE p.op=?1 AND p.kind='gate.propose' AND p.phase='intent' AND r.kind='gate.review' AND r.seq>p.seq ORDER BY r.seq DESC LIMIT 1",
+            [operation.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|_| canon::codes::AURA_TRANSACTION)?;
+        let Some((proposed, reviewed)) = rows else { return Ok(false); };
+        let proposed = canon::json::parse_strict(proposed.as_bytes())?;
+        let reviewed = canon::json::parse_strict(reviewed.as_bytes())?;
+        let proposed = self.record_at(crate::record::AuthorityBodyV1::parse(&proposed)?.authority)?;
+        let reviewed = self.record_at(crate::record::AuthorityBodyV1::parse(&reviewed)?.authority)?;
+        if proposed.kind != canon::authority::Kind::GatePropose || proposed.phase != canon::authority::Phase::Intent
+            || reviewed.kind != canon::authority::Kind::GateReview || reviewed.phase == canon::authority::Phase::Terminal
+            || proposed.operation != Some(*operation) || reviewed.operation != Some(*operation)
+            || reviewed.authority.sequence <= proposed.authority.sequence {
+            return Err(canon::codes::AURA_UNVERIFIED);
+        }
+        Ok(matches!(gate_payload(&proposed.body).get("suggestion").map(canon::json::Value::view),
+            Some(canon::json::ValueView::Text("batch")))
+            && matches!(gate_payload(&proposed.body).get("target").map(canon::json::Value::view),
+                Some(canon::json::ValueView::Text(value)) if value == target)
+            && matches!(gate_payload(&reviewed.body).get("action").map(canon::json::Value::view),
+                Some(canon::json::ValueView::Text("apply"))))
+    }
+}
+
+fn gate_payload(value: &canon::json::Value) -> &canon::json::Value {
+    if matches!(value.get("schema").map(canon::json::Value::view),
+        Some(canon::json::ValueView::Text(crate::record::AUTHORITY_BODY_SCHEMA))) {
+        value.get("payload").unwrap_or(value)
+    } else { value }
+}
