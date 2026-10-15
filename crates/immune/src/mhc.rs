@@ -9,10 +9,11 @@
 use crate::health::Context;
 use crate::organ_map::{self, OrganMap};
 use canon::{
+    alg::AlgorithmId,
     digest::Digest32,
     health::{
-        Cell, CheckId, CheckRef, CornerId, HealthEvidence, HealthReason, HealthSnapshot, OrganId,
-        CHECKS, CORNERS,
+        Cell, CheckId, CheckRef, CheckSpec, CornerId, HealthEvidence, HealthReason, HealthSnapshot,
+        OrganId, CHECKS, CORNERS, HEALTH_FORMAT_VERSION,
     },
     Refusal, Result,
 };
@@ -123,13 +124,52 @@ impl MhcLoop {
         evidence: Vec<HealthEvidence>,
         usage: SampleBudget,
     ) -> Result<HealthSnapshot> {
+        self.sample_with_targets(context, evidence, &[], usage)
+    }
+
+    /// Includes digest mismatches measured by Body in this sample. Target count
+    /// is bounded before inspection. Existing evidence is validated before any
+    /// replacement, so a target failure cannot hide malformed or duplicate reports.
+    pub fn sample_with_targets(
+        &mut self,
+        context: Context,
+        evidence: Vec<HealthEvidence>,
+        targets: &[TargetObservation<'_>],
+        usage: SampleBudget,
+    ) -> Result<HealthSnapshot> {
         self.cadence
             .advance(context.observed_at_ms, usage.periods())?;
         usage.check()?;
         if evidence.len() > canon::health::MAX_EVIDENCE_COUNT {
             return Err(refusal("mhc-evidence-limit"));
         }
-        compute(context, evidence)
+        if targets.len() > canon::health::MAX_EVIDENCE_COUNT {
+            return Err(refusal("mhc-target-limit"));
+        }
+        let mut snapshot = compute(context, evidence)?;
+        let mut changed = false;
+        for target in targets {
+            for failure in target.failures() {
+                // Validate each failure before merging, including its observation
+                // time. A later target must not conceal an invalid earlier one.
+                compute(context, vec![failure.clone()])?;
+                if let Some(report) = snapshot
+                    .evidence
+                    .iter_mut()
+                    .find(|report| report.check == failure.check)
+                {
+                    *report = failure;
+                } else {
+                    snapshot.evidence.push(failure);
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            compute(context, snapshot.evidence)
+        } else {
+            Ok(snapshot)
+        }
     }
 
     /// `sample`, then the projection of its snapshot onto the geometry.
@@ -140,7 +180,20 @@ impl MhcLoop {
         usage: SampleBudget,
         geometry: &Geometry,
     ) -> Result<Attestation> {
-        let snapshot = self.sample(context, evidence, usage)?;
+        self.attest_with_targets(context, evidence, &[], usage, geometry)
+    }
+
+    /// Samples Body target failures with the organ reports, then projects the
+    /// reduced snapshot. Other organs must supply their own corner-side reports.
+    pub fn attest_with_targets(
+        &mut self,
+        context: Context,
+        evidence: Vec<HealthEvidence>,
+        targets: &[TargetObservation<'_>],
+        usage: SampleBudget,
+        geometry: &Geometry,
+    ) -> Result<Attestation> {
+        let snapshot = self.sample_with_targets(context, evidence, targets, usage)?;
         let map = organ_map::project(&snapshot, geometry)?;
         Ok(Attestation { snapshot, map })
     }
@@ -233,6 +286,76 @@ pub enum Concern {
         verified_record: Digest32,
     },
     Unavailable,
+}
+
+/// Body-owned targets with fixed registry mappings. Display names do not select
+/// a check, and no variant can report for Gate, Kira or another organ.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Target {
+    RunningBinary,
+    Shell,
+    AntibodyCorpus,
+    IndexPin,
+}
+
+impl Target {
+    fn checks(self) -> &'static [CheckSpec] {
+        const BINARY: &[CheckSpec] = &[CHECKS[76].spec(), CORNERS[12].specs()[1]];
+        const SHELL: &[CheckSpec] = &[CHECKS[77].spec()];
+        const CORPUS: &[CheckSpec] = &[CHECKS[85].spec(), CORNERS[13].specs()[1]];
+        const INDEX: &[CheckSpec] = &[CORNERS[16].specs()[1]];
+        match self {
+            Self::RunningBinary => BINARY,
+            Self::Shell => SHELL,
+            Self::AntibodyCorpus => CORPUS,
+            Self::IndexPin => INDEX,
+        }
+    }
+}
+
+/// A target read in its actual context by the supervisor, with its Body source
+/// selected separately from the target's display name. No wire decoder exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TargetObservation<'a> {
+    pub target: Target,
+    pub context: Context,
+    pub check: &'a TargetCheck,
+}
+
+impl TargetObservation<'_> {
+    /// Both drift and proven tampering fail the registered Body checks. A match
+    /// or an unavailable target adds no report: neither establishes the complete
+    /// invariant, such as the shell's manifest together with its serving policy.
+    pub fn failures(&self) -> Vec<HealthEvidence> {
+        if !self
+            .check
+            .observed
+            .is_some_and(|observed| observed != self.check.expected)
+        {
+            return Vec::new();
+        }
+        self.target
+            .checks()
+            .iter()
+            .map(|spec| HealthEvidence {
+                v: HEALTH_FORMAT_VERSION,
+                algorithm: AlgorithmId::Sha256,
+                check: spec.check,
+                reporter: OrganId::Body,
+                epoch: self.context.epoch,
+                sequence: self.context.sequence,
+                observed_at_ms: self.context.observed_at_ms,
+                expires_at_ms: self
+                    .context
+                    .observed_at_ms
+                    .saturating_add(spec.freshness_ms)
+                    .min(canon::json::MAX_SAFE_INTEGER as u64),
+                cell: Cell::Failed,
+                reason: HealthReason::InvariantFailed,
+                commitment: self.context.commitment,
+            })
+            .collect()
+    }
 }
 
 /// One target compared with the digest its receipt records. Plain data from the

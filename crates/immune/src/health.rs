@@ -178,7 +178,7 @@ pub fn observe(context: Context, state: &BodyState) -> Vec<BodyObservation> {
         // 14. The active antibody corpus is the released one.
         antibody,
         unwritten, // 15. immune floor
-        // 16. Health and fingerprint displays stay apart.
+        // 16. Invalid labels fail; no live display probe is connected.
         display_types(context),
         unwritten, // 17. app grant boundary
         unwritten, // 18. release pointer
@@ -255,9 +255,8 @@ fn probe<T>(
     }
 }
 
-/// Private check 16: the organ map, the fingerprint and the bloom carry non-empty,
-/// pairwise distinct labels. Health cells and fingerprint trits are separate Rust
-/// types, and `organ_map::project` accepts only a health snapshot.
+/// Private check 16 rejects empty or colliding display labels. Distinct static
+/// labels do not observe live canvases, so this check remains unwritten.
 fn display_types(context: Context) -> (Context, Finding) {
     let labels = [
         crate::organ_map::LABEL,
@@ -269,7 +268,7 @@ fn display_types(context: Context) -> (Context, Finding) {
         .enumerate()
         .all(|(i, label)| !label.is_empty() && labels[i + 1..].iter().all(|other| other != label));
     let finding = if distinct {
-        Finding::Satisfied
+        Finding::Unwritten
     } else {
         Finding::Failed
     };
