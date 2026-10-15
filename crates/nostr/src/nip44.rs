@@ -87,10 +87,7 @@ pub fn encrypt(key: &ConversationKey, plaintext: &str) -> Result<String> {
         return Err(refusal("plaintext-length"));
     }
     let mut nonce = [0; 32];
-    getrandom::fill(&mut nonce).map_err(|_| Refusal {
-        organ: "nostr",
-        reason: "random-unavailable",
-    })?;
+    getrandom::fill(&mut nonce).map_err(|_| refusal("random-unavailable"))?;
     let material = key.message_material(&nonce)?;
     let mut ciphertext = Zeroizing::new(vec![0; 2 + padded_length(length)?]);
     let count = u16::try_from(length).map_err(|_| refusal("plaintext-length"))?;

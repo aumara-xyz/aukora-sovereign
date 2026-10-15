@@ -85,6 +85,7 @@ impl TransportEnvelope {
             });
         }
         let recipient = hex::encode(self.recipient.as_bytes());
+        // A wrap has exactly one recipient, including when another p tag differs.
         let mut addressed = false;
         for tag in &event.tags {
             if tag.first().map(String::as_str) != Some("p") {

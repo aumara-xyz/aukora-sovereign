@@ -51,7 +51,11 @@ impl PublicKey {
 
     /// Encodes lowercase npub using the original Bech32 checksum.
     pub fn to_npub(&self) -> Result<canon::provenance::Npub> {
-        canon::provenance::Npub::parse(self.algorithm(), &self.encoded_npub()?)
+        let address = canon::provenance::Npub::from_key_bytes(self.0);
+        if address.as_str() != self.encoded_npub()? {
+            return Err(refusal("npub-invalid"));
+        }
+        Ok(address)
     }
 
     /// Checks checksum, npub HRP, 32-byte length and canonical round trip.

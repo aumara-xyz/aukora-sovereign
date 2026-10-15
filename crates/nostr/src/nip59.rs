@@ -85,6 +85,7 @@ pub fn authenticate_sender(
     }
     let recipient_key = recipient.public_key()?;
     let recipient_hex = hex::encode(recipient_key.as_bytes());
+    // Exactly one p tag names this recipient; additional recipients refuse.
     let mut addressed = false;
     for tag in outer
         .tags

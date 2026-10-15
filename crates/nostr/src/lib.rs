@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Network wire and integration contracts, frozen for wave 1.
+//! Nostr identities, authenticated events and encrypted message envelopes.
 //!
-//! Cryptographic, storage and transport bodies remain unavailable. Their public
-//! entry points refuse rather than claiming validation. Health reports all 26
-//! unwritten observations as failed. No key or remote event grants authority.
+//! Implements BIP-340, NIP-19, NIP-44 v2, NIP-59 and envelope validation.
+//! Identity binding uses the host's locked delegation and authority transaction.
+//! Relay I/O belongs to the transport adapter. Health reports all 26 unwritten
+//! observations as failed. No key or remote event grants authority.
 #![forbid(unsafe_code)]
 
 pub mod antibody;

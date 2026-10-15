@@ -1,0 +1,182 @@
+{
+  "schema": "aukora-nostr-binding-vectors-v1",
+  "target": "nostr.bind",
+  "owner_operation": "permission",
+  "new_sha256_input": "body_canonical UTF-8 bytes without a trailing newline",
+  "binding_body_keys": [
+    "agent_key",
+    "authority",
+    "delegation_commitment",
+    "node",
+    "node_key",
+    "owner",
+    "v"
+  ],
+  "vectors": [
+    {
+      "name": "first-row",
+      "request": {
+        "v": 1,
+        "node": "0123456789abcdef0123456789abcdef",
+        "owner": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+        "authority": {
+          "epoch": 1,
+          "sequence": 1,
+          "previous_hash": null
+        },
+        "node_key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "agent_key": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+        "delegation_commitment": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "body_canonical": "{\"agent_key\":\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\",\"authority\":{\"epoch\":1,\"previous_hash\":null,\"sequence\":1},\"delegation_commitment\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"node\":\"0123456789abcdef0123456789abcdef\",\"node_key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"owner\":\"aukora:1:1111111111111111111111111111111111111111111111111111111111111111\",\"v\":1}",
+      "body_sha256": "88bd3ba72eed736cd94858dea1d3b73649d574e846a910aad7710d579a95e2ce",
+      "authorization": {
+        "v": 1,
+        "node": "0123456789abcdef0123456789abcdef",
+        "target": "nostr.bind",
+        "base_sha256": "absent",
+        "new_sha256": "88bd3ba72eed736cd94858dea1d3b73649d574e846a910aad7710d579a95e2ce",
+        "cell": null,
+        "subject": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+        "op": "permission",
+        "proposal": "33333333333333333333333333333333",
+        "display_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "challenge": "55555555555555555555555555555555",
+        "expires_at": 1700000060000,
+        "epoch": 1,
+        "operation": "b935f9df262719ac44a8e8d548b2da1be1a04bb4611cc93c2da94840c1e179cd"
+      },
+      "authorization_canonical": "{\"base_sha256\":\"absent\",\"cell\":null,\"challenge\":\"55555555555555555555555555555555\",\"display_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"epoch\":1,\"expires_at\":1700000060000,\"new_sha256\":\"88bd3ba72eed736cd94858dea1d3b73649d574e846a910aad7710d579a95e2ce\",\"node\":\"0123456789abcdef0123456789abcdef\",\"op\":\"permission\",\"operation\":\"b935f9df262719ac44a8e8d548b2da1be1a04bb4611cc93c2da94840c1e179cd\",\"proposal\":\"33333333333333333333333333333333\",\"subject\":\"aukora:1:1111111111111111111111111111111111111111111111111111111111111111\",\"target\":\"nostr.bind\",\"v\":1}",
+      "operation_content_canonical": "{\"base_sha256\":\"absent\",\"cell\":null,\"new_sha256\":\"88bd3ba72eed736cd94858dea1d3b73649d574e846a910aad7710d579a95e2ce\",\"node\":\"0123456789abcdef0123456789abcdef\",\"target\":\"nostr.bind\",\"v\":1}",
+      "operation_preimage_hex": "61756b6f72613a6f7065726174696f6e2d636f6e74656e743a7631007b22626173655f736861323536223a22616273656e74222c2263656c6c223a6e756c6c2c226e65775f736861323536223a2238386264336261373265656437333663643934383538646561316433623733363439643537346538343661393130616164373731306435373961393565326365222c226e6f6465223a223031323334353637383961626364656630313233343536373839616263646566222c22746172676574223a226e6f7374722e62696e64222c2276223a317d",
+      "append": {
+        "v": 1,
+        "algorithm": "sha256",
+        "authority": {
+          "epoch": 1,
+          "sequence": 1,
+          "previous_hash": null
+        },
+        "at": 1700000000000,
+        "kind": "nostr.bind",
+        "actor": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+        "operation": "66666666666666666666666666666666",
+        "phase": "terminal",
+        "body": {
+          "v": 1,
+          "node": "0123456789abcdef0123456789abcdef",
+          "owner": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+          "authority": {
+            "epoch": 1,
+            "sequence": 1,
+            "previous_hash": null
+          },
+          "node_key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "agent_key": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+          "delegation_commitment": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    },
+    {
+      "name": "retained-predecessor",
+      "request": {
+        "v": 1,
+        "node": "0123456789abcdef0123456789abcdef",
+        "owner": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+        "authority": {
+          "epoch": 3,
+          "sequence": 42,
+          "previous_hash": "abababababababababababababababababababababababababababababababab"
+        },
+        "node_key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "agent_key": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+        "delegation_commitment": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "body_canonical": "{\"agent_key\":\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\",\"authority\":{\"epoch\":3,\"previous_hash\":\"abababababababababababababababababababababababababababababababab\",\"sequence\":42},\"delegation_commitment\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"node\":\"0123456789abcdef0123456789abcdef\",\"node_key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"owner\":\"aukora:1:1111111111111111111111111111111111111111111111111111111111111111\",\"v\":1}",
+      "body_sha256": "96e60416d7dc78fe2d0efa1f055e78a602f1e83c7b4020014e962cff3604b3c1",
+      "authorization": {
+        "v": 1,
+        "node": "0123456789abcdef0123456789abcdef",
+        "target": "nostr.bind",
+        "base_sha256": "absent",
+        "new_sha256": "96e60416d7dc78fe2d0efa1f055e78a602f1e83c7b4020014e962cff3604b3c1",
+        "cell": null,
+        "subject": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+        "op": "permission",
+        "proposal": "33333333333333333333333333333333",
+        "display_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "challenge": "55555555555555555555555555555555",
+        "expires_at": 1700000060000,
+        "epoch": 3,
+        "operation": "b3f0c0e8f61ef48c30348ae65feeba66c25d66953803209fb19809e97577e7a9"
+      },
+      "authorization_canonical": "{\"base_sha256\":\"absent\",\"cell\":null,\"challenge\":\"55555555555555555555555555555555\",\"display_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"epoch\":3,\"expires_at\":1700000060000,\"new_sha256\":\"96e60416d7dc78fe2d0efa1f055e78a602f1e83c7b4020014e962cff3604b3c1\",\"node\":\"0123456789abcdef0123456789abcdef\",\"op\":\"permission\",\"operation\":\"b3f0c0e8f61ef48c30348ae65feeba66c25d66953803209fb19809e97577e7a9\",\"proposal\":\"33333333333333333333333333333333\",\"subject\":\"aukora:1:1111111111111111111111111111111111111111111111111111111111111111\",\"target\":\"nostr.bind\",\"v\":1}",
+      "operation_content_canonical": "{\"base_sha256\":\"absent\",\"cell\":null,\"new_sha256\":\"96e60416d7dc78fe2d0efa1f055e78a602f1e83c7b4020014e962cff3604b3c1\",\"node\":\"0123456789abcdef0123456789abcdef\",\"target\":\"nostr.bind\",\"v\":1}",
+      "operation_preimage_hex": "61756b6f72613a6f7065726174696f6e2d636f6e74656e743a7631007b22626173655f736861323536223a22616273656e74222c2263656c6c223a6e756c6c2c226e65775f736861323536223a2239366536303431366437646337386665326430656661316630353565373861363032663165383363376234303230303134653936326366663336303462336331222c226e6f6465223a223031323334353637383961626364656630313233343536373839616263646566222c22746172676574223a226e6f7374722e62696e64222c2276223a317d",
+      "append": {
+        "v": 1,
+        "algorithm": "sha256",
+        "authority": {
+          "epoch": 3,
+          "sequence": 42,
+          "previous_hash": "abababababababababababababababababababababababababababababababab"
+        },
+        "at": 1700000000000,
+        "kind": "nostr.bind",
+        "actor": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+        "operation": "66666666666666666666666666666666",
+        "phase": "terminal",
+        "body": {
+          "v": 1,
+          "node": "0123456789abcdef0123456789abcdef",
+          "owner": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+          "authority": {
+            "epoch": 3,
+            "sequence": 42,
+            "previous_hash": "abababababababababababababababababababababababababababababababab"
+          },
+          "node_key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "agent_key": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+          "delegation_commitment": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    }
+  ],
+  "refusals": [
+    {
+      "condition": "request.v is not 1 or role keys are equal",
+      "code": "nostr:binding-invalid"
+    },
+    {
+      "condition": "sequence is zero, out of C1 range, or previous_hash is absent except at sequence 1",
+      "code": "nostr:binding-authority"
+    },
+    {
+      "condition": "proof was verified by another transaction",
+      "code": "nostr:binding-transaction"
+    },
+    {
+      "condition": "C5 target, permission action, node, owner, epoch, body digest, operation digest or exact bytes differ",
+      "code": "nostr:binding-authorization"
+    },
+    {
+      "condition": "locked owner credential, key, algorithm, epoch or top origin changed",
+      "code": "nostr:binding-owner"
+    },
+    {
+      "condition": "locked append context changes, clock is invalid, or approval is expired",
+      "code": "nostr:binding-authority"
+    }
+  ],
+  "transaction_order": [
+    "check_delegation_request",
+    "authority_append_context",
+    "rebuild_authorization",
+    "owner_binding",
+    "authority_append_context",
+    "persist_counter",
+    "consume",
+    "append"
+  ],
+  "commit": "caller only; roll back the entire transaction on any refusal"
+}

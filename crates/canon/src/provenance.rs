@@ -12,6 +12,54 @@ pub struct Npub {
 }
 
 impl Npub {
+    /// Encode 32 public-key bytes as canonical lowercase NIP-19 Bech32, tagged
+    /// `Secp256k1Schnorr`. This checks representation by construction, not curve
+    /// membership, contact approval or owner authority.
+    pub fn from_key_bytes(bytes: [u8; 32]) -> Self {
+        const CHARSET: &[u8; 32] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+        let mut encoded = String::with_capacity(63);
+        encoded.push_str("npub1");
+        let mut checksum = 1;
+        for part in b"npub"
+            .iter()
+            .map(|byte| byte >> 5)
+            .chain([0])
+            .chain(b"npub".iter().map(|byte| byte & 31))
+        {
+            checksum = npub_checksum_step(checksum, part);
+        }
+        let mut pending = 0_u16;
+        let mut bits = 0_u8;
+        for byte in bytes {
+            pending = (pending << 8) | u16::from(byte);
+            bits += 8;
+            while bits >= 5 {
+                bits -= 5;
+                let part = ((pending >> bits) & 31) as u8;
+                encoded.push(char::from(CHARSET[usize::from(part)]));
+                checksum = npub_checksum_step(checksum, part);
+            }
+            pending &= (1_u16 << bits) - 1;
+        }
+        if bits != 0 {
+            let part = (pending << (5 - bits)) as u8;
+            encoded.push(char::from(CHARSET[usize::from(part)]));
+            checksum = npub_checksum_step(checksum, part);
+        }
+        for _ in 0..6 {
+            checksum = npub_checksum_step(checksum, 0);
+        }
+        checksum ^= 1;
+        for digit in (0..6).rev() {
+            let part = ((checksum >> (digit * 5)) & 31) as usize;
+            encoded.push(char::from(CHARSET[part]));
+        }
+        Self {
+            algorithm: AlgorithmId::Secp256k1Schnorr,
+            encoded,
+        }
+    }
+
     /// Checks a canonical `npub` address of at most 128 UTF-8 bytes and requires
     /// `Secp256k1Schnorr`. Unknown algorithms or address encodings refuse.
     pub fn parse(_algorithm: AlgorithmId, _encoded: &str) -> Result<Self> {
@@ -27,6 +75,26 @@ impl Npub {
     pub fn as_str(&self) -> &str {
         &self.encoded
     }
+}
+
+fn npub_checksum_step(checksum: u32, part: u8) -> u32 {
+    let upper = checksum >> 25;
+    let mut next = ((checksum & 0x01ff_ffff) << 5) ^ u32::from(part);
+    for (bit, generator) in [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if upper & (1 << bit) != 0 {
+            next ^= generator;
+        }
+    }
+    next
 }
 
 /// The trusted ingress classification of incoming data. Only `Owner` can ever
