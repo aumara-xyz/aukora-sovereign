@@ -30,7 +30,7 @@ function reason(error: unknown): string {
 
 async function confirmationWindow(until: number, signal: AbortSignal): Promise<void> {
   live(signal);
-  const remaining = until - performance.now();
+  const remaining = until - Date.now();
   if (remaining <= 0) return;
   await new Promise<void>((resolve, reject) => {
     const abort = (): void => {
@@ -163,7 +163,7 @@ class JoiningPane {
 
   private describe(exchange: PreparedJoiningExchange): void {
     this.detail("Purpose", "Joining with your own two devices");
-    this.detail("Selected method", methodForLayers(exchange.context.requiredLayers));
+    this.detail("Selected method", `${methodForLayers(exchange.context.requiredLayers)}; this selection does not prove physical proximity.`);
     this.detail("Node", exchange.context.node);
     this.detail("Scopes requested separately from co-presence", exchange.context.scopes.join(", "));
     this.detail("Exchange expires", new Date(exchange.context.expiresAtMs).toISOString());
@@ -198,14 +198,29 @@ class JoiningPane {
           return;
         }
         const receipt = Uint8Array.from(bytes);
-        const confirmationEnds = performance.now() + 10_000;
         this.receipts.add(receipt);
         this.enqueue(async () => {
+          let confirmationTimer: ReturnType<typeof setTimeout> | null = null;
+          const cancelConfirmation = (): void => {
+            if (confirmationTimer !== null) clearTimeout(confirmationTimer);
+          };
           try {
             live(signal);
             if (Date.now() >= exchange.context.expiresAtMs) refuse("joining-expired");
             const receiptDigest = digestHex(await digest(receipt));
             live(signal);
+            const submissionStarts = Date.now();
+            if (submissionStarts >= exchange.context.expiresAtMs) refuse("joining-expired");
+            const confirmationEnds = Math.min(submissionStarts + 10_000, exchange.context.expiresAtMs);
+            confirmationTimer = setTimeout(() => {
+              if (signal.aborted || this.disposed) return;
+              const release = this.releasePhase;
+              this.releasePhase = null;
+              try { release?.(); }
+              catch (error) { this.phase.abort(); this.enqueue(async () => { throw error; }); }
+              finally { this.stage.replaceChildren(); }
+            }, confirmationEnds - submissionStarts);
+            signal.addEventListener("abort", cancelConfirmation, { once: true });
             this.status.textContent = "Asking the owner service to verify and record the co-presence evidence.";
             const next = await snapshot(await this.configuration.ceremonies.recordEvidence(checkpoint.ceremony,
               checkpoint.revision, exchange.contextDigest, receipt, signal), checkpoint, this.configuration, signal);
@@ -217,7 +232,11 @@ class JoiningPane {
             this.status.textContent = "Co-presence evidence is recorded. Keep the screens facing while the other device reads the confirmation.";
             await confirmationWindow(confirmationEnds, signal);
             await this.show(next);
-          } finally { receipt.fill(0); this.receipts.delete(receipt); }
+          } finally {
+            cancelConfirmation();
+            signal.removeEventListener("abort", cancelConfirmation);
+            receipt.fill(0); this.receipts.delete(receipt);
+          }
         });
       }, error => {
         if (!signal.aborted) this.enqueue(async () => { if (!signal.aborted) throw error; });
@@ -233,6 +252,9 @@ class JoiningPane {
 
   private async show(next: JoiningSnapshot): Promise<void> {
     live(this.lifetime.signal);
+    if (next.stage === "phrase" && Date.now() >= next.evidence.exchange.context.expiresAtMs) {
+      refuse("joining-expired");
+    }
     const signal = this.newPhase();
     this.current = next;
     this.failed = false;

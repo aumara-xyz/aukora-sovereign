@@ -6,6 +6,11 @@ owner release composes this mount after successful claim, inside the existing
 owner iframe created here. The configured owner and direct shell frame are
 checked before any ceremony service runs.
 
+`mountJoiningExchange` refuses `invites:joining-optical` before creating a portal,
+reserving an attempt or starting the engine. The current engine cannot bind the
+prepared durable device keys and exact context from the first FACE frame. Neither
+format pinning nor a successful ephemeral observation can bypass this refusal.
+
 `services.ts` defines local adapter ports, without changing a v1 wire format.
 The authenticated joining service resumes a claim-bound checkpoint, prepares
 the exact two-device context and records verified co-presence as evidence. The
@@ -23,7 +28,7 @@ joining context, not an extra field in a frozen co-presence v1 object.
 
 The `portal(host, method, signal)` factory supplies the frozen `PortalServices`
 ports inside the joining step. It must prepare the selected sensors and release
-its resources on abort. Joining reserves a durable attempt, then calls
+its resources on abort. The disabled exchange path reserves a durable attempt, then calls
 `CopresenceEngine.begin` with domain `copresence.v1`, that attempt ID and a copy of
 the canonical joining bytes as `contextBytes`. Required layers select `optical`,
 `optical-audio` or `optical-audio-motion`; motion without sound refuses. The
@@ -42,12 +47,13 @@ parent-message secret input, and no phrase or root appears in the joining ports.
 The page completes only after the service returns a matching bound checkpoint
 with a passkey credential and Aura receipt sequence. Co-presence grants no
 permission or device scope. The final confirmation remains available for up to
-ten seconds, bounded by context expiry, while the receipt is submitted. This page
-draws no relationship bloom.
+ten seconds from the start of receipt submission, bounded by context expiry.
+That deadline closes the confirmation even if submission is still pending; an
+expired context cannot open the phrase stage. This page draws no relationship bloom.
 
 The shared browser engine still creates an ephemeral device key, and its first
 FACE frame omits the context; later frames and the receipt bind it as `purpose`.
-Before enabling joining, the engine owner must accept the prepared durable
+To remove the joining refusal, the engine owner must accept the prepared durable
 signer and bind the exact context from the first frame through the receipt. The
 frozen FACE key set requires a new versioned wrapper and vectors for that change.
 Joining defines no alternate optical protocol. The existing phrase pane refreshes

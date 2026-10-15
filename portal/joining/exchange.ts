@@ -3,10 +3,16 @@ import {
   CONTEXT_CORE_DOMAIN, type PortalExchange, type PortalObservation, type PortalServices,
 } from "../contracts.js";
 import { APPROVED_TEXT } from "../page.js";
+import { equal } from "../bytes.js";
 import type { JoiningConfiguration, PreparedJoiningExchange } from "./services.js";
 import { live, methodForLayers, refuse } from "./validate.js";
 
 type Outcome = "bloom" | "refused" | "cancelled";
+
+function requireJoiningOptical(): void {
+  // The current optical protocol is disabled for joining.
+  refuse("joining-optical");
+}
 
 function reason(error: unknown): string {
   return error instanceof Error && /^[a-z][a-z0-9-]*:[a-z0-9-]+$/.test(error.message)
@@ -25,6 +31,7 @@ export function mountJoiningExchange(host: HTMLElement, preparedExchange: Prepar
   receiptCallback: (receipt: Uint8Array) => void,
   errorCallback: (error: unknown) => void): () => void {
   live(parentSignal);
+  requireJoiningOptical();
   const method = methodForLayers(preparedExchange.context.requiredLayers);
   const controller = new AbortController(), signal = controller.signal;
   const root = document.createElement("section"), surface = document.createElement("div");
@@ -85,6 +92,7 @@ export function mountJoiningExchange(host: HTMLElement, preparedExchange: Prepar
 
   function finish(outcome: Outcome): Promise<void> {
     if (attempt === null || services === null) return Promise.resolve();
+    // Persist the first terminal outcome once; later observations cannot replace it.
     finishing ??= Promise.resolve().then(() => services!.attempts.finish(attempt!, outcome,
       new AbortController().signal));
     return finishing;
@@ -147,8 +155,7 @@ export function mountJoiningExchange(host: HTMLElement, preparedExchange: Prepar
     }
     const receipt = bytes(observation.receiptBytes);
     if (delivered) {
-      if (!acceptedReceipt || receipt.length !== acceptedReceipt.length
-        || receipt.some((value, index) => value !== acceptedReceipt![index])) refuse("joining-receipt-changed");
+      if (!acceptedReceipt || !equal(receipt, acceptedReceipt)) refuse("joining-receipt-changed");
       return;
     }
     await finish("bloom");
