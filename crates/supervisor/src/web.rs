@@ -3,19 +3,18 @@
 
 use crate::host::Host;
 use canon::{codes, json::Value, Result};
-use frontdoor::{
-    ingress::{self, Method, RequestInput},
-    tls::ProxyObservation,
-};
-use http_body_util::{BodyExt, Full, Limited};
+use frontdoor::ingress::{self, HttpIngress};
+use http_body_util::Full;
 use hyper::{
     body::{Bytes, Incoming},
     Request, Response,
 };
 use hyper_util::rt::TokioIo;
 use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
+use tokio::io::AsyncWriteExt;
 
 pub async fn serve(host: Arc<Host>) -> Result<()> {
+    let ingress = Arc::new(HttpIngress::new(host.config.boundary()?)?);
     let listener = tokio::net::TcpListener::bind(host.config.listen)
         .await
         .map_err(|_| canon::Refusal {
@@ -30,15 +29,22 @@ pub async fn serve(host: Arc<Host>) -> Result<()> {
             .await
             .map_err(|_| codes::SUPERVISOR_STATE)?;
         let Ok(slot) = slots.clone().try_acquire_owned() else {
-            drop(stream);
+            refuse_overload(stream).await;
             continue;
         };
         let host = host.clone();
+        let ingress = ingress.clone();
         tokio::spawn(async move {
             let slot = Arc::new(slot);
             let held = Arc::clone(&slot);
             let service = hyper::service::service_fn(move |request| {
-                handle(host.clone(), peer, request, Arc::clone(&slot))
+                handle(
+                    host.clone(),
+                    ingress.clone(),
+                    peer,
+                    request,
+                    Arc::clone(&slot),
+                )
             });
             let mut server = hyper::server::conn::http1::Builder::new();
             server
@@ -57,14 +63,15 @@ pub async fn serve(host: Arc<Host>) -> Result<()> {
 
 async fn handle(
     host: Arc<Host>,
+    ingress: Arc<HttpIngress>,
     peer: SocketAddr,
     request: Request<Incoming>,
     slot: Arc<tokio::sync::OwnedSemaphorePermit>,
 ) -> std::result::Result<Response<Full<Bytes>>, Infallible> {
-    let response = match admit(&host, peer, request).await {
-        Ok((admitted, headers)) => match tokio::task::spawn_blocking(move || {
+    let response = match ingress.admit_incoming(peer.ip(), request).await {
+        Ok(admitted) => match tokio::task::spawn_blocking(move || {
             let _slot = slot;
-            host.dispatch(admitted, &headers)
+            host.dispatch(&admitted)
         })
         .await
         {
@@ -80,69 +87,19 @@ async fn handle(
     Ok(response.map(|bytes| Full::new(Bytes::from(bytes))))
 }
 
-async fn admit(
-    host: &Host,
-    peer: SocketAddr,
-    request: Request<Incoming>,
-) -> Result<(ingress::AdmittedRequest, http::HeaderMap)> {
-    if request.uri().scheme().is_some()
-        || request.uri().authority().is_some()
-        || request.uri().query().is_some()
-    {
-        return Err(codes::FRONTDOOR_PATH_REFUSED);
-    }
-    let method = match *request.method() {
-        http::Method::GET => Method::Get,
-        http::Method::HEAD => Method::Head,
-        http::Method::POST => Method::Post,
-        _ => return Err(codes::FRONTDOOR_UNKNOWN_ROUTE),
-    };
-    let (parts, body) = request.into_parts();
-    let bytes = parts
-        .headers
-        .iter()
-        .try_fold(0usize, |count, (key, value)| {
-            count.checked_add(key.as_str().len() + value.len() + 4)
-        })
-        .ok_or(codes::FRONTDOOR_BODY_INVALID)?;
-    if bytes > ingress::MAX_HEADER_BYTES {
-        return Err(codes::FRONTDOOR_BODY_INVALID);
-    }
-    let transport = host.config.boundary()?.admit(ProxyObservation {
-        peer: peer.ip(),
-        forwarded_proto: headers(&parts.headers, "x-forwarded-proto")?,
-        host: headers(&parts.headers, "host")?,
-    })?;
-    let body = Limited::new(body, ingress::MAX_BODY_BYTES)
-        .collect()
-        .await
-        .map_err(|_| codes::FRONTDOOR_BODY_INVALID)?
-        .to_bytes()
-        .to_vec();
-    let input = RequestInput {
-        transport,
-        method,
-        path: parts.uri.path().to_owned(),
-        origins: headers(&parts.headers, "origin")?,
-        fetch_sites: headers(&parts.headers, "sec-fetch-site")?,
-        content_types: headers(&parts.headers, "content-type")?,
-        cookies: headers(&parts.headers, "cookie")?,
-        body,
-    };
-    Ok((ingress::admit(input)?, parts.headers))
-}
-
-fn headers(headers: &http::HeaderMap, name: &str) -> Result<Vec<String>> {
-    headers
-        .get_all(name)
-        .iter()
-        .map(|value| {
-            value
-                .to_str()
-                .map(str::to_owned)
-                .map_err(|_| codes::FRONTDOOR_BODY_INVALID)
-        })
-        .collect()
+async fn refuse_overload(mut stream: tokio::net::TcpStream) {
+    let body = refusal(codes::FRONTDOOR_OVERLOADED).into_body();
+    let header = format!(
+        "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    // One rejected socket remains in the accept loop, bounded independently of active work.
+    let _sent = tokio::time::timeout(Duration::from_millis(100), async {
+        stream.write_all(header.as_bytes()).await?;
+        stream.write_all(&body).await?;
+        stream.shutdown().await
+    })
+    .await;
 }
 
 fn refusal(code: canon::Refusal) -> Response<Vec<u8>> {
@@ -153,7 +110,11 @@ fn refusal(code: canon::Refusal) -> Response<Vec<u8>> {
         Err(_) => b"{\"error\":\"supervisor:refusal-encoding\"}".to_vec(),
     };
     let mut response = Response::new(bytes);
-    *response.status_mut() = http::StatusCode::BAD_REQUEST;
+    *response.status_mut() = if code == codes::FRONTDOOR_OVERLOADED {
+        http::StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        http::StatusCode::BAD_REQUEST
+    };
     response.headers_mut().insert(
         "content-type",
         http::HeaderValue::from_static("application/json"),

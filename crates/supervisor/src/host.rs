@@ -11,7 +11,7 @@ use canon::{codes, json::Value, Result};
 use frontdoor::{
     assets::{ApprovedRelease, AssetSurface},
     documents::DocumentRoot,
-    ingress::{AdmittedRequest, HostRole, Method},
+    ingress::{AdmittedRequest, HostRole, HttpAdmission, Method},
     owner_origin::OwnerRoute,
     session::DurableSessions,
 };
@@ -174,7 +174,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         assets.clone(),
         Arc::new(crate::adapters::runtime::UnavailableGuestPlan),
     ));
-    let data = crate::data::HostData::new(transcripts, health.clone(), ledger.clone())?;
+    let data = crate::data::HostData::new(transcripts, health.clone(), ledger.clone(), state.node)?;
     let host = Arc::new(Host {
         approvals: crate::approvals::ApprovalFeed::new(ledger.clone()),
         config,
@@ -256,16 +256,13 @@ impl Host {
     /// Called from `web`'s blocking worker with a Tokio runtime entered. Data and
     /// face reads synchronously wait for async organ ports and cannot run on a
     /// Tokio runtime worker thread.
-    pub fn dispatch(
-        &self,
-        request: AdmittedRequest,
-        headers: &http::HeaderMap,
-    ) -> Result<http::Response<Vec<u8>>> {
+    pub fn dispatch(&self, admission: &HttpAdmission) -> Result<http::Response<Vec<u8>>> {
+        let request = admission.request();
         if !request.path().starts_with("/api/") {
-            return self.asset(&request, headers);
+            return self.asset(request, admission.owner_navigation());
         }
         if request.role() == HostRole::Owner && request.path() == "/api/claim" {
-            return self.consume_host_claim(&request);
+            return self.consume_host_claim(request);
         }
         if request.role() == HostRole::Owner {
             let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;
@@ -276,7 +273,7 @@ impl Host {
                 )?;
                 return frontdoor::claim::consume_claim(
                     &mut claim,
-                    &request,
+                    request,
                     self.state.node,
                     now()?,
                 )?
@@ -312,7 +309,7 @@ impl Host {
         }
         if request.path() == frontdoor::api::service_reads::PATH {
             let read = self.with_release(|release| {
-                frontdoor::api::service_reads::authorize(release, &request)
+                frontdoor::api::service_reads::authorize(release, request)
             })?;
             let mut sessions = self.sessions()?;
             return frontdoor::session::with_bound_session(
@@ -407,7 +404,7 @@ impl Host {
     fn asset(
         &self,
         request: &AdmittedRequest,
-        headers: &http::HeaderMap,
+        navigation: Option<&frontdoor::owner_origin::FrameNavigation>,
     ) -> Result<http::Response<Vec<u8>>> {
         if !matches!(request.method(), Method::Get | Method::Head) {
             return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
@@ -423,21 +420,10 @@ impl Host {
         let boundary = self.config.boundary()?;
         if request.role() == HostRole::Owner {
             let context = frontdoor::owner_origin::CeremonyContext::from_boundary(&boundary)?;
-            let navigation = if request.path() == "/" {
-                let destination = one_header(headers, "sec-fetch-dest")?;
-                let parent = one_header(headers, "referer")?;
-                Some(frontdoor::owner_origin::admit_frame_navigation(
-                    &context,
-                    destination,
-                    parent.strip_suffix('/').unwrap_or(parent),
-                )?)
-            } else {
-                None
-            };
             return frontdoor::owner_origin::serve_owner_asset_response(
                 &context,
                 request,
-                navigation.as_ref(),
+                navigation,
                 release,
                 source,
             );
@@ -508,12 +494,4 @@ pub fn json_response(value: Value) -> Result<http::Response<Vec<u8>>> {
         .header("x-content-type-options", "nosniff")
         .body(value.as_bytes().to_vec())
         .map_err(|_| codes::SUPERVISOR_STATE)
-}
-fn one_header<'a>(headers: &'a http::HeaderMap, name: &str) -> Result<&'a str> {
-    let mut values = headers.get_all(name).iter();
-    let value = values.next().ok_or(codes::FRONTDOOR_ORIGIN_REFUSED)?;
-    if values.next().is_some() {
-        return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
-    }
-    value.to_str().map_err(|_| codes::FRONTDOOR_ORIGIN_REFUSED)
 }

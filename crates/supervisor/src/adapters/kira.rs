@@ -5,9 +5,7 @@ use super::HostLedger;
 use canon::{
     authority::Kind,
     codes,
-    fd3_payloads::{
-        Accepted, MemoryList, MemoryListReply, MemoryPut, MemoryRecall, MemoryTier, Outcome, Recall,
-    },
+    fd3_payloads::{Accepted, MemoryList, MemoryListReply, MemoryPut, MemoryRecall, Outcome, Recall},
     frame::FrameId,
     ids::ProposalId,
     Result,
@@ -90,9 +88,7 @@ impl KiraService for KiraAdapter {
     ) -> ServiceFuture<'_, MemoryListReply> {
         Box::pin(async move {
             self.ledger.scoped(scope, |transaction| {
-                if request.tier == MemoryTier::Remembered {
-                    disclose(transaction, scope)?;
-                }
+                disclose(transaction, scope)?;
                 require_no_retained_notes(transaction)?;
                 if request.before.is_some() {
                     return Err(codes::KIRA_INVALID_FIELD);
@@ -109,6 +105,7 @@ impl KiraService for KiraAdapter {
     fn outcome(&self, scope: PrincipalScope, _: ProposalId) -> ServiceFuture<'_, Option<Outcome>> {
         Box::pin(async move {
             self.ledger.scoped(scope, |transaction| {
+                disclose(transaction, scope)?;
                 require_no_retained_notes(transaction)?;
                 Ok(None)
             })
@@ -138,6 +135,9 @@ fn disclose(transaction: &mut aura::LedgerTxn<'_>, scope: PrincipalScope) -> Res
 }
 
 fn require_no_retained_notes(transaction: &aura::LedgerTxn<'_>) -> Result<()> {
+    if !transaction.kira_retention_tables_empty()? {
+        return Err(codes::KIRA_STORE_UNAVAILABLE);
+    }
     let version = transaction.current_version()?;
     let mut previous = None;
     for sequence in 1..version.sequence {
@@ -152,7 +152,7 @@ fn require_no_retained_notes(transaction: &aura::LedgerTxn<'_>) -> Result<()> {
             return Err(codes::KIRA_STORE_UNAVAILABLE);
         }
     }
-    if previous != version.previous_hash || !transaction.kira_retention_empty()? {
+    if previous != version.previous_hash {
         return Err(codes::KIRA_LEDGER_UNVERIFIED);
     }
     Ok(())
@@ -170,27 +170,5 @@ impl SaveCell for MemoryCell {
             canon::json::parse_strict(&bytes)?,
         )?;
         Ok(self.0.run(&input)?.commitments())
-    }
-}
-
-/// Startup fallback when the scoped adapter itself cannot be constructed.
-pub struct UnavailableKira;
-impl KiraService for UnavailableKira {
-    fn put<'a>(
-        &'a self,
-        _: PrincipalScope,
-        _: &'a FrameId,
-        _: MemoryPut,
-    ) -> ServiceFuture<'a, Accepted> {
-        Box::pin(async { Err(codes::KIRA_STORE_UNAVAILABLE) })
-    }
-    fn recall(&self, _: PrincipalScope, _: MemoryRecall) -> ServiceFuture<'_, Recall> {
-        Box::pin(async { Err(codes::KIRA_LEDGER_UNVERIFIED) })
-    }
-    fn list(&self, _: PrincipalScope, _: MemoryList) -> ServiceFuture<'_, MemoryListReply> {
-        Box::pin(async { Err(codes::KIRA_LEDGER_UNVERIFIED) })
-    }
-    fn outcome(&self, _: PrincipalScope, _: ProposalId) -> ServiceFuture<'_, Option<Outcome>> {
-        Box::pin(async { Err(codes::KIRA_LEDGER_UNVERIFIED) })
     }
 }

@@ -4,7 +4,7 @@
 use super::HostLedger;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use canon::{
-    authority::{AuthorityTxn, BaseDigest, OwnerAssertion, OwnerOperation},
+    authority::{BaseDigest, OwnerAssertion, OwnerOperation},
     codes,
     fd3_payloads::{Accepted, Outcome, OutcomeState, Propose, Read, ReadReply},
     frame::FrameId,
@@ -123,6 +123,22 @@ impl GateAdapter {
             receive.await.map_err(|_| codes::SUPERVISOR_NOT_READY)?
         })
     }
+    fn refuse_unscoped_authority<T>(
+        &self,
+        scope: PrincipalScope,
+        proposal: ProposalId,
+        action: OwnerOperation,
+    ) -> Result<T> {
+        match action {
+            OwnerOperation::Apply | OwnerOperation::Retire => (),
+            _ => return Err(codes::GATE_UNSUPPORTED_OPERATION),
+        }
+        self.ledger.scoped(scope, |txn| {
+            require_proposal_scope(txn, proposal, scope)?;
+            // Gate starts its own transaction; it cannot join this scope check.
+            Err(codes::SUPERVISOR_GATE_SCOPE_UNAVAILABLE)
+        })
+    }
 }
 impl GateService for GateAdapter {
     fn propose_site<'a>(
@@ -212,54 +228,16 @@ impl GateService for GateAdapter {
         proposal: ProposalId,
         action: OwnerOperation,
     ) -> ServiceFuture<'_, OwnerReview> {
-        self.submit(scope, move |gate, ledger| {
-            ledger.transaction(|txn| require_proposal_scope(txn, proposal, scope))?;
-            let review = gate.review(proposal, action, &mut NoInjection)?;
-            let authorization = ledger.transaction(|txn| {
-                require_proposal_scope(txn, proposal, scope)?;
-                txn.rebuild_authorization(&proposal, action)
-            })?;
-            if authorization.canonical_bytes()? != review.authorization_bytes {
-                return Err(codes::GATE_DISPLAY_MISMATCH);
-            }
-            Ok(OwnerReview {
-                proposal_id: proposal,
-                authorization,
-                authorization_bytes: review.authorization_bytes,
-                card_bytes: review.card.canonical_bytes().to_vec(),
-            })
-        })
+        Box::pin(async move { self.refuse_unscoped_authority(scope, proposal, action) })
     }
     fn owner_assertion(
         &self,
         scope: PrincipalScope,
         proposal: ProposalId,
         action: OwnerOperation,
-        assertion: OwnerAssertion,
+        _assertion: OwnerAssertion,
     ) -> ServiceFuture<'_, Outcome> {
-        self.submit(scope, move |gate, ledger| {
-            ledger.transaction(|txn| require_proposal_scope(txn, proposal, scope))?;
-            let result = match action {
-                OwnerOperation::Apply => gate.apply(proposal, assertion, &mut NoInjection),
-                OwnerOperation::Retire => gate.retire(proposal, assertion, &mut NoInjection),
-                _ => Err(codes::GATE_UNSUPPORTED_OPERATION),
-            }?;
-            let state = match result.state {
-                gate::proposal::ProposalState::Applied => OutcomeState::Applied,
-                gate::proposal::ProposalState::Refused => OutcomeState::Refused,
-                gate::proposal::ProposalState::Expired => OutcomeState::Expired,
-                gate::proposal::ProposalState::Retired => OutcomeState::Retired,
-                gate::proposal::ProposalState::Incomplete => OutcomeState::Incomplete,
-                gate::proposal::ProposalState::Failed => OutcomeState::Failed,
-                gate::proposal::ProposalState::Conflict => OutcomeState::Conflict,
-                gate::proposal::ProposalState::Unknown => OutcomeState::Unknown,
-                _ => return Err(codes::SUPERVISOR_NOT_READY),
-            };
-            Ok(Outcome {
-                proposal_id: result.proposal,
-                state,
-            })
-        })
+        Box::pin(async move { self.refuse_unscoped_authority(scope, proposal, action) })
     }
 }
 fn require_proposal_scope(

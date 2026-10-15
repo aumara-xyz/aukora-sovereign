@@ -443,6 +443,34 @@ fn sql(_: rusqlite::Error) -> canon::Refusal {
 }
 
 impl LedgerTxn<'_> {
+    /// Require both retained Kira tables before observing their emptiness.
+    /// This does not replace verification of the complete signed Aura history.
+    pub fn kira_retention_tables_empty(&self) -> Result<bool> {
+        self.active()?;
+        let tables: u32 = self
+            .transaction
+            .query_row(
+                "SELECT COUNT(*) FROM main.sqlite_master WHERE type='table' AND name IN ('kira_notes_v1','kira_demotions_v1')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sql)?;
+        if tables != 2 {
+            return Err(canon::codes::KIRA_STORE_UNAVAILABLE);
+        }
+        let populated: bool = self
+            .transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM main.kira_notes_v1) OR EXISTS(SELECT 1 FROM main.kira_demotions_v1)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sql)?;
+        Ok(!populated)
+    }
+}
+
+impl LedgerTxn<'_> {
     /// Read the latest recorded owner subject without creating an authority proof.
     pub fn gate_owner_subject(&self) -> Result<canon::ids::SubjectId> {
         let operation: String = self.transaction.query_row(

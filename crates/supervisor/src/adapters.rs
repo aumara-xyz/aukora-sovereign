@@ -11,5 +11,4 @@ pub mod snapshot;
 
 pub use broker::BrokerAdapter;
 pub use gate::GateAdapter;
-pub use kira::UnavailableKira;
 pub use ledger::{HostClock, HostLedger};

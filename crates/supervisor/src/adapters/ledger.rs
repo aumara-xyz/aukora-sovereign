@@ -126,8 +126,8 @@ impl HostLedger {
             .map_err(|_| codes::SUPERVISOR_NOT_READY)?;
         operation()
     }
-    /// Keep the writer lock across scope checks and the complete gate operation.
-    /// SQLite's immediate transactions also exclude writers in other processes.
+    /// Serialize nonauthorizing gate work against this process's host writes.
+    /// Scope reads here do not cover transactions on the gate's connection.
     pub fn gate_scoped<T>(
         &self,
         scope: PrincipalScope,

@@ -317,6 +317,16 @@ impl HttpIngress {
         })
     }
 
+    /// Adapt Hyper's incoming stream without moving admission into the transport host.
+    pub async fn admit_incoming(
+        &self,
+        peer: std::net::IpAddr,
+        request: http::Request<hyper::body::Incoming>,
+    ) -> Result<HttpAdmission> {
+        self.admit_http(peer, request.map(axum::body::Body::new))
+            .await
+    }
+
     /// `peer` comes from the accepted connection, never a request header.
     /// The limit covers active admission/dispatch; the HTTP server owns idle connection limits.
     pub async fn admit_http(

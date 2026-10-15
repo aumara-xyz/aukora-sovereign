@@ -7,7 +7,7 @@ use canon::{
     digest::Digest32,
     fd4::{ChatCommand, SessionEvent},
     frame::Frame,
-    ids::AppId,
+    ids::{AppId, NodeId},
     provenance::{Provenance, Source},
     Result,
 };
@@ -43,14 +43,14 @@ impl HostData {
         sessions: Arc<supervisor::session::DurableSessions>,
         health: Arc<HealthCollector>,
         ledger: Arc<HostLedger>,
+        node: NodeId,
     ) -> Result<Self> {
-        let mut producer = [0; canon::ids::RANDOM_ID_BYTES];
-        getrandom::fill(&mut producer).map_err(|_| codes::SUPERVISOR_STATE)?;
         Ok(Self {
             sessions,
             health,
             ledger,
-            producer: AppId::from_bytes(producer),
+            // The installed supervisor uses its persisted node identity for data replies.
+            producer: AppId::from_bytes(*node.as_bytes()),
             queues: Mutex::new(BTreeMap::new()),
         })
     }

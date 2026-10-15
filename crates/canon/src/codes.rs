@@ -28,6 +28,7 @@ macro_rules! registry {
 }
 
 registry! {
+    SUPERVISOR_GATE_SCOPE_UNAVAILABLE => ("supervisor", "gate-scope-unavailable", "The gate cannot enforce the host principal scope in its authority transaction."),
     BROKER_STREAMING_UNAVAILABLE => ("broker", "streaming-unavailable", "The host has no model streaming adapter; no stream reservation was admitted."),
     BROKER_GRANT_PROJECTION_UNAVAILABLE => ("broker", "grant-projection-unavailable", "Retained broker history has no available active-grant projection."),
     SUPERVISOR_PUBLIC_COUNTERS_UNAVAILABLE => ("supervisor", "public-counters-unavailable", "Owning-organ public counter projections are unavailable."),
