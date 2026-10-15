@@ -30,6 +30,7 @@
  "crates/aumlok/vectors/legacy/filter-counts.json": "e8f55407f8ae67123e6c1c25a38c510bdf599e9e17fa2dc71a7f8ea6a36b0032",
  "crates/aumlok/vectors/legacy/sources.json": "852495b033d7d6a379c342f00c24a38b58513a20cb909fd70e70263af038acef",
  "crates/aumlok/vectors/legacy/threshold-curve.json": "7ffcbd671b4fbf397087bc28eb1508adc778db6599eef45c32c353adf5ee1b8d",
+ "crates/aumlok/vectors/person-nostr-v1.json": "a74138a49045e1b2f88106aed31e1e6aace2993d14def24b8a0092231e7857e0",
  "crates/aumlok/vectors/prime-webauthn.json": "60d28b9880637b21ae8a9d42c17fd85c60a81fd4094c291c83047a587a42f8f3",
  "crates/aumlok/vectors/refresh-phrase-v1.json": "f81cea43ce6ed1b8f89fd3a861f188b9704edc9688c56412b9f144e75fcc7b68",
  "crates/aumlok/vectors/threshold-curve.json": "8c5194dac7b75a714adefa38c8dcbbdb6326bd96d2fbf37e88d3169616e2ae06",
