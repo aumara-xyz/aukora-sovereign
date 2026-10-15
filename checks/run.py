@@ -3,8 +3,10 @@
 """The construction checks of NORTH-STAR.md. Run on main: `python3 -B checks/run.py`. Any failure means main is red.
 
 They hold on every commit, from the empty skeleton on. Milestone acceptance is different: it runs on the installed
-node (tests/e2e/) and never stops work.
+node (tests/e2e/) and never stops work. Before public push, run with --pre-push in a complete local clone to also
+audit commit metadata. Construction success alone is not publication clearance.
 """
+import ast
 import hashlib
 import ipaddress
 import json
@@ -119,6 +121,14 @@ COVERAGE_PINS = {
     "crates/gate/src/coverage.rs": "477d1e4c2a13f3738e20bb9c789cfd4558be01e9c7b1fedac93d341ccf39b25b",
     "crates/aura/src/schema.rs": "1e6573208564388f26392a6b218acaf85f173365d2ad621c0d87bde6a4d4240b",
 }
+CLAIM_PINS = {
+    "crates/aumlok/src/claim.rs": "2fe5431686448fed49bf3ab541f61bf7951f65018735a93cd0cc5fdd41f91872",
+    "crates/aumlok/src/lib.rs": "7500b1e26a2be7663bd7e4726b509cc81c3eef6caea2b0e7e2b32fd4831b93b1",
+    "crates/frontdoor/src/claim.rs": "f85a1b29a5ca44fe21056f1d1c869615ee18ec168bdf86bf6c5011bc28201432",
+    "crates/frontdoor/src/session.rs": "36aacaf049a32545026acaabdfe6d29f7e8cd3841658daaf05f1fd0157b3741c",
+    "crates/supervisor/src/claim.rs": "9b87561caf6513a1ef478d3936b8e5a955a175f4d61fcc1a811a1865d8aceb0a",
+    "crates/supervisor/src/lib.rs": "81d9f14180c122fb8c8022c0b7188575551441a9ca44f06f158ad237871aed52",
+}
 
 
 def check_source_pins(rule, expected, inventory):
@@ -130,6 +140,218 @@ def check_source_pins(rule, expected, inventory):
             fail(rule, f"{path}: missing regular pinned source")
         elif hashlib.sha256(file.read_bytes()).hexdigest() != digest:
             fail(rule, f"{path}: source drift; review the change before updating its construction pin")
+
+
+class PythonGuard:
+    """Inspect parsed source only; pins cover helper bodies outside these assertions."""
+    def __init__(self, path, function):
+        self.label = f"{path}:{function}"
+        tree = ast.parse(read_source(path), filename=path)
+        parts = function.split(".")
+        if len(parts) == 2:
+            classes = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == parts[0]]
+            if len(classes) != 1:
+                raise ValueError(f"{self.label}: missing or ambiguous class")
+            tree = classes[0]
+        matches = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == parts[-1]]
+        if len(matches) != 1:
+            raise ValueError(f"{self.label}: missing or ambiguous function")
+        self.body = matches[0].body
+        if self.body and isinstance(self.body[0], ast.Expr) and isinstance(self.body[0].value, ast.Constant):
+            self.body = self.body[1:]
+
+    def prefix(self, source):
+        expected = ast.parse(source).body
+        if [ast.dump(n) for n in self.body[:len(expected)]] != [ast.dump(n) for n in expected]:
+            raise ValueError(f"{self.label}: guard must run unconditionally before dispatch")
+
+    def ordered(self, *sources):
+        previous = (-1, -1)
+        for source in sources:
+            expected = ast.parse(source).body[0]
+            matches = [node for node in self.body if ast.dump(node) == ast.dump(expected)]
+            if len(matches) != 1 or (matches[0].lineno, matches[0].col_offset) <= previous:
+                raise ValueError(f"{self.label}: missing, ambiguous or reordered guard statement")
+            previous = (matches[0].lineno, matches[0].col_offset)
+
+
+def deploy_source_guards():
+    """Check admission, pointer authorization and host commitment issuance without executing deploy code."""
+    spawn = PythonGuard("deploy/spawn/spawn.py", "main")
+    spawn.prefix("action, name, options = parse(argv)\nadmission = guard.admit(action, name)")
+    spawn.ordered('if action == "create":\n return create(admission, name, options)',
+                  'if action == "destroy":\n return destroy(admission, name, options)',
+                  'return refresh_egress(admission, name, options)')
+    guard = PythonGuard("deploy/spawn/guard.py", "admit")
+    guard.ordered('if action not in ACTIONS:\n core.refuse("guard", "action")',
+                  'if not core.is_node_name(name) or name.startswith(CONTAINER_PREFIX):\n'
+                  ' core.refuse("guard", "invalid-name")',
+                  'listed = existing_nodes(path)',
+                  'if name in listed or name in ALIASES or CONTAINER_PREFIX + name in listed:\n'
+                  ' core.refuse("guard", "existing-node")', 'return Admission(action, name)')
+    listed = PythonGuard("deploy/spawn/guard.py", "existing_nodes")
+    listed.prefix('text = core.read_regular(path, 64 * 1024, "guard").decode("utf-8", "replace")\nnames = set()')
+    listed.ordered('for line in text.splitlines():\n line = line.strip()\n'
+                   ' if not line or line.startswith("#"):\n  continue\n name = line.split(None, 1)[0]\n'
+                   ' if _LISTED.match(name) is None:\n  core.refuse("guard", "existing-nodes-invalid")\n names.add(name)',
+                   'if not set(PINNED) <= names:\n core.refuse("guard", "existing-nodes-incomplete")',
+                   'return frozenset(names)')
+    PythonGuard("deploy/spawn/host.py", "Host.__init__").prefix(
+        'if type(admission) is not Admission or not core.is_node_name(admission.node):\n'
+        ' core.refuse("spawn", "not-admitted")\nself.admission = admission')
+    upgrade = PythonGuard("deploy/upgrade/upgrade.py", "main")
+    upgrade.prefix('name, options = parse(argv)\nadmission = guard.admit("upgrade", name)\n'
+                   'found = pointer.verify(options["pointer"], options["assertion"], options["credential"], name)')
+    attempts = [n for n in upgrade.body if isinstance(n, ast.Try)]
+    if len(attempts) != 1:
+        raise ValueError("upgrade: missing guarded dispatch")
+    upgrade.body = attempts[0].body
+    upgrade.prefix('directory = os.path.abspath(options["release"]) if "release" in options else rebuild(found.commit, scratch)\n'
+                   'bundle = release.load(directory)\n'
+                   'if bundle.commit != found.commit or bundle.digest != found.release:\n'
+                   ' core.refuse("upgrade", "release-mismatch")')
+    pointer = PythonGuard("deploy/upgrade/pointer.py", "verify")
+    pointer.prefix('raw = core.read_regular(pointer_path, 4096, "upgrade")\n'
+                   'document = core.parse_json(raw, "upgrade", 4096)\n'
+                   'core.exact_keys(document, ("schema", "node", "commit", "release", "seq"), "upgrade", "pointer")\n'
+                   'if core.canonical(document) != raw:\n core.refuse("upgrade", "pointer-not-canonical")')
+    pointer.ordered(
+        'if (document["schema"] != POINTER_SCHEMA or document["node"] != node or not core.is_hex(document["commit"], 40)'
+        ' or not core.is_hex(document["release"], 64) or not core.is_int(document["seq"], 1)):\n core.refuse("upgrade", "pointer")',
+        'credential = read_credential(credential_path, node)',
+        'if assertion["schema"] != ASSERTION_SCHEMA or unb64url(assertion["credential_id"], "pointer-assertion") != credential["_id"]:\n'
+        ' core.refuse("upgrade", "pointer-assertion")',
+        'if not isinstance(client, dict) or client.get("type") != "webauthn.get":\n core.refuse("upgrade", "pointer-client-data")',
+        'if client.get("challenge") != challenge(raw) or client.get("origin") != credential["origin"]:\n'
+        ' core.refuse("upgrade", "pointer-client-data")',
+        'if top is not None:\n framed = client.get("crossOrigin") is True and client.get("topOrigin") == top\n'
+        'else:\n framed = client.get("crossOrigin") in (None, False) and "topOrigin" not in client',
+        'if not framed:\n core.refuse("upgrade", "pointer-client-data")',
+        'if len(authenticator) != 37 or authenticator[:32] != hashlib.sha256(credential["rp_id"].encode("ascii")).digest():\n'
+        ' core.refuse("upgrade", "pointer-authenticator")',
+        'if not flags & FLAG_UP or not flags & FLAG_UV or flags & (FLAG_AT | FLAG_ED):\n'
+        ' core.refuse("upgrade", "pointer-authenticator")',
+        'es256_verify(credential["_spki"], authenticator + hashlib.sha256(client_bytes).digest(), signature)',
+        'return Pointer(node, document["commit"], document["release"], document["seq"], core.sha256_hex(raw))')
+    PythonGuard("deploy/upgrade/pointer.py", "challenge").prefix(
+        'return b64url(hashlib.sha256(DOMAIN + b"\\x00" + pointer_bytes).digest())')
+    PythonGuard("deploy/upgrade/pointer.py", "es256_verify").ordered(
+        'if done.returncode != 0 or done.stdout.strip() != b"Verified OK":\n core.refuse("upgrade", "pointer-signature")')
+    PythonGuard("deploy/spawn/spawn.py", "new_claim").prefix(
+        'secret = secrets.token_bytes(32)\n'
+        'return base64.urlsafe_b64encode(secret).rstrip(b"=").decode("ascii"), hashlib.sha256(secret).hexdigest()')
+    PythonGuard("deploy/spawn/spawn.py", "issue_claim").ordered(
+        'token, commitment = new_claim()',
+        'node.run(["python3", "-B", NODE_TOOL, "claim", "--digest", commitment])',
+        'node.run(["python3", "-B", NODE_TOOL, "claim", "--delivered"])')
+    PythonGuard("deploy/upgrade/node_release.py", "claim").ordered(
+        'if not core.is_hex(digest, 64):\n core.refuse("node-release", "arguments")',
+        'if os.path.lexists(DELIVERED):\n core.refuse("node-release", "claim-delivered")',
+        'core.atomic_write(CLAIM, (digest + "\\n").encode("ascii"), 0o440, (0, grp.getgrnam(SERVICE_USER).gr_gid))')
+
+
+def no_release_artifacts(paths):
+    """Reject pointer/assertion/credential data anywhere in the tracked or untracked source tree."""
+    schemas = {"aukora-release-pointer-v1", "aukora-release-assertion-v1", "aukora-owner-credential-v1"}
+
+    def contains_artifact(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("schema"), str) and value["schema"] in schemas:
+                return True
+            if {"commit", "node", "release", "seq"} <= value.keys():
+                return True
+            return any(contains_artifact(item) for item in value.values())
+        return isinstance(value, list) and any(contains_artifact(item) for item in value)
+
+    for path in paths:
+        name = pathlib.PurePosixPath(path).name.lower()
+        source_suffixes = (".py", ".rs", ".md", ".ts", ".js", ".mjs", ".sh")
+        if re.search(r"(?:^|[-_.])(pointer|assertion|credential)(?:[-_.]|$)", name) and not name.endswith(source_suffixes):
+            fail("deploy-guard", f"{path}: release authorization artifact must remain outside the tree")
+            continue
+        found = False
+
+        def inspect_pairs(pairs):
+            nonlocal found
+            found |= any(key == "schema" and isinstance(value, str) and value in schemas for key, value in pairs)
+            value = dict(pairs)
+            found |= contains_artifact(value)
+            return value
+
+        try:
+            text = (ROOT / path).read_text(encoding="utf-8")
+        except UnicodeError:
+            continue
+        decoder = json.JSONDecoder(object_pairs_hook=inspect_pairs)
+        try:
+            decoder.decode(text)
+        except ValueError:
+            # Find versioned objects embedded in markdown, JSON lines or another wrapper.
+            if any(schema in text for schema in schemas):
+                for brace in re.finditer(r"\{", text):
+                    try:
+                        decoder.raw_decode(text, brace.start())
+                    except ValueError:
+                        pass
+        if found:
+            fail("deploy-guard", f"{path}: release authorization object must remain outside the tree")
+
+
+def claim_source_guards():
+    """Inspect the host-to-digest and digest-to-session flow, with pins retaining the complete implementations."""
+    host = ast.parse(read_source("deploy/upgrade/node_release.py"))
+    destinations = [node.value for node in host.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "CLAIM" for target in node.targets)]
+    if (len(destinations) != 1 or not isinstance(destinations[0], ast.BinOp)
+            or not isinstance(destinations[0].op, ast.Add)
+            or not isinstance(destinations[0].right, ast.Constant)
+            or not isinstance(destinations[0].right.value, str)
+            or pathlib.PurePosixPath(destinations[0].right.value).name != "claim.sha256"):
+        raise ValueError("claim: spawn's host destination changed")
+    reader = read_source("crates/supervisor/src/claim.rs")
+    if not re.search(r'openat\(\s*directory,\s*"claim\.sha256",', reader):
+        raise ValueError("claim: reader must consume spawn's host commitment file")
+
+    def ordered(path, *fragments):
+        code = re.sub(r"\s+", "", walls.strip_rs(read_source(path)))
+        offset = 0
+        for fragment in fragments:
+            expected = re.sub(r"\s+", "", walls.strip_rs(fragment))
+            found = code.find(expected, offset)
+            if found < 0:
+                raise ValueError(f"{path}: missing or reordered claim boundary")
+            offset = found + len(expected)
+
+    ordered("crates/aumlok/src/claim.rs", 'pub struct HostClaimCommitment(Digest32);',
+            'pub fn verify(&self, token: &[u8]) -> Result<()> {',
+            'if token.len() != 43 { return Err(AUMLOK_CLAIM_UNKNOWN); }',
+            'URL_SAFE_NO_PAD.decode(token).map_err(|_| AUMLOK_CLAIM_UNKNOWN)?',
+            'if secret.len() != 32 { return Err(AUMLOK_CLAIM_UNKNOWN); }',
+            'if encoded.as_bytes() != token { return Err(AUMLOK_CLAIM_UNKNOWN); }',
+            'let actual = Digest32::sha256(secret.as_slice());',
+            'if !bool::from(self.0.as_bytes().ct_eq(actual.as_bytes())) { return Err(AUMLOK_CLAIM_UNKNOWN); }',
+            'Ok(())')
+    ordered("crates/supervisor/src/claim.rs", 'pub fn from_host(directory: &File, sessions: DurableSessions) -> Result<Self> {',
+            'if !meta.is_dir() || meta.uid() != 0 || meta.mode() & 0o022 != 0 { return Err(codes::AUMLOK_CLAIM_UNKNOWN); }',
+            'OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK',
+            'if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o7777 != 0o440 || meta.nlink() != 1 || meta.len() != 65',
+            'file.take(66).read_to_end(&mut bytes).map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;',
+            "if bytes.len() != 65 || bytes[64] != b'\\n' { return Err(codes::AUMLOK_CLAIM_UNKNOWN); }",
+            'let text = std::str::from_utf8(&bytes[..64]).map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;',
+            'let digest = Digest32::from_hex(text).map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;',
+            'commitment: HostClaimCommitment::from_host_digest(digest),',
+            'impl ClaimService for HostClaimService {',
+            'self.sessions.consume_host_claim(request, &self.commitment, now_ms)')
+    ordered("crates/frontdoor/src/session.rs", 'pub fn consume_host_claim(',
+            'let _lock = self.lock()?; let mut state = self.load()?;',
+            'if state.epoch != 0 || parse_binding(&state.binding)? != BindingState::Unclaimed'
+            ' || state.subject.is_some() || !state.records.is_empty() { return Err(canon::codes::AUMLOK_CLAIM_SPENT); }',
+            'commitment.verify(token.as_slice())?;', 'scope: SessionScope::BindingOnly,',
+            'apply_binding(&mut state, 0, BindingState::Claimed, None)?;',
+            'self.insert_record(&mut state, record.clone(), None, now_ms)?; self.save(&state)?; Ok(record)')
+    ordered("crates/frontdoor/src/claim.rs", 'let token = decode_claim(request.body())?;',
+            'let session = service.consume_and_create_session(ClaimRequest {',
+            'expires_at_ms: expires, })?;', 'let set_cookie = bearer.cookie_header(SessionScope::BindingOnly, expires, now_ms)?;')
 
 
 # ICANN top-level labels from an offline Public Suffix List snapshot, plus local/reserved suffixes.
@@ -233,7 +455,6 @@ xn--yfro4i67o xn--ygbi2ammx xn--zfr164b xxx xyz yachts yahoo yamaxun yandex ye y
 youtube yt yun za zappos zara zero zip zm zone zuerich zw
 """.split())
 WIRE_SYMBOLS = frozenset({"documents.read", "kira.save"})
-ATTRIBUTION = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 PRIVATE_SUFFIXES = {"local", "lan", "internal", "intranet", "corp", "home", "private", "localdomain", "localhost", "test"}
 ADDRESS_DNS = re.compile(r"(?:^|[.-])(\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3})\.(?:sslip|nip|xip)\.io$")
 # Placeholders used in documentation are not anyone's machine: the RFC 5737 and RFC 3849 documentation ranges, the
@@ -245,7 +466,8 @@ DOCUMENTATION_NETS = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.
 def documentation_address(address):
     return any(address in net for net in DOCUMENTATION_NETS if net.version == address.version)
 MAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+@(?:[\w-]+\.)*[\w-]+", re.ASCII)
-GITHUB_MAIL = re.compile(r"[A-Za-z0-9+_.-]+@users\.noreply\.github\.com", re.I)
+NOREPLY_MAIL = re.compile(r"(?:[A-Za-z0-9+_.-]+@users\.noreply\.github\.com|"
+                          r"(?:noreply|no-reply)@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})", re.I)
 HOST_TOKEN = re.compile(r"(?<![\w.-])(?:[^\W_](?:[^\W_]|-){0,62}\.)+"
                         r"[^\W_](?:[^\W_]|-){0,62}(?![\w-])")
 ABSOLUTE_TOKEN = re.compile(r"(?<![\w./!:+-])(?:[A-Za-z]:[\\/]|\\\\[\w.-]+\\|"
@@ -255,17 +477,15 @@ ABSOLUTE_TOKEN = re.compile(r"(?<![\w./!:+-])(?:[A-Za-z]:[\\/]|\\\\[\w.-]+\\|"
 def privacy_findings(message, file_names):
     findings = set()
     lines = message.splitlines()
-    attribution_lines = [line for line in lines if line.startswith("Co-Authored-By:")]
-    if not attribution_lines:
-        findings.add("attribution-missing")
-    for line in attribution_lines:
-        if line != ATTRIBUTION and not re.fullmatch(
-                r"Co-Authored-By: [^<>\n]+ <[A-Za-z0-9+_.-]+@users\.noreply\.github\.com>", line):
+    for line in lines:
+        if not re.match(r"\s*Co-Authored-By\s*:", line, re.I):
+            continue
+        trailer = re.fullmatch(r"Co-Authored-By: [^<>\n]+ <([^<>\s]+)>", line, re.I)
+        if trailer is None or not public_noreply(trailer[1]):
             findings.add("attribution-invalid")
-    message = "\n".join(line for line in lines if line != ATTRIBUTION)
 
     def remove_mail(match):
-        if not GITHUB_MAIL.fullmatch(match.group()):
+        if not public_noreply(match.group()):
             findings.add("email")
         return " "
 
@@ -318,6 +538,14 @@ def privacy_findings(message, file_names):
     return sorted(findings)
 
 
+def public_noreply(address):
+    if not NOREPLY_MAIL.fullmatch(address):
+        return False
+    domain = address.rsplit("@", 1)[1].lower()
+    return (domain.rsplit(".", 1)[-1] not in PRIVATE_SUFFIXES
+            and not domain.endswith(".home.arpa") and not ADDRESS_DNS.search(domain))
+
+
 def privacy_git(repository, *arguments):
     result = subprocess.run(["git", "--no-replace-objects", *arguments], cwd=repository,
                             capture_output=True, text=True, encoding="utf-8", check=False,
@@ -328,11 +556,10 @@ def privacy_git(repository, *arguments):
 
 
 def commit_privacy(repository=ROOT):
-    """Scan messages only; Git's author identities are not commit-message text."""
+    """Audit publication history, including both raw identities; never fetch history."""
     shallow = privacy_git(repository, "rev-parse", "--is-shallow-repository").strip()
     if shallow == "true":
-        print("NOTICE commit-privacy: shallow repository; history scan skipped; no fetch attempted")
-        return
+        raise ValueError("shallow repository; complete local history required; no fetch attempted")
     if shallow != "false":
         raise ValueError("unknown shallow-repository status")
     base = privacy_git(repository, "rev-parse", "--verify", "00471ff^{commit}").strip()
@@ -340,21 +567,22 @@ def commit_privacy(repository=ROOT):
     if not all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in (base, head)):
         raise ValueError("invalid privacy history anchor")
     privacy_git(repository, "merge-base", "--is-ancestor", base, head)
-    history = privacy_git(repository, "log", "-z", "--format=%H%x00%B", "--no-show-signature",
+    history = privacy_git(repository, "log", "-z", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B", "--no-show-signature",
                           "--no-notes", "--no-decorate", f"{base}..{head}").split("\x00")
-    if history[-1] != "" or len(history) % 2 != 1:
-        raise ValueError("malformed commit-message stream")
+    if history[-1] != "" or len(history) % 6 != 1:
+        raise ValueError("malformed commit-metadata stream")
     # A filename exception is an exact basename actually tracked in this repository, not an extension allowlist.
     names = {pathlib.PurePosixPath(p).name for p in
              privacy_git(repository, "ls-tree", "-rz", "--name-only", head).split("\x00") if p}
-    for index in range(0, len(history) - 1, 2):
-        commit, message = history[index:index + 2]
+    for index in range(0, len(history) - 1, 6):
+        commit, *fields = history[index:index + 6]
         if not re.fullmatch(r"[0-9a-f]{40}", commit):
             raise ValueError("malformed commit identifier")
-        violations = privacy_findings(message, names)
-        if violations:
-            fail("commit-privacy", f"{commit[:12]}: {', '.join(violations)} in message (redacted)")
-    print(f"commit-privacy: scanned {(len(history) - 1) // 2} commit messages since 00471ff")
+        for label, value in zip(("author name", "author email", "committer name", "committer email", "message"), fields):
+            violations = privacy_findings(value, names)
+            if violations:
+                fail("commit-privacy", f"{commit[:12]}: {', '.join(violations)} in {label} (redacted)")
+    print(f"commit-privacy: scanned {(len(history) - 1) // 6} commits and identities since 00471ff")
 
 
 def tracked():
@@ -366,6 +594,10 @@ def tracked():
     return [p for p in paths if (ROOT / p).is_file() and not (ROOT / p).is_symlink()]
 
 
+if sys.argv[1:] not in ([], ["--pre-push"]):
+    print("FAIL checks:usage: python3 -B checks/run.py [--pre-push]")
+    sys.exit(1)
+publication_audit = sys.argv[1:] == ["--pre-push"]
 files = tracked()
 baseline = json.loads((ROOT / "checks/baseline.json").read_text())
 scaffold = json.loads((ROOT / "checks/scaffold.json").read_text())
@@ -542,20 +774,32 @@ launcher_inventory = [p for p in files if p.startswith("crates/launcher/src/")]
 launcher_inventory += ["crates/launcher/Cargo.toml", "crates/launcher/clippy.toml"]
 check_source_pins("pin-drift", LAUNCHER_PINS, launcher_inventory)
 
-# 15. Row 131: preserve guard-before-dispatch, exact-pointer verification, release binding and claim issuance.
-# All imported local helpers and both shell entry points are pinned; deploy code is never executed here.
+# 15. Row 131: inspect authorization before dispatch and forbid release authorization data in the tree.
+# Independent pins retain the reviewed helper bodies and shell entry points; deploy code is never executed here.
 deploy_inventory = [p for p in files if p.startswith(("deploy/spawn/", "deploy/upgrade/"))]
 deploy_inventory.append("scripts/reproduce.sh")
 check_source_pins("deploy-guard", DEPLOY_PINS, deploy_inventory)
-
-# 16. Row 83: the full clone audits private metadata before publication; shallow workers never fetch.
+check_source_pins("deploy-guard", CLAIM_PINS, CLAIM_PINS)
 try:
-    commit_privacy()
-except (OSError, UnicodeError, ValueError) as error:
-    fail("commit-privacy", str(error))
+    deploy_source_guards()
+    claim_source_guards()
+    no_release_artifacts(files)
+except (OSError, UnicodeError, ValueError, SyntaxError, RecursionError) as error:
+    fail("deploy-guard", str(error))
+
+# 16. Row 83: publication requires a complete local history audit; neither mode fetches.
+if publication_audit:
+    try:
+        commit_privacy()
+    except (OSError, UnicodeError, ValueError) as error:
+        fail("commit-privacy", str(error))
+else:
+    print("commit-privacy: NOT AUDITED (construction only); --pre-push required before public push")
 
 if FAIL:
     print("\n".join(f"FAIL {f}" for f in FAIL))
     print(f"CHECKS RED: {len(FAIL)}")
     sys.exit(1)
-print(f"CHECKS GREEN: {len(rows)} bricks, {len(crates)} crates, {len(files)} files, {len(pins)} pinned data files; inventory: {inventory}")
+privacy_status = "publication privacy audited" if publication_audit else "publication privacy NOT AUDITED"
+print(f"CHECKS GREEN: {len(rows)} bricks, {len(crates)} crates, {len(files)} files, {len(pins)} pinned data files; "
+      f"{privacy_status}; inventory: {inventory}")

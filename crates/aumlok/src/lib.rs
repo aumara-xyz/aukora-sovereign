@@ -21,3 +21,5 @@ pub use webauthn::{AssertionMaterial, RegistrationMaterial};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod ceremony_schema;
+
+pub mod claim;

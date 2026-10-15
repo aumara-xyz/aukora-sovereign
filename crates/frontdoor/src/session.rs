@@ -780,3 +780,46 @@ fn apply_binding(
     state.subject = subject.map(|id| id.to_string());
     Ok(())
 }
+
+impl DurableSessions {
+    /// Verify the host claim and persist its consumption with the binding session.
+    pub fn consume_host_claim(
+        &mut self,
+        request: crate::claim::ClaimRequest,
+        commitment: &aumlok::claim::HostClaimCommitment,
+        now_ms: u64,
+    ) -> Result<SessionRecord> {
+        let crate::claim::ClaimRequest {
+            node,
+            token,
+            session_digest,
+            session_origin,
+            expires_at_ms,
+        } = request;
+        let token = Zeroizing::new(token);
+        let _lock = self.lock()?;
+        let mut state = self.load()?;
+        if state.epoch != 0
+            || parse_binding(&state.binding)? != BindingState::Unclaimed
+            || state.subject.is_some()
+            || !state.records.is_empty()
+        {
+            return Err(canon::codes::AUMLOK_CLAIM_SPENT);
+        }
+        commitment.verify(token.as_slice())?;
+        let record = SessionRecord {
+            token_digest: session_digest,
+            node,
+            origin: session_origin,
+            subject: None,
+            owner_epoch: 0,
+            scope: SessionScope::BindingOnly,
+            expires_at_ms,
+            revoked: false,
+        };
+        apply_binding(&mut state, 0, BindingState::Claimed, None)?;
+        self.insert_record(&mut state, record.clone(), None, now_ms)?;
+        self.save(&state)?;
+        Ok(record)
+    }
+}
