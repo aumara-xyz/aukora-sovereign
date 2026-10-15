@@ -5,7 +5,6 @@ use crate::webauthn::{
     inspect_assertion, verify_registration, AssertionMaterial, Credential, ExtensionPolicy,
     OriginContext, RegistrationCandidate, RegistrationContext, RegistrationMaterial,
 };
-use canon::authority::ceremony::{CeremonyFinish, CeremonyKind};
 use canon::authority::{AuthorityTxn, AuthorityVersion, OwnerBinding};
 use canon::digest::Digest32;
 use canon::ids::{CredentialId, SessionId, SubjectId};
@@ -15,6 +14,11 @@ use sha2::{Digest, Sha256};
 pub use canon::ids::RequestId as CeremonyId;
 pub const MAX_CEREMONY_MS: i64 = 300_000;
 pub const NONCE_BYTES: usize = 32;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod finish;
+#[cfg(not(target_arch = "wasm32"))]
+pub use finish::{CeremonyAuthorityWriter, CeremonyWrite};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CeremonyPurpose {
@@ -164,6 +168,11 @@ pub trait CeremonyReadTxn: AuthorityTxn {
     /// Bootstrap admission must still hold and no owner binding may already exist.
     fn enrolment_identity(&mut self, _id: &CeremonyId) -> Result<EnrolmentIdentity> {
         Err(refusal("ceremony-adapter"))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ceremony_write(&mut self) -> Result<CeremonyWrite<'_>> {
+        Err(refusal("canon-ceremony-contract"))
     }
 }
 
@@ -347,47 +356,20 @@ pub fn finish_signin<T: CeremonyReadTxn + ?Sized>(
 fn complete<T: CeremonyReadTxn + ?Sized>(
     txn: &mut T,
     transaction_id: Digest32,
-    mut row: CeremonySnapshot,
+    row: CeremonySnapshot,
     credential: &Credential,
     assertion: &AssertionMaterial,
     now_ms: i64,
 ) -> Result<()> {
-    if txn.transaction_id() != transaction_id {
-        return Err(refusal("ceremony-stale"));
-    }
-    let kind = match row.purpose {
-        CeremonyPurpose::Enrolment => CeremonyKind::Enrolment,
-        CeremonyPurpose::SignIn => CeremonyKind::SignIn,
-        _ => return Err(refusal("ceremony-kind")),
-    };
-    let assertion_json =
-        serde_json::to_vec(assertion).map_err(|_| refusal("ceremony-data-invalid"))?;
-    txn.finish_ceremony(CeremonyFinish {
-        transaction_id,
-        id: row.id,
-        kind,
-        session: row.session,
-        subject: row.subject.ok_or_else(|| refusal("ceremony-subject"))?,
-        authority: row.authority,
-        nonce: row.nonce,
-        expires_at_ms: row.expires_at_ms,
-        candidate_digest: row.candidate_digest,
-        binding: &credential.binding,
-        owner_id: &credential.owner_id,
-        user_handle: &credential.user_handle,
-        backup_eligible: credential.backup_eligible,
-        assertion_json: &assertion_json,
-        now_ms,
-    })?;
-    row.state = CeremonyState::Finished;
-    if txn.ceremony(&row.id)? != row
-        || txn.owner_binding(&credential.binding.credential_id)? != credential.binding
-        || txn.credential(&credential.binding.credential_id)? != *credential
-        || txn.transaction_id() != transaction_id
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        return Err(refusal("canon-ceremony-contract"));
+        finish::complete(txn, transaction_id, row, credential, assertion, now_ms)
     }
-    Ok(())
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (txn, transaction_id, row, credential, assertion, now_ms);
+        Err(refusal("canon-ceremony-contract"))
+    }
 }
 
 fn refusal(reason: &'static str) -> Refusal {
@@ -692,6 +674,10 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_forward_v1
             let context = serde_json::to_string(&context).map_err(|_| refusal("store-corrupt"))?;
             self.write(|tx| {
                 tx.execute("UPDATE aumlok_ceremonies_v1 SET state='expired',last_seen=?1 WHERE deadline<=?1 AND last_seen<=?1 AND state IN ('fresh','reserved','registered')",[now_ms]).map_err(store_error)?;
+                if request.purpose == CeremonyPurpose::Enrolment {
+                    let closed: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM aumlok_ceremonies_v1 WHERE purpose='enrolment' AND state NOT IN ('failed','expired'))", [], |row| row.get(0)).map_err(store_error)?;
+                    if closed { return Err(refusal("enrolment-closed")); }
+                }
                 let previous:Option<Vec<u8>>=tx.query_row("SELECT id FROM aumlok_ceremonies_v1 WHERE purpose=?1 AND json_extract(context,'$.session')=?2 AND state IN ('fresh','reserved','registered') ORDER BY issued DESC LIMIT 1",params![request.purpose.wire_name(),request.session.to_string()],|row|row.get(0)).optional().map_err(store_error)?;
                 if let Some(previous)=previous {
                     let previous=CeremonyId::from_bytes(previous.try_into().map_err(|_|refusal("store-corrupt"))?);
@@ -699,10 +685,6 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_forward_v1
                     if serde_json::to_string(&row.context).map_err(|_|refusal("store-corrupt"))?!=context || row.claim_digest!=claim { return Err(refusal("ceremony-context-changed")); }
                     touch(tx,&row,now_ms)?;
                     return load_row(tx,&previous)?.snapshot();
-                }
-                if request.purpose == CeremonyPurpose::Enrolment {
-                    let closed: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM aumlok_ceremonies_v1 WHERE purpose='enrolment' AND state NOT IN ('failed','expired'))", [], |row| row.get(0)).map_err(store_error)?;
-                    if closed { return Err(refusal("enrolment-closed")); }
                 }
                 tx.execute("INSERT INTO aumlok_ceremonies_v1(id,purpose,state,context,nonce,issued,deadline,last_seen,claim_digest) VALUES(?1,?2,'fresh',?3,?4,?5,?6,?5,?7)",
                     params![id.as_bytes().as_slice(),request.purpose.wire_name(),context,nonce.as_slice(),now_ms,deadline,claim]).map_err(store_error)?;
@@ -875,6 +857,17 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_forward_v1
                 })
                 .transpose()?,
         })
+    }
+    pub(super) fn check_finish_row(
+        tx: &rusqlite::Transaction<'_>,
+        expected: &CeremonySnapshot,
+        now_ms: i64,
+    ) -> Result<()> {
+        let row = load_row(tx, &expected.id)?;
+        if row.snapshot()? != *expected || now_ms < row.last_seen || now_ms >= row.deadline {
+            return Err(refusal("ceremony-state"));
+        }
+        Ok(())
     }
     fn touch(tx: &rusqlite::Transaction<'_>, row: &Row, now_ms: i64) -> Result<()> {
         if now_ms < row.issued || now_ms < row.last_seen {

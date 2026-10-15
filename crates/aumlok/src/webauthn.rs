@@ -585,14 +585,14 @@ fn verify_signature(key: &PublicKey, message: &[u8], bytes: &[u8]) -> Result<()>
     }
 }
 
-/// Verify the gate's rebuilt C5 authorization within its active authority transaction.
+/// Refuse C5 verification through this AUMLOK entry point.
 pub fn verify_owner_assertion<T: AuthorityTxn + ?Sized>(
-    txn: &mut T,
-    proposal: &ProposalId,
-    action: OwnerOperation,
-    assertion: OwnerAssertion,
+    _txn: &mut T,
+    _proposal: &ProposalId,
+    _action: OwnerOperation,
+    _assertion: OwnerAssertion,
 ) -> Result<VerifiedProof> {
-    VerifiedProof::verify(txn, proposal, action, assertion)
+    Err(refuse("canon-proof-contract"))
 }
 
 struct CborReader<'a> {
