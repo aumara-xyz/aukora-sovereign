@@ -926,7 +926,7 @@ impl OpenViking for VikingDb {
     }
 }
 
-/// Observes only Kira's private index pin and its side of the index/head corner.
+/// Observes only Kira's private index pin; chain-head checks remain unwritten here.
 pub struct IndexHealth<'a> {
     pub index: &'a dyn OpenViking,
     pub expected: IndexPin,
@@ -939,10 +939,8 @@ impl crate::health::HealthObserver for IndexHealth<'_> {
         spec: canon::health::CheckSpec,
         _requested: crate::health::HealthContext,
     ) -> crate::health::CheckObservation {
-        use crate::health::{
-            CheckObservation, ObservationVerdict, ObservedCheck, INDEX_HEAD_CORNER, INDEX_PIN,
-        };
-        if spec != INDEX_PIN && spec != INDEX_HEAD_CORNER {
+        use crate::health::{CheckObservation, ObservationVerdict, ObservedCheck, INDEX_PIN};
+        if spec != INDEX_PIN {
             return CheckObservation::Unwritten;
         }
         let verdict = match self

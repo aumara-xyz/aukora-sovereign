@@ -43,6 +43,7 @@ IPAddressAllow=127.0.0.1
 CapabilityBoundingSet=
 AmbientCapabilities=
 LimitCORE=0
+MemoryMax=2G
 TasksMax=128
 
 [Install]

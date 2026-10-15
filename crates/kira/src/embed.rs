@@ -172,7 +172,7 @@ pub struct LlamaEmbedder {
 
 impl LlamaEmbedder {
     /// Open a relative, symlink-free model path and verify its full SHA-256 before use.
-    /// `model_id` must match the server's alias and its embeddings response.
+    /// `model_id` must equal the pinned digest's lowercase hex and the server's alias.
     /// Server availability is checked on each embedding call, so startup can proceed offline.
     pub fn new(
         port: NonZeroU16,
@@ -180,11 +180,8 @@ impl LlamaEmbedder {
         model_id: &str,
         timeout: Duration,
     ) -> Result<Self, EmbedError> {
-        if model_id.is_empty()
-            || model_id.len() > 255
-            || model_id.bytes().any(|byte| !(0x21..=0x7e).contains(&byte))
-            || timeout.is_zero()
-            || timeout > Duration::from_secs(30)
+        let digest = Digest32::from_bytes(QWEN_DIGEST);
+        if model_id != digest.to_string() || timeout.is_zero() || timeout > Duration::from_secs(30)
         {
             return Err(EmbedError::Model);
         }
@@ -193,7 +190,7 @@ impl LlamaEmbedder {
             port,
             model_id: model_id.to_owned(),
             timeout,
-            model: LocalModel::new(Digest32::from_bytes(QWEN_DIGEST), 1_024)?,
+            model: LocalModel::new(digest, 1_024)?,
         })
     }
 
@@ -288,7 +285,7 @@ impl LocalEmbedder for LlamaEmbedder {
 }
 
 fn verify_qwen_file(path: &Path) -> Result<(), EmbedError> {
-    use rustix::fs::{CWD, Mode, OFlags, openat};
+    use rustix::fs::{openat, Mode, OFlags, CWD};
 
     let parts: Vec<_> = path.components().collect();
     if parts.is_empty()
