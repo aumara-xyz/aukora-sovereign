@@ -5,4 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
+canon = { path = "../canon" }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"

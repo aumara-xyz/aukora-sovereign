@@ -1,0 +1,47 @@
+{
+  "schema": "aukora-theme-adapter-vectors-v1",
+  "domain": "aukora:theme-adapter:v1",
+  "cases": [
+    {
+      "name": "canonical-accent-object",
+      "adapter_version": 1,
+      "target": "theme",
+      "theme_utf8": "{\"accent\":\"#123456\"}",
+      "input_utf8": "{\"key\":\"theme:v1\",\"value\":{\"accent\":\"#123456\"}}",
+      "effect_utf8": "{\"key\":\"theme:v1\",\"value\":{\"accent\":\"#123456\"}}\n",
+      "budgeted_bytes": 28,
+      "binding_utf8": "{\"body\":{\"algorithm\":\"sha256\",\"effect_sha256\":\"eefa7c99073b3682b2e0e669869f80b89f3be74ade8be5395fff8add7a4a8dba\",\"input_sha256\":\"8c030f6e8b1745ec022b41cc57a3c8c752c9e37da769c9e52c57f686e2e7886d\",\"key\":\"theme:v1\",\"module_sha256\":\"34ce6cab618b626243e876befb49ccf8a6780dc836e757484886b34ae977a438\",\"target\":\"theme\",\"theme_sha256\":\"59bb2c840d96bdd4115952da51ae9e4346ea49c2c961bf44e6035aca87fcfdec\"},\"schema\":\"aukora-theme-adapter-v1\"}",
+      "binding_sha256": "66c72ff5aee7b8e55c205d2da466aa524f98440111b1eb81f1ad2e9a45a12510",
+      "cell": {
+        "module_sha256": "34ce6cab618b626243e876befb49ccf8a6780dc836e757484886b34ae977a438",
+        "input_sha256": "8c030f6e8b1745ec022b41cc57a3c8c752c9e37da769c9e52c57f686e2e7886d",
+        "effect_sha256": "eefa7c99073b3682b2e0e669869f80b89f3be74ade8be5395fff8add7a4a8dba"
+      },
+      "new_sha256": "eefa7c99073b3682b2e0e669869f80b89f3be74ade8be5395fff8add7a4a8dba",
+      "theme_sha256": "59bb2c840d96bdd4115952da51ae9e4346ea49c2c961bf44e6035aca87fcfdec"
+    }
+  ],
+  "refusals": [
+    {
+      "name": "unknown-version",
+      "adapter_version": 2,
+      "target": "theme",
+      "theme_utf8": "{\"accent\":\"#123456\"}",
+      "code": "wasmcell:evidence-mismatch"
+    },
+    {
+      "name": "leading-whitespace",
+      "adapter_version": 1,
+      "target": "theme",
+      "theme_utf8": " {\"accent\":\"#123456\"}",
+      "code": "wasmcell:value-json-not-canonical"
+    },
+    {
+      "name": "array-is-not-theme-object",
+      "adapter_version": 1,
+      "target": "theme",
+      "theme_utf8": "[]",
+      "code": "wasmcell:value-not-canonical"
+    }
+  ]
+}

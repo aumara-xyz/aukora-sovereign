@@ -1,2 +1,15 @@
-//! immune: see README.md. Its contract is frozen in wave 0; its body is written in wave 1.
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #![forbid(unsafe_code)]
+
+pub mod boot_attack;
+pub mod health;
+pub mod heldout;
+pub mod herd;
+pub mod hostile;
+pub mod hypermutation;
+pub mod mhc;
+pub mod organ_map;
+pub mod posture;
+pub mod ratchet;
+pub mod registry;
+pub mod thymus;

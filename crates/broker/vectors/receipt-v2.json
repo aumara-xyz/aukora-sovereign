@@ -1,0 +1,85 @@
+{
+  "schema": "aukora-broker-receipt-vectors-v1",
+  "domain": "aukora:broker-receipt:v2",
+  "commitment_rule": "sha256(domain UTF-8 || 00 || canonical_utf8)",
+  "cases": [
+    {
+      "name": "reported-is-not-verified",
+      "envelope": {
+        "schema": "aukora-broker-receipt-v2",
+        "body": {
+          "algorithm": "sha256",
+          "grant_id": "11111111111111111111111111111111",
+          "request_id": "44444444444444444444444444444444",
+          "reservation_id": "55555555555555555555555555555555",
+          "operation_id": "66666666666666666666666666666666",
+          "identity": {
+            "requested": "deepseek-chat",
+            "reported": "deepseek-chat",
+            "verified": {
+              "status": "unverified"
+            }
+          },
+          "source": {
+            "provider": "deepseek"
+          },
+          "intake_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+          "slot_generation": 3,
+          "key_generation": 2,
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "cost_microusd": 800,
+          "reserved_microusd": 1000,
+          "charged_microusd": 800,
+          "cost_unknown": false,
+          "reservation_exceeded": false,
+          "grant_frozen": false,
+          "outcome": "completed",
+          "refusal": null
+        }
+      },
+      "canonical_utf8": "{\"body\":{\"algorithm\":\"sha256\",\"charged_microusd\":800,\"completion_tokens\":50,\"cost_microusd\":800,\"cost_unknown\":false,\"grant_frozen\":false,\"grant_id\":\"11111111111111111111111111111111\",\"identity\":{\"reported\":\"deepseek-chat\",\"requested\":\"deepseek-chat\",\"verified\":{\"status\":\"unverified\"}},\"intake_commitment\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"key_generation\":2,\"operation_id\":\"66666666666666666666666666666666\",\"outcome\":\"completed\",\"prompt_tokens\":100,\"refusal\":null,\"request_id\":\"44444444444444444444444444444444\",\"reservation_exceeded\":false,\"reservation_id\":\"55555555555555555555555555555555\",\"reserved_microusd\":1000,\"slot_generation\":3,\"source\":{\"provider\":\"deepseek\"}},\"schema\":\"aukora-broker-receipt-v2\"}",
+      "sha256": "5892cce1f724976cfb001f3f868bdce5dfcb8bb18859fd474ba711f04a6fab3c",
+      "domain_commitment": "b67fb1cf4cacc0a2fa26654b15f8bf0d999ad487cc7554cfca9163f68f7c2d84"
+    },
+    {
+      "name": "unknown-cost-retains-whole-reservation",
+      "envelope": {
+        "schema": "aukora-broker-receipt-v2",
+        "body": {
+          "algorithm": "sha256",
+          "grant_id": "11111111111111111111111111111111",
+          "request_id": "44444444444444444444444444444444",
+          "reservation_id": "55555555555555555555555555555555",
+          "operation_id": "66666666666666666666666666666666",
+          "identity": {
+            "requested": "deepseek-chat",
+            "reported": null,
+            "verified": {
+              "status": "unverified"
+            }
+          },
+          "source": {
+            "provider": "deepseek"
+          },
+          "intake_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+          "slot_generation": 3,
+          "key_generation": 2,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "cost_microusd": 1000,
+          "reserved_microusd": 1000,
+          "charged_microusd": 1000,
+          "cost_unknown": true,
+          "reservation_exceeded": false,
+          "grant_frozen": false,
+          "outcome": "unknown",
+          "refusal": "broker:provider-unavailable"
+        }
+      },
+      "canonical_utf8": "{\"body\":{\"algorithm\":\"sha256\",\"charged_microusd\":1000,\"completion_tokens\":0,\"cost_microusd\":1000,\"cost_unknown\":true,\"grant_frozen\":false,\"grant_id\":\"11111111111111111111111111111111\",\"identity\":{\"reported\":null,\"requested\":\"deepseek-chat\",\"verified\":{\"status\":\"unverified\"}},\"intake_commitment\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"key_generation\":2,\"operation_id\":\"66666666666666666666666666666666\",\"outcome\":\"unknown\",\"prompt_tokens\":0,\"refusal\":\"broker:provider-unavailable\",\"request_id\":\"44444444444444444444444444444444\",\"reservation_exceeded\":false,\"reservation_id\":\"55555555555555555555555555555555\",\"reserved_microusd\":1000,\"slot_generation\":3,\"source\":{\"provider\":\"deepseek\"}},\"schema\":\"aukora-broker-receipt-v2\"}",
+      "sha256": "3342594d0425f5d3dd0c0a8781ce4bdd11f4d69e91720366d937a6e705e525c7",
+      "domain_commitment": "84e5e25930e813b30c94c053d25c2217940b9091950c0a4a72b5bcbf13c21d7a"
+    }
+  ]
+}
