@@ -280,6 +280,8 @@ fn decode_manifest_v2(value: &Value) -> Result<Manifest> {
     if !matches!(
         value.get("captures").map(Value::view),
         Some(ValueView::Text("pending" | "complete"))
+            // Partial captures receive the same entries and assets validation.
+            | Some(ValueView::Text("partial"))
     ) {
         return Err(refusal("manifest-invalid"));
     }
