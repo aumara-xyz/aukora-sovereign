@@ -25,7 +25,7 @@ async function reply(response: Response, signal: AbortSignal): Promise<string> {
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
   catch { throw new Error("frontdoor:body-invalid"); }
 }
 

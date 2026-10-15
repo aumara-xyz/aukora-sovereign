@@ -3,11 +3,20 @@ import {
   JOINING_CONTEXT_SCHEMA, type JoiningConfiguration, type JoiningContext,
   type JoiningParticipant, type JoiningSnapshot, type PreparedJoiningExchange,
 } from "./services.js";
+import type { ExchangeMethod } from "../contracts.js";
 
 export function refuse(reason: string): never { throw new Error(`invites:${reason}`); }
 
 export function live(signal: AbortSignal): void {
   if (signal.aborted) refuse("joining-cancelled");
+}
+
+export function methodForLayers(layers: JoiningContext["requiredLayers"]): ExchangeMethod {
+  if (typeof layers.sound !== "boolean" || typeof layers.motion !== "boolean"
+    || typeof layers.intentAcknowledgement !== "boolean" || (layers.motion && !layers.sound)) {
+    refuse("joining-layers");
+  }
+  return layers.motion ? "optical-audio-motion" : layers.sound ? "optical-audio" : "optical";
 }
 
 function record(value: unknown, fields: readonly string[]): Record<string, unknown> {
@@ -60,6 +69,7 @@ function joiningContext(value: unknown): JoiningContext {
   if (typeof layers.sound !== "boolean" || typeof layers.motion !== "boolean"
     || typeof layers.intentAcknowledgement !== "boolean") refuse("joining-layers");
   const requiredLayers = Object.freeze({ sound: layers.sound, motion: layers.motion, intentAcknowledgement: layers.intentAcknowledgement });
+  methodForLayers(requiredLayers);
   const issuedAtMs = integer(item.issuedAtMs, 1), expiresAtMs = integer(item.expiresAtMs, 1);
   if (expiresAtMs <= issuedAtMs || expiresAtMs - issuedAtMs > 300_000) refuse("joining-expired");
   return Object.freeze({ schema: JOINING_CONTEXT_SCHEMA, ceremony: hex(item.ceremony, 16), node: hex(item.node, 16),
@@ -91,6 +101,7 @@ export async function prepared(value: unknown, checkpoint: Pick<JoiningSnapshot,
     refuse("joining-context-size");
   }
   const canonicalContext = Uint8Array.from(item.canonicalContext);
+  if (requireFresh && canonicalContext.length > 4096) refuse("joining-context-size");
   const computed = await configuration.codec.encode(context, signal);
   live(signal);
   if (!(computed.canonical instanceof Uint8Array) || !equal(canonicalContext, computed.canonical)

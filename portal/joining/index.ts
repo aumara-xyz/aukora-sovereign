@@ -5,10 +5,11 @@ import {
   JOINING_CONTEXT_SCHEMA, type JoiningConfiguration, type JoiningEnrolmentContext,
   type JoiningSnapshot, type PreparedJoiningExchange,
 } from "./services.js";
-import { hex, live, origin, prepared, refuse, snapshot } from "./validate.js";
+import { hex, live, methodForLayers, origin, prepared, refuse, snapshot } from "./validate.js";
+import { mountJoiningExchange } from "./exchange.js";
 
 export type { JoiningConfiguration, JoiningCeremonies, JoiningContext, JoiningEnrolment,
-  JoiningOptical, JoiningSnapshot, PreparedJoiningExchange } from "./services.js";
+  JoiningSnapshot, PreparedJoiningExchange } from "./services.js";
 
 export type JoiningService = { mount(context: OwnerPaneContext): OwnerDisposer };
 
@@ -25,6 +26,21 @@ function environment(configuration: JoiningConfiguration, context: OwnerPaneCont
 function reason(error: unknown): string {
   if (error instanceof Error && /^[a-z][a-z0-9-]*:[a-z0-9-]+$/.test(error.message)) return error.message;
   return "invites:joining-unavailable";
+}
+
+async function confirmationWindow(until: number, signal: AbortSignal): Promise<void> {
+  live(signal);
+  const remaining = until - performance.now();
+  if (remaining <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const abort = (): void => {
+      clearTimeout(timer);
+      reject(new Error("invites:joining-cancelled"));
+    };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, remaining);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  live(signal);
 }
 
 export function createJoiningService(configuration: JoiningConfiguration): JoiningService {
@@ -147,7 +163,7 @@ class JoiningPane {
 
   private describe(exchange: PreparedJoiningExchange): void {
     this.detail("Purpose", "Joining with your own two devices");
-    this.detail("Selected method", "Screen to screen; this selection does not prove physical proximity");
+    this.detail("Selected method", methodForLayers(exchange.context.requiredLayers));
     this.detail("Node", exchange.context.node);
     this.detail("Scopes requested separately from co-presence", exchange.context.scopes.join(", "));
     this.detail("Exchange expires", new Date(exchange.context.expiresAtMs).toISOString());
@@ -173,9 +189,8 @@ class JoiningPane {
     this.describe(exchange);
     this.status.textContent = "Face your two devices towards each other. Each reads the other screen. Keep this owner pane open.";
     let captured = false;
-    const opticalExchange = Object.freeze({ ...exchange, canonicalContext: Uint8Array.from(exchange.canonicalContext) });
-    const release = await this.configuration.optical.mount({ host: this.stage, signal, exchange: opticalExchange,
-      receipt: bytes => {
+    const release = mountJoiningExchange(this.stage, exchange, this.configuration, signal,
+      bytes => {
         if (signal.aborted || this.disposed || captured) return;
         captured = true;
         if (!(bytes instanceof Uint8Array) || bytes.length < 1 || bytes.length > 65_536) {
@@ -183,6 +198,7 @@ class JoiningPane {
           return;
         }
         const receipt = Uint8Array.from(bytes);
+        const confirmationEnds = performance.now() + 10_000;
         this.receipts.add(receipt);
         this.enqueue(async () => {
           try {
@@ -198,11 +214,14 @@ class JoiningPane {
               || next.evidence.receiptDigest !== receiptDigest) {
               refuse("joining-evidence-unconfirmed");
             }
+            this.status.textContent = "Co-presence evidence is recorded. Keep the screens facing while the other device reads the confirmation.";
+            await confirmationWindow(confirmationEnds, signal);
             await this.show(next);
           } finally { receipt.fill(0); this.receipts.delete(receipt); }
         });
-      },
-    });
+      }, error => {
+        if (!signal.aborted) this.enqueue(async () => { if (!signal.aborted) throw error; });
+      });
     this.retain(release, signal);
   }
 

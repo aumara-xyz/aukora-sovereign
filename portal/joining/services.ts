@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { OwnerDisposer, OwnerPaneContext } from "../../ui/owner/contracts.js";
+import type { ExchangeMethod, PortalServices } from "../contracts.js";
 
 export const JOINING_CONTEXT_SCHEMA = "aukora.joining-context.v1" as const;
 
@@ -85,17 +86,6 @@ export interface JoiningCeremonies {
     receipt: Uint8Array, signal: AbortSignal): Promise<JoiningSnapshot>;
 }
 
-export type JoiningOpticalContext = {
-  readonly host: HTMLElement;
-  readonly signal: AbortSignal;
-  readonly exchange: PreparedJoiningExchange;
-  receipt(bytes: Uint8Array): void;
-};
-
-export interface JoiningOptical {
-  mount(context: JoiningOpticalContext): OwnerDisposer | Promise<OwnerDisposer>;
-}
-
 export type JoiningEnrolmentContext = {
   readonly owner: OwnerPaneContext;
   readonly snapshot: JoiningSnapshot;
@@ -123,7 +113,8 @@ export type JoiningConfiguration = {
   readonly shellOrigin: string;
   readonly node: string;
   readonly ceremonies: JoiningCeremonies;
-  readonly optical: JoiningOptical;
+  // The portal factory receives the selected method and exchange abort signal.
+  readonly portal: (host: HTMLElement, method: ExchangeMethod, signal: AbortSignal) => PortalServices | Promise<PortalServices>;
   readonly enrolment: JoiningEnrolment;
   readonly codec: JoiningContextCodec;
   readonly contextFormatPinned: (schema: typeof JOINING_CONTEXT_SCHEMA) => boolean;
