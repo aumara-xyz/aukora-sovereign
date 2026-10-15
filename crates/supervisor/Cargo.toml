@@ -1,0 +1,45 @@
+[package]
+name = "sovereign"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+aumlok = { version = "0.1.0", path = "../aumlok" }
+aura = { version = "0.1.0", path = "../aura" }
+broker = { version = "0.1.0", path = "../broker" }
+canon = { version = "0.1.0", path = "../canon" }
+frontdoor = { version = "0.1.0", path = "../frontdoor" }
+floor = { version = "0.1.0", path = "../floor" }
+gate = { version = "0.1.0", path = "../gate" }
+immune = { version = "0.1.0", path = "../immune" }
+kira = { version = "0.1.0", path = "../kira" }
+launcher = { version = "0.1.0", path = "../launcher" }
+libc = "0.2.190"
+nostr = { version = "0.1.0", path = "../nostr" }
+relay = { version = "0.1.0", path = "../relay" }
+pentora = { version = "0.1.0", path = "../pentora" }
+tokio = { version = "1.53.3", features = ["full"] }
+wasmcell = { version = "0.1.0", path = "../wasmcell" }
+axum = "0.8.9"
+base64 = "0.22.1"
+chacha20poly1305 = "0.11.0"
+ed25519-dalek = "3.0.0"
+getrandom = "0.4.3"
+hex = "0.4.3"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+zeroize = "1.9.1"
+tempfile = "3.27.0"
+
+[dev-dependencies]
+kira = { version = "0.1.0", path = "../kira", features = ["test-support"] }
+verifier = { version = "0.1.0", path = "../verifier" }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tokio = { version = "1.53.3", features = ["test-util"] }
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }

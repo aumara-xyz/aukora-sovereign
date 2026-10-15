@@ -1,0 +1,1045 @@
+[
+  {
+    "name": "memory list request False None",
+    "input": "{\"body\":{\"before\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest"
+  },
+  {
+    "name": "memory list request False note-previous",
+    "input": "{\"body\":{\"before\":\"note-previous\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":\"note-previous\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest"
+  },
+  {
+    "name": "memory remembered reply",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory empty reply False",
+    "input": "{\"body\":{\"items\":[],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory next cursor False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":\"note-1\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":\"note-1\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory reply wrong direction False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:unknown-kind"
+  },
+  {
+    "name": "memory missing item at False",
+    "input": "{\"body\":{\"items\":[{\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item category False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item cite_seq False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item demoted_at False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item demoted_seq False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item note_id False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item text False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing reply items False",
+    "input": "{\"body\":{\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing reply next False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing reply tier False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory extra reply field False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"secret\":\"private\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"secret\":\"private\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:unknown-field"
+  },
+  {
+    "name": "memory extra item field False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"secret\":\"private\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"secret\":\"private\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:unknown-field"
+  },
+  {
+    "name": "memory bad tier 'signed' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"signed\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"signed\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad tier None False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad tier False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":false},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":false},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad tier 0 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":0},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":0},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next '' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":\"\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":\"\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":false,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":false,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next 0 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":0,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":0,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next [] False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":[],\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":[],\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items None False",
+    "input": "{\"body\":{\"items\":null,\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":null,\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items False False",
+    "input": "{\"body\":{\"items\":false,\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":false,\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items 0 False",
+    "input": "{\"body\":{\"items\":0,\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":0,\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items {} False",
+    "input": "{\"body\":{\"items\":{},\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":{},\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items [None] False",
+    "input": "{\"body\":{\"items\":[null],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[null],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:not-object"
+  },
+  {
+    "name": "memory bad items [False] False",
+    "input": "{\"body\":{\"items\":[false],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[false],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:not-object"
+  },
+  {
+    "name": "memory bad items [[]] False",
+    "input": "{\"body\":{\"items\":[[]],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[[]],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:not-object"
+  },
+  {
+    "name": "memory bad item at -1 False",
+    "input": "{\"body\":{\"items\":[{\"at\":-1,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":-1,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item at None False",
+    "input": "{\"body\":{\"items\":[{\"at\":null,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":null,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item at False False",
+    "input": "{\"body\":{\"items\":[{\"at\":false,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":false,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item at '1' False",
+    "input": "{\"body\":{\"items\":[{\"at\":\"1\",\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":\"1\",\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category '' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'has space' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"has space\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"has space\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'x/y' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"x/y\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"x/y\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'é' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"é\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"é\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category None False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":null,\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":null,\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":false,\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":false,\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq 0 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":0,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":0,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq -1 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":-1,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":-1,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq None False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":null,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":null,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":false,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":false,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq '1' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":\"1\",\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":\"1\",\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item note_id '' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item note_id None False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":null,\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":null,\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item note_id False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":false,\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":false,\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item text False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":false}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":false}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item text 0 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":0}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":0}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item text {} False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":{}}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":{}}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory too many items False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_at -1 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":-1,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":-1,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_at False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":false,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":false,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_at '1' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":\"1\",\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":\"1\",\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq 0 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":0,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":0,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq -1 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":-1,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":-1,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq False False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":false,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":false,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq '1' False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":\"1\",\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":\"1\",\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier text None False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier demoted_at 0 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":0,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":0,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier demoted_seq 9 False",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory list request True None",
+    "input": "{\"body\":{\"before\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest"
+  },
+  {
+    "name": "memory list request True note-previous",
+    "input": "{\"body\":{\"before\":\"note-previous\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":\"note-previous\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest"
+  },
+  {
+    "name": "memory forgotten reply",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory empty reply True",
+    "input": "{\"body\":{\"items\":[],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory next cursor True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":\"note-1\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":\"note-1\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory reply wrong direction True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:unknown-kind"
+  },
+  {
+    "name": "memory missing item at True",
+    "input": "{\"body\":{\"items\":[{\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item category True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item cite_seq True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item demoted_at True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item demoted_seq True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item note_id True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing item text True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\"}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\"}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing reply items True",
+    "input": "{\"body\":{\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing reply next True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing reply tier True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory extra reply field True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"secret\":\"private\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"secret\":\"private\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:unknown-field"
+  },
+  {
+    "name": "memory extra item field True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"secret\":\"private\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"secret\":\"private\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:unknown-field"
+  },
+  {
+    "name": "memory bad tier 'signed' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"signed\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"signed\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad tier None True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad tier False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":false},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":false},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad tier 0 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":0},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":0},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next '' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":\"\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":\"\",\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":false,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":false,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next 0 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":0,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":0,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad next [] True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":[],\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":[],\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items None True",
+    "input": "{\"body\":{\"items\":null,\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":null,\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items False True",
+    "input": "{\"body\":{\"items\":false,\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":false,\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items 0 True",
+    "input": "{\"body\":{\"items\":0,\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":0,\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items {} True",
+    "input": "{\"body\":{\"items\":{},\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":{},\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad items [None] True",
+    "input": "{\"body\":{\"items\":[null],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[null],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:not-object"
+  },
+  {
+    "name": "memory bad items [False] True",
+    "input": "{\"body\":{\"items\":[false],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[false],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:not-object"
+  },
+  {
+    "name": "memory bad items [[]] True",
+    "input": "{\"body\":{\"items\":[[]],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[[]],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:not-object"
+  },
+  {
+    "name": "memory bad item at -1 True",
+    "input": "{\"body\":{\"items\":[{\"at\":-1,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":-1,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item at None True",
+    "input": "{\"body\":{\"items\":[{\"at\":null,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":null,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item at False True",
+    "input": "{\"body\":{\"items\":[{\"at\":false,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":false,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item at '1' True",
+    "input": "{\"body\":{\"items\":[{\"at\":\"1\",\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":\"1\",\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category '' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'has space' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"has space\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"has space\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'x/y' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"x/y\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"x/y\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category 'é' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"é\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"é\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category None True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":null,\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":null,\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item category False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":false,\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":false,\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq 0 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":0,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":0,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq -1 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":-1,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":-1,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq None True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":null,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":null,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":false,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":false,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item cite_seq '1' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":\"1\",\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":\"1\",\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item note_id '' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item note_id None True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":null,\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":null,\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item note_id False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":false,\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":false,\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item text False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":false}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":false}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item text 0 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":0}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":0}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad item text {} True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":{}}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":{}}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory too many items True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null},{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_at -1 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":-1,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":-1,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_at False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":false,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":false,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_at '1' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":\"1\",\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":\"1\",\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq 0 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":0,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":0,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq -1 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":-1,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":-1,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq False True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":false,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":false,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory bad demotion demoted_seq '1' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":\"1\",\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":\"1\",\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier text 'erased text' True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":\"erased text\"}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":\"erased text\"}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier demoted_at None True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier demoted_seq None True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier demoted_seq 1 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":1,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":1,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory mismatched tier demoted_seq 7 True",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":7,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":7,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad before ''",
+    "input": "{\"body\":{\"before\":\"\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":\"\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad before False",
+    "input": "{\"body\":{\"before\":false,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":false,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad before 0",
+    "input": "{\"body\":{\"before\":0,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":0,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad before []",
+    "input": "{\"body\":{\"before\":[],\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":[],\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad tier 'signed'",
+    "input": "{\"body\":{\"before\":null,\"tier\":\"signed\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"tier\":\"signed\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad tier None",
+    "input": "{\"body\":{\"before\":null,\"tier\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"tier\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad tier False",
+    "input": "{\"body\":{\"before\":null,\"tier\":false},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"tier\":false},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory request bad tier 0",
+    "input": "{\"body\":{\"before\":null,\"tier\":0},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"tier\":0},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:invalid-field"
+  },
+  {
+    "name": "memory missing request before",
+    "input": "{\"body\":{\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory missing request tier",
+    "input": "{\"body\":{\"before\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:missing-field"
+  },
+  {
+    "name": "memory extra request",
+    "input": "{\"body\":{\"before\":null,\"secret\":\"private\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"secret\":\"private\",\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "guest",
+    "frame_refusal": "frame:unknown-field"
+  },
+  {
+    "name": "memory request wrong direction",
+    "input": "{\"body\":{\"before\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "canonical": "{\"body\":{\"before\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:unknown-kind"
+  },
+  {
+    "name": "memory safe integer bound at",
+    "input": "{\"body\":{\"items\":[{\"at\":9007199254740991,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":9007199254740991,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory safe integer bound cite_seq",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":9007199254740990,\"demoted_at\":124,\"demoted_seq\":9007199254740991,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":9007199254740990,\"demoted_at\":124,\"demoted_seq\":9007199254740991,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory safe integer bound demoted_at",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":9007199254740991,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":9007199254740991,\"demoted_seq\":9,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory safe integer bound demoted_seq",
+    "input": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9007199254740991,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":124,\"demoted_seq\":9007199254740991,\"note_id\":\"note-1\",\"text\":null}],\"next\":null,\"tier\":\"forgotten\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor"
+  },
+  {
+    "name": "memory noncanonical reply",
+    "input": "{\"v\": 1, \"id\": \"memory_fixture\", \"kind\": \"memory.list.reply\", \"body\": {\"tier\": \"remembered\", \"items\": [{\"note_id\": \"note-1\", \"category\": \"personal\", \"at\": 123, \"cite_seq\": 7, \"text\": \"A remembered note\", \"demoted_seq\": null, \"demoted_at\": null}], \"next\": null}}",
+    "canonical": "{\"body\":{\"items\":[{\"at\":123,\"category\":\"personal\",\"cite_seq\":7,\"demoted_at\":null,\"demoted_seq\":null,\"note_id\":\"note-1\",\"text\":\"A remembered note\"}],\"next\":null,\"tier\":\"remembered\"},\"id\":\"memory_fixture\",\"kind\":\"memory.list.reply\",\"v\":1}",
+    "frame_direction": "supervisor",
+    "frame_refusal": "frame:not-canonical"
+  }
+]

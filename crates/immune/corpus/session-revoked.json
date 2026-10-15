@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:session-required","guarded_issue":"#41","id":"session-revoked","organ":"aumlok","scenario":{"steps":[{"action":"new_claim","save":"claim"},{"action":"http","body":{"token":{"$ref":"claim"}},"method":"POST","path":"/api/claim"},{"action":"revoke_session"},{"action":"http","body":{},"cookie":true,"method":"POST","path":"/api/enrol/start"}]}}

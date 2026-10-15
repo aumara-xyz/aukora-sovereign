@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:unknown-route","guarded_issue":"#41","id":"chat-owner-route","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{},"host":"chat-test.example","method":"GET","path":"/api/approvals"}]}}

@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:cookie-host-refused","guarded_issue":"#41","id":"chat-owner-cookie","organ":"frontdoor","scenario":{"steps":[{"action":"new_claim","save":"claim"},{"action":"http","body":{"token":{"$ref":"claim"}},"method":"POST","path":"/api/claim"},{"action":"http","body":{},"cookie":true,"host":"chat-test.example","method":"GET","path":"/assets/example.js"}]}}

@@ -1,0 +1,1 @@
+{"expected_refusal":"aumlok:claim-unknown","guarded_issue":"#41","id":"claim-unknown","organ":"aumlok","scenario":{"steps":[{"action":"http","body":{"token":"disposable-unknown-claim"},"method":"POST","path":"/api/claim"}]}}

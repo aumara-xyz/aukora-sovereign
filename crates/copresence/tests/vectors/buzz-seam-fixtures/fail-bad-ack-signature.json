@@ -1,0 +1,51 @@
+{
+ "v": 0,
+ "schema": "aukora.copresence.receipt.v1",
+ "alg": "ECDSA-P256-SHA256-P1363",
+ "pk_A": "04555eec79131f66fb96a75fea2ff8bbe929a825ab3e5ab29c5a1a43a67ebfb536bdc481ef04c30a5ac0f4665304fc69babf76e65267c11ce945db8da27f6ce60b",
+ "pk_B": "049f2442d5e7a5566e57fd67240dc2c9bf0bed96bc803f3d7f3827a2ed2ce67c3f1cfc86ce4437d7b8500694a445bd17db97347124509848219fccb5453ad7cf0d",
+ "nonce_A": "114aa885f8ec1d5f",
+ "nonce_B": "e961657c17d4fdd3",
+ "t_A": 1791800000,
+ "t_B": 1791800000,
+ "sig_A": "7a5a3a0116cf840b9f788ae62815b5eec4d6a39deffe5a0ae0868f06548d95d15ff7d894846ec97639958e10893ac7a9718fad99fc1cb2c8d56c574a82ee038f",
+ "sig_B": "7705326d27de66fa998064c2a03288531920c9af1d187d96f202a4f2f57733cfe31358ad82c32f9785cd919486a9ebf40bc2aac6e2d7e705038aaab179d613e5",
+ "core": "f62e88351f12f9bb66704a6096106e2b906959e3ad701d3675e037ab9dc12278",
+ "digest": "7B1D5F2B",
+ "minted_by": "B",
+ "clocks": {
+  "minted_at_local": 1791800000,
+  "t_B_local": 1791800000,
+  "clamped": false,
+  "skew_s": 0
+ },
+ "sentinel_verdict": "CONSISTENT_CLAIMED",
+ "position_source": "SELF_REPORTED_UNVERIFIABLE",
+ "anomalies": [],
+ "acoustic_channel": "NOT_PERFORMED",
+ "signed_fields": [
+  "pk_A",
+  "pk_B",
+  "nonce_A",
+  "nonce_B",
+  "t_B"
+ ],
+ "does_not_prove": [
+  "That two different humans were present;",
+  "That any human was present;",
+  "That the devices belong to anyone in particular;",
+  "That the pairing was not relayed by a determined attacker with a fast video link;",
+  "Anything about location beyond line-of-sight between screen and camera;",
+  "Anything after the moment of the ceremony."
+ ],
+ "intent": {
+  "text": "buzz-grant:abababababababababababababababababababababababababababababababab:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "digest": "1ab46bcd7ece0d7546b8f2d6a0dc025d026965d306be2817507de939c05a0e35",
+  "salt": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "side": "B",
+  "ack": {
+   "sig": "f957f44d22e675fce573bbe368268d99151c134c34d77b8d521086d7fcf5c2d302c1ca7a1a23b990a0ca826bd903833cee3dcf1f242aadfb9e4f4d68432dfac8",
+   "by": "A"
+  }
+ }
+}

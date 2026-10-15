@@ -1,0 +1,12 @@
+[package]
+name = "messaging"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gate = { path = "../gate" }
+nostr = { path = "../nostr" }
+serde_json = "1.0.154"

@@ -1,0 +1,8 @@
+{
+  "generated_with": "Node v24.11.1 crypto.argon2Sync and crypto.hkdfSync",
+  "phrase": "acacia aardvark cabbage abode cabin icon abacus",
+  "salt_hex": "12121212121212121212121212121212",
+  "prf_hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+  "phrase_key_hex": "f34b424ba41c792123caab0fbb8239968f03fbaa5c67767529dca902e17b87e9",
+  "backup_key_hex": "7b270691b8f17cdd87b648aa529eb8b1a246e7436ddb45ea665fc92c65ea4ac7"
+}

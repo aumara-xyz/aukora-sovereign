@@ -1,0 +1,5 @@
+{
+  "name": "accepted parser whitespace",
+  "input": " \n { \"b\" : 2 , \"a\" : 1 } \t ",
+  "canonical": "{\"a\":1,\"b\":2}"
+}

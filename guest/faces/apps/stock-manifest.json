@@ -1,0 +1,83 @@
+{
+  "schema": "aukora-stock-apps-v1",
+  "donorCommit": "645d3213b8aede3b544269b4224ae09df06b0a42",
+  "routes": [
+    {
+      "path": "/stock-apps/dakini-code/assets/index-C2MMIvhO.css",
+      "relative": "dakini-code/assets/index-C2MMIvhO.css",
+      "contentType": "text/css; charset=utf-8",
+      "bytes": 149512,
+      "sha256": "894bc70bd3165115b62cc0ef1b0d4c77a75bee34b301cb7673d55d23c74243b1",
+      "donorPath": "faces/apps/vendor/dakini-code/assets/index-C2MMIvhO.css"
+    },
+    {
+      "path": "/stock-apps/dakini-code/assets/index-t74FFCZZ.js",
+      "relative": "dakini-code/assets/index-t74FFCZZ.js",
+      "contentType": "text/javascript; charset=utf-8",
+      "bytes": 315451,
+      "sha256": "86a20f0b66960990c79758b07506c9148e2bb66adac3951bc1ed5dd2fb16a2dc",
+      "donorPath": "faces/apps/vendor/dakini-code/assets/index-t74FFCZZ.js"
+    },
+    {
+      "path": "/stock-apps/dakini-code/assets/space-Bu4O81zr.js",
+      "relative": "dakini-code/assets/space-Bu4O81zr.js",
+      "contentType": "text/javascript; charset=utf-8",
+      "bytes": 590245,
+      "sha256": "e31cc0bffed35a44b03c9aba5a1b7d9c1673cab72578b9c605d2918e06894e4a",
+      "donorPath": "faces/apps/vendor/dakini-code/assets/space-Bu4O81zr.js"
+    },
+    {
+      "path": "/stock-apps/dakini-code/favicon.svg",
+      "relative": "dakini-code/favicon.svg",
+      "contentType": "image/svg+xml",
+      "bytes": 354,
+      "sha256": "23f5768dc9a51c98a67c41120f6e690a15b14c9236cc96f3690db80855ce9226",
+      "donorPath": "faces/apps/vendor/dakini-code/favicon.svg"
+    },
+    {
+      "path": "/stock-apps/dakini-code/index.html",
+      "relative": "dakini-code/index.html",
+      "contentType": "text/html; charset=utf-8",
+      "bytes": 512,
+      "sha256": "87fda9f9027637a5d3b448194ae63c8ac03480964e8aa3a853f7ca82326bdf3b",
+      "donorPath": "faces/apps/vendor/dakini-code/index.html"
+    }
+  ],
+  "licenses": [
+    {
+      "path": "DAKINI-BASE-UI-NOTICES.md",
+      "bytes": 3706,
+      "sha256": "7d8121ae87cec3cbd784a5056715c8827d0401c88fb3e6f8eb1734d206253dfc"
+    },
+    {
+      "path": "DAKINI-LUCIDE-THREE-NOTICES.md",
+      "bytes": 4532,
+      "sha256": "396129fdb2bf0d2a21bf2682f62ea067a8ad7bb7c4445246f9e27ff66be9f170"
+    },
+    {
+      "path": "DAKINI-REACT-NOTICES.md",
+      "bytes": 3344,
+      "sha256": "b7791bb108fbb680e4edae8bac3ba3d71d1091a61ad3da5590b1af592962a061"
+    },
+    {
+      "path": "upstream/npm/@base-ui/react@1.7.0/LICENSE",
+      "bytes": 1072,
+      "sha256": "07fc1b39d69d14bc7d40482a628f47226258eb01265db68ae684944b916beb2a"
+    },
+    {
+      "path": "upstream/npm/lucide-react@1.31.0/LICENSE",
+      "bytes": 3208,
+      "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+    },
+    {
+      "path": "upstream/npm/react@19.2.6/LICENSE",
+      "bytes": 1088,
+      "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+    },
+    {
+      "path": "upstream/npm/three@0.186.0/LICENSE",
+      "bytes": 1081,
+      "sha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc"
+    }
+  ]
+}

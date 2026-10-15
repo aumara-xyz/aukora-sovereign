@@ -1,0 +1,5 @@
+{
+  "schema": "aukora-app-lock-v1",
+  "aukora_apps": ["Auma Lingwa", "Auma Live", "Zeta Harp", "Human Graph", "Media", "Memory", "Messages", "Documents"],
+  "system": ["AUMLOK", "Identity", "Aura Coherence", "General", "Models", "Plugins", "Agent presets", "Archived sessions"]
+}

@@ -1,0 +1,47 @@
+{
+ "v": 0,
+ "schema": "aukora.copresence.receipt.v1",
+ "alg": "ECDSA-P256-SHA256-P1363",
+ "pk_A": "0458935637377ee787b98a49e146d0a1c978047dd7495da7b4b36af68b2242a09c854b15e2c8cf013d8b2997f10479daaae12dcea4252482fb73e37bbdd7d1d6cf",
+ "pk_B": "04f0011779942faf58e65fe21af7824cb7256b1cb07d676b10931922978cd41bfaee15dbafa0fec1e078887be32d485d8d6ee6d57cff79f9ca462ce2ed108259b8",
+ "nonce_A": "c1323e84466ede6e",
+ "nonce_B": "e961657c17d4fdd3",
+ "t_A": 1791800000,
+ "t_B": 1791800000,
+ "sig_A": "080b12ba985fc40b73938f1221411237293846581957161ed552df28e40146e9dc9b0fb8071ff91455b7b77cb06e955dac37fa51b67bb2afbb427acf782af3d0",
+ "sig_B": "3696577e5edddb19f902ed77fceca6537688e83970a521aa520dc97b319807c2fd59fd8de1c8e948d8dd977becd0bc05b10978ca25ebb13da4ca4a571446877a",
+ "core": "7a963724a8c95650c6a73ce1da17e48e5ee55cef9db6e9f3383bd3ce38e220d6",
+ "digest": "04E5B936",
+ "minted_by": "B",
+ "clocks": {
+  "minted_at_local": 1791800000,
+  "t_B_local": 1791800000,
+  "clamped": false,
+  "skew_s": 0
+ },
+ "sentinel_verdict": "CONSISTENT_CLAIMED",
+ "position_source": "SELF_REPORTED_UNVERIFIABLE",
+ "anomalies": [],
+ "acoustic_channel": "NOT_PERFORMED",
+ "signed_fields": [
+  "pk_A",
+  "pk_B",
+  "nonce_A",
+  "nonce_B",
+  "t_B"
+ ],
+ "does_not_prove": [
+  "That two different humans were present;",
+  "That any human was present;",
+  "That the devices belong to anyone in particular;",
+  "That the pairing was not relayed by a determined attacker with a fast video link;",
+  "Anything about location beyond line-of-sight between screen and camera;",
+  "Anything after the moment of the ceremony."
+ ],
+ "intent": {
+  "text": "buzz-grant:abababababababababababababababababababababababababababababababab:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "digest": "1ab46bcd7ece0d7546b8f2d6a0dc025d026965d306be2817507de939c05a0e35",
+  "salt": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "side": "B"
+ }
+}

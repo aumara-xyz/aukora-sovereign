@@ -1,0 +1,5 @@
+{
+  "name": "escaped surrogate pair becomes literal UTF-8",
+  "input": "{\"face\":\"\\ud83d\\ude00\"}",
+  "canonical": "{\"face\":\"😀\"}"
+}

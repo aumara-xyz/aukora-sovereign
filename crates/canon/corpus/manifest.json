@@ -1,0 +1,112 @@
+[
+  {
+    "name": "duplicate keys",
+    "file": "duplicate-keys.bin",
+    "mode": "parse",
+    "code": "canon:duplicate-key"
+  },
+  {
+    "name": "float",
+    "file": "float.bin",
+    "mode": "parse",
+    "code": "canon:invalid-number"
+  },
+  {
+    "name": "exponent",
+    "file": "exponent.bin",
+    "mode": "parse",
+    "code": "canon:invalid-number"
+  },
+  {
+    "name": "negative zero",
+    "file": "negative-zero.bin",
+    "mode": "parse",
+    "code": "canon:invalid-number"
+  },
+  {
+    "name": "leading zero",
+    "file": "leading-zero.bin",
+    "mode": "parse",
+    "code": "canon:invalid-number"
+  },
+  {
+    "name": "positive integer range",
+    "file": "range-positive.bin",
+    "mode": "parse",
+    "code": "canon:integer-range"
+  },
+  {
+    "name": "negative integer range",
+    "file": "range-negative.bin",
+    "mode": "parse",
+    "code": "canon:integer-range"
+  },
+  {
+    "name": "escaped high surrogate",
+    "file": "surrogate-high.bin",
+    "mode": "parse",
+    "code": "canon:lone-surrogate"
+  },
+  {
+    "name": "escaped low surrogate",
+    "file": "surrogate-low.bin",
+    "mode": "parse",
+    "code": "canon:lone-surrogate"
+  },
+  {
+    "name": "raw surrogate UTF-8",
+    "file": "surrogate-raw.bin",
+    "mode": "parse",
+    "code": "canon:invalid-utf8"
+  },
+  {
+    "name": "NUL",
+    "file": "nul.bin",
+    "mode": "parse",
+    "code": "canon:invalid-json"
+  },
+  {
+    "name": "BOM",
+    "file": "bom.bin",
+    "mode": "parse",
+    "code": "canon:bom"
+  },
+  {
+    "name": "trailing bytes",
+    "file": "trailing.bin",
+    "mode": "parse",
+    "code": "canon:trailing-bytes"
+  },
+  {
+    "name": "depth 65",
+    "file": "depth-65.bin",
+    "mode": "parse",
+    "code": "canon:nesting-too-deep"
+  },
+  {
+    "name": "frame 65537 bytes",
+    "file": "frame-65537.bin",
+    "mode": "frame",
+    "code": "frame:too-large",
+    "direction": "guest"
+  },
+  {
+    "name": "truncated",
+    "file": "truncated.bin",
+    "mode": "parse",
+    "code": "canon:invalid-json"
+  },
+  {
+    "name": "non UTF-8",
+    "file": "non-utf8.bin",
+    "mode": "parse",
+    "code": "canon:invalid-utf8"
+  },
+  {
+    "name": "noncanonical frame",
+    "file": "frame-noncanonical.bin",
+    "mode": "frame",
+    "code": "frame:not-canonical",
+    "direction": "guest"
+  }
+]

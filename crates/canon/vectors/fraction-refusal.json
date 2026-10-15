@@ -1,0 +1,5 @@
+{
+  "name": "fraction refusal",
+  "input": "1.0",
+  "refusal": "canon:invalid-number"
+}

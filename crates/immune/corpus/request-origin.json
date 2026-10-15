@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:origin-refused","guarded_issue":"#41","id":"request-origin","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{"token":"disposable"},"method":"POST","origin":"https://chat-test.example","path":"/api/claim"}]}}

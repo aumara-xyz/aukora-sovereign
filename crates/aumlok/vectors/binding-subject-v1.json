@@ -1,0 +1,22 @@
+{
+  "generator": "Node.js crypto SHA256 and Ed25519, Node v24.11.1",
+  "root_domain": "aukora:aumlok-root-key:v1",
+  "subject_domain": "aukora:aumlok-subject:v1",
+  "vectors": [
+    {
+      "root_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "public_hex": "877d7ec6d6af34b20de9c875e5da0036c3e92f683db78186060ea58a3df3e676",
+      "subject": "aukora:1:33382b96f3f1b79bb5dfc6e3788b1189aa4c1ca3cb65dd7dd8c4f6f703713d60"
+    },
+    {
+      "root_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "public_hex": "f6e6f39aaea90f089e081291a7596e59c5374b3fdcb990967489c036f0569014",
+      "subject": "aukora:1:dac2ad9dfda98048c45fa4ca5caf071237d50e384ccc577dcb7aa2ae040fa753"
+    },
+    {
+      "root_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "public_hex": "10d6e83abb49590e377c33727138f8d922d8e60e2a788621229a6a06d0cc4cb6",
+      "subject": "aukora:1:ffabdd35feab71d5e44a2482c9f853e9a43b76e9bdc6285ac598524eaf5543e6"
+    }
+  ]
+}

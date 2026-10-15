@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:host-refused","guarded_issue":"#41","id":"request-exact-host","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{"token":"disposable"},"host":"owner-test.example.attacker.example","method":"POST","path":"/api/claim"}]}}

@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:fetch-site-refused","guarded_issue":"#41","id":"request-fetch-site","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{"token":"disposable"},"fetch_site":"cross-site","method":"POST","path":"/api/claim"}]}}

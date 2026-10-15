@@ -1,0 +1,1 @@
+{"expected_refusal":"aumlok:binding-required","guarded_issue":"#41","id":"owner-before-binding","organ":"frontdoor","scenario":{"steps":[{"action":"new_claim","save":"claim"},{"action":"http","body":{"token":{"$ref":"claim"}},"method":"POST","path":"/api/claim"},{"action":"http","body":{},"cookie":true,"method":"GET","path":"/api/approvals"}]}}

@@ -1,0 +1,5 @@
+{
+  "name": "duplicate key refusal",
+  "input": "{\"a\":1,\"a\":2}",
+  "refusal": "canon:duplicate-key"
+}

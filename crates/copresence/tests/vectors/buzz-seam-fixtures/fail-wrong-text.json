@@ -1,0 +1,51 @@
+{
+ "v": 0,
+ "schema": "aukora.copresence.receipt.v1",
+ "alg": "ECDSA-P256-SHA256-P1363",
+ "pk_A": "0447f86a41b132b1ed5689779aa856c98642dce0cc39e50d2e88ba1d50c8f117def0cc6714488568a7eadc953c3e427085dbc3c85c4da6a827afe67b2fdc86d657",
+ "pk_B": "04d777740bcd2fa542597ec6f7ab3f9c75794eeeb6e88176eb5a86ab0be4bce0b2e3fdd71b08d7e63d56669c30b79beb9d009f9621bbb75005ae3ba4b217d48b4f",
+ "nonce_A": "62dba6f9a047ae88",
+ "nonce_B": "eb68ec7036c4f581",
+ "t_A": 1791800000,
+ "t_B": 1791800000,
+ "sig_A": "67ac3249da422e1d2dc935d92e2d97360456e7e2edea350714fe345200cd790030b38f658f75489ac4e1dfb4bc25ec4df3e48b38608670146c207ce1eb227402",
+ "sig_B": "8b326c53031aa878c15f9a5341bebb9df1d1cd05e5b1794112f2f86b0d329af3a3f1d287bc994503d3a8872b994a0f1e34d2c3d30fc0319eb6fd7f069429d9d8",
+ "core": "268f6eff94076d35273258de5bbccefdfa721f9c5a27c17b4879e7913979cfe3",
+ "digest": "73575913",
+ "minted_by": "A",
+ "clocks": {
+  "minted_at_local": 1791800000,
+  "peer_frame_t": 1791800000,
+  "clamped": false,
+  "skew_s": 0
+ },
+ "sentinel_verdict": "CONSISTENT_CLAIMED",
+ "position_source": "SELF_REPORTED_UNVERIFIABLE",
+ "anomalies": [],
+ "acoustic_channel": "NOT_PERFORMED",
+ "signed_fields": [
+  "pk_A",
+  "pk_B",
+  "nonce_A",
+  "nonce_B",
+  "t_B"
+ ],
+ "does_not_prove": [
+  "That two different humans were present;",
+  "That any human was present;",
+  "That the devices belong to anyone in particular;",
+  "That the pairing was not relayed by a determined attacker with a fast video link;",
+  "Anything about location beyond line-of-sight between screen and camera;",
+  "Anything after the moment of the ceremony."
+ ],
+ "intent": {
+  "text": "buzz-grant:acababababababababababababababababababababababababababababababab:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "digest": "6853256f75c8c74defb63986477653748bd9b4b5af2a21593cba47ddee1e4bf5",
+  "salt": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "side": "A",
+  "ack": {
+   "sig": "bc1f74db5d1998c03136609c8b442c7e4827d364a903e41c684506aba4328181971eefdca0cc2878a20ed667444272b00c93bb0672fab63a823a359ad03358fc",
+   "by": "B"
+  }
+ }
+}

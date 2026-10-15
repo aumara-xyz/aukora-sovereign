@@ -1,0 +1,14 @@
+[package]
+name = "wasmcell"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+hex = "0.4.3"
+serde_json = "1.0.145"
+sha2 = "0.11.0"
+thiserror = "2.0.21"
+wasmtime = { version = "34.0.2", default-features = false, features = ["cranelift", "runtime"] }

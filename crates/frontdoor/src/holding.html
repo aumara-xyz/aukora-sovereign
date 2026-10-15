@@ -1,0 +1,78 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en" style="color-scheme:dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Approvals</title>
+<style>
+body{--aukora-background:#0b0d18;--aukora-border:#ffffff1a;--aukora-text:#e8eaed;--dsw-alias-bg-layer-2:#1F232E;--dsw-alias-border-l1:var(--aukora-border);--dsw-alias-label-primary:var(--aukora-text);margin:0;min-height:100dvh;background:var(--aukora-background);color:var(--dsw-alias-label-primary);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+dialog[data-owner-sheet]{padding:0;width:min(1100px,calc(100vw - 48px));height:min(820px,calc(100dvh - 48px));max-width:none;max-height:none;border:1px solid var(--dsw-alias-border-l1);border-radius:20px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv1);backdrop-filter:blur(24px)}
+dialog[data-owner-sheet]::backdrop{background:rgba(0,0,0,.38);backdrop-filter:blur(8px)}
+.JS6p6q_panel{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);width:100%;height:100%;box-shadow:var(--dsw-shadow-lv1);border-radius:20px;margin:0;display:flex;flex-direction:column;overflow:hidden;container:JS6p6q_settings-panel/inline-size}
+.JS6p6q_title{white-space:nowrap;text-overflow:ellipsis;min-width:0;color:var(--dsw-alias-label-primary);font-size:16px;font-weight:600;line-height:24px;overflow:hidden}
+.JS6p6q_header{height:56px;padding:16px 24px;box-sizing:border-box;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;align-items:center;gap:8px;display:flex;justify-content:space-between}
+.JS6p6q_close{cursor:pointer;width:30px;height:30px;color:var(--dsw-alias-label-primary);background:0 0;border:none;border-radius:50%;justify-content:center;align-items:center;padding:0;display:inline-flex}
+.JS6p6q_close:hover{background:var(--dsw-alias-interactive-bg-hover)}
+iframe{flex:1;width:100%;border:0;min-height:0}
+</style>
+</head>
+<body data-ds-dark-theme>
+<dialog id="owner-sheet" aria-label="Approvals" data-owner-sheet="approvals">
+  <div class="JS6p6q_panel">
+    <header class="JS6p6q_header"><strong class="JS6p6q_title">Approvals</strong><button id="owner-close" type="button" class="JS6p6q_close" aria-label="Close owner panel">×</button></header>
+    <iframe id="owner-frame" title="Approvals" src="__OWNER_ORIGIN__/#/embed/approvals" allow="publickey-credentials-get; publickey-credentials-create" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" referrerPolicy="no-referrer"></iframe>
+  </div>
+</dialog>
+<script>
+(() => {
+  const ownerOrigin = '__OWNER_ORIGIN__'
+  const dialog = document.getElementById('owner-sheet')
+  const frame = document.getElementById('owner-frame')
+  let decision = 0
+  let polling = false
+  let again = false
+  let timer
+
+  function close() { if (dialog.open) dialog.close() }
+  function validDecision(event) {
+    const data = event.data
+    return event.origin === ownerOrigin && frame.contentWindow != null && event.source === frame.contentWindow
+      && data !== null && typeof data === 'object' && !Array.isArray(data)
+      && Object.keys(data).sort().join(',') === 'event,kind,pending'
+      && data.kind === 'aukora-owner' && data.event === 'decided'
+      && Number.isSafeInteger(data.pending) && data.pending >= 0
+  }
+
+  async function poll() {
+    clearTimeout(timer)
+    if (polling) { again = true; return }
+    polling = true
+    const issuedDecision = decision
+    try {
+      const response = await fetch('/__aukora/release', { credentials: 'same-origin', cache: 'no-store', redirect: 'error' })
+      if (!response.ok) return
+      const state = await response.json()
+      if (issuedDecision === decision && state?.agent === 'running') window.location.reload()
+    } catch { /* Unavailable state never establishes that the guest is running. */ }
+    finally {
+      polling = false
+      if (again) { again = false; void poll() }
+      else timer = setTimeout(poll, 5000)
+    }
+  }
+
+  document.getElementById('owner-close').addEventListener('click', close)
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close() })
+  dialog.addEventListener('click', event => { if (event.target === event.currentTarget) close() })
+  window.addEventListener('message', event => {
+    if (!dialog.open || !validDecision(event)) return
+    decision += 1
+    if (event.data.pending === 0) { close(); void poll() }
+  })
+  dialog.showModal()
+  void poll()
+})()
+</script>
+</body>
+</html>

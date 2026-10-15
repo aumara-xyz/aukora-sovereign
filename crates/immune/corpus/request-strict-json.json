@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:body-invalid","guarded_issue":"#41","id":"request-strict-json","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{},"method":"POST","path":"/api/claim","raw_body":"{\"token\":\"one\",\"token\":\"two\"}"}]}}

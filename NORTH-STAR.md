@@ -32,7 +32,7 @@ and can never act past the boundary without its owner's approval, with a receipt
   - AUKORA APPS: Auma Lingwa, Auma Live, Zeta Harp, Human Graph, Media, Memory, Messages, Documents.
   - SYSTEM: AUMLOK, Identity, Aura Coherence, General, Models, Plugins, Agent presets, Archived sessions.
 - **One node, one link.** Passkey, phrase and approvals are pop-ups inside the app. They are served by the node itself
-  from an invisible, framed-only owner origin (`crates/frontdoor`, `owner-panes/`), never by the agent.
+  from an invisible, framed-only owner origin (`crates/frontdoor`, `ui/owner/`), never by the agent.
 - **The cage** (`crates/launcher`): Auma runs as a different host user with no network, under user namespaces,
   Landlock and seccomp. She can only propose. The boot self-attack (`crates/immune`) proves the cage at every start.
 - **The gate** (`crates/gate`): exact bytes are shown, approved by passkey, applied once and never replayed. Auma can
@@ -59,7 +59,7 @@ and can never act past the boundary without its owner's approval, with a receipt
   without a direct invite from me or someone I've invited." A one-time code, valid 48 hours, three per member.
 - **Co-presence** (`portal/`, `crates/copresence`): two screens show each other signed light. It is evidence of being
   in the same place, never authority.
-- **Go Sovereign** (`ops/go-sovereign`, `ops/spawn`): a valid invite unlocks a fresh node with one click.
+- **Go Sovereign** (`deploy/go-sovereign`, `deploy/spawn`): a valid invite unlocks a fresh node with one click.
 
 ## How it fits (the technical rules are in spec/SPEC-v0.2.md sections 2 to 7, unchanged, with one amendment: one link)
 - **One trusted supervisor** process holds every authority. It is **wiring only**: it starts the organs and routes
@@ -80,12 +80,16 @@ spec/            frozen technical appendix: SPEC v0.2, CONTRACTS, CARRY-LIST, co
 crates/          canon aura gate laya aumlok kira broker wasmcell floor immune verifier pentora
                  nostr relay messaging invites copresence launcher frontdoor supervisor
 app/             the Spatial app, whole: vendored, pinned, provenance recorded (no path into another repository)
-owner-panes/     the trusted pop-ups only; never a page
+ui/owner/        the trusted pop-ups (passkey, phrase, approvals, AUMLOK), shown only framed inside the app; never a page
 guest/           the sandbox bridge (FD 3 client, model adapter, service adapters for the app)
+bridge/          the JavaScript twins of canon, shared with the guest
 portal/          the co-presence Point-and-Bloom page
-ops/             spawn (LXD and Nebius VM), go-sovereign, upgrade, reproduce
-checks/          the machine rules below
-tests/e2e/       one test per milestone
+deploy/          spawn (LXD and Nebius VM), go-sovereign, upgrade, the install units
+scripts/         check.sh, antibodies.py, reproduce.sh
+immune/          the antibody registry
+tools/           verify.py, the stranger's verifier in Python
+checks/          the machine rules below (run.py, scaffold.json, baseline.json)
+tests/           shared test support, and tests/e2e/ with one acceptance test per milestone
 ```
 Each crate has a README of 10 lines or fewer: what it owns, what it never owns, and which crates it may depend on.
 No authored file is longer than 1,000 lines.
@@ -107,12 +111,12 @@ never dropped; Peter decides when.
 | 7 | AUKORA APPS: Memory (Remembered, Signed, Proposals, Forgotten) reading Kira | SOURCE | archive guest memory route (2e64029) + Prime memory face | app/, guest/ | M4 |
 | 8 | AUKORA APPS: Messages, the node's Nostr messages | BUILD | Prime messages face + archive messaging | app/, guest/, crates/messaging | M6 |
 | 9 | AUKORA APPS: Documents (read-only, full-page rendered) | PORT | Prime aukora-face documents | app/ | M1 |
-| 10 | SYSTEM: AUMLOK (seven-word binding witness), opening the trusted panes | PORT | Prime aukora-face aumlok + archive owner panes | app/, owner-panes/ | M1 |
+| 10 | SYSTEM: AUMLOK (seven-word binding witness), opening the trusted panes | PORT | Prime aukora-face aumlok + archive owner panes | app/, ui/owner/ | M1 |
 | 11 | SYSTEM: Identity (public contact card, contact codes, safety numbers) | PORT | Prime aukora-face aumlok (contact-qr, contact-verification) | app/, crates/nostr | M6 |
 | 12 | SYSTEM: Aura Coherence (the Pentora picture) | RAN | archive pentora + organs snapshot (7257d39); seen rendering on S2 on 2026-10-15 | app/, crates/pentora | M5 |
 | 13 | SYSTEM: General, Models, Plugins, Agent presets, Archived sessions | PORT | Prime aukora-face settings, threads | app/ | M1 |
 | 14 | Auma theme: the first self-change target | PORT | Prime plugins/aukora-auma-theme | app/ | M3 |
-| 15 | Every Prime plugin accounted for. Into the app: aukora-face, aukora-foundation, aukora-auma-theme, aukora-board, aukora-goal-resume, aukora-eye (its capture denied during ceremonies), aukora-organism, aukora-subscription-hands, aukora-gate-demo, aukora-action-gate (brick 30). Replaced by a crate: aukora-aumlok (aumlok), aukora-box (wasmcell; it holds the cell's source), aukora-kira (kira), aukora-nostr (nostr, relay, messaging), aukora-owner-daemon (supervisor, owner-panes), aukora-composition-gate (the supervisor's harness digest check), aukora-openshell-confinement, aukora-seatbelt, aukora-core-read-deny and aukora-caged-worker (launcher). Later: aukora-buzz-door and aukora-relay-auma (brick 87) | PORT | Prime plugins/ | app/ | M1 |
+| 15 | Every Prime plugin accounted for. Into the app: aukora-face, aukora-foundation, aukora-auma-theme, aukora-board, aukora-goal-resume, aukora-eye (its capture denied during ceremonies), aukora-organism, aukora-subscription-hands, aukora-gate-demo, aukora-action-gate (brick 30). Replaced by a crate: aukora-aumlok (aumlok), aukora-box (wasmcell; it holds the cell's source), aukora-kira (kira), aukora-nostr (nostr, relay, messaging), aukora-owner-daemon (supervisor, ui/owner), aukora-composition-gate (the supervisor's harness digest check), aukora-openshell-confinement, aukora-seatbelt, aukora-core-read-deny and aukora-caged-worker (launcher). Later: aukora-buzz-door and aukora-relay-auma (brick 87) | PORT | Prime plugins/ | app/ | M1 |
 | 16 | App lock: Peter's app and System entries are registered, visible and opening, never hidden | BUILD | new | checks/ | M1 |
 | 17 | App start speed: warm the plugin bundle when the agent starts (first chat took 49 s on a 2-vCPU VM) | SOURCE | archive #47 (a warm-up exists in the archive frontdoor; the 49 s first load is unmeasured) | guest/ | M1 |
 | 98 | Every Prime package accounted for: authority, contracts, copresence, cordis-tool-provider, desktop, evolution-lab, execution, inference, invites, memory, ops, owner-key, runtime-bridge, ui; each carried into a crate, ported, or marked replaced | PORT | Prime packages/ | crates/, app/ | M1 |
@@ -121,12 +125,12 @@ never dropped; Peter decides when.
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
 | 18 | One link: one address per node; the owner origin invisible and only ever framed | BUILD | archive frontdoor (pop-up panes RAN) | crates/frontdoor | M1 |
-| 19 | Sign-in inside the app: a passkey pop-up, never a redirect | BUILD | archive frontdoor + owner panes | crates/frontdoor, owner-panes/ | M1 |
-| 20 | Claiming a fresh node happens at the one link | BUILD | archive claim screen | crates/frontdoor, owner-panes/ | M1 |
+| 19 | Sign-in inside the app: a passkey pop-up, never a redirect | BUILD | archive frontdoor + owner panes | crates/frontdoor, ui/owner/ | M1 |
+| 20 | Claiming a fresh node happens at the one link | BUILD | archive claim screen | crates/frontdoor, ui/owner/ | M1 |
 | 21 | Approvals pop up by themselves, also while the agent is stopped | RAN | archive holding page (b0f148c) | crates/frontdoor | M1 |
 | 22 | The app stays signed in across restarts and upgrades | RAN | archive durable sessions (a3c4988) | crates/frontdoor | M1 |
 | 23 | The agent never runs unbound; an unbound session gets only the binding screens | RAN | archive frontdoor + supervisor | crates/frontdoor, crates/supervisor | M1 |
-| 24 | TLS, host-only __Host- cookies, one Caddy block per node | RAN | archive frontdoor + deploy/spawn/caddy.sh | crates/frontdoor, ops/ | M1 |
+| 24 | TLS, host-only __Host- cookies, one Caddy block per node | RAN | archive frontdoor + deploy/spawn/caddy.sh | crates/frontdoor, deploy/ | M1 |
 
 ### C. The cage
 | # | Brick | Status | From | Lives in | Milestone |
@@ -145,7 +149,7 @@ never dropped; Peter decides when.
 | 32 | Canon: strict canonical JSON, FD 3 codec, shared Rust and JS vectors | RAN | archive canon + bridge | crates/canon, guest/ | M1 |
 | 33 | Gate: exact-bytes proposals, consumed once, recovery sweep, crash injection at every transition | RAN | archive gate | crates/gate | M3 |
 | 34 | Retire and reconcile (Prime I1-I9): a declined or interrupted proposal never blocks its target | RAN | archive gate (#32), Prime #7 | crates/gate | M3 |
-| 35 | Approval card: every field shown; the passkey signs the C5 authorization of exact bytes | RAN | archive gate + owner panes | crates/gate, owner-panes/ | M3 |
+| 35 | Approval card: every field shown; the passkey signs the C5 authorization of exact bytes | RAN | archive gate + owner panes | crates/gate, ui/owner/ | M3 |
 | 36 | Laya slider: ask for everything, only for risky things, or not within today's limits; standing permission by fingerprint | SOURCE | archive gate standing (01a2093); the card was raised and retired on S2, and no standing permission was used live yet | crates/laya, crates/gate | M3 |
 | 37 | Laya triage (escalate only) with its benchmark; each Laya fine-tune ships as a pinned, reviewed model release | PORT | Prime lab (13.5% false alarms recorded) | crates/laya | M3 |
 | 38 | Chat, Build and Yolo modes | BUILD | archive #23 | crates/laya | M3 |
@@ -159,7 +163,7 @@ never dropped; Peter decides when.
 |---|---|---|---|---|---|
 | 43 | Passkey enrolment and WebAuthn (Prime semantics on RustCrypto), durable ceremonies | RAN | archive aumlok | crates/aumlok | M1 |
 | 44 | Acrostic seven-word phrase (ROOT, UNITE, RISE), honest entropy, envelope over a random root; decide whether the phrase is derived in a browser worker or on the node | RAN | archive aumlok | crates/aumlok | M1 |
-| 45 | Phrase refresh screen | RAN | archive aumlok (1e8a53b); ran live on S2 with a software key; Touch ID refresh not yet | crates/aumlok, owner-panes/ | M1 |
+| 45 | Phrase refresh screen | RAN | archive aumlok (1e8a53b); ran live on S2 with a software key; Touch ID refresh not yet | crates/aumlok, ui/owner/ | M1 |
 | 46 | Passkey-bound backup (WebAuthn PRF) | SOURCE | archive aumlok (#50) | crates/aumlok | M4 |
 | 47 | Add a machine; pair a device by co-presence | BUILD | archive #24, contact portal | crates/aumlok, crates/copresence | M7 |
 | 48 | Delegation lineage root to device to session to agent; revocation rechecked at every use | BUILD | archive #61, kernel spec | crates/aumlok | M7 |
@@ -171,7 +175,7 @@ never dropped; Peter decides when.
 | 50 | Aura: one signed record, two arms, export with proofs (vectors at 1 to 32) | RAN | archive aura | crates/aura | M5 |
 | 51 | Cold proof export: one download any stranger can verify offline | SOURCE | archive #27 | crates/aura, crates/verifier | M5 |
 | 52 | The minimal verifier: aukora-verify and verify.py, from an empty folder, with Prime's regressions | SOURCE | archive verifier + tools/verify.py; the witness check ran against S2's relays; the stranger line is pending | crates/verifier | M5 |
-| 53 | Owner-browser head witness: rollback and fork alarm on every visit | SOURCE | archive owner-witness | owner-panes/ | M5 |
+| 53 | Owner-browser head witness: rollback and fork alarm on every visit | SOURCE | archive owner-witness | ui/owner/ | M5 |
 | 54 | Aura head witnessed on Nostr relays | RAN | archive relay (b8ecb85); S2's head verified from the Mac against two public relays on 2026-10-15 | crates/relay | M5 |
 | 55 | Pentora digest: 110 trits, identical on every device | RAN | archive pentora | crates/pentora | M5 |
 | 56 | Live posture rows: the node attests its sandbox state into Aura on a schedule | BUILD | archive #26 | crates/immune, crates/aura | M5 |
@@ -180,7 +184,7 @@ never dropped; Peter decides when.
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
 | 57 | Kira: encrypted notes, content-free commitments, demote never delete, cited recall (found, empty, undetermined); doctrines: usage never raises confidence, a summary is never the only copy, TTL means review-by | SOURCE | archive kira | crates/kira | M4 |
-| 58 | OpenViking recall by meaning inside the node, with a local embedder | SOURCE | archive openviking; the service ran healthy under the supervisor on S2 on 2026-10-15; recall by meaning not yet shown | crates/kira, ops/ | M4 |
+| 58 | OpenViking recall by meaning inside the node, with a local embedder | SOURCE | archive openviking; the service ran healthy under the supervisor on S2 on 2026-10-15; recall by meaning not yet shown | crates/kira, deploy/ | M4 |
 | 59 | Memory permissions: disclose (done), store, dataset, export, train, activate | BUILD | carry list, Prime I-09 | crates/kira | M4 |
 | 60 | Encrypted memory backup on relays and between the owner's own nodes | BUILD | archive #65, Prime records plan | crates/kira, crates/messaging | M6 |
 | 61 | Member exit: export keys, memory and receipts; verify offline; restore with original ids | BUILD | archive #66, Prime #4 | crates/supervisor, crates/verifier | M7 |
@@ -204,16 +208,16 @@ never dropped; Peter decides when.
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
 | 69 | Nostr node and agent identities, bound to Aura | RAN | archive nostr identity (#52) | crates/nostr, crates/supervisor | M6 |
-| 70 | Relay client and an allowlisted egress path per relay | RAN | archive relay + spawn egress (#57) | crates/relay, ops/ | M6 |
+| 70 | Relay client and an allowlisted egress path per relay | RAN | archive relay + spawn egress (#57) | crates/relay, deploy/ | M6 |
 | 71 | Node-to-node gift-wrapped messages; contacts and sends are passkey cards | RAN | archive messaging; ran live S2 to S4 through public relays on 2026-10-15 (archive #60) | crates/messaging | M6 |
 
 ### K. Growth: invites, spawn, Go Sovereign, co-presence
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
 | 72 | Invites: signed, 48 hours, three per member, provenance in the new node's first record | RAN | archive invites; ran live S2 to S4 on 2026-10-15 (archive #59) | crates/invites | M7 |
-| 73 | One-command spawn: LXD on the host and Nebius VMs | RAN | archive deploy/spawn | ops/spawn | M1 |
-| 74 | Go Sovereign page: paste a code, get a node | BUILD | new (Prime North Star step 11) | ops/go-sovereign | M7 |
-| 75 | Claim with the invite's secret, in the browser | BUILD | archive claim API | owner-panes/ | M7 |
+| 73 | One-command spawn: LXD on the host and Nebius VMs | RAN | archive deploy/spawn | deploy/spawn | M1 |
+| 74 | Go Sovereign page: paste a code, get a node | BUILD | new (Prime North Star step 11) | deploy/go-sovereign | M7 |
+| 75 | Claim with the invite's secret, in the browser | BUILD | archive claim API | ui/owner/ | M7 |
 | 76 | Co-presence portal (Point-and-Bloom), screen to screen; the sound, motion and intent-ack layers (built, never run) come with it | PORT | aukora-contact copresence-portal-v0 (ran on Mac and iPhone) | portal/ | M7 |
 | 77 | Co-presence receipt verifier | SOURCE | archive copresence (ef368ee) | crates/copresence | M7 |
 | 78 | Joining ceremony: co-presence with your own two devices, then phrase and passkey | BUILD | Prime North Star, Prime I-17 | portal/, crates/invites | M7 |
@@ -222,13 +226,13 @@ never dropped; Peter decides when.
 ### L. Operations and quality
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
-| 80 | Upgrade without losing the binding; release switch with rollback | BUILD | archive scratch scripts, #22 | ops/ | M1 |
-| 81 | Reproducible build and byte-compare | SOURCE | archive reproduce.sh (#63) | ops/reproduce | M1 |
+| 80 | Upgrade without losing the binding; release switch with rollback | BUILD | archive scratch scripts, #22 | deploy/ | M1 |
+| 81 | Reproducible build and byte-compare | SOURCE | archive reproduce.sh (#63) | scripts/reproduce.sh | M1 |
 | 82 | Pin-drift check on the launcher and policy | BUILD | archive #62 | checks/ | M2 |
 | 83 | Repository checks: no logs, no file over 1,000 lines, no absolute or cross-repository paths, crate dependency allowlists, one plan; a commit-metadata privacy scan before any public push | BUILD | new | checks/ | M1 |
 | 84 | Scaffold lock: how much of the scaffold still stands, checked on main | BUILD | new | checks/ | M1 |
-| 102 | Per-unit systemd hardening, checked with systemd-analyze security | PORT | Prime hardening proposals, carry list | ops/ | M2 |
-| 103 | S1, Peter's archive-era node: keeps running untouched until the new node passes; then its record and memory move by the exit and restore path, or it retires | BUILD | archive #8 | ops/ | M7 |
+| 102 | Per-unit systemd hardening, checked with systemd-analyze security | PORT | Prime hardening proposals, carry list | deploy/ | M2 |
+| 103 | S1, Peter's archive-era node: keeps running untouched until the new node passes; then its record and memory move by the exit and restore path, or it retires | BUILD | archive #8 | deploy/ | M7 |
 | 104 | The archive's open review findings (#46) re-checked against the new code | BUILD | archive #46 | tests/ | M1 |
 
 ### M. Later: kept, never dropped

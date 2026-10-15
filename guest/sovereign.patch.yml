@@ -1,0 +1,125 @@
+[
+  { "id": "llm-deepseek", "disabled": true },
+  { "id": "llm-pi-ai", "disabled": true },
+  { "id": "deepseek-llm-api-extensions", "disabled": true },
+  { "id": "web", "disabled": true },
+  { "id": "ui-settings-plugins", "disabled": true },
+  { "id": "ui-settings-plugin-inventory", "disabled": true },
+  { "id": "session-title-llm", "disabled": true },
+  { "id": "session-telemetry-otel", "disabled": true },
+  { "id": "session-log-deepseek", "disabled": true },
+  { "id": "plugin-package-inventory-deepseek", "disabled": true },
+  { "id": "web-search-deepseek", "disabled": true },
+  { "id": "web-fetch-http", "disabled": true },
+  { "id": "open-in-app", "disabled": true },
+  { "id": "ui-open-in-app", "disabled": true },
+  { "id": "sandbox", "disabled": true },
+  { "id": "client-hmr", "disabled": true },
+  { "id": "tool-bash", "disabled": true },
+  { "id": "tool-pwsh", "disabled": true },
+  { "id": "persistent-shell", "disabled": true },
+  { "id": "pty", "disabled": true },
+  { "id": "terminal-bash", "disabled": true },
+  { "id": "terminal-pwsh", "disabled": true },
+  { "id": "persistent-bash", "disabled": true },
+  { "id": "persistent-pwsh", "disabled": true },
+  { "id": "tool-jobs", "disabled": true },
+  { "id": "terminal-controller", "disabled": true },
+  { "id": "tool-fs", "disabled": true },
+  { "id": "tool-fs-search", "disabled": true },
+  { "id": "tool-skill", "disabled": true },
+  { "id": "skill-filesystem", "disabled": true },
+  { "id": "agent-instructions", "disabled": true },
+  { "id": "workspace-files", "disabled": true },
+  { "id": "file-reference-local", "disabled": true },
+  { "id": "present", "disabled": true },
+  { "id": "ui-sidebar-terminal", "disabled": true },
+  { "id": "ui-deliverables", "disabled": true },
+  { "id": "subagent-spawn-in-process", "disabled": true },
+  { "id": "subagent-fork-in-process", "disabled": true },
+  { "id": "subagent-codex", "disabled": true },
+  { "id": "subagent-claude-code", "disabled": true },
+  { "id": "delegation", "disabled": true },
+  { "id": "tool-subagent-control", "disabled": true },
+  { "id": "tool-subagent-list-agents", "disabled": true },
+  { "id": "tool-subagent", "disabled": true },
+  { "id": "tool-subagent-fork", "disabled": true },
+  { "id": "tool-subagent-codex", "disabled": true },
+  { "id": "tool-subagent-claude-code", "disabled": true },
+  { "id": "ptc-runtime", "disabled": true },
+  { "id": "workflow-ptc", "disabled": true },
+  { "id": "tool-workflow", "disabled": true },
+  { "id": "tool-ralph", "disabled": true },
+  { "id": "tool-cordis", "disabled": true },
+  { "id": "tool-web", "disabled": true },
+  { "id": "mcp-resources", "disabled": true },
+  { "id": "mcp-client", "disabled": true },
+  { "id": "mcp-client-kira-memory", "disabled": true },
+  { "id": "aukora-caged-worker", "disabled": true },
+  { "id": "aukora-eye", "disabled": true },
+  { "id": "ui-settings-models", "disabled": true },
+  { "id": "ui-layout", "disabled": true },
+  { "id": "ui-sidebar", "disabled": true },
+  { "id": "ui-workspace", "disabled": true },
+  { "id": "ui-settings-general", "disabled": true },
+  { "id": "agent-presets", "disabled": true },
+  { "id": "ui-agent-preset", "disabled": true },
+  {
+    "id": "webserver",
+    "config": {
+      "host": "127.0.0.1",
+      "port": 3080,
+      "listenFd": 4,
+      "compression": "gzip",
+      "compressionLevel": 1,
+      "compressionThresholdBytes": 1024
+    }
+  },
+  {
+    "id": "web-runtime",
+    "config": {
+      "openBrowser": false,
+      "printUrl": true,
+      "surfaceContext": false,
+      "trustedHosts": { "__jsExpr": "ctx.webStartup.trustedHosts" }
+    }
+  },
+  {
+    "id": "connection",
+    "config": {
+      "trustedHosts": { "__jsExpr": "ctx.webRuntime.trustedHosts" },
+      "cookieMaxAgeDays": 1
+    }
+  },
+  {
+    "id": "agent-default-model",
+    "config": {
+      "provider": "sovereign",
+      "model": { "__jsExpr": "process.env.DSH_SOVEREIGN_MODEL || 'deepseek/deepseek-chat'" }
+    }
+  },
+  {
+    "insert": [
+      { "id": "aukora-foundation", "name": "./faces/foundation/lib/index.js", "config": { "brandName": "AUKORA", "palette": "aukora-dark" } },
+      { "id": "aukora-face-layout", "name": "./faces/layout/lib/host.mjs" },
+      { "id": "aukora-face-sidebar", "name": "./faces/sidebar/lib/host.mjs" },
+      { "id": "aukora-face-threads", "name": "./faces/threads/lib/host.mjs" },
+      { "id": "aukora-face-apps", "name": "./faces/apps/lib/host.mjs" },
+      { "id": "aukora-face-messages", "name": "./faces/messages/lib/host.mjs" },
+      { "id": "aukora-face-documents", "name": "./faces/documents/lib/host.mjs" },
+      { "id": "aukora-face-settings", "name": "./faces/settings/lib/host.mjs" },
+      { "id": "aukora-face-memory", "name": "./faces/memory/lib/host.mjs" },
+      { "id": "aukora-face-organs", "name": "./faces/organs/lib/host.mjs" },
+      { "id": "aukora-face-services", "name": "./faces/unavailable.mjs" },
+      { "id": "aukora-face-stock-apps", "name": "./faces/stock-apps.mjs" },
+      { "id": "aukora-branding", "name": "./faces/branding.mjs" },
+      {
+        "id": "sovereign-bridge",
+        "name": "./plugin.mjs",
+        "config": {
+          "model": { "__jsExpr": "process.env.DSH_SOVEREIGN_MODEL || 'deepseek/deepseek-chat'" }
+        }
+      }
+    ]
+  }
+]

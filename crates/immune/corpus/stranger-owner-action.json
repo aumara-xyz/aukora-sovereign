@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:session-required","guarded_issue":"#32","id":"stranger-owner-action","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{"id":"00000000000000000000000000000000"},"method":"POST","path":"/api/approvals/retire/challenge"}]}}

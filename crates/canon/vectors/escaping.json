@@ -1,0 +1,5 @@
+{
+  "name": "JSON.stringify escaping",
+  "input": "{\"delete\":\"\",\"controls\":\"\\u0000\\b\\f\\n\\r\\t\",\"slash\":\"/\\\\\\\"\",\"lines\":\"  \"}",
+  "canonical": "{\"controls\":\"\\u0000\\b\\f\\n\\r\\t\",\"delete\":\"\",\"lines\":\"  \",\"slash\":\"/\\\\\\\"\"}"
+}

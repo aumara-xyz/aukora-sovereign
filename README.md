@@ -17,5 +17,13 @@ brick (row number = GitHub issue number), who does what, and the rules. Waiting 
 6. Two nodes talk over Nostr: NOT YET
 7. Go Sovereign: invite, co-presence, a friend's fresh node: NOT YET
 
+## Claim board
+One worker per crate or folder. Claim it here before starting; a diff that does not fit the scaffold is thrown away.
+| Piece | Claimed by | Bricks |
+|---|---|---|
+
+## Checks
+Main only. `python3 -B checks/run.py` runs the machine rules of NORTH-STAR.md; `sh scripts/check.sh` runs everything.
+
 ## Ideas
 None yet.

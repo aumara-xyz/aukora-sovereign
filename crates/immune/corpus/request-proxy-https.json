@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:https-required","guarded_issue":"#41","id":"request-proxy-https","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{"token":"disposable"},"method":"POST","path":"/api/claim","proto":"http"}]}}

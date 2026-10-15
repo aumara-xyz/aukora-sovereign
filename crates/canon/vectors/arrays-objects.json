@@ -1,0 +1,5 @@
+{
+  "name": "arrays and objects",
+  "input": "{\"z\":null,\"a\":[true,false,0,-9007199254740991]}",
+  "canonical": "{\"a\":[true,false,0,-9007199254740991],\"z\":null}"
+}

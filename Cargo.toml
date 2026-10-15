@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "crates/copresence"]
+
+[workspace.package]
+edition = "2021"
+license = "AGPL-3.0-or-later"
+rust-version = "1.85"
+publish = false
+
+# Small target dirs: several builders share one disk.
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+debug = 0
+lto = "thin"

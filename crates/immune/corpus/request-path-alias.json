@@ -1,0 +1,1 @@
+{"expected_refusal":"frontdoor:path-refused","guarded_issue":"#41","id":"request-path-alias","organ":"frontdoor","scenario":{"steps":[{"action":"http","body":{},"method":"GET","path":"/api/%61pprovals"}]}}

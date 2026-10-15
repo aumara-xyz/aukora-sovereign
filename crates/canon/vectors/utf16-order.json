@@ -1,0 +1,5 @@
+{
+  "name": "UTF-16 key order",
+  "input": "{\"\":\"bmp\",\"𐀀\":\"astral\",\"a\":1}",
+  "canonical": "{\"a\":1,\"𐀀\":\"astral\",\"\":\"bmp\"}"
+}
