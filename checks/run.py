@@ -12,6 +12,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import walls  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FAIL = []
 
@@ -78,8 +81,12 @@ for p in files:
 
 # 6. Dependencies as cargo itself reads them (every table form): path dependencies only as each README allows, and
 #    external crates only from checks/deps.json.
-meta = json.loads(subprocess.run(["cargo", "metadata", "--offline", "--no-deps", "--format-version", "1"], cwd=ROOT,
-                                 capture_output=True, text=True, check=True).stdout)
+try:
+    meta = json.loads(subprocess.run(["cargo", "metadata", "--offline", "--no-deps", "--format-version", "1"], cwd=ROOT,
+                                     capture_output=True, text=True, check=True).stdout)
+except (subprocess.CalledProcessError, OSError) as e:
+    fail("cargo-metadata", (getattr(e, "stderr", "") or str(e)).strip()[:300])
+    meta = {"packages": []}
 crates = sorted(d.name for d in (ROOT / "crates").iterdir() if (d / "Cargo.toml").is_file())
 for pkg in meta["packages"]:
     home = pathlib.Path(pkg["manifest_path"]).parent
@@ -94,10 +101,13 @@ for pkg in meta["packages"]:
         if dep.get("path"):
             if said != "every organ crate" and dep["name"] not in allowed:
                 fail("crate-deps", f"{pkg['name']} depends on {dep['name']}, not in its README")
-        elif dep["name"] not in allowed_deps:
+            continue
+        if dep["name"] not in allowed_deps:
             fail("deps-allowlist", f"{pkg['name']} uses {dep['name']}, not in checks/deps.json")
-    cargo = (home / "Cargo.toml").read_text()
-    if (home / "build.rs").exists() or re.search(r"^\s*(build|links)\s*=", cargo, re.M) or re.search(r"proc-macro\s*=\s*true", cargo):
+        for rule, detail in walls.dep_findings(pkg["name"], dep):
+            fail(rule, detail)
+    kinds = {k for t in pkg["targets"] for k in t["kind"]}
+    if (home / "build.rs").exists() or kinds & {"custom-build", "proc-macro"} or pkg.get("links"):
         fail("build-time-code", f"{pkg['name']}: no build scripts, links or proc-macro crates of our own")
 
 # 7. The scaffold lock: every planned piece exists, and nothing unplanned appears at the top or among the crates.
@@ -136,45 +146,15 @@ for node in ("s1", "s2", "s3", "s4", "pilot"):
     if not re.search(rf"^{node}\s", nodes, re.M):
         fail("deploy-guard", f"deploy/EXISTING-NODES must keep {node}")
 
-# 11. The walls, by source scan (comments stripped): the agent never executes, opens a socket or uses unsafe; only the
-#     crates that must touch the network or processes do; the gate, frontdoor and launcher never read the health map or
-#     a picture; the browser code never evaluates strings or writes raw HTML; and there are no test suites.
-NET = r"std::net|std::os::unix::net|TcpStream|TcpListener|UdpSocket|tokio::net|hyper::|tungstenite|rustls::"
-PROC = r"std::process::(Command|Child|Stdio)|\bCommand::new|libc::(exec|fork|vfork|posix_spawn)"
-PICTURE = r"HealthSnapshot|organ_map|OrganMap|pentora::"
-JS_BAD = r"\beval\s*\(|new\s+Function\s*\(|\.innerHTML\b|\.outerHTML\b|document\.write\s*\(|javascript:"
-ALLOW = {"net": {"frontdoor", "relay", "broker", "kira", "supervisor", "launcher"}, "proc": {"launcher", "supervisor"},
-         "unsafe": {"launcher", "canon", "pentora", "wasmcell"}}
-
-
-def strip(text):
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    return re.sub(r"(?m)//.*$", "", text)
-
-
+# 11. The walls, by source scan (checks/walls.py): the agent never executes, opens a socket or uses unsafe; only the
+#     crates that must touch the network or processes do; no file pulls in code the scan cannot see; the gate,
+#     frontdoor and launcher never read the health map or a picture; browser code never evaluates strings or writes raw
+#     HTML; and there are no test suites.
 for p in files:
     if p in pins:
         continue
-    low = p.lower()
-    if ("/tests/" in f"/{low}" and not low.startswith("tests/e2e/")) or re.search(r"\.(test|spec)\.(ts|js|mjs)$", low):
-        fail("no-test-suites", p)
-    if not re.search(r"\.(rs|ts|js|mjs|html)$", p):
-        continue
-    code = strip((ROOT / p).read_text(errors="replace"))
-    unit = p.split("/")[1] if p.startswith("crates/") else p.split("/")[0]
-    if p.endswith(".rs"):
-        if re.search(r"#\[(test|cfg\(test\))\]", code):
-            fail("no-test-suites", p)
-        if re.search(NET, code) and unit not in ALLOW["net"]:
-            fail("wall-network", p)
-        if re.search(PROC, code) and unit not in ALLOW["proc"]:
-            fail("wall-exec", p)
-        if re.search(r"\bunsafe\b", code) and unit not in ALLOW["unsafe"]:
-            fail("wall-unsafe", p)
-        if unit in ("gate", "frontdoor", "launcher") and re.search(PICTURE, code):
-            fail("wall-picture", p)
-    elif re.search(JS_BAD, code) or (p.endswith(".html") and re.search(r"<script(?![^>]*\bsrc=)[^>]*>", code)):
-        fail("wall-browser", p)
+    for rule, detail in walls.file_findings(p, (ROOT / p).read_text(errors="replace")):
+        fail(rule, detail)
 
 if FAIL:
     print("\n".join(f"FAIL {f}" for f in FAIL))
