@@ -1,0 +1,69 @@
+{
+  "schema": "aukora-broker-provider-stream-v2",
+  "algorithm": "sha256",
+  "dummy_key": "sk-vector0123456789abcdef",
+  "requested_model": "deepseek-chat",
+  "cases": [
+    {
+      "id": "decimal-microdollar-ceiling",
+      "response": "{\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":3,\"cost\":0.0000001}}",
+      "expected": {
+        "content": "hello",
+        "reported": "deepseek-chat",
+        "verified": "unverified",
+        "cost_microusd": 1,
+        "cost_unknown": false
+      }
+    },
+    {
+      "id": "stream-crlf-bom-split-transport",
+      "wire_chunks": [
+        "\ufeffdata: {\"model\":\"deepseek-chat\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello, \"},\"finish_reason\":null}]}\r",
+        "\n\r\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"owner.\"},\"finish_reason\":null}]}\r\n\r\n",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":3}}\r\n\r\ndata: [DO",
+        "NE]\r\n\r\n"
+      ],
+      "expected": {
+        "delta_content": ["He", "llo, owner."],
+        "content": "Hello, owner.",
+        "finish_reason": "stop",
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "cost_unknown": true
+      }
+    },
+    {
+      "id": "key-split-across-short-content-events",
+      "wire_chunks": [
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"sk-vector0\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"123456789a\"},\"finish_reason\":null}]}\n\n"
+      ],
+      "expected": {
+        "delta_content": [],
+        "refusal": "broker:key-echo"
+      }
+    },
+    {
+      "id": "discarded-metadata-key-echo",
+      "response": "{\"metadata\":{\"debug\":\"sk-vector0123456789abcdef\"},\"choices\":[],\"usage\":{}}",
+      "expected": {"refusal": "broker:key-echo"}
+    },
+    {
+      "id": "duplicate-escaped-object-member",
+      "response": "{\"model\":\"deepseek-chat\",\"\\u006dodel\":\"different\"}",
+      "expected": {"refusal": "broker:invalid-reply"}
+    },
+    {
+      "id": "number-shaped-object-is-not-a-counter",
+      "response": "{\"choices\":[{\"message\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":{\"$serde_json::private::Number\":\"2\"},\"completion_tokens\":3}}",
+      "expected": {"refusal": "broker:invalid-reply"}
+    },
+    {
+      "id": "sse-unterminated-done-is-truncation",
+      "wire_chunks": [
+        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":3}}\n\ndata: [DONE]"
+      ],
+      "expected": {"refusal": "broker:invalid-reply"}
+    }
+  ]
+}

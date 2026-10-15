@@ -3,12 +3,17 @@
 
 use canon::{codes, Result};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+};
 use zeroize::Zeroizing;
 
 pub const MAX_TICKET_TTL_MS: u64 = 300_000;
 pub const MAX_TICKETS: usize = 1_024;
 pub const MAX_KEY_BYTES: usize = 4_096;
+pub const MAX_KEY_HISTORY: usize = 1_024;
+const MIN_KEY_BYTES: usize = 16;
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 pub struct Ticket {
@@ -37,6 +42,9 @@ pub struct KeyState {
 struct State {
     tickets: BTreeMap<[u8; 32], PendingTicket>,
     key: Option<Zeroizing<String>>,
+    key_fingerprints: BTreeMap<usize, BTreeSet<[u8; 32]>>,
+    key_prefixes: BTreeSet<[u8; 32]>,
+    key_history: usize,
     generation: u64,
 }
 
@@ -56,6 +64,9 @@ impl KeyInbox {
             state: Mutex::new(State {
                 tickets: BTreeMap::new(),
                 key: None,
+                key_fingerprints: BTreeMap::new(),
+                key_prefixes: BTreeSet::new(),
+                key_history: 0,
                 generation: 0,
             }),
         }
@@ -111,6 +122,25 @@ impl KeyInbox {
             .checked_add(1)
             .filter(|v| *v <= MAX_SAFE)
             .ok_or(codes::BROKER_GENERATION_EXHAUSTED)?;
+        let fingerprint: [u8; 32] = Sha256::digest(key.as_bytes()).into();
+        let known = state
+            .key_fingerprints
+            .get(&key.len())
+            .is_some_and(|entries| entries.contains(&fingerprint));
+        if !known {
+            if state.key_history >= MAX_KEY_HISTORY {
+                return Err(codes::BROKER_KEY_STORE);
+            }
+            state
+                .key_fingerprints
+                .entry(key.len())
+                .or_default()
+                .insert(fingerprint);
+            state
+                .key_prefixes
+                .insert(Sha256::digest(&key.as_bytes()[..MIN_KEY_BYTES]).into());
+            state.key_history += 1;
+        }
         state.key = Some(key);
         state.generation = generation;
         Ok(snapshot(&state))
@@ -135,16 +165,50 @@ impl KeyInbox {
 
     pub fn reject_echo(&self, bytes: &[u8]) -> Result<()> {
         let state = self.state.lock().map_err(|_| codes::BROKER_STATE)?;
-        let key = state.key.as_ref().ok_or(codes::BROKER_KEY_UNAVAILABLE)?;
-        if bytes.windows(key.len()).any(|part| part == key.as_bytes()) {
-            return Err(codes::BROKER_KEY_ECHO);
+        for (start, marker) in bytes.windows(3).enumerate() {
+            if marker != b"sk-" {
+                continue;
+            }
+            let tail = &bytes[start..];
+            let Some(prefix) = tail.get(..MIN_KEY_BYTES) else {
+                continue;
+            };
+            let prefix_fingerprint: [u8; 32] = Sha256::digest(prefix).into();
+            if !state.key_prefixes.contains(&prefix_fingerprint) {
+                continue;
+            }
+            let mut hash = Sha256::new();
+            let mut hashed = 0;
+            for (length, fingerprints) in &state.key_fingerprints {
+                let Some(part) = tail.get(hashed..*length) else {
+                    break;
+                };
+                hash.update(part);
+                hashed = *length;
+                let fingerprint: [u8; 32] = hash.clone().finalize().into();
+                if fingerprints.contains(&fingerprint) {
+                    return Err(codes::BROKER_KEY_ECHO);
+                }
+            }
         }
         Ok(())
+    }
+
+    pub(crate) fn key_for_generation(&self, generation: u64) -> Result<Zeroizing<String>> {
+        let state = self.state.lock().map_err(|_| codes::BROKER_STATE)?;
+        if state.generation != generation {
+            return Err(codes::BROKER_GENERATION_CHANGED);
+        }
+        state
+            .key
+            .as_ref()
+            .cloned()
+            .ok_or(codes::BROKER_KEY_UNAVAILABLE)
     }
 }
 
 pub fn validate_key(key: &str) -> Result<()> {
-    if !(16..=MAX_KEY_BYTES).contains(&key.len())
+    if !(MIN_KEY_BYTES..=MAX_KEY_BYTES).contains(&key.len())
         || !key.starts_with("sk-")
         || !key
             .bytes()

@@ -51,6 +51,14 @@ impl ModelIdentity {
         Ok(())
     }
 
+    /// The strongest available identity remains evidence, never spending authority.
+    pub fn serving_model(&self) -> Option<&ModelName> {
+        match &self.verified {
+            VerifiedIdentity::Verified { model, .. } => Some(model),
+            VerifiedIdentity::Unverified => self.reported.as_ref(),
+        }
+    }
+
     pub fn requested(model: ModelName) -> Self {
         Self {
             requested: model,

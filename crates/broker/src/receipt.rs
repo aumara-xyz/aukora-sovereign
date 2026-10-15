@@ -11,7 +11,8 @@ use canon::{
     digest::Digest32,
     fd3_payloads::Usage,
     ids::{GrantId, OperationId, RequestId, ReservationId},
-    json::{SafeInteger, Value},
+    json::{SafeInteger, Value, ValueView},
+    session::{ModelReceipt, Text, RECORD_VERSION},
     Result,
 };
 
@@ -50,6 +51,111 @@ pub struct ReceiptBody {
 }
 
 impl ReceiptBody {
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        self.canonical_body()
+            .map(|value| canon::json::to_canonical(&value))
+    }
+
+    /// Replay accepts the exact versioned body shape and canonical bytes only.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.is_empty() || bytes.len() > 65_536 {
+            return Err(codes::BROKER_STATE);
+        }
+        let value = canon::json::parse_strict(bytes)?;
+        if canon::json::to_canonical(&value) != bytes {
+            return Err(codes::BROKER_STATE);
+        }
+        shape(&value, &["schema", "body"])?;
+        if string(field(&value, "schema")?)? != RECEIPT_SCHEMA {
+            return Err(codes::BROKER_STATE);
+        }
+        let body = field(&value, "body")?;
+        shape(
+            body,
+            &[
+                "algorithm",
+                "grant_id",
+                "request_id",
+                "reservation_id",
+                "operation_id",
+                "identity",
+                "source",
+                "intake_commitment",
+                "slot_generation",
+                "key_generation",
+                "prompt_tokens",
+                "completion_tokens",
+                "cost_microusd",
+                "reserved_microusd",
+                "charged_microusd",
+                "cost_unknown",
+                "reservation_exceeded",
+                "grant_frozen",
+                "outcome",
+                "refusal",
+            ],
+        )?;
+        let source_value = field(body, "source")?;
+        let source = if let Ok(provider) = field(source_value, "provider") {
+            shape(source_value, &["provider"])?;
+            ModelSource::Hosted(crate::provider::HostedProvider::parse(string(provider)?)?)
+        } else {
+            shape(source_value, &["artifact"])?;
+            ModelSource::Local {
+                artifact: Digest32::from_hex(string(field(source_value, "artifact")?)?)?,
+            }
+        };
+        let identity_value = field(body, "identity")?;
+        shape(identity_value, &["requested", "reported", "verified"])?;
+        let identity = ModelIdentity {
+            requested: crate::identity::ModelName::new(
+                string(field(identity_value, "requested")?)?.to_owned(),
+            )?,
+            reported: optional_string(field(identity_value, "reported")?)?
+                .map(|name| crate::identity::ModelName::new(name.to_owned()))
+                .transpose()?,
+            verified: parse_verified(field(identity_value, "verified")?)?,
+        };
+        let outcome = match string(field(body, "outcome")?)? {
+            "completed" => SettlementOutcome::Completed,
+            "cancelled" => SettlementOutcome::Cancelled,
+            "refused" => SettlementOutcome::Refused,
+            "unknown" => SettlementOutcome::Unknown,
+            _ => return Err(codes::BROKER_STATE),
+        };
+        let receipt = Self {
+            v: 2,
+            algorithm: AlgorithmId::from_wire(string(field(body, "algorithm")?)?)?,
+            grant_id: GrantId::from_hex(string(field(body, "grant_id")?)?)?,
+            request_id: RequestId::from_hex(string(field(body, "request_id")?)?)?,
+            reservation_id: ReservationId::from_hex(string(field(body, "reservation_id")?)?)?,
+            operation_id: OperationId::from_hex(string(field(body, "operation_id")?)?)?,
+            identity,
+            source,
+            intake_commitment: Digest32::from_hex(string(field(body, "intake_commitment")?)?)?,
+            slot_generation: unsigned(field(body, "slot_generation")?)?,
+            key_generation: unsigned(field(body, "key_generation")?)?,
+            usage: Usage {
+                prompt_tokens: u32::try_from(unsigned(field(body, "prompt_tokens")?)?)
+                    .map_err(|_| codes::BROKER_STATE)?,
+                completion_tokens: u32::try_from(unsigned(field(body, "completion_tokens")?)?)
+                    .map_err(|_| codes::BROKER_STATE)?,
+                cost_microusd: unsigned(field(body, "cost_microusd")?)?,
+            },
+            reserved_microusd: unsigned(field(body, "reserved_microusd")?)?,
+            charged_microusd: unsigned(field(body, "charged_microusd")?)?,
+            cost_unknown: boolean(field(body, "cost_unknown")?)?,
+            reservation_exceeded: boolean(field(body, "reservation_exceeded")?)?,
+            grant_frozen: boolean(field(body, "grant_frozen")?)?,
+            outcome,
+            refusal: optional_string(field(body, "refusal")?)?
+                .map(codes::parse)
+                .transpose()?,
+        };
+        receipt.validate()?;
+        Ok(receipt)
+    }
+
     pub fn canonical_body(&self) -> Result<canon::json::Value> {
         self.validate()?;
         let source = match &self.source {
@@ -148,7 +254,7 @@ impl ReceiptBody {
         let mut hash = Sha256::new();
         hash.update(RECEIPT_DOMAIN);
         hash.update([0]);
-        hash.update(canon::json::to_canonical(&self.canonical_body()?));
+        hash.update(self.canonical_bytes()?);
         Ok(Digest32::from_bytes(hash.finalize().into()))
     }
 
@@ -160,17 +266,30 @@ impl ReceiptBody {
             || self.slot_generation == 0
             || self.slot_generation > safe
             || self.key_generation > safe
+            || (matches!(self.source, ModelSource::Hosted(_)) && self.key_generation == 0)
             || self.usage.prompt_tokens > 32_768
             || self.usage.completion_tokens > 32_768
             || self.usage.cost_microusd > safe
             || self.reserved_microusd > safe
             || self.charged_microusd > safe
+            || self.charged_microusd
+                != if self.cost_unknown {
+                    self.reserved_microusd.max(self.usage.cost_microusd)
+                } else {
+                    self.usage.cost_microusd
+                }
             || self.reservation_exceeded != (self.charged_microusd > self.reserved_microusd)
             || (self.reservation_exceeded && !self.grant_frozen)
             || (self.cost_unknown && self.charged_microusd < self.reserved_microusd)
             || (self.outcome == SettlementOutcome::Completed && self.refusal.is_some())
+            || (self.outcome == SettlementOutcome::Refused && self.refusal.is_none())
+            || (self.outcome == SettlementOutcome::Unknown
+                && (!self.cost_unknown || self.refusal.is_none()))
         {
             return Err(codes::BROKER_STATE);
+        }
+        if let Some(refusal) = self.refusal {
+            codes::parse(&refusal.to_string())?;
         }
         Ok(())
     }
@@ -199,5 +318,93 @@ impl CommittedReceipt {
             return Err(codes::BROKER_RECEIPT_SEQUENCE);
         }
         Ok(())
+    }
+
+    pub fn stream_receipt(&self) -> Result<ModelReceipt> {
+        self.validate()?;
+        Ok(ModelReceipt {
+            v: RECORD_VERSION,
+            algorithm: AlgorithmId::Sha256,
+            request_id: self.body.request_id,
+            reservation_id: self.body.reservation_id,
+            model: Text::new(
+                self.body
+                    .identity
+                    .serving_model()
+                    .map_or("[unreported]", |model| model.as_str())
+                    .to_owned(),
+            )?,
+            usage: self.body.usage.clone(),
+            receipt_seq: self.aura_sequence,
+            commitment: self.aura_hash,
+        })
+    }
+}
+
+fn shape(value: &Value, names: &[&str]) -> Result<()> {
+    match value.view() {
+        ValueView::Object(entries)
+            if entries.len() == names.len()
+                && entries.iter().all(|(key, _)| names.contains(&key.as_str())) =>
+        {
+            Ok(())
+        }
+        _ => Err(codes::BROKER_STATE),
+    }
+}
+
+fn field<'a>(value: &'a Value, name: &str) -> Result<&'a Value> {
+    match value.view() {
+        ValueView::Object(entries) => entries
+            .iter()
+            .find_map(|(key, value)| (key == name).then_some(value))
+            .ok_or(codes::BROKER_STATE),
+        _ => Err(codes::BROKER_STATE),
+    }
+}
+
+fn string(value: &Value) -> Result<&str> {
+    match value.view() {
+        ValueView::Text(text) => Ok(text),
+        _ => Err(codes::BROKER_STATE),
+    }
+}
+
+fn optional_string(value: &Value) -> Result<Option<&str>> {
+    match value.view() {
+        ValueView::Null => Ok(None),
+        _ => string(value).map(Some),
+    }
+}
+
+fn unsigned(value: &Value) -> Result<u64> {
+    match value.view() {
+        ValueView::Integer(number) => u64::try_from(number.get()).map_err(|_| codes::BROKER_STATE),
+        _ => Err(codes::BROKER_STATE),
+    }
+}
+
+fn boolean(value: &Value) -> Result<bool> {
+    match value.view() {
+        ValueView::Boolean(boolean) => Ok(boolean),
+        _ => Err(codes::BROKER_STATE),
+    }
+}
+
+fn parse_verified(value: &Value) -> Result<VerifiedIdentity> {
+    match string(field(value, "status")?)? {
+        "unverified" => {
+            shape(value, &["status"])?;
+            Ok(VerifiedIdentity::Unverified)
+        }
+        "verified" => {
+            shape(value, &["status", "model", "verifier", "evidence"])?;
+            Ok(VerifiedIdentity::Verified {
+                model: crate::identity::ModelName::new(string(field(value, "model")?)?.to_owned())?,
+                verifier: string(field(value, "verifier")?)?.to_owned(),
+                evidence: Digest32::from_hex(string(field(value, "evidence")?)?)?,
+            })
+        }
+        _ => Err(codes::BROKER_STATE),
     }
 }

@@ -1,0 +1,137 @@
+{
+  "schema": "aukora-broker-reservation-vectors-v1",
+  "call_digest_rule": "sha256(canonical C4 v1 model.call frame with id broker)",
+  "reservation_rule": "prompt bound times prompt price plus completion bound times completion price",
+  "cases": [
+    {
+      "name": "hosted-reservation-with-conservative-recovery-receipt",
+      "call_frame": {
+        "v": 1,
+        "id": "broker",
+        "kind": "model.call",
+        "body": {
+          "grant_id": "11111111111111111111111111111111",
+          "model": "deepseek-chat",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "tools": [],
+          "max_output_tokens": 50
+        }
+      },
+      "call_canonical_utf8": "{\"body\":{\"grant_id\":\"11111111111111111111111111111111\",\"max_output_tokens\":50,\"messages\":[{\"content\":\"hello\",\"role\":\"user\"}],\"model\":\"deepseek-chat\",\"tools\":[]},\"id\":\"broker\",\"kind\":\"model.call\",\"v\":1}",
+      "call_sha256": "0ec8ef4dd83de5b09f0be57a75b6feb3705cf92107329cc7d132cf96c17ec7d0",
+      "envelope": {
+        "schema": "aukora-broker-reservation-v2",
+        "body": {
+          "terms": {
+            "schema": "aukora-broker-grant-v2",
+            "body": {
+              "algorithm": "sha256",
+              "grant_id": "11111111111111111111111111111111",
+              "source": {
+                "provider": "deepseek"
+              },
+              "model": "deepseek-chat",
+              "intake_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+              "slot_generation": 3,
+              "key_generation": 2,
+              "prompt_microusd_per_token": 4,
+              "completion_microusd_per_token": 8,
+              "total_cap_microusd": 2400,
+              "per_request_cap_microusd": 1200,
+              "max_requests": 2,
+              "expires_at_ms": 1000000
+            }
+          },
+          "request_id": "44444444444444444444444444444444",
+          "reservation_id": "55555555555555555555555555555555",
+          "operation_id": "66666666666666666666666666666666",
+          "prompt_token_bound": 200,
+          "completion_token_bound": 50,
+          "reserved_microusd": 1200,
+          "call_sha256": "0ec8ef4dd83de5b09f0be57a75b6feb3705cf92107329cc7d132cf96c17ec7d0",
+          "unknown_receipt": {
+            "schema": "aukora-broker-receipt-v2",
+            "body": {
+              "algorithm": "sha256",
+              "grant_id": "11111111111111111111111111111111",
+              "request_id": "44444444444444444444444444444444",
+              "reservation_id": "55555555555555555555555555555555",
+              "operation_id": "66666666666666666666666666666666",
+              "identity": {
+                "requested": "deepseek-chat",
+                "reported": null,
+                "verified": {
+                  "status": "unverified"
+                }
+              },
+              "source": {
+                "provider": "deepseek"
+              },
+              "intake_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+              "slot_generation": 3,
+              "key_generation": 2,
+              "prompt_tokens": 0,
+              "completion_tokens": 0,
+              "cost_microusd": 1200,
+              "reserved_microusd": 1200,
+              "charged_microusd": 1200,
+              "cost_unknown": true,
+              "reservation_exceeded": false,
+              "grant_frozen": true,
+              "outcome": "unknown",
+              "refusal": "broker:provider-unavailable"
+            }
+          }
+        }
+      },
+      "canonical_utf8": "{\"body\":{\"call_sha256\":\"0ec8ef4dd83de5b09f0be57a75b6feb3705cf92107329cc7d132cf96c17ec7d0\",\"completion_token_bound\":50,\"operation_id\":\"66666666666666666666666666666666\",\"prompt_token_bound\":200,\"request_id\":\"44444444444444444444444444444444\",\"reservation_id\":\"55555555555555555555555555555555\",\"reserved_microusd\":1200,\"terms\":{\"body\":{\"algorithm\":\"sha256\",\"completion_microusd_per_token\":8,\"expires_at_ms\":1000000,\"grant_id\":\"11111111111111111111111111111111\",\"intake_commitment\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"key_generation\":2,\"max_requests\":2,\"model\":\"deepseek-chat\",\"per_request_cap_microusd\":1200,\"prompt_microusd_per_token\":4,\"slot_generation\":3,\"source\":{\"provider\":\"deepseek\"},\"total_cap_microusd\":2400},\"schema\":\"aukora-broker-grant-v2\"},\"unknown_receipt\":{\"body\":{\"algorithm\":\"sha256\",\"charged_microusd\":1200,\"completion_tokens\":0,\"cost_microusd\":1200,\"cost_unknown\":true,\"grant_frozen\":true,\"grant_id\":\"11111111111111111111111111111111\",\"identity\":{\"reported\":null,\"requested\":\"deepseek-chat\",\"verified\":{\"status\":\"unverified\"}},\"intake_commitment\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"key_generation\":2,\"operation_id\":\"66666666666666666666666666666666\",\"outcome\":\"unknown\",\"prompt_tokens\":0,\"refusal\":\"broker:provider-unavailable\",\"request_id\":\"44444444444444444444444444444444\",\"reservation_exceeded\":false,\"reservation_id\":\"55555555555555555555555555555555\",\"reserved_microusd\":1200,\"slot_generation\":3,\"source\":{\"provider\":\"deepseek\"}},\"schema\":\"aukora-broker-receipt-v2\"}},\"schema\":\"aukora-broker-reservation-v2\"}",
+      "sha256": "7d6bba80d9988f3120846324adca9a5307059cd56e2cd2adc304bf6188e911b5"
+    }
+  ],
+  "admission_cases": [
+    {
+      "name": "first-use-reserves-cap",
+      "total_cap_microusd": 2400,
+      "per_request_cap_microusd": 1200,
+      "max_requests": 2,
+      "usage": {
+        "spent_microusd": 0,
+        "reserved_microusd": 0,
+        "requests": 0
+      },
+      "amount_microusd": 1200,
+      "expected_refusal": null
+    },
+    {
+      "name": "serialized-second-use-exhausts-total",
+      "total_cap_microusd": 1200,
+      "per_request_cap_microusd": 1200,
+      "max_requests": 2,
+      "usage": {
+        "spent_microusd": 0,
+        "reserved_microusd": 1200,
+        "requests": 1
+      },
+      "amount_microusd": 1200,
+      "expected_refusal": "broker:grant-exhausted"
+    },
+    {
+      "name": "zero-price-use-still-counted",
+      "total_cap_microusd": 2400,
+      "per_request_cap_microusd": 1200,
+      "max_requests": 2,
+      "usage": {
+        "spent_microusd": 0,
+        "reserved_microusd": 0,
+        "requests": 2
+      },
+      "amount_microusd": 0,
+      "expected_refusal": "broker:grant-exhausted"
+    }
+  ]
+}

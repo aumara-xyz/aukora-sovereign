@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Grant proposals and arithmetic are data; only the transaction service installs a grant.
 
-use crate::{identity::ModelName, provider::ModelSource};
+use crate::{
+    identity::ModelName,
+    provider::{HostedProvider, ModelSource},
+};
 use canon::{
     alg::AlgorithmId,
     codes,
     digest::Digest32,
     ids::GrantId,
-    json::{SafeInteger, Value},
+    json::{SafeInteger, Value, ValueView},
     Result,
 };
 
@@ -42,6 +45,17 @@ pub struct GrantTerms {
 
 impl GrantTerms {
     pub fn validate(&self, now_ms: u64) -> Result<()> {
+        self.validate_static()?;
+        if now_ms > MAX_SAFE
+            || now_ms >= self.expires_at_ms
+            || self.expires_at_ms - now_ms > MAX_GRANT_LIFETIME_MS
+        {
+            return Err(codes::BROKER_INVALID_GRANT);
+        }
+        Ok(())
+    }
+
+    fn validate_static(&self) -> Result<()> {
         let values = [
             self.total_cap_microusd,
             self.per_request_cap_microusd,
@@ -53,8 +67,6 @@ impl GrantTerms {
             || self.algorithm != AlgorithmId::Sha256
             || values.iter().any(|v| *v == 0 || *v > MAX_SAFE)
             || self.per_request_cap_microusd > self.total_cap_microusd
-            || now_ms >= self.expires_at_ms
-            || self.expires_at_ms - now_ms > MAX_GRANT_LIFETIME_MS
             || self.prices.prompt_microusd_per_token > MAX_SAFE
             || self.prices.completion_microusd_per_token > MAX_SAFE
             || self.key_generation > MAX_SAFE
@@ -68,14 +80,75 @@ impl GrantTerms {
         Ok(())
     }
 
+    pub fn from_value(value: &Value) -> Result<Self> {
+        let wrapper = object_fields(value, &["schema", "body"])?;
+        if string_field(wrapper, "schema")? != GRANT_SCHEMA {
+            return Err(codes::BROKER_INVALID_GRANT);
+        }
+        let body = object_fields(
+            field(wrapper, "body")?,
+            &[
+                "algorithm",
+                "grant_id",
+                "source",
+                "model",
+                "intake_commitment",
+                "slot_generation",
+                "key_generation",
+                "prompt_microusd_per_token",
+                "completion_microusd_per_token",
+                "total_cap_microusd",
+                "per_request_cap_microusd",
+                "max_requests",
+                "expires_at_ms",
+            ],
+        )?;
+        let source = match field(body, "source")?.view() {
+            ValueView::Object(source) if source.len() == 1 => match source[0].0.as_str() {
+                "provider" => ModelSource::Hosted(
+                    HostedProvider::parse(string_field(source, "provider")?)
+                        .map_err(|_| codes::BROKER_INVALID_GRANT)?,
+                ),
+                "artifact" => ModelSource::Local {
+                    artifact: Digest32::from_hex(string_field(source, "artifact")?)
+                        .map_err(|_| codes::BROKER_INVALID_GRANT)?,
+                },
+                _ => return Err(codes::BROKER_INVALID_GRANT),
+            },
+            _ => return Err(codes::BROKER_INVALID_GRANT),
+        };
+        let terms = Self {
+            v: GRANT_VERSION,
+            algorithm: AlgorithmId::from_wire(string_field(body, "algorithm")?)
+                .map_err(|_| codes::BROKER_INVALID_GRANT)?,
+            grant_id: GrantId::from_hex(string_field(body, "grant_id")?)
+                .map_err(|_| codes::BROKER_INVALID_GRANT)?,
+            source,
+            model: ModelName::new(string_field(body, "model")?.to_owned())
+                .map_err(|_| codes::BROKER_INVALID_GRANT)?,
+            intake_commitment: Digest32::from_hex(string_field(body, "intake_commitment")?)
+                .map_err(|_| codes::BROKER_INVALID_GRANT)?,
+            slot_generation: number_field(body, "slot_generation")?,
+            key_generation: number_field(body, "key_generation")?,
+            prices: PriceBasis {
+                prompt_microusd_per_token: number_field(body, "prompt_microusd_per_token")?,
+                completion_microusd_per_token: number_field(body, "completion_microusd_per_token")?,
+            },
+            total_cap_microusd: number_field(body, "total_cap_microusd")?,
+            per_request_cap_microusd: number_field(body, "per_request_cap_microusd")?,
+            max_requests: number_field(body, "max_requests")?,
+            expires_at_ms: number_field(body, "expires_at_ms")?,
+        };
+        terms.validate_static()?;
+        Ok(terms)
+    }
+
     pub fn target(&self) -> String {
         format!("broker/grants/{}", self.grant_id)
     }
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        if self.v != GRANT_VERSION || self.algorithm != AlgorithmId::Sha256 {
-            return Err(codes::BROKER_INVALID_GRANT);
-        }
+        self.validate_static()?;
         let source = match &self.source {
             ModelSource::Hosted(provider) => {
                 Value::object(vec![("provider".into(), text(provider.name())?)])?
@@ -131,8 +204,12 @@ impl GrantTerms {
     }
 
     pub fn reserve_amount(&self, prompt_bound: u64, completion_bound: u32) -> Result<u64> {
+        self.validate_static()?;
         if !(1..=32_768).contains(&completion_bound) {
             return Err(codes::BROKER_INVALID_REQUEST);
+        }
+        if prompt_bound > MAX_SAFE {
+            return Err(codes::BROKER_PRICE_UNBOUNDED);
         }
         let cost = prompt_bound
             .checked_mul(self.prices.prompt_microusd_per_token)
@@ -158,8 +235,26 @@ pub struct GrantUsage {
 }
 
 impl GrantUsage {
+    pub fn from_value(value: &Value) -> Result<Self> {
+        let fields = object_fields(value, &["spent_microusd", "reserved_microusd", "requests"])?;
+        Ok(Self {
+            spent_microusd: number_field(fields, "spent_microusd")?,
+            reserved_microusd: number_field(fields, "reserved_microusd")?,
+            requests: number_field(fields, "requests")?,
+        })
+    }
+
     pub fn admit(&self, grant: &GrantTerms, amount: u64) -> Result<()> {
-        if amount > grant.per_request_cap_microusd
+        grant.validate_static()?;
+        if [
+            self.spent_microusd,
+            self.reserved_microusd,
+            self.requests,
+            amount,
+        ]
+        .iter()
+        .any(|value| *value > MAX_SAFE)
+            || amount > grant.per_request_cap_microusd
             || self.requests >= grant.max_requests
             || self
                 .spent_microusd
@@ -175,9 +270,48 @@ impl GrantUsage {
 
 fn integer(value: u64) -> Result<Value> {
     let value = i64::try_from(value).map_err(|_| codes::BROKER_INVALID_GRANT)?;
-    Ok(Value::integer(SafeInteger::new(value)?))
+    Ok(Value::integer(
+        SafeInteger::new(value).map_err(|_| codes::BROKER_INVALID_GRANT)?,
+    ))
 }
 
 fn text(value: &str) -> Result<Value> {
     Value::text(value.to_owned())
+}
+
+fn object_fields<'a>(value: &'a Value, names: &[&str]) -> Result<&'a [(String, Value)]> {
+    match value.view() {
+        ValueView::Object(fields)
+            if fields.len() == names.len()
+                && fields
+                    .iter()
+                    .all(|(name, _)| names.contains(&name.as_str())) =>
+        {
+            Ok(fields)
+        }
+        _ => Err(codes::BROKER_INVALID_GRANT),
+    }
+}
+
+fn field<'a>(fields: &'a [(String, Value)], name: &str) -> Result<&'a Value> {
+    fields
+        .iter()
+        .find_map(|(key, value)| (key == name).then_some(value))
+        .ok_or(codes::BROKER_INVALID_GRANT)
+}
+
+fn string_field<'a>(fields: &'a [(String, Value)], name: &str) -> Result<&'a str> {
+    match field(fields, name)?.view() {
+        ValueView::Text(text) => Ok(text),
+        _ => Err(codes::BROKER_INVALID_GRANT),
+    }
+}
+
+fn number_field(fields: &[(String, Value)], name: &str) -> Result<u64> {
+    match field(fields, name)?.view() {
+        ValueView::Integer(number) => {
+            u64::try_from(number.get()).map_err(|_| codes::BROKER_INVALID_GRANT)
+        }
+        _ => Err(codes::BROKER_INVALID_GRANT),
+    }
 }

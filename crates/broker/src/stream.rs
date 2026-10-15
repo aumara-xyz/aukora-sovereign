@@ -7,8 +7,8 @@ use canon::{
     codes,
     fd3_payloads::ToolCall,
     session::{
-        Items, ModelCancel, ModelDelta, ModelEnd, ModelError, ModelReceipt, ModelStarted, Text,
-        MAX_DELTA_BYTES, MAX_PENDING_CHUNKS, RECORD_VERSION,
+        Items, ModelCancel, ModelDelta, ModelEnd, ModelError, ModelStarted, Text, MAX_DELTA_BYTES,
+        MAX_PENDING_CHUNKS, RECORD_VERSION,
     },
     Result,
 };
@@ -58,13 +58,26 @@ impl StreamBuffer {
     }
 
     pub fn can_poll_provider(&self) -> bool {
-        !self.closed
-            && !self.cancelling
-            && self.terminal.is_none()
-            && self.queue.len() < usize::from(self.started.max_pending_chunks)
-            && Instant::now() < self.deadline
-            && self.next_index < MAX_STREAM_CHUNKS
-            && self.bytes < MAX_STREAM_BYTES
+        self.production_refusal().is_none()
+    }
+
+    pub fn started(&self) -> &ModelStarted {
+        &self.started
+    }
+
+    /// A full window is transient; elapsed time and output limits require settlement.
+    pub fn production_refusal(&self) -> Option<canon::Refusal> {
+        if self.closed || self.terminal.is_some() || self.cancelling {
+            Some(codes::BROKER_STATE)
+        } else if Instant::now() >= self.deadline {
+            Some(codes::BROKER_PROVIDER_UNAVAILABLE)
+        } else if self.next_index >= MAX_STREAM_CHUNKS || self.bytes >= MAX_STREAM_BYTES {
+            Some(codes::BROKER_REPLY_TOO_LARGE)
+        } else if self.queue.len() >= usize::from(self.started.max_pending_chunks) {
+            Some(codes::BROKER_BUSY)
+        } else {
+            None
+        }
     }
 
     pub fn push(
@@ -72,14 +85,8 @@ impl StreamBuffer {
         content: Option<Text<MAX_DELTA_BYTES>>,
         calls: Items<ToolCall, 32>,
     ) -> Result<()> {
-        if self.closed || self.cancelling || self.terminal.is_some() {
-            return Err(codes::BROKER_STATE);
-        }
-        if Instant::now() >= self.deadline {
-            return Err(codes::BROKER_PROVIDER_UNAVAILABLE);
-        }
-        if self.queue.len() >= usize::from(self.started.max_pending_chunks) {
-            return Err(codes::BROKER_BUSY);
+        if let Some(refusal) = self.production_refusal() {
+            return Err(refusal);
         }
         let content_bytes = content.as_ref().map_or(0, |value| value.as_str().len());
         let chunk_bytes = calls
@@ -157,22 +164,7 @@ impl StreamBuffer {
         {
             return Err(codes::BROKER_STATE);
         }
-        let reported = receipt
-            .body
-            .identity
-            .reported
-            .as_ref()
-            .map_or("[unreported]", |name| name.as_str());
-        let wire_receipt = ModelReceipt {
-            v: RECORD_VERSION,
-            algorithm: AlgorithmId::Sha256,
-            request_id: self.started.request_id,
-            reservation_id: self.started.reservation_id,
-            model: Text::new(reported.to_owned())?,
-            usage: receipt.body.usage.clone(),
-            receipt_seq: receipt.aura_sequence,
-            commitment: receipt.aura_hash,
-        };
+        let wire_receipt = receipt.stream_receipt()?;
         self.terminal = Some(match receipt.body.outcome {
             SettlementOutcome::Completed | SettlementOutcome::Cancelled => {
                 let end = ModelEnd {
@@ -216,6 +208,9 @@ impl StreamBuffer {
     }
     pub fn pending_chunks(&self) -> usize {
         self.queue.len()
+    }
+    pub fn total_bytes(&self) -> usize {
+        self.bytes
     }
     pub fn is_cancelling(&self) -> bool {
         self.cancelling

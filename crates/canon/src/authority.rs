@@ -686,6 +686,29 @@ pub struct FactRecord {
 /// transaction and may not be reused after rollback or commit. Aura implements this
 /// interface; cryptographic primitives come only from allowlisted crates.
 pub trait AuthorityTxn {
+    /// Atomically append and durably commit one broker reserve or settle row.
+    /// Resolve the retained, owner-consumed grant under the same exclusive lock;
+    /// reject revoked, expired, frozen or foreign-epoch grants on reservation.
+    /// Recompute reserved cost and enforce total/per-call/count caps, unique request,
+    /// reservation and operation ids, and one terminal settlement. Materialize only
+    /// verified broker authority rows, never facts. Settlement releases the exact
+    /// reservation and charges its receipt, freezing uncertain or excessive usage.
+    /// Return only after durable commit; failure rolls back every write. The ended
+    /// transaction cannot append again. No adapter means no model dispatch.
+    fn commit_broker_transition(
+        &mut self,
+        _record: PendingAuthorityRecord,
+    ) -> Result<AuthorityRecord> {
+        Err(crate::codes::BROKER_SETTLE_PENDING)
+    }
+
+    /// Read committed, unsettled broker reservation bodies for crash recovery.
+    /// Verify their covering authority records and retained owner grant proof;
+    /// exclude facts and uncommitted rows. Recovery never reissues model requests.
+    fn pending_broker_reservations(&mut self) -> Result<Vec<Value>> {
+        Err(crate::codes::BROKER_SETTLE_PENDING)
+    }
+
     /// Read materialized state from verified, committed owner-consumed rows.
     /// Pending transaction writes, facts and caller-supplied snapshots are excluded.
     /// A missing value is None; unavailable storage or verification refuses.
