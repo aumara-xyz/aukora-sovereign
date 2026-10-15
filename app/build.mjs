@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The app build: erasable TypeScript turned into ES modules, the design data checked against its pins, the face
-// catalog written from the face manifests, the two WebAssembly modules built from crates/pentora and crates/canon,
+// catalog checked against the face manifests, the two WebAssembly modules built from crates/pentora and crates/canon,
 // and a release manifest listing every byte. `node app/build.mjs --pin-design` rewrites design-lock.json instead.
 import { execFileSync } from 'node:child_process';
 import { stripTypeScriptTypes } from 'node:module';
@@ -107,22 +107,17 @@ async function verifyAppLock(manifests) {
   }
 }
 
-// The face manifests are the truth. The catalog the pages import is written from them, so it cannot drift; a
-// committed catalog.ts that differs is reported and not used.
-async function writeCatalog(manifests) {
+// A release uses the committed catalog only when it agrees with every face manifest.
+async function verifiedCatalog(manifests) {
   const source = await readFile(join(app, 'faces', 'catalog.ts'), 'utf8');
   const literal = /export const FACE_CATALOG[^=]*=\s*(\[[\s\S]*\]);\s*$/.exec(source);
   if (!literal) throw new Error('app:catalog-format');
   const committed = JSON.parse(literal[1]);
-  const position = id => { const at = committed.findIndex(value => value.id === id); return at < 0 ? committed.length : at; };
-  const ordered = [...manifests].sort((a, b) => position(a.id) - position(b.id) || a.menu.order - b.menu.order);
   const sorted = values => [...values].sort((a, b) => (a.id < b.id ? -1 : 1));
   if (!isDeepStrictEqual(sorted(committed), sorted(manifests))) {
-    const stale = sorted(manifests).filter(value => !isDeepStrictEqual(value, committed.find(other => other.id === value.id)));
-    process.stderr.write(`app:catalog-stale app/faces/catalog.ts differs from the manifests of: ${stale.map(value => value.id).join(', ')}\n`);
+    throw new Error('app:catalog-mismatch');
   }
-  const start = literal.index + literal[0].indexOf(literal[1]);
-  return source.slice(0, start) + JSON.stringify(ordered, null, 2) + source.slice(start + literal[1].length);
+  return source;
 }
 
 const hexColour = /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/;
@@ -188,19 +183,31 @@ async function pinDesign() {
 }
 
 async function verifyCaptures(captures, manifests) {
-  const states = captures.requiredStates;
-  const faces = captures.requiredFaces;
-  const weights = captures.requiredLaneWeights;
-  if (captures.schema !== 'aukora-design-captures-v1' || !/^[0-9a-f]{7}$/.test(captures.referenceBuild)
+  const states = captures?.requiredStates;
+  const faces = captures?.requiredFaces;
+  const weights = captures?.requiredLaneWeights;
+  if (captures?.schema !== 'aukora-design-captures-v1' || captures.referenceBuild !== '3673b98'
+    || !isDeepStrictEqual(captures.statuses, ['unavailable', 'partial', 'complete'])
     || !captures.statuses.includes(captures.status) || !Array.isArray(captures.files)
+    || !isDeepStrictEqual(states, ['initial', 'loading', 'empty', 'ready', 'refusal', 'service-unavailable', 'phone'])
+    || !Array.isArray(faces) || !Array.isArray(weights)
     || !isDeepStrictEqual([...faces].sort(), manifests.map(value => value.id).sort())
-    || weights.length !== 10 || new Set(weights.map(value => value.join('-'))).size !== 10
-    || weights.some(value => value.length !== 3 || value.some(part => !Number.isInteger(part) || part < 0) || value[0] + value[1] + value[2] !== 3)) {
+    || weights.length !== 10
+    || weights.some(value => !Array.isArray(value) || value.length !== 3
+      || value.some(part => !Number.isInteger(part) || part < 0 || part > 3) || value[0] + value[1] + value[2] !== 3)
+    || new Set(weights.map(value => value.join('-'))).size !== 10) {
     throw new Error('app:design-captures');
   }
+  if (captures.status !== 'complete') {
+    throw new Error(`app:design-captures-incomplete build ${captures.referenceBuild}: ${captures.status}`);
+  }
+  const folder = join(app, 'design', 'captures');
+  const directory = await present(folder);
+  if (directory && (!directory.isDirectory() || directory.isSymbolicLink())) throw new Error('app:design-captures directory');
   const listed = new Set();
   const covered = new Set();
   for (const file of captures.files) {
+    if (!file || typeof file !== 'object' || Array.isArray(file)) throw new Error('app:design-captures file');
     const subject = file.subject === 'shell' ? 'shell' : faces.includes(file.subject) ? file.subject : null;
     const shellWeights = subject === 'shell' && weights.some(value => isDeepStrictEqual(value, file.weights));
     if (!subject || !states.includes(file.state) || (subject === 'shell') !== (file.weights !== undefined)
@@ -210,19 +217,18 @@ async function verifyCaptures(captures, manifests) {
     if (covered.has(key)) throw new Error(`app:design-captures duplicate ${key}`);
     listed.add(file.path);
     covered.add(key);
-    const bytes = await present(join(app, 'design', file.path)) ? await readFile(join(app, 'design', file.path)) : null;
-    if (!bytes || sha256(bytes) !== file.sha256) throw new Error(`app:design-captures digest ${file.path}`);
+    const path = join(app, 'design', file.path);
+    const info = await present(path);
+    if (!info || !info.isFile() || info.isSymbolicLink()) throw new Error(`app:design-captures file ${file.path}`);
+    const bytes = await readFile(path);
+    if (!bytes.length || sha256(bytes) !== file.sha256) throw new Error(`app:design-captures digest ${file.path}`);
   }
-  const folder = join(app, 'design', 'captures');
-  if (await present(folder)) {
+  if (directory) {
     for (const entry of await readdir(folder)) if (!listed.has(`captures/${entry}`)) throw new Error(`app:design-captures unpinned ${entry}`);
   }
-  if (captures.status === 'unavailable' && captures.files.length) throw new Error('app:design-captures status');
-  if (captures.status === 'complete') {
-    const missing = [...faces.flatMap(face => states.map(state => `${face}/${state}/`)),
-      ...weights.map(value => `shell/ready/${value.join('-')}`)].filter(key => !covered.has(key));
-    if (missing.length) throw new Error(`app:design-captures incomplete ${missing[0]}`);
-  }
+  const missing = [...faces.flatMap(face => states.map(state => `${face}/${state}/`)),
+    ...weights.map(value => `shell/ready/${value.join('-')}`)].filter(key => !covered.has(key));
+  if (missing.length) throw new Error(`app:design-captures incomplete ${missing[0]}`);
 }
 
 async function verifyDesign(manifests) {
@@ -259,7 +265,7 @@ async function verifyDesign(manifests) {
   return { css: tokensCss(design.tokens, design.fonts), captures: design.captures };
 }
 
-// Rust to WebAssembly, offline and from the locked dependencies; the modules must import nothing.
+// Requires the wasm32-unknown-unknown Rust target installed before this offline build; modules must import nothing.
 function buildWasm() {
   const output = execFileSync('cargo', ['build', '--release', '--offline', '--locked', '--target', 'wasm32-unknown-unknown',
     '--message-format', 'json-render-diagnostics', ...Object.keys(WASM_MODULES).flatMap(name => ['-p', name])],
@@ -298,7 +304,7 @@ async function build() {
   const manifests = await readManifests();
   await verifyAppLock(manifests);
   const design = await verifyDesign(manifests);
-  const catalog = await writeCatalog(manifests);
+  const catalog = await verifiedCatalog(manifests);
   for (const path of [staging, destination]) {
     const info = await present(path);
     if (info?.isSymbolicLink() || (info && !info.isDirectory())) throw new Error('app:release-directory');

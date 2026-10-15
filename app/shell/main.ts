@@ -150,8 +150,8 @@ export function mountShell(options: ShellOptions): ShellController {
     surfacePrompt.hidden = selected !== '';
     if (workspace) layout.reveal('threads');
     else {
-      // An app that would have only a third of the frame, or none, takes two thirds beside the threads.
-      if (layout.weights[1] < 2) layout.setWeights(APP_OPEN);
+      // Reveal a hidden desktop surface without replacing a visible lane's chosen width.
+      if (!layout.phone && layout.weights[1] === 0) layout.setWeights(APP_OPEN);
       layout.showPhoneLane('surface');
     }
   };

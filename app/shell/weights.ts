@@ -8,7 +8,7 @@ export type Corner = 'left' | 'centre-left' | 'centre-right' | 'right';
 
 export const LANES: readonly LaneId[] = ['threads', 'surface', 'menu'];
 export const BALANCED: PaneWeights = Object.freeze([1, 1, 1]) as PaneWeights;
-/** What choosing an app does: the app takes two thirds beside the threads, and the menu lane steps aside. */
+/** Revealing a hidden desktop app gives it two thirds beside the threads and hides the menu. */
 export const APP_OPEN: PaneWeights = Object.freeze([1, 2, 0]) as PaneWeights;
 
 export const PANE_WEIGHTS: readonly PaneWeights[] = Object.freeze(

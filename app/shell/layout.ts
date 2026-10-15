@@ -103,12 +103,12 @@ export class TriPane {
     this.#render();
   }
 
-  /** Bring a lane into view on every screen. Only a hidden lane changes the composition: it becomes the balanced one. */
+  /** Reveal a lane; only a hidden desktop lane resets the composition to balanced. */
   reveal(lane: LaneId): void {
     const index = LANES.indexOf(lane);
     if (index < 0) throw new Error('shell:unknown-lane');
     this.#phoneLane = lane;
-    if (this.#weights[index] === 0) this.#weights = BALANCED;
+    if (!this.phone && this.#weights[index] === 0) this.#weights = BALANCED;
     this.#render();
   }
 
