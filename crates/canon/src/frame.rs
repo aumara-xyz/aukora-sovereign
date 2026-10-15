@@ -22,7 +22,7 @@ pub const VERSION_1: u16 = 1;
 /// Version for explicitly added streaming, session and health operations.
 pub const VERSION_2: u16 = 2;
 
-/// A wire correlation id of 1..64 ASCII letters, digits, `_` or `-`. It accepts
+/// A wire correlation id of 1..=64 ASCII letters, digits, `_` or `-`. It accepts
 /// legacy C4 ids and is distinct from a C7 random, 16-byte `RequestId`.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FrameId(String);
@@ -95,17 +95,22 @@ pub fn decode(_payload: &[u8]) -> Result<Value> {
     todo!("row 32")
 }
 
-/// Decodes exactly one length-prefixed frame, rejecting absent/short headers,
-/// zero/oversized length and truncated payload with `Disposition::Close`. A
-/// complete semantic error is `Refuse`. Returns consumed bytes so callers may
-/// retain subsequent complete frames, without searching after a fatal error.
+/// Decodes exactly one length-prefixed frame. `frame:zero-length`,
+/// `frame:too-large` and `frame:short-read` require `Disposition::Close`; the
+/// last code covers absent/short headers and truncated payloads. `frame:io` is
+/// reserved for stream I/O failures and cannot arise from this slice decoder.
+/// Complete payload refusals, including `frame:not-canonical` and
+/// `frame:not-object`, use `Disposition::Refuse`. Returns consumed bytes so
+/// callers may retain subsequent frames without scanning after a fatal error.
 pub fn decode_prefixed(_bytes: &[u8]) -> core::result::Result<(Value, usize), FrameError> {
     todo!("row 32")
 }
 
-/// Reads exactly one prefixed frame from a caller-owned stream. Zero/oversized
-/// length, EOF even between frames, short reads and I/O errors require close.
-/// Complete C1 or object refusals are nonfatal; no socket is created here.
+/// Reads exactly one prefixed frame from a caller-owned stream.
+/// `frame:zero-length`, `frame:too-large`, `frame:short-read` and `frame:io`
+/// require `Disposition::Close`; EOF even between frames is `frame:short-read`.
+/// Complete payload refusals, including `frame:not-canonical` and
+/// `frame:not-object`, use `Disposition::Refuse`. No socket is created here.
 pub fn read<R: Read + ?Sized>(_reader: &mut R) -> core::result::Result<Value, FrameError> {
     todo!("row 32")
 }

@@ -12,7 +12,8 @@ pub const OWNER_AUTHORIZATION_DOMAIN: &str = "aukora:owner-authorization:v1";
 pub const OPERATION_CONTENT_DOMAIN: &str = "aukora:operation-content:v1";
 /// C2 Kira associated-data tag, followed by NUL and u32be length-prefixed fields.
 pub const KIRA_AEAD_DOMAIN: &str = "aukora:kira-aead:v1";
-/// Fingerprint hash prefix: UTF-8 tag, one NUL, then the raw 32-byte root.
+/// Fingerprint digest: SHA-256 of `"pentora.display.v1" || 0x00 || head`, where
+/// `head` is the 32 raw bytes of the Aura head hash.
 pub const PENTORA_DISPLAY_DOMAIN: &str = "pentora.display.v1";
 /// C2 export convention name; its leaf prefix is the byte `0x00`, not this text.
 pub const RFC6962_LEAF_CONVENTION: &str = "rfc6962-leaf-sha256-0x00-prefixed-v1";
@@ -29,6 +30,7 @@ pub const AUMLOK_SUBJECT_DOMAIN: &str = "aukora:aumlok-subject:v1";
 /// The header contains exactly `kdf`, `nonce`, `salt` and `version`.
 pub const AUMLOK_ENVELOPE_DOMAIN: &str = "aukora:aumlok-envelope:v1";
 /// Refresh-phrase vector's key-derivation prefix: tag, one NUL, then the raw root key.
+/// The derived key's AEAD associated data is the plain ASCII ceremony id alone.
 pub const AUMLOK_REFRESH_PHRASE_KEY_DOMAIN: &str = "aukora:aumlok-refresh-phrase-key:v1";
 /// Backup v2 PRF input is SHA-256 of this tag alone, without a NUL suffix.
 pub const AUMLOK_BACKUP_PRF_DOMAIN: &str = "aukora:aumlok-backup-prf:v2";
