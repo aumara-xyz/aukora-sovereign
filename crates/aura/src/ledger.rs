@@ -297,6 +297,50 @@ impl LedgerTxn<'_> {
     }
 }
 
+impl LedgerTxn<'_> {
+    /// Read the transaction's signer public keys; this grants no append capability.
+    pub fn floor_signing_keys(&self) -> Result<Vec<PublicKey>> {
+        self.services.signer.public_keys()
+    }
+
+    /// Locate a retained row by sequence, then authenticate its full stored context.
+    pub fn floor_record_at_sequence(&self, sequence: u64) -> Result<Option<AuthorityRecord>> {
+        use rusqlite::OptionalExtension;
+        if sequence == 0 || sequence > canon::json::MAX_SAFE_INTEGER as u64 {
+            return Err(canon::codes::AURA_UNVERIFIED);
+        }
+        let stored: Option<(String, String)> = self.transaction.query_row(
+            "SELECT hash,body FROM aura WHERE seq=?1",
+            [sequence as i64],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|_| canon::codes::AURA_TRANSACTION)?;
+        let Some((claimed_hash, body)) = stored else { return Ok(None); };
+        let body = canon::json::parse_strict(body.as_bytes())?;
+        let context = crate::record::AuthorityBodyV1::parse(&body)?.authority;
+        let record = self.record_at(context)?;
+        if record.authority.sequence != sequence || record.hash != Digest32::from_hex(&claimed_hash)? {
+            return Err(canon::codes::AURA_UNVERIFIED);
+        }
+        Ok(Some(record))
+    }
+
+    /// Read locked release append coordinates without consuming the owner proof.
+    pub fn floor_append_context(
+        &self,
+        proof: &VerifiedProof,
+    ) -> Result<canon::authority::AuthorityAppendContext> {
+        if proof.transaction_id() != self.identity {
+            return Err(canon::Refusal { organ: "aura", reason: "proof-transaction" });
+        }
+        let proposal = self.proposal(&proof.authorization().proposal)?;
+        Ok(canon::authority::AuthorityAppendContext {
+            authority: self.current_version()?,
+            at: self.services.clock.now_ms()?,
+            operation_id: proposal.operation,
+        })
+    }
+}
+
 fn gate_payload(value: &canon::json::Value) -> &canon::json::Value {
     if matches!(value.get("schema").map(canon::json::Value::view),
         Some(canon::json::ValueView::Text(crate::record::AUTHORITY_BODY_SCHEMA))) {

@@ -3,6 +3,7 @@
 
 use crate::{refuse, Result};
 use canon::digest::Digest32;
+use canon::json::{self, SafeInteger, Value, ValueView};
 use core::cmp::Ordering;
 
 pub const HISTORY_MAX: usize = 64;
@@ -58,14 +59,99 @@ impl Floor {
     }
 
     /// Row 65: strict C1 seven-key codec; reject unknown keys and legacy clock floors.
-    pub fn parse(_bytes: &[u8]) -> Result<Self> {
-        Err(refuse("codec-unwritten"))
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > FLOOR_MAX_BYTES {
+            return Err(refuse("malformed"));
+        }
+        let value = json::parse_strict(bytes).map_err(|_| refuse("malformed"))?;
+        let ValueView::Object(members) = value.view() else {
+            return Err(refuse("malformed"));
+        };
+        if matches!(
+            value.get("kind").map(Value::view),
+            Some(ValueView::Text("aukora-release-floor/v1"))
+        ) {
+            return Err(refuse("migration-required"));
+        }
+        const KEYS: [&str; 7] = [
+            "digest",
+            "record",
+            "signer_epoch",
+            "ledger_seq",
+            "signer_key_sha256",
+            "ledger_hash",
+            "history",
+        ];
+        if members.len() != KEYS.len()
+            || members.iter().any(|(key, _)| !KEYS.contains(&key.as_str()))
+        {
+            return Err(refuse("malformed"));
+        }
+        let digest = |key: &str| -> Result<Digest32> {
+            match value.get(key).map(Value::view) {
+                Some(ValueView::Text(text)) => {
+                    Digest32::from_hex(text).map_err(|_| refuse("malformed"))
+                }
+                _ => Err(refuse("malformed")),
+            }
+        };
+        let number = |key: &str| -> Result<u64> {
+            match value.get(key).map(Value::view) {
+                Some(ValueView::Integer(number)) if number.get() > 0 => Ok(number.get() as u64),
+                _ => Err(refuse("malformed")),
+            }
+        };
+        let Some(ValueView::Array(history)) = value.get("history").map(Value::view) else {
+            return Err(refuse("malformed"));
+        };
+        if history.len() > HISTORY_MAX {
+            return Err(refuse("malformed"));
+        }
+        let history = history
+            .iter()
+            .map(|entry| match entry.view() {
+                ValueView::Text(text) => Digest32::from_hex(text).map_err(|_| refuse("malformed")),
+                _ => Err(refuse("malformed")),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let floor = Self {
+            digest: digest("digest")?,
+            record: digest("record")?,
+            signer_epoch: number("signer_epoch")?,
+            ledger_seq: number("ledger_seq")?,
+            signer_key_sha256: digest("signer_key_sha256")?,
+            ledger_hash: digest("ledger_hash")?,
+            history,
+        };
+        floor.validate()?;
+        Ok(floor)
     }
 
     /// Row 65: emit only digest, record, signer_epoch, ledger_seq, signer_key_sha256,
     /// ledger_hash and history. Version and algorithm live in `ProtectedState`.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        Err(refuse("codec-unwritten"))
+        self.validate()?;
+        let text = |digest: Digest32| Value::text(digest.to_string());
+        let integer = |value: u64| SafeInteger::new(value as i64).map(Value::integer);
+        let value = Value::object(vec![
+            ("digest".into(), text(self.digest)?),
+            ("record".into(), text(self.record)?),
+            ("signer_epoch".into(), integer(self.signer_epoch)?),
+            ("ledger_seq".into(), integer(self.ledger_seq)?),
+            ("signer_key_sha256".into(), text(self.signer_key_sha256)?),
+            ("ledger_hash".into(), text(self.ledger_hash)?),
+            (
+                "history".into(),
+                Value::array(
+                    self.history
+                        .iter()
+                        .copied()
+                        .map(text)
+                        .collect::<Result<_>>()?,
+                )?,
+            ),
+        ])?;
+        Ok(json::to_canonical(&value))
     }
 
     fn compare(&self, proposed: &ReleaseOrder) -> Result<Ordering> {
