@@ -6,3 +6,34 @@ license.workspace = true
 publish = false
 
 [dependencies]
+canon = { path = "../canon" }
+aura = { path = "../aura" }
+argon2 = "=0.6.0"
+base64 = "=0.22.1"
+chacha20poly1305 = "=0.11.0"
+ciborium = "=0.2.2"
+ed25519-dalek = "=3.0.0"
+getrandom = "=0.4.3"
+hex = "=0.4.3"
+hkdf = "=0.13.0"
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data", "utf8_iter"] }
+k256 = { version = "=0.14.0", features = ["schnorr"] }
+p256 = { version = "=0.14.0", features = ["ecdsa"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.154", features = ["unbounded_depth"] }
+sha2 = "=0.11.1"
+signature = "=3.0.0"
+subtle = "=2.6.1"
+url = "=2.5.8"
+zeroize = "=1.9.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+rustix = { version = "=1.1.5", features = ["fs"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "=0.4.3", features = ["wasm_js"] }
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "=0.4.79"
+js-sys = "=0.3.106"
+web-sys = { version = "=0.3.106", features = ["Window", "Location", "Navigator", "CredentialsContainer", "CredentialRequestOptions", "PublicKeyCredentialRequestOptions", "PublicKeyCredentialDescriptor", "PublicKeyCredentialType", "UserVerificationRequirement", "PublicKeyCredential", "Credential", "AuthenticatorResponse", "AuthenticatorAssertionResponse", "AuthenticationExtensionsClientInputs", "AuthenticationExtensionsClientOutputs"] }

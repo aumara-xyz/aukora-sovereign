@@ -1,0 +1,95 @@
+{
+  "schema": "aukora:aumlok-framed-registration-v1",
+  "source": "prime-webauthn.json public none-attestation fixtures",
+  "note": "Registration acceptance vectors only. None attestation has no signature; possession and assertion signature verification are separate. New data awaits conductor pinning and main replay.",
+  "fixtures": [
+    {
+      "name": "registration-baseline-framed-accept",
+      "phase": "registration",
+      "rp_id": "owner.example.test",
+      "origin": "https://owner.example.test",
+      "expected_top_origin": "https://shell.example.test",
+      "owner_id": "software-owner",
+      "user_handle": "c29mdHdhcmUtb3duZXI",
+      "algorithm": "ES256",
+      "challenge": "X_7z-0Wj_1CX2xkcag5CxX6yJXGf9UyH-YsLqJxQ-7g",
+      "existing_credential_ids": [],
+      "registration": {
+        "kind": "passkey-registration",
+        "type": "public-key",
+        "id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "raw_id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiWF83ei0wV2pfMUNYMnhrY2FnNUN4WDZ5SlhHZjlVeUgtWXNMcUp4US03ZyIsIm9yaWdpbiI6Imh0dHBzOi8vb3duZXIuZXhhbXBsZS50ZXN0IiwiY3Jvc3NPcmlnaW4iOnRydWUsInRvcE9yaWdpbiI6Imh0dHBzOi8vc2hlbGwuZXhhbXBsZS50ZXN0In0",
+        "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViX_xset5vROu1Yoa9c5YjeuvYx9l639OuKtEmUdAJt7eJFAAAAAAAAAAAAAAAAAAAAAAAAAAAAE3NvZnR3YXJlLWNyZWRlbnRpYWylAQIDJiABIVggaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpYiWCBP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q",
+        "client_extension_results": {}
+      },
+      "expected": "ok"
+    },
+    {
+      "name": "registration-baseline-framed-wrong-top",
+      "phase": "registration",
+      "rp_id": "owner.example.test",
+      "origin": "https://owner.example.test",
+      "expected_top_origin": "https://shell.example.test",
+      "owner_id": "software-owner",
+      "user_handle": "c29mdHdhcmUtb3duZXI",
+      "algorithm": "ES256",
+      "challenge": "X_7z-0Wj_1CX2xkcag5CxX6yJXGf9UyH-YsLqJxQ-7g",
+      "existing_credential_ids": [],
+      "registration": {
+        "kind": "passkey-registration",
+        "type": "public-key",
+        "id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "raw_id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiWF83ei0wV2pfMUNYMnhrY2FnNUN4WDZ5SlhHZjlVeUgtWXNMcUp4US03ZyIsIm9yaWdpbiI6Imh0dHBzOi8vb3duZXIuZXhhbXBsZS50ZXN0IiwiY3Jvc3NPcmlnaW4iOnRydWUsInRvcE9yaWdpbiI6Imh0dHBzOi8vb3RoZXIuZXhhbXBsZS50ZXN0In0",
+        "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViX_xset5vROu1Yoa9c5YjeuvYx9l639OuKtEmUdAJt7eJFAAAAAAAAAAAAAAAAAAAAAAAAAAAAE3NvZnR3YXJlLWNyZWRlbnRpYWylAQIDJiABIVggaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpYiWCBP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q",
+        "client_extension_results": {}
+      },
+      "expected": "aumlok:registration-challenge-or-origin-mismatch"
+    },
+    {
+      "name": "eddsa-registration-framed-accept",
+      "phase": "registration",
+      "rp_id": "owner.example.test",
+      "origin": "https://owner.example.test",
+      "expected_top_origin": "https://shell.example.test",
+      "owner_id": "software-owner",
+      "user_handle": "c29mdHdhcmUtb3duZXI",
+      "algorithm": "EdDSA",
+      "challenge": "X_7z-0Wj_1CX2xkcag5CxX6yJXGf9UyH-YsLqJxQ-7g",
+      "existing_credential_ids": [],
+      "registration": {
+        "kind": "passkey-registration",
+        "type": "public-key",
+        "id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "raw_id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiWF83ei0wV2pfMUNYMnhrY2FnNUN4WDZ5SlhHZjlVeUgtWXNMcUp4US03ZyIsIm9yaWdpbiI6Imh0dHBzOi8vb3duZXIuZXhhbXBsZS50ZXN0IiwiY3Jvc3NPcmlnaW4iOnRydWUsInRvcE9yaWdpbiI6Imh0dHBzOi8vc2hlbGwuZXhhbXBsZS50ZXN0In0",
+        "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVh0_xset5vROu1Yoa9c5YjeuvYx9l639OuKtEmUdAJt7eJFAAAAAAAAAAAAAAAAAAAAAAAAAAAAE3NvZnR3YXJlLWNyZWRlbnRpYWykAQEDJyAGIVggxLy4xE_dhkaCMQ-iydg6XaAxNjY4nvR86tK-CpWBKr8",
+        "client_extension_results": {}
+      },
+      "expected": "ok"
+    },
+    {
+      "name": "eddsa-registration-framed-wrong-top",
+      "phase": "registration",
+      "rp_id": "owner.example.test",
+      "origin": "https://owner.example.test",
+      "expected_top_origin": "https://shell.example.test",
+      "owner_id": "software-owner",
+      "user_handle": "c29mdHdhcmUtb3duZXI",
+      "algorithm": "EdDSA",
+      "challenge": "X_7z-0Wj_1CX2xkcag5CxX6yJXGf9UyH-YsLqJxQ-7g",
+      "existing_credential_ids": [],
+      "registration": {
+        "kind": "passkey-registration",
+        "type": "public-key",
+        "id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "raw_id": "c29mdHdhcmUtY3JlZGVudGlhbA",
+        "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiWF83ei0wV2pfMUNYMnhrY2FnNUN4WDZ5SlhHZjlVeUgtWXNMcUp4US03ZyIsIm9yaWdpbiI6Imh0dHBzOi8vb3duZXIuZXhhbXBsZS50ZXN0IiwiY3Jvc3NPcmlnaW4iOnRydWUsInRvcE9yaWdpbiI6Imh0dHBzOi8vb3RoZXIuZXhhbXBsZS50ZXN0In0",
+        "attestation_object": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVh0_xset5vROu1Yoa9c5YjeuvYx9l639OuKtEmUdAJt7eJFAAAAAAAAAAAAAAAAAAAAAAAAAAAAE3NvZnR3YXJlLWNyZWRlbnRpYWykAQEDJyAGIVggxLy4xE_dhkaCMQ-iydg6XaAxNjY4nvR86tK-CpWBKr8",
+        "client_extension_results": {}
+      },
+      "expected": "aumlok:registration-challenge-or-origin-mismatch"
+    }
+  ]
+}
