@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The unchanged v1 encrypted envelope and owner-only identity-root contracts.
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use canon::{alg::AlgorithmId, alg::PublicKey, ids::SubjectId, Refusal, Result};
+use serde::{Deserialize, Serialize};
 
 /// The existing envelope's outer version; algorithms are not added as new v1 keys.
 pub const ENVELOPE_VERSION: u16 = 1;
@@ -66,7 +68,7 @@ impl Default for KdfParameters {
     }
 }
 
-/// Parsed ciphertext data; construction is unavailable until the decoder lands.
+/// Validated ciphertext data.
 /// Its canonical wire has exactly `ciphertext`, `kdf`, `nonce`, `salt`, `version`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnvelopeV1 {
@@ -78,12 +80,31 @@ pub struct EnvelopeV1 {
 }
 
 impl EnvelopeV1 {
-    /// Wave-0 refusal. The decoder must reject unknown fields and versions,
+    /// Reject unknown fields and versions,
     /// noncanonical JSON/base64, wrong widths and out-of-bounds KDF costs.
-    pub fn from_canonical_bytes(_bytes: &[u8]) -> Result<Self> {
-        Err(Refusal {
-            organ: "aumlok",
-            reason: "not-implemented",
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > MAX_ENVELOPE_BYTES {
+            return Err(refuse("envelope-too-large"));
+        }
+        let encoded: WireEnvelope =
+            serde_json::from_slice(bytes).map_err(|_| refuse("envelope-json"))?;
+        if encoded.version != u32::from(ENVELOPE_VERSION) {
+            return Err(refuse("envelope-version"));
+        }
+        let kdf = encoded.kdf.parameters()?;
+        let salt = decode_fixed(&encoded.salt)?;
+        let nonce = decode_fixed(&encoded.nonce)?;
+        let ciphertext = decode_fixed(&encoded.ciphertext)?;
+        let canonical = encode(&encoded)?;
+        if canonical != bytes {
+            return Err(refuse("envelope-not-canonical"));
+        }
+        Ok(Self {
+            canonical,
+            kdf,
+            salt,
+            nonce,
+            ciphertext,
         })
     }
 
@@ -120,6 +141,73 @@ impl EnvelopeV1 {
     }
 }
 
+fn refuse(reason: &'static str) -> Refusal {
+    Refusal {
+        organ: "aumlok",
+        reason,
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireEnvelope {
+    ciphertext: String,
+    kdf: WireKdf,
+    nonce: String,
+    salt: String,
+    version: u32,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireKdf {
+    algorithm: String,
+    memory_kib: u32,
+    parallelism: u32,
+    time_cost: u32,
+    version: u32,
+}
+
+impl WireKdf {
+    fn parameters(&self) -> Result<KdfParameters> {
+        if self.algorithm != "argon2id" || self.version != ARGON2_VERSION {
+            return Err(refuse("envelope-kdf"));
+        }
+        let costs = KdfParameters {
+            memory_kib: self.memory_kib,
+            parallelism: self.parallelism,
+            time_cost: self.time_cost,
+        };
+        costs.validate()?;
+        Ok(costs)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn from_parameters(costs: KdfParameters) -> Self {
+        Self {
+            algorithm: "argon2id".into(),
+            memory_kib: costs.memory_kib,
+            parallelism: costs.parallelism,
+            time_cost: costs.time_cost,
+            version: ARGON2_VERSION,
+        }
+    }
+}
+
+fn decode_fixed<const N: usize>(text: &str) -> Result<[u8; N]> {
+    let decoded = STANDARD
+        .decode(text)
+        .map_err(|_| refuse("envelope-base64"))?;
+    if STANDARD.encode(&decoded) != text {
+        return Err(refuse("envelope-base64"));
+    }
+    decoded.try_into().map_err(|_| refuse("envelope-length"))
+}
+
+fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
+    serde_json::to_vec(value).map_err(|_| refuse("envelope-json"))
+}
+
 /// Public identity correspondence, distinct from the hardware passkey's authority.
 /// These fields alone are unverified data and grant nothing.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -145,56 +233,175 @@ pub struct EnvelopeSubmission {
 /// Secret operations are absent from native builds.
 #[cfg(target_arch = "wasm32")]
 pub mod owner {
-    use super::{EnvelopeV1, KdfParameters, RootIdentity, ROOT_BYTES};
+    use super::{
+        encode, refuse, EnvelopeV1, KdfParameters, RootIdentity, WireEnvelope, WireKdf,
+        ENVELOPE_AAD_DOMAIN, ENVELOPE_VERSION, NONCE_BYTES, ROOT_BYTES, ROOT_KEY_DOMAIN,
+        SALT_BYTES, SUBJECT_DOMAIN,
+    };
     use crate::phrase::owner::{OwnerBrowser, OwnerPhrase};
-    use canon::{Refusal, Result};
+    use argon2::{Algorithm, Argon2, Params, Version};
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use canon::{
+        alg::{AlgorithmId, PublicKey},
+        digest::Digest32,
+        ids::SubjectId,
+        Result,
+    };
+    use chacha20poly1305::{
+        aead::{AeadInOut, KeyInit},
+        XChaCha20Poly1305, XNonce,
+    };
+    use ed25519_dalek::SigningKey;
+    use serde::Serialize;
+    use sha2::{Digest, Sha256};
     use zeroize::Zeroizing;
 
     /// An identity root with no public raw-byte constructor or serialization.
     pub struct IdentityRoot(Zeroizing<[u8; ROOT_BYTES]>);
 
     impl IdentityRoot {
-        /// Wave-0 refusal; randomness must come from the platform CSPRNG.
+        /// Fill the independent root from the platform CSPRNG.
         pub fn generate(_browser: &OwnerBrowser) -> Result<Self> {
-            Err(Refusal {
-                organ: "aumlok",
-                reason: "not-implemented",
+            let mut root = Zeroizing::new([0; ROOT_BYTES]);
+            getrandom::fill(root.as_mut()).map_err(|_| refuse("random-unavailable"))?;
+            Ok(Self(root))
+        }
+
+        /// Derive the public key and subject using the two pinned SHA-256 domains.
+        pub fn public_identity(&self, _browser: &OwnerBrowser) -> Result<RootIdentity> {
+            let mut seed_hash = Sha256::new();
+            seed_hash.update(ROOT_KEY_DOMAIN);
+            seed_hash.update(self.0.as_ref());
+            let seed = Zeroizing::new(<[u8; 32]>::from(seed_hash.finalize()));
+            let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+            let mut subject_hash = Sha256::new();
+            subject_hash.update(SUBJECT_DOMAIN);
+            subject_hash.update(public);
+            Ok(RootIdentity {
+                subject: SubjectId::from_digest(Digest32::from_bytes(
+                    subject_hash.finalize().into(),
+                )),
+                public_key: PublicKey {
+                    v: 1,
+                    algorithm: AlgorithmId::Ed25519,
+                    bytes: public.to_vec(),
+                },
             })
         }
 
-        /// Wave-0 refusal; frozen domains derive the public key and then subject.
-        pub fn public_identity(&self, _browser: &OwnerBrowser) -> Result<RootIdentity> {
-            let _ = &self.0;
-            Err(Refusal {
-                organ: "aumlok",
-                reason: "not-implemented",
-            })
+        pub(crate) fn bytes(&self, _browser: &OwnerBrowser) -> &[u8; ROOT_BYTES] {
+            &self.0
+        }
+
+        pub(crate) fn from_secret(bytes: Zeroizing<[u8; ROOT_BYTES]>) -> Self {
+            Self(bytes)
         }
     }
 
-    /// Wave-0 refusal. Sealing uses Argon2id and XChaCha20-Poly1305 with fresh
+    /// Sealing uses Argon2id and XChaCha20-Poly1305 with fresh
     /// salt/nonce; it does not derive a root from the phrase.
     pub fn seal(
-        _browser: &OwnerBrowser,
-        _root: &IdentityRoot,
-        _phrase: &OwnerPhrase,
-        _parameters: KdfParameters,
+        browser: &OwnerBrowser,
+        root: &IdentityRoot,
+        phrase: &OwnerPhrase,
+        parameters: KdfParameters,
     ) -> Result<EnvelopeV1> {
-        Err(Refusal {
-            organ: "aumlok",
-            reason: "not-implemented",
-        })
+        parameters.validate()?;
+        let mut salt = [0; SALT_BYTES];
+        let mut nonce = [0; NONCE_BYTES];
+        getrandom::fill(&mut salt).map_err(|_| refuse("random-unavailable"))?;
+        getrandom::fill(&mut nonce).map_err(|_| refuse("random-unavailable"))?;
+        let key = derive_phrase_key(browser, phrase, parameters, &salt)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+            .map_err(|_| refuse("envelope-seal-failed"))?;
+        let mut envelope = EnvelopeV1 {
+            canonical: Vec::new(),
+            kdf: parameters,
+            salt,
+            nonce,
+            ciphertext: [0; 48],
+        };
+        let mut encrypted = Zeroizing::new(root.bytes(browser).to_vec());
+        cipher
+            .encrypt_in_place(
+                &XNonce::from(nonce),
+                &associated_data(&envelope)?,
+                &mut *encrypted,
+            )
+            .map_err(|_| refuse("envelope-seal-failed"))?;
+        envelope.ciphertext.copy_from_slice(&encrypted);
+        envelope.canonical = encode(&WireEnvelope {
+            ciphertext: STANDARD.encode(envelope.ciphertext),
+            kdf: WireKdf::from_parameters(parameters),
+            nonce: STANDARD.encode(nonce),
+            salt: STANDARD.encode(salt),
+            version: u32::from(ENVELOPE_VERSION),
+        })?;
+        Ok(envelope)
     }
 
-    /// Wave-0 refusal; a phrase alone is insufficient to recover an identity root.
+    /// Authenticate the ciphertext before returning the phrase-sealed root.
     pub fn open(
-        _browser: &OwnerBrowser,
-        _envelope: &EnvelopeV1,
-        _phrase: &OwnerPhrase,
+        browser: &OwnerBrowser,
+        envelope: &EnvelopeV1,
+        phrase: &OwnerPhrase,
     ) -> Result<IdentityRoot> {
-        Err(Refusal {
-            organ: "aumlok",
-            reason: "not-implemented",
-        })
+        let key = derive_phrase_key(browser, phrase, envelope.kdf, &envelope.salt)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
+            .map_err(|_| refuse("envelope-authentication"))?;
+        let mut plaintext = Zeroizing::new(envelope.ciphertext.to_vec());
+        cipher
+            .decrypt_in_place(
+                &XNonce::from(envelope.nonce),
+                &associated_data(envelope)?,
+                &mut *plaintext,
+            )
+            .map_err(|_| refuse("envelope-authentication"))?;
+        let mut root = Zeroizing::new([0; ROOT_BYTES]);
+        if plaintext.len() != root.len() {
+            return Err(refuse("envelope-length"));
+        }
+        root.copy_from_slice(&plaintext);
+        Ok(IdentityRoot::from_secret(root))
+    }
+
+    pub(crate) fn derive_phrase_key(
+        browser: &OwnerBrowser,
+        phrase: &OwnerPhrase,
+        parameters: KdfParameters,
+        salt: &[u8; SALT_BYTES],
+    ) -> Result<Zeroizing<[u8; ROOT_BYTES]>> {
+        parameters.validate()?;
+        let costs = Params::new(
+            parameters.memory_kib,
+            parameters.time_cost,
+            parameters.parallelism,
+            Some(ROOT_BYTES),
+        )
+        .map_err(|_| refuse("envelope-kdf"))?;
+        let mut key = Zeroizing::new([0; ROOT_BYTES]);
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, costs)
+            .hash_password_into(phrase.expose(browser).as_bytes(), salt, key.as_mut())
+            .map_err(|_| refuse("envelope-kdf-failed"))?;
+        Ok(key)
+    }
+
+    fn associated_data(envelope: &EnvelopeV1) -> Result<Vec<u8>> {
+        #[derive(Serialize)]
+        struct Header {
+            kdf: WireKdf,
+            nonce: String,
+            salt: String,
+            version: u32,
+        }
+        let header = Header {
+            kdf: WireKdf::from_parameters(envelope.kdf),
+            nonce: STANDARD.encode(envelope.nonce),
+            salt: STANDARD.encode(envelope.salt),
+            version: u32::from(ENVELOPE_VERSION),
+        };
+        let mut aad = ENVELOPE_AAD_DOMAIN.to_vec();
+        aad.extend_from_slice(&encode(&header)?);
+        Ok(aad)
     }
 }

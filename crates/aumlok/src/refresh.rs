@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Ciphertext-only phrase-refresh contracts; state transitions refuse in wave 0.
+//! Ciphertext-only phrase refresh with owner-local preparation and resumption.
 
 use crate::{ceremony::CeremonyId, envelope::EnvelopeV1};
 use canon::{
@@ -8,6 +8,7 @@ use canon::{
     ids::{SessionId, SubjectId},
     Refusal, Result,
 };
+use sha2::{Digest, Sha256};
 
 /// Maximum lifetime of one pending refresh, in supervisor milliseconds.
 pub const REFRESH_LIFETIME_MS: i64 = 300_000;
@@ -24,12 +25,12 @@ pub struct ProtectedRefreshPhrase {
 }
 
 impl ProtectedRefreshPhrase {
-    /// Wave-0 refusal; nonce and bounded ciphertext are data, not plaintext.
-    pub fn from_parts(_nonce: [u8; 24], _ciphertext: Vec<u8>) -> Result<Self> {
-        Err(Refusal {
-            organ: "aumlok",
-            reason: "not-implemented",
-        })
+    /// Admit a nonce and bounded authenticated ciphertext as non-authorizing data.
+    pub fn from_parts(nonce: [u8; 24], ciphertext: Vec<u8>) -> Result<Self> {
+        if !(17..=MAX_PROTECTED_PHRASE_BYTES).contains(&ciphertext.len()) {
+            return Err(refused("refresh-input"));
+        }
+        Ok(Self { nonce, ciphertext })
     }
 
     /// Borrow only the encrypted resume payload.
@@ -105,7 +106,6 @@ pub struct RefreshRecord {
 }
 
 /// Storage requirements for refresh within the same authority transaction.
-/// No implementation or successful authorizing transition is provided in wave 0.
 pub trait RefreshTxn: AuthorityTxn {
     /// Read the sole current envelope under the active write transaction.
     fn current_envelope(&mut self) -> Result<CurrentEnvelope>;
@@ -131,42 +131,144 @@ pub trait RefreshTxn: AuthorityTxn {
     ) -> Result<CurrentEnvelope>;
 }
 
-/// Wave-0 refusal. No data, cipher, subject or prior receipt substitutes for proof.
-pub fn prepare_refresh<T: RefreshTxn + ?Sized>(
-    _txn: &mut T,
-    _proof: &VerifiedProof,
-    _submission: RefreshSubmission,
-    _now_ms: i64,
-) -> Result<RefreshRecord> {
-    Err(Refusal {
+fn refused(reason: &'static str) -> Refusal {
+    Refusal {
         organ: "aumlok",
-        reason: "not-implemented",
-    })
+        reason,
+    }
 }
 
-/// Wave-0 refusal. The owned proof cannot be replaced by a caller-made approval flag.
+fn envelope_digest(envelope: &EnvelopeV1) -> Digest32 {
+    Digest32::from_bytes(Sha256::digest(envelope.canonical_bytes()).into())
+}
+
+fn check_current(current: &CurrentEnvelope, submission: &RefreshSubmission) -> Result<()> {
+    if current.digest != envelope_digest(&current.envelope) {
+        return Err(refused("refresh-corrupt"));
+    }
+    if current.subject != submission.subject
+        || current.owner_epoch != submission.expected_epoch
+        || current.revision != submission.expected_revision
+        || current.digest != submission.previous_digest
+    {
+        return Err(refused("refresh-stale"));
+    }
+    current
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| refused("refresh-revision"))?;
+    Ok(())
+}
+
+fn check_proof<T: RefreshTxn + ?Sized>(
+    txn: &T,
+    proof: &VerifiedProof,
+    submission: &RefreshSubmission,
+    now_ms: i64,
+) -> Result<()> {
+    let authorization = proof.authorization();
+    if txn.transaction_id() != proof.transaction_id()
+        || authorization.subject != submission.subject
+        || authorization.epoch != submission.expected_epoch
+    {
+        return Err(refused("refresh-proof"));
+    }
+    if authorization.expires_at <= now_ms {
+        return Err(refused("refresh-expired"));
+    }
+    Ok(())
+}
+
+/// Check the locked source and stage ciphertext through the transaction's exact-byte proof check.
+pub fn prepare_refresh<T: RefreshTxn + ?Sized>(
+    txn: &mut T,
+    proof: &VerifiedProof,
+    submission: RefreshSubmission,
+    now_ms: i64,
+) -> Result<RefreshRecord> {
+    if now_ms < 0 {
+        return Err(refused("refresh-input"));
+    }
+    let expires_at = now_ms
+        .checked_add(REFRESH_LIFETIME_MS)
+        .ok_or_else(|| refused("refresh-input"))?
+        .min(proof.authorization().expires_at);
+    check_proof(txn, proof, &submission, now_ms)?;
+    check_current(&txn.current_envelope()?, &submission)?;
+    let replacement_digest = envelope_digest(&submission.replacement);
+    if replacement_digest == submission.previous_digest {
+        return Err(refused("refresh-stale"));
+    }
+    let record = RefreshRecord {
+        submission,
+        replacement_digest,
+        issued_at: now_ms,
+        expires_at,
+        state: RefreshState::Prepared,
+    };
+    txn.stage_refresh(proof, &record)?;
+    Ok(record)
+}
+
+/// Validate the authenticated pending record, then retire and replace in one transaction.
 pub fn finish_refresh<T: RefreshTxn + ?Sized>(
-    _txn: &mut T,
-    _proof: VerifiedProof,
-    _session: SessionId,
-    _ceremony: CeremonyId,
-    _now_ms: i64,
+    txn: &mut T,
+    proof: VerifiedProof,
+    session: SessionId,
+    ceremony: CeremonyId,
+    now_ms: i64,
 ) -> Result<CurrentEnvelope> {
-    Err(Refusal {
-        organ: "aumlok",
-        reason: "not-implemented",
-    })
+    let record = txn.refresh_for_session(&session, &ceremony)?;
+    if record.submission.session != session || record.submission.ceremony != ceremony {
+        return Err(refused("refresh-corrupt"));
+    }
+    match record.state {
+        RefreshState::Prepared => {}
+        RefreshState::InDoubt => return Err(refused("refresh-in-doubt")),
+        RefreshState::Committed => return Err(refused("refresh-proof-spent")),
+        RefreshState::Cancelled => return Err(refused("refresh-cancelled")),
+        RefreshState::Expired => return Err(refused("refresh-expired")),
+    }
+    let lifetime = record.expires_at.checked_sub(record.issued_at);
+    if record.issued_at < 0
+        || !matches!(lifetime, Some(1..=REFRESH_LIFETIME_MS))
+        || record.replacement_digest != envelope_digest(&record.submission.replacement)
+        || record.replacement_digest == record.submission.previous_digest
+    {
+        return Err(refused("refresh-corrupt"));
+    }
+    if now_ms < record.issued_at || now_ms >= record.expires_at {
+        return Err(refused("refresh-expired"));
+    }
+    check_proof(txn, &proof, &record.submission, now_ms)?;
+    check_current(&txn.current_envelope()?, &record.submission)?;
+    let replacement = txn.commit_refresh(proof, &record)?;
+    if replacement.subject != record.submission.subject
+        || replacement.owner_epoch != record.submission.expected_epoch
+        || Some(replacement.revision) != record.submission.expected_revision.checked_add(1)
+        || replacement.digest != record.replacement_digest
+        || replacement.envelope != record.submission.replacement
+    {
+        return Err(refused("refresh-unsettled"));
+    }
+    Ok(replacement)
 }
 
 /// Browser APIs carry plaintext only inside the owner-origin build.
 #[cfg(target_arch = "wasm32")]
 pub mod owner {
-    use super::{CeremonyId, ProtectedRefreshPhrase};
+    use super::{refused, CeremonyId, ProtectedRefreshPhrase, REFRESH_PHRASE_KEY_DOMAIN};
     use crate::{
         envelope::{owner::IdentityRoot, EnvelopeV1, KdfParameters},
         phrase::owner::{OwnerBrowser, OwnerPhrase},
     };
-    use canon::{Refusal, Result};
+    use canon::Result;
+    use chacha20poly1305::{
+        aead::{AeadInOut, KeyInit},
+        XChaCha20Poly1305, XNonce,
+    };
+    use sha2::{Digest, Sha256};
+    use zeroize::Zeroizing;
 
     /// Unconfirmed local replacement; no node or app receives its phrase.
     pub struct RefreshDraft {
@@ -187,31 +289,64 @@ pub mod owner {
         }
     }
 
-    /// Wave-0 refusal. Preparation must rewrap the same root, with fresh phrase,
-    /// salt and nonce, and protect the displayed phrase under the pinned refresh key.
+    fn capsule_cipher(browser: &OwnerBrowser, root: &IdentityRoot) -> Result<XChaCha20Poly1305> {
+        let key: Zeroizing<[u8; 32]> = Zeroizing::new(
+            Sha256::new()
+                .chain_update(REFRESH_PHRASE_KEY_DOMAIN)
+                .chain_update(root.bytes(browser))
+                .finalize()
+                .into(),
+        );
+        XChaCha20Poly1305::new_from_slice(key.as_ref()).map_err(|_| refused("refresh-corrupt"))
+    }
+
+    /// Draw a phrase and rewrap the same root with fresh salt and nonce.
     pub fn prepare(
-        _browser: &OwnerBrowser,
-        _root: &IdentityRoot,
-        _ceremony: &CeremonyId,
-        _parameters: KdfParameters,
+        browser: &OwnerBrowser,
+        root: &IdentityRoot,
+        ceremony: &CeremonyId,
+        parameters: KdfParameters,
     ) -> Result<RefreshDraft> {
-        Err(Refusal {
-            organ: "aumlok",
-            reason: "not-implemented",
+        parameters.validate()?;
+        let phrase = OwnerPhrase::draw(browser)?;
+        let envelope = crate::envelope::owner::seal(browser, root, &phrase, parameters)?;
+        let mut nonce = [0_u8; 24];
+        getrandom::fill(&mut nonce).map_err(|_| refused("random-unavailable"))?;
+        let mut encrypted = Zeroizing::new(phrase.expose(browser).as_bytes().to_vec());
+        capsule_cipher(browser, root)?
+            .encrypt_in_place(
+                &XNonce::from(nonce),
+                ceremony.to_string().as_bytes(),
+                &mut *encrypted,
+            )
+            .map_err(|_| refused("refresh-corrupt"))?;
+        let protected_phrase =
+            ProtectedRefreshPhrase::from_parts(nonce, core::mem::take(&mut *encrypted))?;
+        Ok(RefreshDraft {
+            phrase,
+            envelope,
+            protected_phrase,
         })
     }
 
-    /// Wave-0 refusal. Resume decrypts only at the owner origin, with ASCII
-    /// ceremony id as AAD exactly as refresh-phrase-v1 specifies.
+    /// Authenticate the capsule against the ASCII ceremony id before parsing its phrase.
     pub fn resume(
-        _browser: &OwnerBrowser,
-        _root: &IdentityRoot,
-        _ceremony: &CeremonyId,
-        _protected: &ProtectedRefreshPhrase,
+        browser: &OwnerBrowser,
+        root: &IdentityRoot,
+        ceremony: &CeremonyId,
+        protected: &ProtectedRefreshPhrase,
     ) -> Result<OwnerPhrase> {
-        Err(Refusal {
-            organ: "aumlok",
-            reason: "not-implemented",
-        })
+        let (nonce, ciphertext) = protected.parts();
+        let mut plaintext = Zeroizing::new(ciphertext.to_vec());
+        capsule_cipher(browser, root)?
+            .decrypt_in_place(
+                &XNonce::from(*nonce),
+                ceremony.to_string().as_bytes(),
+                &mut *plaintext,
+            )
+            .map_err(|_| refused("refresh-corrupt"))?;
+        let text =
+            core::str::from_utf8(plaintext.as_ref()).map_err(|_| refused("refresh-corrupt"))?;
+        OwnerPhrase::parse(browser, text).map_err(|_| refused("refresh-corrupt"))
     }
 }
