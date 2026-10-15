@@ -9,11 +9,58 @@ macro_rules! registry {
         $(#[doc = $doc]
         pub const $name: Refusal = Refusal::new($organ, $reason);)+
         /// All refusal codes recognized by this version of the shared spine.
-        pub const ALL: &[Refusal] = &[$($name),+];
+        pub const ALL: &[Refusal] = &{
+            let core = [$($name),+];
+            let mut entries = [FRAME_INVALID_FIELD; [$($name),+].len() + COPRESENCE_CODES.len()];
+            let mut index = 0;
+            while index < core.len() {
+                entries[index] = core[index];
+                index += 1;
+            }
+            let mut extra = 0;
+            while extra < COPRESENCE_CODES.len() {
+                entries[index + extra] = COPRESENCE_CODES[extra];
+                extra += 1;
+            }
+            entries
+        };
     };
 }
 
 registry! {
+    CANON_AUTHORIZATION_STATE_UNAVAILABLE => ("canon", "authorization-state-unavailable", "The authority transaction cannot establish live authorization state."),
+    AUMLOK_BACKUP_ELIGIBILITY_CHANGED => ("aumlok", "backup-eligibility-changed", "Pinned refusal token `aumlok:backup-eligibility-changed`."),
+    AUMLOK_CHALLENGE_OR_ORIGIN_MISMATCH => ("aumlok", "challenge-or-origin-mismatch", "Pinned refusal token `aumlok:challenge-or-origin-mismatch`."),
+    AUMLOK_CLIENT_DATA_INVALID => ("aumlok", "client-data-invalid", "Pinned refusal token `aumlok:client-data-invalid`."),
+    AUMLOK_COUNTER_REPLAYED => ("aumlok", "counter-replayed", "Pinned refusal token `aumlok:counter-replayed`."),
+    AUMLOK_CREDENTIAL_NOT_PINNED => ("aumlok", "credential-not-pinned", "Pinned refusal token `aumlok:credential-not-pinned`."),
+    AUMLOK_CROSS_ORIGIN_REFUSED => ("aumlok", "cross-origin-refused", "Pinned refusal token `aumlok:cross-origin-refused`."),
+    AUMLOK_DATA_INVALID => ("aumlok", "data-invalid", "Pinned refusal token `aumlok:data-invalid`."),
+    AUMLOK_ENCODING_INVALID => ("aumlok", "encoding-invalid", "Pinned refusal token `aumlok:encoding-invalid`."),
+    AUMLOK_MATERIAL_KIND => ("aumlok", "material-kind", "Pinned refusal token `aumlok:material-kind`."),
+    AUMLOK_REGISTRATION_ATTESTATION_INVALID => ("aumlok", "registration-attestation-invalid", "Pinned refusal token `aumlok:registration-attestation-invalid`."),
+    AUMLOK_REGISTRATION_BACKUP_FLAGS_INVALID => ("aumlok", "registration-backup-flags-invalid", "Pinned refusal token `aumlok:registration-backup-flags-invalid`."),
+    AUMLOK_REGISTRATION_CBOR_INVALID => ("aumlok", "registration-cbor-invalid", "Pinned refusal token `aumlok:registration-cbor-invalid`."),
+    AUMLOK_REGISTRATION_CHALLENGE_OR_ORIGIN_MISMATCH => ("aumlok", "registration-challenge-or-origin-mismatch", "Pinned refusal token `aumlok:registration-challenge-or-origin-mismatch`."),
+    AUMLOK_REGISTRATION_CLIENT_DATA_INVALID => ("aumlok", "registration-client-data-invalid", "Pinned refusal token `aumlok:registration-client-data-invalid`."),
+    AUMLOK_REGISTRATION_CREDENTIAL_ID_MISMATCH => ("aumlok", "registration-credential-id-mismatch", "Pinned refusal token `aumlok:registration-credential-id-mismatch`."),
+    AUMLOK_REGISTRATION_KEY_INVALID => ("aumlok", "registration-key-invalid", "Pinned refusal token `aumlok:registration-key-invalid`."),
+    AUMLOK_REGISTRATION_RP_ID_MISMATCH => ("aumlok", "registration-rp-id-mismatch", "Pinned refusal token `aumlok:registration-rp-id-mismatch`."),
+    AUMLOK_REGISTRATION_TYPE_OR_ID_INVALID => ("aumlok", "registration-type-or-id-invalid", "Pinned refusal token `aumlok:registration-type-or-id-invalid`."),
+    AUMLOK_REGISTRATION_UP_UV_AT_OR_FLAGS_REFUSED => ("aumlok", "registration-up-uv-at-or-flags-refused", "Pinned refusal token `aumlok:registration-up-uv-at-or-flags-refused`."),
+    AUMLOK_RP_ID_MISMATCH => ("aumlok", "rp-id-mismatch", "Pinned refusal token `aumlok:rp-id-mismatch`."),
+    AUMLOK_SIGNATURE_INVALID => ("aumlok", "signature-invalid", "Pinned refusal token `aumlok:signature-invalid`."),
+    AUMLOK_UP_UV_OR_FLAGS_REFUSED => ("aumlok", "up-uv-or-flags-refused", "Pinned refusal token `aumlok:up-uv-or-flags-refused`."),
+    AUMLOK_USER_HANDLE_MISMATCH => ("aumlok", "user-handle-mismatch", "Pinned refusal token `aumlok:user-handle-mismatch`."),
+    FLOOR_ABSENT => ("floor", "absent", "Pinned refusal token `floor:absent`."),
+    FLOOR_EQUAL_CONFLICT => ("floor", "equal-conflict", "Pinned refusal token `floor:equal-conflict`."),
+    FLOOR_INSTALL_INCOMPLETE => ("floor", "install-incomplete", "Pinned refusal token `floor:install-incomplete`."),
+    FLOOR_MALFORMED => ("floor", "malformed", "Pinned refusal token `floor:malformed`."),
+    FLOOR_MIGRATION_REQUIRED => ("floor", "migration-required", "Pinned refusal token `floor:migration-required`."),
+    FLOOR_NOT_NEWER => ("floor", "not-newer", "Pinned refusal token `floor:not-newer`."),
+    FLOOR_ORDERING_EVIDENCE => ("floor", "ordering-evidence", "Pinned refusal token `floor:ordering-evidence`."),
+    FLOOR_RELEASE_BELOW_FLOOR => ("floor", "release-below-floor", "Pinned refusal token `floor:release-below-floor`."),
+    FLOOR_SIGNER_EPOCH_MISMATCH => ("floor", "signer-epoch-mismatch", "Pinned refusal token `floor:signer-epoch-mismatch`."),
     CANON_INVALID_UTF8 => ("canon", "invalid-utf8", "Input is not valid UTF-8."),
     CANON_BOM => ("canon", "bom", "Input starts with a forbidden byte-order mark."),
     CANON_INVALID_JSON => ("canon", "invalid-json", "Input violates the JSON grammar."),
@@ -236,8 +283,12 @@ registry! {
 /// frozen corpus registry refusal and this version's explicit additions. Unknown
 /// or malformed strings refuse with `frame:invalid-field`; no peer-supplied token
 /// is interned, and `canon:too-large` is not registered.
-pub fn parse(_code: &str) -> Result<Refusal> {
-    todo!("row 32")
+pub fn parse(code: &str) -> Result<Refusal> {
+    let (organ, reason) = code.split_once(':').ok_or(FRAME_INVALID_FIELD)?;
+    ALL.iter()
+        .copied()
+        .find(|entry| entry.organ == organ && entry.reason == reason)
+        .ok_or(FRAME_INVALID_FIELD)
 }
 
 /// Co-presence receipt and hardened-exchange reasons, retaining the v0 spellings.

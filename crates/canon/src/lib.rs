@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared, versioned data contracts for the five organs.
 //!
-//! Wave 0 freezes interfaces. Unimplemented codecs, reducers and verifiers panic
-//! with `row 32`; they do not report validation or authorization success.
+//! C1 parsing and canonical serialization are shared by native and WASM callers.
+//! Typed descriptor codecs validate data without granting authority.
 //! Canon owns no policy, storage, keys, socket creation or command execution.
 
 #![deny(unsafe_code)]

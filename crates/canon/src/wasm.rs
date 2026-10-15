@@ -37,8 +37,26 @@ pub struct CanonicalResult {
 /// offset, or zero when bounds/allocation fail. The caller writes only this
 /// allocation; it remains owned by the caller until `release_input`.
 #[no_mangle]
-pub extern "C" fn allocate_input(_raw_len: u32) -> u32 {
-    todo!("row 32")
+pub extern "C" fn allocate_input(raw_len: u32) -> u32 {
+    if raw_len == 0 || raw_len as usize > crate::frame::MAX_FRAME_BYTES {
+        return 0;
+    }
+    ALLOCATIONS.with(|slot| {
+        let Ok(mut allocations) = slot.try_borrow_mut() else {
+            return 0;
+        };
+        if allocations.inputs.try_reserve(1).is_err() {
+            return 0;
+        }
+        let mut input = Vec::new();
+        if input.try_reserve_exact(raw_len as usize).is_err() {
+            return 0;
+        }
+        input.resize(raw_len as usize, 0);
+        let offset = input.as_ptr() as u32;
+        allocations.inputs.push(input);
+        offset
+    })
 }
 
 /// Canonicalizes one allocated input slice using `json::canonicalize`, with all
@@ -49,22 +67,104 @@ pub extern "C" fn allocate_input(_raw_len: u32) -> u32 {
 /// allocation/allocation failure. Failure never returns success bytes. The
 /// input is borrowed, not consumed. No result can authorize an operation.
 #[no_mangle]
-pub extern "C" fn canonicalize(_raw_utf8: u32, _raw_len: u32) -> u32 {
-    todo!("row 32")
+pub extern "C" fn canonicalize(raw_utf8: u32, raw_len: u32) -> u32 {
+    if raw_utf8.checked_add(raw_len).is_none() {
+        return 0;
+    }
+    ALLOCATIONS.with(|slot| {
+        let Ok(mut allocations) = slot.try_borrow_mut() else {
+            return 0;
+        };
+        let Some(input) = allocations
+            .inputs
+            .iter()
+            .find(|input| input.as_ptr() as u32 == raw_utf8 && input.len() == raw_len as usize)
+        else {
+            return 0;
+        };
+        let (status, data) = match crate::json::canonicalize(input) {
+            Ok(bytes) => (Status::Canonical, bytes),
+            Err(refusal) => (Status::Refusal, refusal.to_string().into_bytes()),
+        };
+        if allocations.outputs.try_reserve(1).is_err() {
+            return 0;
+        }
+        let mut descriptor = Vec::new();
+        if descriptor.try_reserve_exact(1).is_err() {
+            return 0;
+        }
+        let Ok(data_len) = u32::try_from(data.len()) else {
+            return 0;
+        };
+        descriptor.push(CanonicalResult {
+            v: ABI_VERSION,
+            status: status as u32,
+            data_ptr: data.as_ptr() as u32,
+            data_len,
+        });
+        let offset = descriptor.as_ptr() as u32;
+        allocations.outputs.push(Output {
+            descriptor,
+            _data: data,
+        });
+        offset
+    })
 }
 
 /// Releases exactly one original input allocation. Refuses unknown, mismatched
 /// or already released offset/length pairs by returning 1; returns 0 on release.
 /// Validation precedes deallocation, including when the browser supplies junk.
 #[no_mangle]
-pub extern "C" fn release_input(_raw_utf8: u32, _raw_len: u32) -> u32 {
-    todo!("row 32")
+pub extern "C" fn release_input(raw_utf8: u32, raw_len: u32) -> u32 {
+    ALLOCATIONS.with(|slot| {
+        let Ok(mut allocations) = slot.try_borrow_mut() else {
+            return 1;
+        };
+        let Some(index) = allocations
+            .inputs
+            .iter()
+            .position(|input| input.as_ptr() as u32 == raw_utf8 && input.len() == raw_len as usize)
+        else {
+            return 1;
+        };
+        allocations.inputs.swap_remove(index);
+        0
+    })
 }
 
 /// Releases one returned descriptor and its result buffer together. Returns 0
 /// on release or 1 for unknown/already released offsets; never dereferences an
 /// unvalidated descriptor. The browser copies output before calling this.
 #[no_mangle]
-pub extern "C" fn release_result(_descriptor: u32) -> u32 {
-    todo!("row 32")
+pub extern "C" fn release_result(descriptor: u32) -> u32 {
+    ALLOCATIONS.with(|slot| {
+        let Ok(mut allocations) = slot.try_borrow_mut() else {
+            return 1;
+        };
+        let Some(index) = allocations
+            .outputs
+            .iter()
+            .position(|output| output.descriptor.as_ptr() as u32 == descriptor)
+        else {
+            return 1;
+        };
+        allocations.outputs.swap_remove(index);
+        0
+    })
+}
+
+#[derive(Default)]
+struct Allocations {
+    inputs: Vec<Vec<u8>>,
+    outputs: Vec<Output>,
+}
+
+struct Output {
+    descriptor: Vec<CanonicalResult>,
+    _data: Vec<u8>,
+}
+
+std::thread_local! {
+    static ALLOCATIONS: std::cell::RefCell<Allocations> =
+        std::cell::RefCell::new(Allocations::default());
 }

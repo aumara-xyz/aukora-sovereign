@@ -383,29 +383,101 @@ impl ModelStream {
     }
 
     /// Starts at index zero after validating the negotiated producer window and admitted ids.
-    pub fn new(_started: &ModelStarted) -> Result<Self> {
-        todo!("row 32")
+    pub fn new(started: &ModelStarted) -> Result<Self> {
+        if !(1..=MAX_PENDING_CHUNKS).contains(&started.max_pending_chunks) {
+            return Err(crate::codes::FRAME_STREAM_LIMIT);
+        }
+        Ok(Self {
+            request_id: started.request_id,
+            reservation_id: started.reservation_id,
+            next_index: 0,
+            first_pending: 0,
+            window: started.max_pending_chunks,
+            ended: false,
+        })
     }
 
     /// Requires matching ids, exact next index, an open stream and available window capacity.
     /// A full window refuses `broker:busy`; the producer waits rather than allocating unbounded data.
-    pub fn observe_delta(&mut self, _delta: &ModelDelta) -> Result<()> {
-        todo!("row 32")
+    pub fn observe_delta(&mut self, delta: &ModelDelta) -> Result<()> {
+        self.check_position(delta.request_id, delta.reservation_id, delta.index)?;
+        check_record(delta.v, delta.algorithm)?;
+        if delta.index >= crate::json::MAX_SAFE_INTEGER as u64 {
+            return Err(crate::codes::FRAME_STREAM_LIMIT);
+        }
+        if self.next_index - self.first_pending >= u64::from(self.window) {
+            return Err(crate::codes::BROKER_BUSY);
+        }
+        self.next_index += 1;
+        Ok(())
     }
 
     /// Releases already forwarded chunks through the given index, refusing future or backward acks.
     /// This local flow-control acknowledgement carries no spending or approval authority.
-    pub fn acknowledge_through(&mut self, _index: u64) -> Result<()> {
-        todo!("row 32")
+    pub fn acknowledge_through(&mut self, index: u64) -> Result<()> {
+        if index < self.first_pending || index >= self.next_index {
+            return Err(crate::codes::FRAME_STREAM_ORDER);
+        }
+        self.first_pending = index + 1;
+        Ok(())
     }
 
     /// Closes once at the exact next index, with matching ids and a mandatory bound final receipt.
-    pub fn observe_end(&mut self, _end: &ModelEnd) -> Result<()> {
-        todo!("row 32")
+    pub fn observe_end(&mut self, end: &ModelEnd) -> Result<()> {
+        self.check_position(end.request_id, end.reservation_id, end.next_index)?;
+        self.check_receipt(&end.receipt)?;
+        self.ended = true;
+        Ok(())
     }
 
     /// Applies the same one-terminal, ordered and receipt-identity checks to an error termination.
-    pub fn observe_error(&mut self, _error: &ModelError) -> Result<()> {
-        todo!("row 32")
+    pub fn observe_error(&mut self, error: &ModelError) -> Result<()> {
+        self.check_position(error.request_id, error.reservation_id, error.next_index)?;
+        self.check_receipt(&error.receipt)?;
+        crate::codes::parse(&error.code.to_string())?;
+        self.ended = true;
+        Ok(())
     }
+
+    fn check_position(
+        &self,
+        request: RequestId,
+        reservation: ReservationId,
+        index: u64,
+    ) -> Result<()> {
+        if self.ended
+            || request != self.request_id
+            || reservation != self.reservation_id
+            || index != self.next_index
+        {
+            return Err(crate::codes::FRAME_STREAM_ORDER);
+        }
+        Ok(())
+    }
+
+    fn check_receipt(&self, receipt: &ModelReceipt) -> Result<()> {
+        check_record(receipt.v, receipt.algorithm)?;
+        if receipt.request_id != self.request_id || receipt.reservation_id != self.reservation_id {
+            return Err(crate::codes::FRAME_STREAM_ORDER);
+        }
+        if receipt.receipt_seq == 0
+            || receipt.receipt_seq > crate::json::MAX_SAFE_INTEGER as u64
+            || receipt.usage.prompt_tokens > 32_768
+            || receipt.usage.completion_tokens > 32_768
+            || receipt.usage.cost_microusd > crate::json::MAX_SAFE_INTEGER as u64
+        {
+            return Err(crate::codes::FRAME_STREAM_LIMIT);
+        }
+        Ok(())
+    }
+}
+
+fn check_record(version: u16, algorithm: AlgorithmId) -> Result<()> {
+    if version != RECORD_VERSION {
+        return Err(crate::codes::FRAME_UNSUPPORTED_VERSION);
+    }
+    if algorithm != AlgorithmId::Sha256 {
+        return Err(crate::codes::ALG_UNSUPPORTED);
+    }
+    Ok(())
 }

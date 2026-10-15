@@ -62,8 +62,29 @@ impl Npub {
 
     /// Checks a canonical `npub` address of at most 128 UTF-8 bytes and requires
     /// `Secp256k1Schnorr`. Unknown algorithms or address encodings refuse.
-    pub fn parse(_algorithm: AlgorithmId, _encoded: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn parse(algorithm: AlgorithmId, encoded: &str) -> Result<Self> {
+        use bech32::{primitives::decode::CheckedHrpstring, Bech32};
+        if algorithm != AlgorithmId::Secp256k1Schnorr {
+            return Err(crate::codes::ALG_UNSUPPORTED);
+        }
+        if encoded.len() > 128 || !encoded.starts_with("npub1") {
+            return Err(crate::codes::ID_INVALID);
+        }
+        let checked =
+            CheckedHrpstring::new::<Bech32>(encoded).map_err(|_| crate::codes::ID_INVALID)?;
+        let bytes: Vec<u8> = checked.byte_iter().collect();
+        if checked.hrp().as_str() != "npub"
+            || bytes.len() != 32
+            || bech32::encode::<Bech32>(checked.hrp(), &bytes)
+                .map_err(|_| crate::codes::ID_INVALID)?
+                != encoded
+        {
+            return Err(crate::codes::ID_INVALID);
+        }
+        Ok(Self {
+            algorithm,
+            encoded: encoded.to_owned(),
+        })
     }
 
     /// Returns the algorithm declared by this public-key address.

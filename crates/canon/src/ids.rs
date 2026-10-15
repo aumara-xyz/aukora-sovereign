@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Opaque identifiers; construction never supplies randomness or authority.
 
+use crate::digest::hex_digit;
 use crate::{alg::AlgorithmId, digest::Digest32, refusal::Refusal, Result};
 use core::fmt;
 
@@ -118,14 +119,6 @@ fn parse_random_id(text: &str) -> Result<[u8; RANDOM_ID_BYTES]> {
     Ok(bytes)
 }
 
-fn hex_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
-}
-
 impl fmt::Display for OperationDigest {
     fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.0, output)
@@ -193,8 +186,11 @@ impl SubjectId {
     }
 
     /// Parse exactly `aukora:1:` plus 64 lowercase hex digits; unknown versions refuse.
-    pub fn parse(_text: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn parse(text: &str) -> Result<Self> {
+        let suffix = text
+            .strip_prefix("aukora:1:")
+            .ok_or(crate::codes::ID_INVALID)?;
+        Digest32::from_hex(suffix).map(Self)
     }
 }
 

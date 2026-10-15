@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Versioned health evidence and the frozen 110-cell observer registry.
 
+mod decode;
+
 use crate::alg::AlgorithmId;
 use crate::digest::Digest32;
 use crate::{Refusal, Result};
@@ -322,8 +324,8 @@ pub struct HealthSnapshot {
 /// unsupported versions or algorithms, and any invalid evidence or cell counts.
 /// The returned cells must match `HealthSnapshot::reduce` for the snapshot context;
 /// evidence remains informational and cannot authorize an effect.
-pub fn decode_snapshot(_bytes: &[u8]) -> Result<HealthSnapshot> {
-    todo!("row 32")
+pub fn decode_snapshot(bytes: &[u8]) -> Result<HealthSnapshot> {
+    decode::snapshot(bytes)
 }
 
 impl HealthSnapshot {
@@ -347,7 +349,99 @@ impl HealthSnapshot {
         commitment: Digest32,
         evidence: Vec<HealthEvidence>,
     ) -> Result<Self> {
-        let _ = (epoch, sequence, observed_at_ms, commitment, evidence);
-        todo!("row 32")
+        let invalid = crate::codes::HEALTH_INVALID_EVIDENCE;
+        let bound = crate::json::MAX_SAFE_INTEGER as u64;
+        if epoch > bound
+            || sequence > bound
+            || observed_at_ms > bound
+            || evidence.len() > MAX_EVIDENCE_COUNT
+        {
+            return Err(invalid);
+        }
+        let mut reports = std::collections::BTreeMap::new();
+        for item in &evidence {
+            let spec = match item.check {
+                CheckRef::Private(id) => CHECKS
+                    .iter()
+                    .find(|entry| entry.id == id)
+                    .map(|entry| entry.spec()),
+                CheckRef::Corner { corner, side } => CORNERS
+                    .iter()
+                    .find(|entry| entry.id == corner)
+                    .and_then(|entry| entry.specs().into_iter().find(|spec| spec.owner == side)),
+            }
+            .ok_or(invalid)?;
+            if item.v != HEALTH_FORMAT_VERSION
+                || item.algorithm != AlgorithmId::Sha256
+                || item.reporter != spec.owner
+                || reports.contains_key(&item.check)
+                || item.observed_at_ms > observed_at_ms
+                || item.expires_at_ms < item.observed_at_ms
+                || item.epoch > bound
+                || item.sequence > bound
+                || item.expires_at_ms > bound
+            {
+                return Err(invalid);
+            }
+            let reduced = if item.epoch != epoch
+                || item.sequence != sequence
+                || item.commitment != commitment
+            {
+                Cell::Failed
+            } else if item.cell == Cell::Failed
+                || matches!(
+                    item.reason,
+                    HealthReason::Unwritten
+                        | HealthReason::Missing
+                        | HealthReason::Disagreement
+                        | HealthReason::InvariantFailed
+                        | HealthReason::ContextMismatch
+                        | HealthReason::InvalidEvidence
+                )
+            {
+                Cell::Failed
+            } else if item.cell == Cell::Undetermined
+                || item.reason != HealthReason::Satisfied
+                || observed_at_ms > item.expires_at_ms
+                || observed_at_ms - item.observed_at_ms > spec.freshness_ms
+            {
+                Cell::Undetermined
+            } else {
+                Cell::Verified
+            };
+            reports.insert(item.check, reduced);
+        }
+        let mut private_cells = [Cell::Failed; PRIVATE_CHECK_COUNT];
+        for (slot, definition) in private_cells.iter_mut().zip(CHECKS) {
+            *slot = reports
+                .get(&CheckRef::Private(definition.id))
+                .copied()
+                .unwrap_or(Cell::Failed);
+        }
+        let mut corner_cells = [Cell::Failed; CORNER_COUNT];
+        for (slot, definition) in corner_cells.iter_mut().zip(CORNERS) {
+            let cells = definition
+                .specs()
+                .map(|spec| reports.get(&spec.check).copied().unwrap_or(Cell::Failed));
+            *slot = if cells.contains(&Cell::Failed) {
+                Cell::Failed
+            } else if cells.contains(&Cell::Undetermined) {
+                Cell::Undetermined
+            } else {
+                Cell::Verified
+            };
+        }
+        Ok(Self {
+            v: HEALTH_FORMAT_VERSION,
+            algorithm: AlgorithmId::Sha256,
+            registry_version: HEALTH_REGISTRY_VERSION,
+            epoch,
+            sequence,
+            observed_at_ms,
+            commitment,
+            evidence,
+            private_cells,
+            corner_cells,
+        })
     }
 }

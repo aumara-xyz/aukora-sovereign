@@ -1,0 +1,50 @@
+{
+  "schema": "canon-card-v1-vectors",
+  "vectors": [
+    {
+      "name": "routine-literal-model-note",
+      "card": {
+        "v": 1,
+        "risk": "routine",
+        "says": "Update the theme",
+        "facts": [
+          [
+            "target",
+            "theme:owner"
+          ],
+          [
+            "warning",
+            "Model text is untrusted."
+          ]
+        ],
+        "from_to": {
+          "accent": [
+            "blue",
+            "green"
+          ]
+        },
+        "model_note": "Auma suggested \"green\".\nLiteral data."
+      },
+      "canonical": "{\"facts\":[[\"target\",\"theme:owner\"],[\"warning\",\"Model text is untrusted.\"]],\"from_to\":{\"accent\":[\"blue\",\"green\"]},\"model_note\":\"Auma suggested \\\"green\\\".\\nLiteral data.\",\"risk\":\"routine\",\"says\":\"Update the theme\",\"v\":1}",
+      "display_sha256": "67556f1f4330c4d8b6ecabe238c9a4bad20c85fc9f8bba3df31946efbe07e08e"
+    },
+    {
+      "name": "critical-retirement",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Retire this proposal",
+        "facts": [
+          [
+            "proposal",
+            "101112131415161718191a1b1c1d1e1f"
+          ]
+        ],
+        "from_to": {},
+        "model_note": "<script> is text; \\ stays literal."
+      },
+      "canonical": "{\"facts\":[[\"proposal\",\"101112131415161718191a1b1c1d1e1f\"]],\"from_to\":{},\"model_note\":\"<script> is text; \\\\ stays literal.\",\"risk\":\"critical\",\"says\":\"Retire this proposal\",\"v\":1}",
+      "display_sha256": "585f82faabc3573394b6445abeb71da7651424e0d61b3698d6b79eaa23111755"
+    }
+  ]
+}

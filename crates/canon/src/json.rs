@@ -33,7 +33,6 @@ pub struct Value {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
 enum Node {
     Null,
     Boolean(bool),
@@ -81,7 +80,7 @@ pub enum ValueView<'a> {
 }
 
 impl Value {
-    /// Construct text without invoking the pending wave-0 codec entry point.
+    /// Construct Unicode text from a Rust string.
     pub fn checked_text(value: String) -> Result<Self> {
         Ok(Self {
             node: Node::Text(value),
@@ -101,7 +100,7 @@ impl Value {
     pub fn checked_object(mut members: Vec<(String, Self)>) -> Result<Self> {
         members.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
         if members.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-            return Err(crate::Refusal::new("canon", "duplicate-key"));
+            return Err(codes::CANON_DUPLICATE_KEY);
         }
         let value = Self {
             node: Node::Object(members),
@@ -114,7 +113,7 @@ impl Value {
         match &self.node {
             Node::Array(values) => {
                 if depth >= MAX_DEPTH {
-                    return Err(crate::Refusal::new("canon", "depth"));
+                    return Err(codes::CANON_NESTING_TOO_DEEP);
                 }
                 for value in values {
                     value.check_depth(depth + 1)?;
@@ -122,7 +121,7 @@ impl Value {
             }
             Node::Object(values) => {
                 if depth >= MAX_DEPTH {
-                    return Err(crate::Refusal::new("canon", "depth"));
+                    return Err(codes::CANON_NESTING_TOO_DEEP);
                 }
                 for (_, value) in values {
                     value.check_depth(depth + 1)?;
@@ -194,20 +193,20 @@ impl Value {
 
     /// Constructs Unicode text; C1 imposes no byte cap. Escaping follows every
     /// string rule in this module's C1 contract.
-    pub fn text(_value: String) -> Result<Self> {
-        todo!("row 32")
+    pub fn text(value: String) -> Result<Self> {
+        Self::checked_text(value)
     }
 
     /// Constructs an array, preserving order and refusing depth over 64.
     /// C1 imposes no byte cap; each transport enforces its own limit.
-    pub fn array(_values: Vec<Self>) -> Result<Self> {
-        todo!("row 32")
+    pub fn array(values: Vec<Self>) -> Result<Self> {
+        Self::checked_array(values)
     }
 
     /// Constructs an object, refusing duplicate decoded keys or depth over 64.
     /// Key sorting uses UTF-16 code units. C1 imposes no byte cap.
-    pub fn object(_members: Vec<(String, Self)>) -> Result<Self> {
-        todo!("row 32")
+    pub fn object(members: Vec<(String, Self)>) -> Result<Self> {
+        Self::checked_object(members)
     }
 
     /// Borrows the value's checked representation.
@@ -259,8 +258,18 @@ fn write_checked_text(value: &str, output: &mut String) {
 /// surrounding JSON whitespace; no second value or other material may trail.
 /// Object key order may vary here; canonical output uses UTF-16 key order and
 /// the string rules above. Frame decoding rejects even surrounding whitespace.
-pub fn parse_strict(_raw_utf8: &[u8]) -> Result<Value> {
-    todo!("row 32")
+pub fn parse_strict(raw_utf8: &[u8]) -> Result<Value> {
+    if raw_utf8.starts_with(b"\xef\xbb\xbf") {
+        return Err(codes::CANON_BOM);
+    }
+    let remaining = core::str::from_utf8(raw_utf8).map_err(|_| codes::CANON_INVALID_UTF8)?;
+    let mut cursor = Cursor { remaining };
+    let parsed = cursor.read_value(0)?;
+    cursor.skip_space();
+    if !cursor.remaining.is_empty() {
+        return Err(codes::CANON_TRAILING_BYTES);
+    }
+    Ok(parsed)
 }
 
 /// Applies every `parse_strict` rule and emits exactly C1 canonical bytes:
@@ -268,14 +277,197 @@ pub fn parse_strict(_raw_utf8: &[u8]) -> Result<Value> {
 /// JavaScript string escaping; no whitespace; depth ≤64; no C1 byte cap.
 /// Duplicate keys, BOM, malformed UTF-8 and lone surrogates are refused.
 /// This may normalize whitespace/key order; frame decoding also checks equality.
-pub fn canonicalize(_raw_utf8: &[u8]) -> Result<Vec<u8>> {
-    todo!("row 32")
+pub fn canonicalize(raw_utf8: &[u8]) -> Result<Vec<u8>> {
+    parse_strict(raw_utf8).map(|value| to_canonical(&value))
 }
 
 /// Emits the checked tree as C1 bytes: UTF-16 sorted unique object keys, ordered
 /// arrays, JavaScript string escapes, literal remaining UTF-8 and safe integers
 /// without floats, exponents, `-0` or leading zeros. No whitespace is emitted.
 /// The `Value` constructors enforce depth ≤64; transport byte limits are separate.
-pub fn to_canonical(_value: &Value) -> Vec<u8> {
-    todo!("row 32")
+pub fn to_canonical(value: &Value) -> Vec<u8> {
+    value.canonical_bytes()
+}
+
+struct Cursor<'a> {
+    remaining: &'a str,
+}
+
+impl Cursor<'_> {
+    fn skip_space(&mut self) {
+        self.remaining = self.remaining.trim_start_matches([' ', '\t', '\n', '\r']);
+    }
+
+    fn consume(&mut self, token: &str) -> bool {
+        if let Some(rest) = self.remaining.strip_prefix(token) {
+            self.remaining = rest;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn next_character(&mut self) -> Result<char> {
+        let character = self
+            .remaining
+            .chars()
+            .next()
+            .ok_or(codes::CANON_INVALID_JSON)?;
+        self.remaining = &self.remaining[character.len_utf8()..];
+        Ok(character)
+    }
+
+    fn read_value(&mut self, containers: usize) -> Result<Value> {
+        self.skip_space();
+        let node = match self.remaining.as_bytes().first() {
+            Some(b'"') => Node::Text(self.read_text()?),
+            Some(b'-' | b'0'..=b'9') => Node::Integer(self.read_number()?),
+            Some(b'[' | b'{') => {
+                if containers >= MAX_DEPTH {
+                    return Err(codes::CANON_NESTING_TOO_DEEP);
+                }
+                if self.consume("[") {
+                    self.read_array(containers + 1)?
+                } else {
+                    self.consume("{");
+                    self.read_object(containers + 1)?
+                }
+            }
+            _ if self.consume("true") => Node::Boolean(true),
+            _ if self.consume("false") => Node::Boolean(false),
+            _ if self.consume("null") => Node::Null,
+            _ => return Err(codes::CANON_INVALID_JSON),
+        };
+        Ok(Value { node })
+    }
+
+    fn read_number(&mut self) -> Result<SafeInteger> {
+        let negative = self.consume("-");
+        let count = self
+            .remaining
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .count();
+        if count == 0 {
+            return Err(codes::CANON_INVALID_NUMBER);
+        }
+        let (digits, rest) = self.remaining.split_at(count);
+        self.remaining = rest;
+        if (digits.starts_with('0') && (count > 1 || negative))
+            || matches!(rest.as_bytes().first(), Some(b'.' | b'e' | b'E'))
+        {
+            return Err(codes::CANON_INVALID_NUMBER);
+        }
+        let magnitude = digits
+            .parse::<i64>()
+            .map_err(|_| codes::CANON_INTEGER_RANGE)?;
+        SafeInteger::new(if negative { -magnitude } else { magnitude })
+    }
+
+    fn read_text(&mut self) -> Result<String> {
+        if !self.consume("\"") {
+            return Err(codes::CANON_INVALID_JSON);
+        }
+        let mut text = String::new();
+        loop {
+            let character = self.next_character()?;
+            if character == '"' {
+                return Ok(text);
+            }
+            if character < ' ' {
+                return Err(codes::CANON_INVALID_JSON);
+            }
+            text.push(if character == '\\' {
+                match self.next_character()? {
+                    '"' => '"',
+                    '\\' => '\\',
+                    '/' => '/',
+                    'b' => '\u{0008}',
+                    'f' => '\u{000c}',
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    'u' => self.read_unicode()?,
+                    _ => return Err(codes::CANON_INVALID_JSON),
+                }
+            } else {
+                character
+            });
+        }
+    }
+
+    fn read_hex_unit(&mut self) -> Result<u16> {
+        let digits = self.remaining.get(..4).ok_or(codes::CANON_INVALID_JSON)?;
+        if !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(codes::CANON_INVALID_JSON);
+        }
+        self.remaining = &self.remaining[4..];
+        u16::from_str_radix(digits, 16).map_err(|_| codes::CANON_INVALID_JSON)
+    }
+
+    fn read_unicode(&mut self) -> Result<char> {
+        let first = self.read_hex_unit()?;
+        let scalar = match first {
+            0xd800..=0xdbff => {
+                if !self.consume("\\u") {
+                    return Err(codes::CANON_LONE_SURROGATE);
+                }
+                let last = self.read_hex_unit()?;
+                if !(0xdc00..=0xdfff).contains(&last) {
+                    return Err(codes::CANON_LONE_SURROGATE);
+                }
+                0x10000 + u32::from(first - 0xd800) * 1024 + u32::from(last - 0xdc00)
+            }
+            0xdc00..=0xdfff => return Err(codes::CANON_LONE_SURROGATE),
+            _ => u32::from(first),
+        };
+        char::from_u32(scalar).ok_or(codes::CANON_LONE_SURROGATE)
+    }
+
+    fn read_array(&mut self, containers: usize) -> Result<Node> {
+        let mut elements = Vec::new();
+        self.skip_space();
+        if self.consume("]") {
+            return Ok(Node::Array(elements));
+        }
+        loop {
+            elements.push(self.read_value(containers)?);
+            self.skip_space();
+            if self.consume("]") {
+                return Ok(Node::Array(elements));
+            }
+            if !self.consume(",") {
+                return Err(codes::CANON_INVALID_JSON);
+            }
+        }
+    }
+
+    fn read_object(&mut self, containers: usize) -> Result<Node> {
+        let mut members = Vec::new();
+        let mut keys = std::collections::BTreeSet::new();
+        self.skip_space();
+        if self.consume("}") {
+            return Ok(Node::Object(members));
+        }
+        loop {
+            self.skip_space();
+            let key = self.read_text()?;
+            if !keys.insert(key.clone()) {
+                return Err(codes::CANON_DUPLICATE_KEY);
+            }
+            self.skip_space();
+            if !self.consume(":") {
+                return Err(codes::CANON_INVALID_JSON);
+            }
+            members.push((key, self.read_value(containers)?));
+            self.skip_space();
+            if self.consume("}") {
+                members.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
+                return Ok(Node::Object(members));
+            }
+            if !self.consume(",") {
+                return Err(codes::CANON_INVALID_JSON);
+            }
+        }
+    }
 }

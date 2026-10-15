@@ -84,15 +84,31 @@ pub struct FrameError {
 /// Encodes an object as C1 canonical JSON preceded by its u32 big-endian byte
 /// length. Refuses non-objects or payloads outside 1..=65,536. This is framing
 /// only: a typed codec must validate envelope and operation fields first.
-pub fn encode(_value: &Value) -> Result<Vec<u8>> {
-    todo!("row 32")
+pub fn encode(value: &Value) -> Result<Vec<u8>> {
+    if !matches!(value.view(), crate::json::ValueView::Object(_)) {
+        return Err(codes::FRAME_NOT_OBJECT);
+    }
+    let payload = crate::json::to_canonical(value);
+    validate_length(payload.len())?;
+    let mut encoded = Vec::with_capacity(LENGTH_PREFIX_BYTES + payload.len());
+    encoded.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    encoded.extend_from_slice(&payload);
+    Ok(encoded)
 }
 
 /// Checks a complete payload (without prefix) in order: byte budget, C1 strict
 /// parse, byte-exact canonical form, object shape. Typed FD codecs then validate
 /// fields. No body is interpreted before canonical equality has passed.
-pub fn decode(_payload: &[u8]) -> Result<Value> {
-    todo!("row 32")
+pub fn decode(payload: &[u8]) -> Result<Value> {
+    validate_length(payload.len())?;
+    let value = crate::json::parse_strict(payload)?;
+    if crate::json::to_canonical(&value) != payload {
+        return Err(codes::FRAME_NOT_CANONICAL);
+    }
+    if !matches!(value.view(), crate::json::ValueView::Object(_)) {
+        return Err(codes::FRAME_NOT_OBJECT);
+    }
+    Ok(value)
 }
 
 /// Decodes exactly one length-prefixed frame. `frame:zero-length`,
@@ -102,8 +118,18 @@ pub fn decode(_payload: &[u8]) -> Result<Value> {
 /// Complete payload refusals, including `frame:not-canonical` and
 /// `frame:not-object`, use `Disposition::Refuse`. Returns consumed bytes so
 /// callers may retain subsequent frames without scanning after a fatal error.
-pub fn decode_prefixed(_bytes: &[u8]) -> core::result::Result<(Value, usize), FrameError> {
-    todo!("row 32")
+pub fn decode_prefixed(bytes: &[u8]) -> core::result::Result<(Value, usize), FrameError> {
+    let header = bytes
+        .get(..LENGTH_PREFIX_BYTES)
+        .ok_or_else(|| close(codes::FRAME_SHORT_READ))?;
+    let length = payload_length(header)?;
+    let consumed = LENGTH_PREFIX_BYTES + length;
+    let payload = bytes
+        .get(LENGTH_PREFIX_BYTES..consumed)
+        .ok_or_else(|| close(codes::FRAME_SHORT_READ))?;
+    decode(payload)
+        .map(|value| (value, consumed))
+        .map_err(refuse)
 }
 
 /// Reads exactly one prefixed frame from a caller-owned stream.
@@ -111,16 +137,60 @@ pub fn decode_prefixed(_bytes: &[u8]) -> core::result::Result<(Value, usize), Fr
 /// require `Disposition::Close`; EOF even between frames is `frame:short-read`.
 /// Complete payload refusals, including `frame:not-canonical` and
 /// `frame:not-object`, use `Disposition::Refuse`. No socket is created here.
-pub fn read<R: Read + ?Sized>(_reader: &mut R) -> core::result::Result<Value, FrameError> {
-    todo!("row 32")
+pub fn read<R: Read + ?Sized>(reader: &mut R) -> core::result::Result<Value, FrameError> {
+    let mut header = [0; LENGTH_PREFIX_BYTES];
+    reader.read_exact(&mut header).map_err(read_failure)?;
+    let mut payload = vec![0; payload_length(&header)?];
+    reader.read_exact(&mut payload).map_err(read_failure)?;
+    decode(&payload).map_err(refuse)
 }
 
 /// Writes one canonical prefixed frame to a caller-owned stream. The borrow
 /// spans header and payload; the owner must serialize all other writer handles.
 /// Invalid outbound data is refused before writing; any write error closes.
 pub fn write<W: Write + ?Sized>(
-    _writer: &mut W,
-    _value: &Value,
+    writer: &mut W,
+    value: &Value,
 ) -> core::result::Result<(), FrameError> {
-    todo!("row 32")
+    let bytes = encode(value).map_err(refuse)?;
+    writer.write_all(&bytes).map_err(|_| close(codes::FRAME_IO))
+}
+
+fn validate_length(length: usize) -> Result<()> {
+    match length {
+        0 => Err(codes::FRAME_ZERO_LENGTH),
+        MIN_FRAME_BYTES..=MAX_FRAME_BYTES => Ok(()),
+        _ => Err(codes::FRAME_TOO_LARGE),
+    }
+}
+
+fn payload_length(header: &[u8]) -> core::result::Result<usize, FrameError> {
+    let prefix = header
+        .try_into()
+        .map_err(|_| close(codes::FRAME_SHORT_READ))?;
+    let length = u32::from_be_bytes(prefix) as usize;
+    validate_length(length).map_err(close)?;
+    Ok(length)
+}
+
+fn refuse(refusal: Refusal) -> FrameError {
+    FrameError {
+        refusal,
+        disposition: Disposition::Refuse,
+    }
+}
+
+fn close(refusal: Refusal) -> FrameError {
+    FrameError {
+        refusal,
+        disposition: Disposition::Close,
+    }
+}
+
+fn read_failure(error: std::io::Error) -> FrameError {
+    close(if error.kind() == std::io::ErrorKind::UnexpectedEof {
+        codes::FRAME_SHORT_READ
+    } else {
+        codes::FRAME_IO
+    })
 }

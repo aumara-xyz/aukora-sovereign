@@ -3,6 +3,9 @@
 
 use core::fmt;
 
+mod codec;
+mod proof;
+
 use crate::{
     alg::{AlgorithmId, PublicKey, Signature, Signatures},
     digest::Digest32,
@@ -106,8 +109,35 @@ impl Kind {
     }
 
     /// Parse the closed C3 registry, refusing unknown operations.
-    pub fn from_wire(_text: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn from_wire(text: &str) -> Result<Self> {
+        [
+            Self::BootFacts,
+            Self::GatePropose,
+            Self::GateReview,
+            Self::GateConsume,
+            Self::GateApply,
+            Self::GateRetire,
+            Self::GateRefuse,
+            Self::GateExpire,
+            Self::GateRecover,
+            Self::FloorAdvance,
+            Self::AumlokEnrol,
+            Self::AumlokBind,
+            Self::AumlokSignin,
+            Self::BrokerGrant,
+            Self::BrokerReserve,
+            Self::BrokerSettle,
+            Self::BrokerRevoke,
+            Self::KiraSave,
+            Self::KiraDemote,
+            Self::KiraPermission,
+            Self::SandboxStart,
+            Self::SandboxExit,
+            Self::NostrBind,
+        ]
+        .into_iter()
+        .find(|kind| kind.wire_name() == text)
+        .ok_or(crate::codes::FRAME_UNKNOWN_KIND)
     }
 }
 
@@ -136,8 +166,11 @@ impl Phase {
     }
 
     /// Parse only the four C3 phase values.
-    pub fn from_wire(_text: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn from_wire(text: &str) -> Result<Self> {
+        [Self::Intent, Self::Settle, Self::Terminal, Self::Fact]
+            .into_iter()
+            .find(|phase| phase.wire_name() == text)
+            .ok_or(crate::codes::FRAME_INVALID_FIELD)
     }
 }
 
@@ -207,8 +240,8 @@ impl AuthorizationChallenge {
     }
 
     /// Parse exactly 32 lowercase hexadecimal digits; all other spellings refuse.
-    pub fn from_hex(_text: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn from_hex(text: &str) -> Result<Self> {
+        Ok(Self(*ProposalId::from_hex(text)?.as_bytes()))
     }
 }
 
@@ -266,7 +299,7 @@ impl Card {
     /// keys or a C1 depth violation. Facts retain their order and two-item shape;
     /// `from_to` is always an object. No wrapper or algorithm fields enter C6 bytes.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        todo!("row 32")
+        codec::card(self)
     }
 }
 
@@ -314,7 +347,7 @@ impl OwnerAuthorization {
     /// Emit `challenge` as exactly 32 lowercase hex digits. The separate WebAuthn
     /// challenge is SHA-256(`aukora:owner-authorization:v1\0` || these bytes), 32 bytes.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        todo!("row 32")
+        codec::authorization(self)
     }
 }
 
@@ -396,12 +429,12 @@ impl VerifiedProof {
     /// replace clientDataJSON before hashing. Bind the result to `txn.transaction_id()`.
     /// No verification or counter update may happen outside this same transaction.
     pub fn verify<T: AuthorityTxn + ?Sized>(
-        _txn: &mut T,
-        _proposal: &ProposalId,
-        _action: OwnerOperation,
-        _assertion: OwnerAssertion,
+        txn: &mut T,
+        proposal: &ProposalId,
+        action: OwnerOperation,
+        assertion: OwnerAssertion,
     ) -> Result<Self> {
-        todo!("row 32")
+        proof::verify(txn, proposal, action, assertion)
     }
 
     /// Credential bound and verified in the transaction's current epoch.
@@ -603,7 +636,7 @@ impl AuthorityRecord {
     /// Ed25519 `sig`. Refuse missing/duplicate Ed25519 components or invalid C3 fields;
     /// never insert algorithm tags, epoch metadata or hybrid lists into old export bytes.
     pub fn c3_v1_export(&self) -> Result<Value> {
-        todo!("row 32")
+        codec::export(self)
     }
 }
 
@@ -769,6 +802,13 @@ pub trait AuthorityTxn {
         proposal: &ProposalId,
         action: OwnerOperation,
     ) -> Result<OwnerAuthorization>;
+
+    /// Recheck the rebuilt authorization against locked, live gate state: current
+    /// trusted clock before expiry, an unspent challenge, current target bytes and
+    /// the exact displayed card. An adapter without this check cannot mint a proof.
+    fn check_authorization_live(&mut self, _authorization: &OwnerAuthorization) -> Result<()> {
+        Err(crate::codes::CANON_AUTHORIZATION_STATE_UNAVAILABLE)
+    }
 
     /// Check a tagged signature with its stored bound public key using an allowlisted
     /// implementation. Unsupported/mismatched algorithms refuse; no fallback is allowed.
