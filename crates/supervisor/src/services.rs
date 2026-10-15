@@ -29,6 +29,15 @@ pub struct OwnerReview {
 
 /// Gate policy, target allowlists, approval consumption and application remain in gate.
 pub trait GateService: Send + Sync {
+    /// Versioned site proposals include an explicit absent base for first publication.
+    /// The gate adapter must validate its configured host and retain pending bytes.
+    fn propose_site<'a>(
+        &'a self,
+        scope: PrincipalScope,
+        request_id: &'a FrameId,
+        proposal: canon::fd3_payloads::sites::SiteProposal,
+    ) -> ServiceFuture<'a, Accepted>;
+
     fn propose<'a>(
         &'a self,
         scope: PrincipalScope,

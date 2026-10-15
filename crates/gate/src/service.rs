@@ -96,6 +96,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         request: ProposalRequest,
         crash: &mut dyn CrashInjector,
     ) -> Result<Proposal> {
+        if request.target.as_str().starts_with("sites/") {
+            crate::target::sites::validate_request(&self.config, &request)?;
+        }
         crash.at(CrashPoint::BeforeProposal)?;
         let spec = self
             .config
@@ -188,6 +191,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         action: OwnerOperation,
         crash: &mut dyn CrashInjector,
     ) -> Result<OwnerReview> {
+        if action == OwnerOperation::Apply && self.site_proposal(id)? {
+            return self.review_site(id, crash);
+        }
         crash.at(CrashPoint::BeforeReview)?;
         let now = clock(self.services)?;
         let mut transaction = self.ledger.begin(self.services)?;
@@ -289,6 +295,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         assertion: OwnerAssertion,
         crash: &mut dyn CrashInjector,
     ) -> Result<Outcome> {
+        if self.site_proposal(id)? {
+            return self.apply_site(id, assertion, crash);
+        }
         coverage::lookup(EntryPoint::Apply, EffectRoute::TargetReplace)?;
         let now = clock(self.services)?;
         let mut transaction = self.ledger.begin(self.services)?;
@@ -458,6 +467,10 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         transaction.rollback()?;
         let mut sweep = RecoverySweep::default();
         for id in ids {
+            if self.site_proposal(id)? {
+                self.recover_site_into(id, crash, &mut sweep)?;
+                continue;
+            }
             match self.reconcile(id, crash) {
                 Ok(outcome) => {
                     let transaction = self.ledger.begin(self.services)?;
@@ -481,6 +494,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
     }
 
     pub fn reconcile(&mut self, id: ProposalId, crash: &mut dyn CrashInjector) -> Result<Outcome> {
+        if self.site_proposal(id)? {
+            return self.reconcile_site(id, crash)?.ok_or(crate::refuse("not-pending"));
+        }
         crash.at(CrashPoint::BeforeReconcile)?;
         let now = clock(self.services)?;
         let mut transaction = self.ledger.begin(self.services)?;

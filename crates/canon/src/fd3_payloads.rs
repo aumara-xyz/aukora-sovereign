@@ -407,3 +407,341 @@ impl Propose {
         Ok(bytes)
     }
 }
+
+/// Versioned static-site data shared by the confined builder and the serving boundary.
+pub mod sites {
+    use crate::{codes, digest::Digest32, json, json::Value, json::ValueView, Result};
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    /// Maximum bytes of the canonical bundle, including base64 and metadata.
+    pub const MAX_BUNDLE_BYTES: usize = 32_768;
+    /// Maximum number of distinct assets in one bundle.
+    pub const MAX_FILES: usize = 64;
+    /// The exact top-level schema discriminator.
+    pub const BUNDLE_SCHEMA: &str = "aukora-site-bundle-v1";
+
+    /// One static asset; construction of a bundle checks its path and media type.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct SiteFile {
+        /// Relative slash-separated asset name.
+        pub path: String,
+        /// Media type from the closed suffix mapping.
+        pub media_type: String,
+        /// Exact proposed response body.
+        pub bytes: Vec<u8>,
+    }
+
+    /// Canonical site data with no authorization or publication capability.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct SiteBundle {
+        host: String,
+        target: String,
+        files: Vec<SiteFile>,
+        canonical: Vec<u8>,
+    }
+
+    impl SiteBundle {
+        /// Build a bounded canonical bundle, sorting the supplied files by path bytes.
+        pub fn build(host: &str, files: &[SiteFile]) -> Result<Self> {
+            validate_host(host)?;
+            if files.is_empty() || files.len() > MAX_FILES {
+                return Err(codes::CANON_SITE_BUNDLE_LIMIT);
+            }
+            let payload_bytes = files.iter().try_fold(0usize, |total, file| {
+                total
+                    .checked_add(file.bytes.len())
+                    .ok_or(codes::CANON_SITE_BUNDLE_LIMIT)
+            })?;
+            if payload_bytes > MAX_BUNDLE_BYTES {
+                return Err(codes::CANON_SITE_BUNDLE_LIMIT);
+            }
+            let mut retained = files.to_vec();
+            retained.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
+            let mut encoded = Vec::with_capacity(retained.len());
+            let mut previous: Option<&str> = None;
+            for file in &retained {
+                validate_path(&file.path)?;
+                if previous == Some(file.path.as_str()) {
+                    return Err(codes::CANON_SITE_PATH_INVALID);
+                }
+                previous = Some(&file.path);
+                if media_type(&file.path)? != file.media_type {
+                    return Err(codes::CANON_SITE_MEDIA_INVALID);
+                }
+                encoded.push(object(vec![
+                    ("path", text(&file.path)?),
+                    ("media_type", text(&file.media_type)?),
+                    ("bytes_b64", text(&STANDARD.encode(&file.bytes))?),
+                ])?);
+            }
+            if !retained.iter().any(|file| file.path == "index.html") {
+                return Err(codes::CANON_SITE_PATH_INVALID);
+            }
+            let canonical = object(vec![
+                ("schema", text(BUNDLE_SCHEMA)?),
+                ("host", text(host)?),
+                ("files", Value::checked_array(encoded)?),
+            ])?
+            .canonical_bytes();
+            if canonical.len() > MAX_BUNDLE_BYTES {
+                return Err(codes::CANON_SITE_BUNDLE_LIMIT);
+            }
+            Ok(Self {
+                host: host.to_owned(),
+                target: format!("sites/{host}.json"),
+                files: retained,
+                canonical,
+            })
+        }
+
+        /// Decode only exact canonical bytes with the closed v1 object field sets.
+        pub fn decode(bytes: &[u8]) -> Result<Self> {
+            if bytes.is_empty() || bytes.len() > MAX_BUNDLE_BYTES {
+                return Err(codes::CANON_SITE_BUNDLE_LIMIT);
+            }
+            let value = json::parse_strict(bytes).map_err(|_| codes::CANON_SITE_BUNDLE_INVALID)?;
+            if value.canonical_bytes() != bytes {
+                return Err(codes::CANON_SITE_BUNDLE_INVALID);
+            }
+            exact_fields(&value, &["files", "host", "schema"])?;
+            if string(field(&value, "schema")?)? != BUNDLE_SCHEMA {
+                return Err(codes::CANON_SITE_BUNDLE_INVALID);
+            }
+            let host = string(field(&value, "host")?)?;
+            let ValueView::Array(entries) = field(&value, "files")?.view() else {
+                return Err(codes::CANON_SITE_BUNDLE_INVALID);
+            };
+            if entries.is_empty() || entries.len() > MAX_FILES {
+                return Err(codes::CANON_SITE_BUNDLE_LIMIT);
+            }
+            let mut files = Vec::with_capacity(entries.len());
+            let mut previous: Option<&str> = None;
+            for entry in entries {
+                exact_fields(entry, &["bytes_b64", "media_type", "path"])?;
+                let path = string(field(entry, "path")?)?;
+                if previous.is_some_and(|last| last.as_bytes() >= path.as_bytes()) {
+                    return Err(codes::CANON_SITE_PATH_INVALID);
+                }
+                previous = Some(path);
+                let encoded = string(field(entry, "bytes_b64")?)?;
+                let bytes = STANDARD
+                    .decode(encoded)
+                    .map_err(|_| codes::CANON_SITE_ENCODING_INVALID)?;
+                if STANDARD.encode(&bytes) != encoded {
+                    return Err(codes::CANON_SITE_ENCODING_INVALID);
+                }
+                files.push(SiteFile {
+                    path: path.to_owned(),
+                    media_type: string(field(entry, "media_type")?)?.to_owned(),
+                    bytes,
+                });
+            }
+            let bundle = Self::build(host, &files)?;
+            if bundle.canonical != bytes {
+                return Err(codes::CANON_SITE_BUNDLE_INVALID);
+            }
+            Ok(bundle)
+        }
+
+        /// Exact approved host name carried in the bundle.
+        pub fn host(&self) -> &str {
+            &self.host
+        }
+
+        /// Assets in strictly increasing bytewise path order.
+        pub fn files(&self) -> &[SiteFile] {
+            &self.files
+        }
+
+        /// Exact bytes that the gate must show and authorize.
+        pub fn canonical_bytes(&self) -> &[u8] {
+            &self.canonical
+        }
+
+        /// SHA-256 of the exact canonical bundle bytes.
+        pub fn digest(&self) -> Digest32 {
+            Digest32::sha256(&self.canonical)
+        }
+
+        /// Allowed-target name derived solely from the validated host.
+        pub fn target(&self) -> &str {
+            &self.target
+        }
+    }
+
+    /// V2 proposal data; receipt of this value queues review without publishing bytes.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct SiteProposal {
+        /// Exact bundle presented for owner approval.
+        pub bundle: SiteBundle,
+        /// Observed target state; absence is distinct from every byte digest.
+        pub base: crate::authority::BaseDigest,
+        /// Untrusted explanation, rendered only as text.
+        pub note: String,
+    }
+
+    impl SiteProposal {
+        pub(crate) fn from_fd3_body(value: &Value) -> Result<Self> {
+            use crate::authority::BaseDigest;
+
+            exact_fields(value, &["base_sha256", "new_bytes_b64", "note", "target"])?;
+            let encoded = string(field(value, "new_bytes_b64")?)?;
+            if encoded.len() > MAX_BUNDLE_BYTES.div_ceil(3) * 4 {
+                return Err(codes::CANON_SITE_BUNDLE_LIMIT);
+            }
+            let bytes = STANDARD
+                .decode(encoded)
+                .map_err(|_| codes::CANON_SITE_ENCODING_INVALID)?;
+            if STANDARD.encode(&bytes) != encoded {
+                return Err(codes::CANON_SITE_ENCODING_INVALID);
+            }
+            let bundle = SiteBundle::decode(&bytes)?;
+            if string(field(value, "target")?)? != bundle.target() {
+                return Err(codes::CANON_SITE_BUNDLE_INVALID);
+            }
+            let base_text = string(field(value, "base_sha256")?)?;
+            let base = if base_text == "absent" {
+                BaseDigest::Absent
+            } else {
+                BaseDigest::Present(
+                    Digest32::from_hex(base_text).map_err(|_| codes::CANON_SITE_BUNDLE_INVALID)?,
+                )
+            };
+            Ok(Self {
+                bundle,
+                base,
+                note: string(field(value, "note")?)?.to_owned(),
+            })
+        }
+
+        pub(crate) fn fd3_body(&self) -> Result<Value> {
+            use crate::authority::BaseDigest;
+
+            object(vec![
+                (
+                    "base_sha256",
+                    text(&match self.base {
+                        BaseDigest::Absent => "absent".to_owned(),
+                        BaseDigest::Present(digest) => digest.to_string(),
+                    })?,
+                ),
+                (
+                    "new_bytes_b64",
+                    text(&STANDARD.encode(self.bundle.canonical_bytes()))?,
+                ),
+                ("note", text(&self.note)?),
+                ("target", text(self.bundle.target())?),
+            ])
+        }
+    }
+
+    /// Require lowercase DNS labels, with at least two and a nonnumeric final label.
+    pub fn validate_host(host: &str) -> Result<()> {
+        if host.len() > 253 || !host.is_ascii() {
+            return Err(codes::CANON_SITE_HOST_INVALID);
+        }
+        let labels: Vec<_> = host.split('.').collect();
+        if labels.len() < 2
+            || labels.last().is_none_or(|label| {
+                !label.bytes().any(|byte| byte.is_ascii_lowercase())
+                    || label.strip_prefix("0x").is_some_and(|hex| {
+                        !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+            })
+            || labels.iter().any(|label| {
+                label.is_empty()
+                    || label.len() > 63
+                    || label.starts_with('-')
+                    || label.ends_with('-')
+                    || !label.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    })
+            })
+        {
+            return Err(codes::CANON_SITE_HOST_INVALID);
+        }
+        Ok(())
+    }
+
+    /// Refuse unsafe paths and paths belonging to owner or API surfaces.
+    pub fn validate_path(path: &str) -> Result<()> {
+        if path.is_empty()
+            || path.len() > 192
+            || !path
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-/".contains(&byte))
+            || path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+            || path
+                .split('/')
+                .next()
+                .is_some_and(|part| matches!(part, "api" | "ui" | ".well-known"))
+        {
+            return Err(codes::CANON_SITE_PATH_INVALID);
+        }
+        media_type(path).map(|_| ())
+    }
+
+    /// Exact allowed media type for a lowercase suffix.
+    pub fn media_type(path: &str) -> Result<&'static str> {
+        match path.rsplit_once('.').map(|(_, suffix)| suffix) {
+            Some("html") => Ok("text/html"),
+            Some("css") => Ok("text/css"),
+            Some("js") => Ok("text/javascript"),
+            Some("txt") => Ok("text/plain"),
+            Some("json") => Ok("application/json"),
+            Some("png") => Ok("image/png"),
+            Some("jpg" | "jpeg") => Ok("image/jpeg"),
+            Some("webp") => Ok("image/webp"),
+            Some("ico") => Ok("image/x-icon"),
+            Some("woff2") => Ok("font/woff2"),
+            _ => Err(codes::CANON_SITE_PATH_INVALID),
+        }
+    }
+
+    fn object(fields: Vec<(&str, Value)>) -> Result<Value> {
+        Value::checked_object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+        )
+    }
+
+    fn text(value: &str) -> Result<Value> {
+        Value::checked_text(value.to_owned())
+    }
+
+    fn field<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
+        let ValueView::Object(fields) = value.view() else {
+            return Err(codes::CANON_SITE_BUNDLE_INVALID);
+        };
+        fields
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value)
+            .ok_or(codes::CANON_SITE_BUNDLE_INVALID)
+    }
+
+    fn string(value: &Value) -> Result<&str> {
+        match value.view() {
+            ValueView::Text(text) => Ok(text),
+            _ => Err(codes::CANON_SITE_BUNDLE_INVALID),
+        }
+    }
+
+    fn exact_fields(value: &Value, expected: &[&str]) -> Result<()> {
+        let ValueView::Object(fields) = value.view() else {
+            return Err(codes::CANON_SITE_BUNDLE_INVALID);
+        };
+        if fields.len() != expected.len()
+            || fields
+                .iter()
+                .any(|(key, _)| !expected.contains(&key.as_str()))
+        {
+            return Err(codes::CANON_SITE_BUNDLE_INVALID);
+        }
+        Ok(())
+    }
+}

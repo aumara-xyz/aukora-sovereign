@@ -143,6 +143,11 @@ impl LocalGate {
 
 fn classification(request: &Request) -> (BuiltinOperation, Option<&str>, bool) {
     match request {
+        Request::SitePropose(site) => (
+            BuiltinOperation::Proposals,
+            Some(site.bundle.target()),
+            true,
+        ),
         Request::Propose(proposal) => (
             BuiltinOperation::Proposals,
             Some(proposal.target.as_str()),
@@ -195,11 +200,15 @@ fn checked_payload(request: &Request, preset: PresetId, mode: SessionMode) -> Re
 }
 
 fn check_model_tools(call: &ModelCall, preset: PresetId, mode: SessionMode) -> Result<()> {
+    if call.tools.iter().any(|tool| tool.name == "sites.propose") {
+        return crate::sites::check_model_tools_with_sites(call, preset, mode);
+    }
     if call.tools.len() > 5 {
         return Err(codes::FRAME_INVALID_FIELD);
     }
     for (index, tool) in call.tools.iter().enumerate() {
         let operation = match tool.name.as_str() {
+            "sites.propose" => BuiltinOperation::Proposals,
             "propose" | "read" => BuiltinOperation::Proposals,
             "memory.put" => BuiltinOperation::MemoryPropose,
             "memory.recall" | "memory.list" => BuiltinOperation::MemoryRead,

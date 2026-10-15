@@ -26,6 +26,7 @@ pub const MAX_TRACKED_PROPOSALS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolName {
+    SitesPropose,
     Propose,
     ReadTarget,
     MemoryRecall,
@@ -44,6 +45,7 @@ impl ToolName {
 
     pub fn parse(name: &str) -> Result<Self> {
         match name {
+            "sites.propose" => Ok(Self::SitesPropose),
             "propose" => Ok(Self::Propose),
             "read" => Ok(Self::ReadTarget),
             "memory.recall" => Ok(Self::MemoryRecall),
@@ -55,6 +57,7 @@ impl ToolName {
 
     pub const fn wire_name(self) -> &'static str {
         match self {
+            Self::SitesPropose => "sites.propose",
             Self::Propose => "propose",
             Self::ReadTarget => "read",
             Self::MemoryRecall => "memory.recall",
@@ -75,6 +78,7 @@ impl ToolName {
                 | (Self::MemoryRecall, Request::MemoryRecall(_))
                 | (Self::MemoryList, Request::MemoryList(_))
                 | (Self::MemoryPropose, Request::MemoryPut(_))
+                | (Self::SitesPropose, Request::SitePropose(_))
         )
     }
 }
@@ -90,6 +94,9 @@ pub struct CanonSuggestionDecoder;
 
 impl SuggestionDecoder for CanonSuggestionDecoder {
     fn decode(&mut self, name: ToolName, arguments: &str) -> Result<Request> {
+        if name == ToolName::SitesPropose {
+            return crate::sites::decode_suggestion(arguments);
+        }
         if arguments.len() > canon::frame::MAX_FRAME_BYTES {
             return Err(codes::FRAME_TOO_LARGE);
         }
@@ -114,9 +121,11 @@ fn auma() -> Provenance {
 pub fn tools(mode: SessionMode) -> Result<Vec<Tool>> {
     ToolName::ALL
         .into_iter()
+        .chain(std::iter::once(ToolName::SitesPropose))
         .filter(|name| name.available(mode))
         .map(|name| {
             let (description, schema) = match name {
+                ToolName::SitesPropose => crate::sites::tool_spec(),
                 ToolName::Propose => (
                     "Queue exact replacement bytes for owner review. Acceptance means pending.",
                     r#"{"type":"object","additionalProperties":false,"required":["target","base_sha256","new_bytes_b64","note"],"properties":{"target":{"type":"string"},"base_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"new_bytes_b64":{"type":"string"},"note":{"type":"string"},"cell":{"type":"object","additionalProperties":false,"required":["module_sha256","input_sha256","effect_sha256"],"properties":{"module_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"input_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"effect_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}}}"#,
@@ -275,6 +284,9 @@ pub fn prepare(
     let name = ToolName::parse(&suggestion.name)?;
     if !name.available(mode) {
         return Err(codes::FRAME_UNKNOWN_KIND);
+    }
+    if name == ToolName::SitesPropose {
+        return crate::sites::prepare_suggestion(suggestion, decoder, gate, mode);
     }
     let expected = CanonSuggestionDecoder.decode(name, &suggestion.arguments)?;
     let request = decoder.decode(name, &suggestion.arguments)?;

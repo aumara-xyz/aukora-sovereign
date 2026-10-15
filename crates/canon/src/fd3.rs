@@ -31,6 +31,8 @@ pub const V2: u16 = 2;
 pub enum Request {
     /// C4 v1 `propose`, available unchanged in v2.
     Propose(Propose),
+    /// V2 static-site bundle proposal, including an explicitly absent target state.
+    SitePropose(sites::SiteProposal),
     /// C4 v1 `read`, available unchanged in v2.
     Read(Read),
     /// C4 v1 non-streaming `model.call`, available unchanged in v2.
@@ -66,6 +68,7 @@ impl Request {
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Propose(_) => "propose",
+            Self::SitePropose(_) => "sites.propose",
             Self::Read(_) => "read",
             Self::ModelCall(_) => "model.call",
             Self::MemoryPut(_) => "memory.put",
@@ -372,6 +375,7 @@ pub(crate) fn parse_reply(kind: &str, body: &Value, ingress: &Provenance) -> Res
 }
 fn request_kind(kind: &str) -> Option<u16> {
     match kind {
+        "sites.propose" => Some(V2),
         "propose" | "read" | "model.call" | "memory.put" | "memory.recall" | "memory.list"
         | "status" | "organs" => Some(V1),
         "model.start" | "model.cancel" | "session.create" | "session.open" | "session.list"

@@ -51,6 +51,9 @@ fn txt<const N: usize>(value: &Value) -> Result<Text<N>> {
 
 pub(super) fn parse_request(kind: &str, value: &Value, ingress: &Provenance) -> Result<Request> {
     Ok(match kind {
+        "sites.propose" => Request::SitePropose(
+            crate::fd3_payloads::sites::SiteProposal::from_fd3_body(value)?,
+        ),
         "session.create" => {
             let o = Object::new(value, &["mode", "thread_id", "title"], &[])?;
             let mode = mode(o.get("mode")?)?;
@@ -145,6 +148,7 @@ pub(super) fn parse_request(kind: &str, value: &Value, ingress: &Provenance) -> 
 }
 pub(super) fn request_body(request: &Request) -> Result<Value> {
     match request {
+        Request::SitePropose(proposal) => proposal.fd3_body(),
         Request::SessionCreate(p) => object(vec![
             ("mode", s(mode_name(p.mode))),
             ("thread_id", s(p.thread_id)),

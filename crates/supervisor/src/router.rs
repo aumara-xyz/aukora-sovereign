@@ -34,6 +34,7 @@ pub enum Route {
 
 pub const fn destination(request: &Request) -> Route {
     match request {
+        Request::SitePropose(_) => Route::Gate,
         Request::Propose(_) | Request::Read(_) => Route::Gate,
         Request::ModelCall(_) | Request::ModelStart(_) | Request::ModelCancel(_) => Route::Broker,
         Request::MemoryPut(_) | Request::MemoryRecall(_) | Request::MemoryList(_) => Route::Kira,
@@ -211,6 +212,12 @@ impl<'a> Router<'a> {
             return Err(codes::SUPERVISOR_STATE);
         }
         let body = match request.body {
+            Request::SitePropose(proposal) => {
+                self.proposal_capacity()?;
+                let accepted = self.ports.gate.propose_site(scope, &correlation.id, proposal).await?;
+                self.track_proposal(&correlation, accepted.proposal_id, false)?;
+                Reply::Accepted(accepted)
+            }
             Request::Status => Reply::StatusReply(self.ports.snapshots.status().await?),
             Request::Organs => Reply::OrgansReply(self.ports.snapshots.organs().await?),
             Request::Read(read) => Reply::ReadReply(self.ports.gate.read(scope, read).await?),

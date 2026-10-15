@@ -302,3 +302,197 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
         Ok(Some(RecoveryResult { proposal: id, state, terminal: receipt.authority, target_released: true }))
     }
 }
+
+impl<S: crate::target::TargetStore> crate::service::Gate<'_, S> {
+    pub(crate) fn site_proposal(&mut self, id: ProposalId) -> Result<bool> {
+        let (ledger, _, _, services) = self.install_parts();
+        let transaction = ledger.begin(services)?;
+        let proposal = crate::install::transition_load(&transaction, id)?;
+        let site = proposal.request.target.as_str().starts_with("sites/");
+        transaction.rollback()?;
+        Ok(site)
+    }
+
+    pub(crate) fn recover_site_into(
+        &mut self,
+        id: ProposalId,
+        crash: &mut dyn CrashInjector,
+        sweep: &mut RecoverySweep,
+    ) -> Result<()> {
+        match self.reconcile_site(id, crash) {
+            Ok(Some(outcome)) => {
+                let (ledger, _, _, services) = self.install_parts();
+                let transaction = ledger.begin(services)?;
+                let stored = transaction.proposal(&id)?;
+                let terminal = transaction
+                    .gate_terminal(&stored.operation)?
+                    .ok_or(crate::refuse("missing-terminal"))?;
+                sweep.settled.push(RecoveryResult {
+                    proposal: id,
+                    state: outcome.state,
+                    terminal: terminal.authority,
+                    target_released: true,
+                });
+                transaction.rollback()?;
+            }
+            Ok(None) => (),
+            Err(error) => sweep.blocked.push((id, error)),
+        }
+        Ok(())
+    }
+
+    /// Observe an interrupted site transition; recovery never constructs a permit.
+    pub(crate) fn reconcile_site(
+        &mut self,
+        id: ProposalId,
+        crash: &mut dyn CrashInjector,
+    ) -> Result<Option<crate::service::Outcome>> {
+        use canon::{
+            alg::AlgorithmId,
+            authority::{AuthorityTxn, LifecycleKind, LifecycleRecord, Phase},
+            json::{Value, ValueView},
+        };
+        crash.at(CrashPoint::BeforeReconcile)?;
+        let (ledger, targets, config, services) = self.install_parts();
+        let now = crate::install::transition_now(services)?;
+        let mut transaction = ledger.begin(services)?;
+        let proposal = crate::install::transition_load(&transaction, id)?;
+        crate::target::sites::validate(config, &proposal)?;
+        if proposal.state == ProposalState::Pending && now < proposal.expires_at_ms {
+            transaction.rollback()?;
+            crash.at(CrashPoint::AfterReconcile)?;
+            return Ok(None);
+        }
+        let text = |value: String| Value::text(value);
+        let base = match proposal.request.base {
+            BaseDigest::Absent => "absent".into(),
+            BaseDigest::Present(digest) => digest.to_string(),
+        };
+        let (state, receipt) = if proposal.state.is_terminal() {
+            let terminal = transaction
+                .gate_terminal(&proposal.operation_id)?
+                .ok_or(crate::refuse("missing-terminal"))?;
+            let wrapped = aura::record::AuthorityBodyV1::parse(&terminal.body)?;
+            let payload = &wrapped.payload;
+            let state = match proposal.state {
+                ProposalState::Applied => "applied",
+                ProposalState::Refused => "refused",
+                ProposalState::Expired => "expired",
+                ProposalState::Retired => "retired",
+                ProposalState::Incomplete => "incomplete",
+                ProposalState::Failed => "failed",
+                ProposalState::Conflict => "conflict",
+                ProposalState::Unknown => "unknown",
+                _ => return Err(crate::refuse("terminal-mismatch")),
+            };
+            let matches = |key: &str, expected: String| {
+                payload.get(key).is_some_and(
+                    |value| matches!(value.view(), ValueView::Text(actual) if actual == expected),
+                )
+            };
+            if !matches("proposal", id.to_string())
+                || !matches("target", proposal.request.target.as_str().into())
+                || !matches("operation", proposal.operation_digest.to_string())
+                || !matches("base_sha256", base)
+                || !matches("new_sha256", proposal.new_digest.to_string())
+                || !matches("state", state.into())
+            {
+                return Err(crate::refuse("terminal-mismatch"));
+            }
+            (proposal.state, terminal)
+        } else if proposal.state == ProposalState::Pending {
+            crash.at(CrashPoint::BeforeTerminal)?;
+            let authority = transaction.current_version()?;
+            let terminal = transaction.append_lifecycle(LifecycleRecord {
+                v: 1,
+                algorithm: AlgorithmId::Sha256,
+                authority,
+                at: now,
+                kind: LifecycleKind::GateExpire,
+                actor: "gate".into(),
+                operation: proposal.operation_id,
+                phase: Phase::Terminal,
+                body: Value::object(vec![
+                    ("proposal".into(), text(id.to_string())?),
+                    (
+                        "target".into(),
+                        text(proposal.request.target.as_str().into())?,
+                    ),
+                    (
+                        "operation".into(),
+                        text(proposal.operation_digest.to_string())?,
+                    ),
+                    ("base_sha256".into(), text(base)?),
+                    ("new_sha256".into(), text(proposal.new_digest.to_string())?),
+                    ("state".into(), text("expired".into())?),
+                    ("retry".into(), Value::boolean(false)),
+                ])?,
+            })?;
+            crash.at(CrashPoint::AfterTerminal)?;
+            (ProposalState::Expired, terminal)
+        } else if proposal.state == ProposalState::Consumed {
+            let work = transaction.recovery_work(10_001)?;
+            if work.len() > 10_000 {
+                return Err(crate::refuse("recovery-limit"));
+            }
+            let mut matches = work.into_iter().filter(|work| work.proposal == id);
+            let work = matches.next().ok_or(crate::refuse("missing-consumption"))?;
+            if matches.next().is_some()
+                || work.operation != proposal.operation_id
+                || work.target != proposal.request.target.as_str()
+                || work.base_sha256 != proposal.request.base
+                || work.new_sha256 != proposal.new_digest
+            {
+                return Err(crate::refuse("consumption-mismatch"));
+            }
+            transaction.check_target_consumption(id, work.consumed_approval)?;
+            let observed = targets
+                .observe(&proposal.request.target)
+                .ok()
+                .filter(|value| match (&value.digest, &value.bytes) {
+                    (BaseDigest::Absent, None) => true,
+                    (BaseDigest::Present(digest), Some(bytes)) => {
+                        *digest == Digest32::sha256(bytes)
+                    }
+                    _ => false,
+                });
+            let state = match &observed {
+                Some(seen) => classify_observation(&RecoveryItem {
+                    proposal: id,
+                    consumed_approval: work.consumed_approval,
+                    consumption: work.consumed_at,
+                    expected_base: work.base_sha256,
+                    expected_new_digest: work.new_sha256,
+                    observed: seen.clone(),
+                })?,
+                None => ProposalState::Unknown,
+            };
+            let status = match state {
+                ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
+                ProposalState::Failed => aura::storage::ProposalStatus::Failed,
+                ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
+                ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
+                _ => return Err(crate::refuse("settlement-state")),
+            };
+            crash.at(CrashPoint::BeforeTerminal)?;
+            let terminal = transaction.settle_consumed_target(
+                id,
+                work.consumed_approval,
+                status,
+                observed.map(|value| value.digest),
+            )?;
+            crash.at(CrashPoint::AfterTerminal)?;
+            (state, terminal)
+        } else {
+            return Err(crate::refuse("not-consumed"));
+        };
+        transaction.release_reservation(&id)?;
+        crate::install::transition_commit(transaction, crash)?;
+        crash.at(CrashPoint::AfterReconcile)?;
+        Ok(Some(crate::service::Outcome {
+            proposal: id,
+            state,
+            receipt_hash: receipt.hash,
+        }))
+    }
+}

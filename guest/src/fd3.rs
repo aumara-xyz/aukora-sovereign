@@ -65,6 +65,7 @@ pub enum ReplyClass {
 impl ReplyClass {
     pub fn of(request: &Request) -> Self {
         match request {
+            Request::SitePropose(_) => Self::Proposal,
             Request::Propose(_) | Request::MemoryPut(_) => Self::Proposal,
             Request::Read(_) => Self::Read,
             Request::ModelCall(_) => Self::Model,
@@ -163,6 +164,7 @@ impl PendingRequests {
             return Err(codes::FRAME_INVALID_ID);
         }
         let state = match &frame.body {
+            Request::SitePropose(_) => PendingState::Proposal(None),
             Request::Propose(_) | Request::MemoryPut(_) => PendingState::Proposal(None),
             Request::ModelStart(start) => {
                 if self.entries.iter().any(|entry| {

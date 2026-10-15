@@ -418,6 +418,515 @@ fn absent() -> TargetObservation {
     }
 }
 
+/// Owner-approved static site bundles use the same consume-once target boundary.
+pub mod sites {
+    use super::{EffectPermit, TargetClass, TargetId, TargetObservation, TargetSpec, TargetStore};
+    use crate::{
+        card::DisplayedCard,
+        proposal::{Proposal, ProposalRequest, ProposalState, SuggestionOrder},
+        recovery::{CrashInjector, CrashPoint, RecoveryItem},
+        service::{Gate, Outcome, OwnerReview},
+        Result, RiskTier,
+    };
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use canon::{
+        alg::AlgorithmId,
+        authority::{
+            AuthorityTxn, AuthorizationChallenge, BaseDigest, Card, Kind, LifecycleKind,
+            LifecycleRecord, OwnerAssertion, OwnerAuthorization, OwnerOperation,
+            PendingAuthorityRecord, Phase,
+        },
+        digest::Digest32,
+        fd3_payloads::sites::{SiteBundle, SiteProposal},
+        ids::ProposalId,
+        json::{Value, ValueView, MAX_SAFE_INTEGER},
+    };
+
+    /// Created only after the signed consumption, terminal row and current bytes agree.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct PublishedSite {
+        bundle: SiteBundle,
+        proposal: ProposalId,
+        receipt_sequence: u64,
+    }
+
+    impl PublishedSite {
+        pub fn bundle(&self) -> &SiteBundle {
+            &self.bundle
+        }
+        pub fn proposal(&self) -> ProposalId {
+            self.proposal
+        }
+        pub fn receipt_sequence(&self) -> u64 {
+            self.receipt_sequence
+        }
+        pub fn bundle_digest(&self) -> Digest32 {
+            self.bundle.digest()
+        }
+    }
+
+    pub fn target_spec(host: &str) -> Result<TargetSpec> {
+        canon::fd3_payloads::sites::validate_host(host)?;
+        Ok(TargetSpec {
+            id: TargetId::new(format!("sites/{host}.json"))?,
+            class: TargetClass::Content,
+            risk: RiskTier::Critical,
+            max_bytes: 32_768,
+        })
+    }
+
+    pub fn proposal_request(request: &SiteProposal) -> Result<ProposalRequest> {
+        let bundle = SiteBundle::decode(request.bundle.canonical_bytes())?;
+        if request.note.len() > 8_192 {
+            return Err(crate::refuse("proposal-too-large"));
+        }
+        Ok(ProposalRequest {
+            target: TargetId::new(bundle.target().into())?,
+            base: request.base,
+            new_bytes: bundle.canonical_bytes().to_vec(),
+            model_note: request.note.clone(),
+            cell: None,
+            new_evidence: None,
+            suggestion: SuggestionOrder::Single,
+        })
+    }
+
+    impl<S: TargetStore> Gate<'_, S> {
+        /// Read proposal data for host admission without staging a ceremony or effect.
+        pub fn site_bundle(&mut self, id: ProposalId) -> Result<SiteBundle> {
+            let (ledger, _, config, services) = self.install_parts();
+            let transaction = ledger.begin(services)?;
+            let proposal = crate::install::transition_load(&transaction, id)?;
+            let bundle = validate(config, &proposal)?;
+            transaction.rollback()?;
+            Ok(bundle)
+        }
+
+        pub fn propose_site(
+            &mut self,
+            request: SiteProposal,
+            crash: &mut dyn CrashInjector,
+        ) -> Result<Proposal> {
+            let proposal = proposal_request(&request)?;
+            configured(self.config(), &proposal)?;
+            self.propose(proposal, crash)
+        }
+
+        pub fn review_site(
+            &mut self,
+            id: ProposalId,
+            crash: &mut dyn CrashInjector,
+        ) -> Result<OwnerReview> {
+            crash.at(CrashPoint::BeforeReview)?;
+            let (ledger, targets, config, services) = self.install_parts();
+            let now = crate::install::transition_now(services)?;
+            let mut transaction = ledger.begin(services)?;
+            let proposal = crate::install::transition_load(&transaction, id)?;
+            let bundle = validate(config, &proposal)?;
+            pending(&proposal, now)?;
+            current_epoch(&transaction, &proposal)?;
+            same_base(targets, &proposal)?;
+            let displayed = DisplayedCard::from_install_card(Card {
+                v: 1,
+                risk: RiskTier::Critical,
+                says: "Publish this exact website bundle at the displayed address.".into(),
+                facts: vec![
+                    (
+                        "address".into(),
+                        text(format!("https://{}/", bundle.host()))?,
+                    ),
+                    ("target".into(), text(proposal.request.target.as_str())?),
+                    ("bundle_sha256".into(), text(bundle.digest())?),
+                    (
+                        "isolation".into(),
+                        text("Separate host; no cookies or WebAuthn; framing refused.")?,
+                    ),
+                ],
+                from_to: vec![
+                    (
+                        "base_sha256".into(),
+                        text(base_name(proposal.request.base))?,
+                    ),
+                    (
+                        "new_bytes_b64".into(),
+                        text(STANDARD.encode(&proposal.request.new_bytes))?,
+                    ),
+                ],
+                model_note: proposal.request.model_note.clone(),
+            })?;
+            let mut nonce = [0; 16];
+            getrandom::fill(&mut nonce).map_err(|_| crate::refuse("randomness"))?;
+            let expires_at = now
+                .checked_add(
+                    i64::try_from(config.ceremony_lifetime_ms)
+                        .map_err(|_| crate::refuse("clock"))?,
+                )
+                .filter(|value| *value <= MAX_SAFE_INTEGER)
+                .ok_or(crate::refuse("clock"))?
+                .min(proposal.expires_at_ms);
+            let authorization = OwnerAuthorization {
+                v: 1,
+                algorithm: AlgorithmId::Sha256,
+                node: config.node,
+                subject: transaction.gate_owner_subject()?,
+                op: OwnerOperation::Apply,
+                proposal: id,
+                target: proposal.request.target.as_str().into(),
+                base_sha256: proposal.request.base,
+                new_sha256: proposal.new_digest,
+                cell: None,
+                display_sha256: displayed.digest(),
+                challenge: AuthorizationChallenge::from_bytes(nonce),
+                expires_at,
+                epoch: transaction.current_version()?.epoch,
+                operation: proposal.operation_digest,
+            };
+            let authorization_bytes = authorization.canonical_bytes()?;
+            let passkey_challenge = crate::install::passkey_challenge(&authorization)?;
+            transaction.stage_authorization(aura::storage::StagedAuthorization {
+                authorization,
+                card: displayed.card().clone(),
+            })?;
+            let authority = transaction.current_version()?;
+            transaction.append_lifecycle(LifecycleRecord {
+                v: 1,
+                algorithm: AlgorithmId::Sha256,
+                authority,
+                at: now,
+                kind: LifecycleKind::GateReview,
+                actor: "gate".into(),
+                operation: proposal.operation_id,
+                phase: Phase::Settle,
+                body: object(vec![
+                    ("proposal", text(id)?),
+                    ("action", text("apply")?),
+                    ("display_sha256", text(displayed.digest())?),
+                    (
+                        "authorization_sha256",
+                        text(Digest32::sha256(&authorization_bytes))?,
+                    ),
+                ])?,
+            })?;
+            crate::install::transition_commit(transaction, crash)?;
+            crash.at(CrashPoint::AfterReview)?;
+            Ok(OwnerReview {
+                proposal: id,
+                action: OwnerOperation::Apply,
+                card: displayed,
+                authorization_bytes,
+                passkey_challenge,
+            })
+        }
+
+        pub fn apply_site(
+            &mut self,
+            id: ProposalId,
+            assertion: OwnerAssertion,
+            crash: &mut dyn CrashInjector,
+        ) -> Result<Outcome> {
+            crate::coverage::lookup(
+                crate::coverage::EntryPoint::Apply,
+                crate::coverage::EffectRoute::TargetReplace,
+            )?;
+            let (ledger, targets, config, services) = self.install_parts();
+            let now = crate::install::transition_now(services)?;
+            let mut transaction = ledger.begin(services)?;
+            let proposal = crate::install::transition_load(&transaction, id)?;
+            validate(config, &proposal)?;
+            pending(&proposal, now)?;
+            current_epoch(&transaction, &proposal)?;
+            same_base(targets, &proposal)?;
+            let proof = aumlok::webauthn::verify_owner_assertion(
+                &mut transaction,
+                &id,
+                OwnerOperation::Apply,
+                assertion,
+            )?;
+            crash.at(CrashPoint::AfterProof)?;
+            let approval = Digest32::sha256(proof.authorization_bytes());
+            transaction.persist_counter(&proof)?;
+            crash.at(CrashPoint::AfterCounter)?;
+            transaction.consume(&proof)?;
+            crash.at(CrashPoint::AfterConsumption)?;
+            let authority = transaction.current_version()?;
+            transaction.append(
+                proof,
+                PendingAuthorityRecord {
+                    v: 1,
+                    algorithm: AlgorithmId::Sha256,
+                    authority,
+                    at: now,
+                    kind: Kind::GateConsume,
+                    actor: "owner".into(),
+                    operation: Some(proposal.operation_id),
+                    phase: Phase::Settle,
+                    body: object(vec![
+                        ("proposal", text(id)?),
+                        ("target", text(proposal.request.target.as_str())?),
+                        ("operation", text(proposal.operation_digest)?),
+                        ("base_sha256", text(base_name(proposal.request.base))?),
+                        ("new_sha256", text(proposal.new_digest)?),
+                        ("state", text("consumed")?),
+                        ("retry", Value::boolean(false)),
+                        ("consumed_approval", text(approval)?),
+                    ])?,
+                },
+            )?;
+            crash.at(CrashPoint::AfterAppend)?;
+            crate::install::transition_commit(transaction, crash)?;
+            self.site_effect(id, approval, crash)
+        }
+
+        fn site_effect(
+            &mut self,
+            id: ProposalId,
+            approval: Digest32,
+            crash: &mut dyn CrashInjector,
+        ) -> Result<Outcome> {
+            let (ledger, targets, config, services) = self.install_parts();
+            let mut transaction = ledger.begin(services)?;
+            let proposal = crate::install::transition_load(&transaction, id)?;
+            validate(config, &proposal)?;
+            if proposal.state != ProposalState::Consumed {
+                return Err(crate::refuse("not-consumed"));
+            }
+            current_epoch(&transaction, &proposal)?;
+            let consumed = transaction.check_target_consumption(id, approval)?;
+            let before = targets
+                .observe(&proposal.request.target)
+                .ok()
+                .filter(observation_valid);
+            let mut acknowledged = false;
+            if before
+                .as_ref()
+                .is_some_and(|value| value.digest == proposal.request.base)
+            {
+                crash.at(CrashPoint::BeforeEffect)?;
+                let replacement = targets.replace_once(EffectPermit::new(
+                    proposal.operation_id,
+                    proposal.request.target.clone(),
+                    proposal.request.base,
+                    proposal.new_digest,
+                    proposal.request.new_bytes.clone(),
+                ));
+                crash.at(CrashPoint::AfterEffect)?;
+                acknowledged = replacement.is_ok_and(|seen| {
+                    observation_valid(&seen)
+                        && seen.digest == BaseDigest::Present(proposal.new_digest)
+                        && seen.bytes.as_ref() == Some(&proposal.request.new_bytes)
+                });
+            }
+            let observed = targets
+                .observe(&proposal.request.target)
+                .ok()
+                .filter(observation_valid);
+            let state = match &observed {
+                Some(seen)
+                    if acknowledged
+                        && seen.digest == BaseDigest::Present(proposal.new_digest)
+                        && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) =>
+                {
+                    ProposalState::Applied
+                }
+                Some(seen) => crate::recovery::classify_observation(&RecoveryItem {
+                    proposal: id,
+                    consumed_approval: approval,
+                    consumption: consumed.authority,
+                    expected_base: proposal.request.base,
+                    expected_new_digest: proposal.new_digest,
+                    observed: seen.clone(),
+                })?,
+                None => ProposalState::Unknown,
+            };
+            let status = match state {
+                ProposalState::Applied => aura::storage::ProposalStatus::Applied,
+                ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
+                ProposalState::Failed => aura::storage::ProposalStatus::Failed,
+                ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
+                ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
+                _ => return Err(crate::refuse("settlement-state")),
+            };
+            crash.at(CrashPoint::BeforeTerminal)?;
+            let terminal = transaction.settle_consumed_target(
+                id,
+                approval,
+                status,
+                observed.map(|value| value.digest),
+            )?;
+            transaction.release_reservation(&id)?;
+            crash.at(CrashPoint::AfterTerminal)?;
+            crate::install::transition_commit(transaction, crash)?;
+            Ok(Outcome {
+                proposal: id,
+                state,
+                receipt_hash: terminal.hash,
+            })
+        }
+
+        pub fn published_site(&mut self, id: ProposalId) -> Result<PublishedSite> {
+            let (ledger, targets, config, services) = self.install_parts();
+            let transaction = ledger.begin(services)?;
+            let proposal = crate::install::transition_load(&transaction, id)?;
+            let bundle = validate(config, &proposal)?;
+            if proposal.state != ProposalState::Applied {
+                return Err(crate::refuse("not-applied"));
+            }
+            let terminal = transaction
+                .gate_terminal(&proposal.operation_id)?
+                .ok_or(crate::refuse("missing-terminal"))?;
+            let wrapped = aura::record::AuthorityBodyV1::parse(&terminal.body)?;
+            let body = &wrapped.payload;
+            let matches = |key: &str, value: String| {
+                body.get(key).is_some_and(
+                    |field| matches!(field.view(), ValueView::Text(text) if text == value),
+                )
+            };
+            if terminal.kind != Kind::GateApply
+                || terminal.phase != Phase::Terminal
+                || terminal.actor != "gate"
+                || terminal.operation != Some(proposal.operation_id)
+                || !matches("proposal", id.to_string())
+                || !matches("target", proposal.request.target.as_str().into())
+                || !matches("operation", proposal.operation_digest.to_string())
+                || !matches("base_sha256", base_name(proposal.request.base))
+                || !matches("new_sha256", proposal.new_digest.to_string())
+                || !matches("observed_sha256", proposal.new_digest.to_string())
+                || !matches("state", "applied".into())
+                || !body
+                    .get("retry")
+                    .is_some_and(|field| matches!(field.view(), ValueView::Boolean(false)))
+            {
+                return Err(crate::refuse("terminal-mismatch"));
+            }
+            let approval = match body.get("consumed_approval").map(Value::view) {
+                Some(ValueView::Text(value)) => Digest32::from_hex(value)?,
+                _ => return Err(crate::refuse("consumption-mismatch")),
+            };
+            let consumed = transaction.check_target_consumption(id, approval)?;
+            if consumed.authority.sequence >= terminal.authority.sequence
+                || consumed.authority.epoch != terminal.authority.epoch
+            {
+                return Err(crate::refuse("consumption-mismatch"));
+            }
+            let observed = targets.observe(&proposal.request.target)?;
+            if !observation_valid(&observed)
+                || observed.digest != BaseDigest::Present(proposal.new_digest)
+                || observed.bytes.as_ref() != Some(&proposal.request.new_bytes)
+            {
+                return Err(crate::refuse("target-observation"));
+            }
+            transaction.rollback()?;
+            Ok(PublishedSite {
+                bundle,
+                proposal: id,
+                receipt_sequence: terminal.authority.sequence,
+            })
+        }
+    }
+
+    pub(crate) fn validate_request(
+        config: &crate::service::GateConfig,
+        request: &ProposalRequest,
+    ) -> Result<()> {
+        configured(config, request)?;
+        let bundle = SiteBundle::decode(&request.new_bytes)?;
+        if request.target.as_str() != bundle.target()
+            || request.cell.is_some()
+            || request.new_evidence.is_some()
+            || request.suggestion != SuggestionOrder::Single
+        {
+            return Err(crate::refuse("operation-mismatch"));
+        }
+        Ok(())
+    }
+
+    fn configured(config: &crate::service::GateConfig, request: &ProposalRequest) -> Result<()> {
+        let spec = config
+            .targets
+            .iter()
+            .find(|value| value.id == request.target)
+            .ok_or(crate::refuse("unknown-target"))?;
+        if spec.class != TargetClass::Content || spec.risk != RiskTier::Critical {
+            return Err(crate::refuse("unsupported-operation"));
+        }
+        if request.new_bytes.len() > spec.max_bytes {
+            return Err(crate::refuse("proposal-too-large"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate(config: &crate::service::GateConfig, proposal: &Proposal) -> Result<SiteBundle> {
+        configured(config, &proposal.request)?;
+        let bundle = SiteBundle::decode(&proposal.request.new_bytes)?;
+        if proposal.request.target.as_str() != bundle.target()
+            || proposal.risk != RiskTier::Critical
+            || proposal.request.cell.is_some()
+            || proposal.request.new_evidence.is_some()
+            || proposal.request.suggestion != SuggestionOrder::Single
+            || proposal.new_digest != bundle.digest()
+            || proposal.operation_digest
+                != crate::proposal::content_digest(config.node, &proposal.request)?
+        {
+            return Err(crate::refuse("operation-mismatch"));
+        }
+        Ok(bundle)
+    }
+
+    fn pending(proposal: &Proposal, now: i64) -> Result<()> {
+        if proposal.state != ProposalState::Pending {
+            return Err(crate::refuse("not-pending"));
+        }
+        if now >= proposal.expires_at_ms {
+            return Err(crate::refuse("expired"));
+        }
+        Ok(())
+    }
+
+    fn current_epoch(transaction: &aura::LedgerTxn<'_>, proposal: &Proposal) -> Result<()> {
+        if proposal.authority.epoch != transaction.current_version()?.epoch {
+            return Err(crate::refuse("operation-mismatch"));
+        }
+        Ok(())
+    }
+
+    fn same_base(store: &impl TargetStore, proposal: &Proposal) -> Result<()> {
+        let seen = store.observe(&proposal.request.target)?;
+        if !observation_valid(&seen) {
+            return Err(crate::refuse("target-observation"));
+        }
+        if seen.digest != proposal.request.base {
+            return Err(crate::refuse("stale-base"));
+        }
+        Ok(())
+    }
+
+    fn observation_valid(value: &TargetObservation) -> bool {
+        match (&value.digest, &value.bytes) {
+            (BaseDigest::Absent, None) => true,
+            (BaseDigest::Present(digest), Some(bytes)) => *digest == Digest32::sha256(bytes),
+            _ => false,
+        }
+    }
+
+    fn base_name(base: BaseDigest) -> String {
+        match base {
+            BaseDigest::Absent => "absent".into(),
+            BaseDigest::Present(digest) => digest.to_string(),
+        }
+    }
+    fn text(value: impl ToString) -> Result<Value> {
+        Value::text(value.to_string())
+    }
+    fn object(fields: Vec<(&str, Value)>) -> Result<Value> {
+        Value::object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key.into(), value))
+                .collect(),
+        )
+    }
+}
+
 fn hash(bytes: &[u8]) -> Digest32 {
     Digest32::from_bytes(Sha256::digest(bytes).into())
 }
