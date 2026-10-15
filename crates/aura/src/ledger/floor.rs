@@ -505,3 +505,111 @@ fn release_pointer(bytes: &[u8], digest: Digest32) -> Result<()> {
     }
     Ok(())
 }
+
+impl LedgerTxn<'_> {
+    /// Roll back an active floor transition, including a poisoned transaction.
+    pub fn abort_floor_transition(&mut self) -> Result<()> {
+        if self.transaction.is_autocommit() {
+            return Err(refusal("transaction"));
+        }
+        self.poisoned = true;
+        self.transaction.execute_batch("ROLLBACK").map_err(sql)
+    }
+
+    /// Read retained floor bytes before any append or pending authority mutation.
+    pub fn floor_recovery_state(&self) -> Result<Option<Vec<u8>>> {
+        self.active()?;
+        if self.state.next()? != self.retained.next()?
+            || !self.counters.is_empty()
+            || !self.consumptions.is_empty()
+            || self.floor_obligation.is_some()
+        {
+            return Err(refusal("floor-recovery-transaction"));
+        }
+        let bytes = self.floor_state()?;
+        if let Some(bytes) = &bytes {
+            self.verify_floor_history(&state(bytes)?)?;
+        }
+        Ok(bytes)
+    }
+
+    /// Resolve an exact release consumption; colliding spent identities refuse.
+    pub fn floor_consumption(
+        &self,
+        approval: Digest32,
+        proposal: ProposalId,
+        operation: OperationId,
+    ) -> Result<Option<canon::authority::AuthorityVersion>> {
+        self.active()?;
+        let mut statement = self.transaction.prepare(
+            "SELECT approval,proposal,operation,epoch,sequence,previous_hash,action,appended,proof,credential FROM authority_consumptions WHERE approval=?1 OR proposal=?2 OR operation=?3",
+        ).map_err(sql)?;
+        let mut rows = statement.query(params![
+            approval.to_string(), proposal.to_string(), operation.to_string()
+        ]).map_err(sql)?;
+        let Some(row) = rows.next().map_err(sql)? else {
+            let spent: i64 = self.transaction.query_row(
+                "SELECT count(*) FROM authority_challenges WHERE proposal=?1 AND spent=1",
+                [proposal.to_string()], |row| row.get(0),
+            ).map_err(sql)?;
+            if spent != 0 {
+                return Err(refusal("floor-consumption"));
+            }
+            return Ok(None);
+        };
+        let previous: Option<String> = row.get(5).map_err(sql)?;
+        let context = canon::authority::AuthorityVersion {
+            epoch: u64::try_from(row.get::<_, i64>(3).map_err(sql)?)
+                .map_err(|_| refusal("floor-consumption"))?,
+            sequence: u64::try_from(row.get::<_, i64>(4).map_err(sql)?)
+                .map_err(|_| refusal("floor-consumption"))?,
+            previous_hash: previous.map(|value| Digest32::from_hex(&value)).transpose()?,
+        };
+        let proof_bytes: Vec<u8> = row.get(8).map_err(sql)?;
+        let credential: String = row.get(9).map_err(sql)?;
+        if row.get::<_, String>(0).map_err(sql)? != approval.to_string()
+            || row.get::<_, String>(1).map_err(sql)? != proposal.to_string()
+            || row.get::<_, String>(2).map_err(sql)? != operation.to_string()
+            || row.get::<_, String>(6).map_err(sql)? != "release"
+            || row.get::<_, i64>(7).map_err(sql)? != 1
+            || context.epoch == 0
+            || context.sequence == 0
+            || context.epoch > json::MAX_SAFE_INTEGER as u64
+            || context.sequence > json::MAX_SAFE_INTEGER as u64
+            || rows.next().map_err(sql)?.is_some()
+        {
+            return Err(refusal("floor-consumption"));
+        }
+        let proof = json::parse_strict(&proof_bytes)?;
+        let authorization = member(&proof, "authorization")?.canonical_bytes();
+        let auth = crate::storage::decode_authorization(&authorization)?;
+        let stored = self.proposal(&proposal)?;
+        if proof.canonical_bytes() != proof_bytes
+            || field_text(&proof, "credential")? != credential
+            || Digest32::sha256(&authorization) != approval
+            || auth.proposal != proposal
+            || auth.epoch != context.epoch
+            || auth.op != OwnerOperation::Release
+            || auth.target != "release"
+            || auth.cell.is_some()
+            || stored.operation != operation
+            || stored.status != crate::storage::ProposalStatus::Applied
+            || stored.target != auth.target
+            || stored.cell != auth.cell
+            || stored.operation_digest != auth.operation
+            || stored.base_sha256 != auth.base_sha256
+            || Digest32::sha256(&stored.new_bytes) != auth.new_sha256
+        {
+            return Err(refusal("floor-consumption"));
+        }
+        let matches: i64 = self.transaction.query_row(
+            "SELECT count(*) FROM authority_challenges WHERE proposal=?1 AND action='release' AND challenge=?2 AND body=?3 AND spent=1",
+            params![proposal.to_string(), auth.challenge.to_string(), authorization],
+            |row| row.get(0),
+        ).map_err(sql)?;
+        if matches != 1 {
+            return Err(refusal("floor-consumption"));
+        }
+        Ok(Some(context))
+    }
+}

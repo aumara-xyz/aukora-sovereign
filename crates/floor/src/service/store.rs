@@ -93,6 +93,16 @@ impl Store {
         self.write(name, bytes, false)
     }
 
+    pub(super) fn discard_stage(&self, expected: &[u8]) -> Result<()> {
+        if let Some(bytes) = self.read(super::PENDING_FILE, super::STAGE_MAX)? {
+            if bytes != expected {
+                return Err(refuse("stage-conflict"));
+            }
+            self.remove(super::PENDING_FILE)?;
+        }
+        self.discard_unpublished()
+    }
+
     pub(crate) fn remove(&self, name: &str) -> Result<()> {
         writable_name(name)?;
         self.revalidate()?;

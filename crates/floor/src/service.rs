@@ -56,25 +56,10 @@ impl FloorService {
         if transaction.floor_state()?.as_deref() != Some(state.canonical_bytes()?.as_slice()) {
             return Err(refuse("ledger-state-mismatch"));
         }
-        check_receipt(&transaction.record_at(state.authority)?, &state)?;
-        for spent in &state.high_water.spent {
-            let row = transaction.record_at(spent.authority)?;
-            let body = payload(&row.body)?;
-            if row.kind != Kind::FloorAdvance
-                || row.phase != Phase::Terminal
-                || row.operation != Some(spent.operation)
-                || field_text(body, "schema") != Some(ADVANCE_SCHEMA)
-                || field_text(body, "proposal") != Some(spent.proposal.to_string().as_str())
-                || field_text(body, "authorization_sha256")
-                    != Some(spent.authorization_sha256.to_string().as_str())
-            {
-                return Err(refuse("receipt-mismatch"));
-            }
-        }
-        Ok(())
+        check_history(transaction, &state)
     }
 
-    /// Row 65/110: verify exact Release action and matching authority transaction,
+    /// Row 65/110: verify exact Release action in a transaction with no prior append,
     /// reject any spent proposal or authorization, then stage floor and high-water
     /// persistence with the signed floor.advance record. No filesystem effect is
     /// authorized by the unsigned `ReleaseOrder`; a failure rolls back the stage.
@@ -86,7 +71,7 @@ impl FloorService {
     ) -> Result<AuthorityRecord> {
         let current = self.snapshot()?;
         let old_bytes = current.canonical_bytes()?;
-        if transaction.floor_state()?.as_deref() != Some(old_bytes.as_slice()) {
+        if transaction.floor_recovery_state()?.as_deref() != Some(old_bytes.as_slice()) {
             return Err(refuse("ledger-state-mismatch"));
         }
         if transaction.transaction_id() != proof.transaction_id() {
@@ -157,7 +142,7 @@ impl FloorService {
         let prior = transaction.record_at(current.authority)?;
         check_receipt(&prior, &current)?;
         let floor = advance_floor(Some(&current.floor), proposed)?;
-        let context = transaction.floor_append_context(&proof)?;
+        let context = transaction.authority_append_context(&proof)?;
         if context.operation_id != proposal.operation
             || context.authority.epoch != auth.epoch
             || context.authority.sequence <= current.high_water.highest_sequence
@@ -213,75 +198,81 @@ impl FloorService {
             previous: Digest32::sha256(&old_bytes),
             state: next,
         };
-        // The stage is durable before Aura can commit; it cannot be read as installed state.
-        self.store.write_new(PENDING_FILE, &stage.bytes()?)?;
-        transaction.persist_counter(&proof)?;
-        transaction.consume(&proof)?;
-        transaction.stage_floor(&proof, Some(stage.previous), &next_bytes)?;
-        let appended = transaction.append(proof, record)?;
-        check_receipt(&appended, &stage.state)?;
-        Ok(appended)
+        let stage_bytes = stage.bytes()?;
+        // Publication can fail after rename, so it shares Aura's rollback path.
+        let outcome = (|| {
+            self.store.write_new(PENDING_FILE, &stage_bytes)?;
+            transaction.persist_counter(&proof)?;
+            transaction.consume(&proof)?;
+            transaction.stage_floor(&proof, Some(stage.previous), &next_bytes)?;
+            let appended = transaction.append(proof, record)?;
+            check_receipt(&appended, &stage.state)?;
+            Ok(appended)
+        })();
+        if outcome.is_err() {
+            transaction.abort_floor_transition()?;
+            self.store.discard_stage(&stage_bytes)?;
+        }
+        outcome
     }
 
-    /// Row 65: interrupted release recovery can reconcile an already-consumed exact
-    /// release only. It cannot reset high-water state or revive spent authority.
-    pub fn reconcile(&mut self) -> Result<ProtectedState> {
-        self.snapshot()
-    }
-
-    /// Finish only from a fresh transaction after the caller committed `advance`.
-    /// A rolled-back stage can be discarded only at its unchanged append predecessor.
-    pub fn reconcile_committed(
-        &mut self,
-        transaction: &mut aura::LedgerTxn<'_>,
-    ) -> Result<ProtectedState> {
+    /// Finish an exact consumed release using a fresh, unchanged Aura transaction.
+    /// Discard an aborted stage only with its retained predecessor and no spent identity.
+    pub fn reconcile(&mut self, transaction: &mut aura::LedgerTxn<'_>) -> Result<ProtectedState> {
         let current = self.read_state()?;
+        let old_bytes = current.canonical_bytes()?;
+        let committed = transaction
+            .floor_recovery_state()?
+            .ok_or_else(|| refuse("absent"))?;
+        check_history(transaction, &current)?;
         let Some(bytes) = self.store.read(PENDING_FILE, STAGE_MAX)? else {
-            let stored = current.canonical_bytes()?;
-            if transaction.floor_state()?.as_deref() != Some(stored.as_slice()) {
+            if committed != old_bytes {
                 return Err(refuse("ledger-state-mismatch"));
             }
-            check_receipt(&transaction.record_at(current.authority)?, &current)?;
             return Ok(current);
         };
         let stage = Stage::parse(&bytes)?;
         if stage.transaction == transaction.transaction_id() {
             return Err(refuse("uncommitted-stage"));
         }
-        let old_bytes = current.canonical_bytes()?;
         let next_bytes = stage.state.canonical_bytes()?;
         let current_hash = Digest32::sha256(&old_bytes);
         if current_hash != stage.previous && old_bytes != next_bytes {
             return Err(refuse("stage-conflict"));
         }
-        let committed = transaction.floor_state()?.ok_or_else(|| refuse("absent"))?;
-        if committed != next_bytes {
-            if committed == old_bytes && current_hash == stage.previous {
-                let next = transaction.current_version()?;
-                let occupant =
-                    transaction.floor_record_at_sequence(stage.state.authority.sequence)?;
-                let not_appended = match occupant {
-                    Some(row) => row.hash != stage.state.high_water.head,
-                    None => next.sequence <= stage.state.authority.sequence,
-                };
-                if not_appended {
-                    self.store.remove(PENDING_FILE)?;
-                    return Ok(current);
-                }
-            }
-            return Err(refuse("recovery-ledger-mismatch"));
-        }
         if old_bytes != next_bytes {
             current
                 .high_water
                 .validate_successor(&stage.state.high_water)?;
+            let proposed = release_order(&stage.state);
+            if advance_floor(Some(&current.floor), &proposed)? != stage.state.floor
+                || stage.state.high_water.spent.len() != current.high_water.spent.len() + 1
+            {
+                return Err(refuse("stage-conflict"));
+            }
         }
-        check_receipt(&transaction.record_at(stage.state.authority)?, &stage.state)?;
+        if committed != next_bytes {
+            if committed != old_bytes || current_hash != stage.previous {
+                return Err(refuse("recovery-ledger-mismatch"));
+            }
+            check_aborted(transaction, &stage)?;
+            self.store.remove(PENDING_FILE)?;
+            return Ok(current);
+        }
+        check_history(transaction, &stage.state)?;
         if old_bytes != next_bytes {
             self.store.replace(STATE_FILE, &next_bytes)?;
         }
         self.store.remove(PENDING_FILE)?;
         Ok(stage.state)
+    }
+
+    /// Compatibility entry point for callers finishing a committed advance.
+    pub fn reconcile_committed(
+        &mut self,
+        transaction: &mut aura::LedgerTxn<'_>,
+    ) -> Result<ProtectedState> {
+        self.reconcile(transaction)
     }
 
     fn read_state(&self) -> Result<ProtectedState> {
@@ -290,6 +281,82 @@ impl FloorService {
             .read(STATE_FILE, crate::state::STATE_MAX_BYTES)?
             .ok_or_else(|| refuse("absent"))?;
         ProtectedState::parse(&bytes)
+    }
+}
+
+fn check_history(transaction: &aura::LedgerTxn<'_>, state: &ProtectedState) -> Result<()> {
+    check_receipt(&transaction.record_at(state.authority)?, state)?;
+    for spent in &state.high_water.spent {
+        let row = transaction.record_at(spent.authority)?;
+        let body = payload(&row.body)?;
+        if row.kind != Kind::FloorAdvance
+            || row.phase != Phase::Terminal
+            || row.operation != Some(spent.operation)
+            || field_text(body, "schema") != Some(ADVANCE_SCHEMA)
+            || field_text(body, "proposal") != Some(spent.proposal.to_string().as_str())
+            || field_text(body, "authorization_sha256")
+                != Some(spent.authorization_sha256.to_string().as_str())
+            || transaction.floor_consumption(
+                spent.authorization_sha256,
+                spent.proposal,
+                spent.operation,
+            )? != Some(spent.authority)
+        {
+            return Err(refuse("receipt-mismatch"));
+        }
+    }
+    Ok(())
+}
+
+fn check_aborted(transaction: &aura::LedgerTxn<'_>, stage: &Stage) -> Result<()> {
+    let authority = stage.state.authority;
+    let spent = stage
+        .state
+        .high_water
+        .spent
+        .iter()
+        .find(|spent| spent.authority == authority)
+        .ok_or_else(|| refuse("stage-conflict"))?;
+    let next = transaction.current_version()?;
+    let prior = transaction
+        .floor_record_at_sequence(authority.sequence.saturating_sub(1))?
+        .ok_or_else(|| refuse("recovery-ledger-mismatch"))?;
+    let occupant = transaction.floor_record_at_sequence(authority.sequence)?;
+    if let Some(terminal) = transaction.gate_terminal(&spent.operation)? {
+        let body = payload(&terminal.body)?;
+        let expected = match terminal.kind {
+            Kind::GateExpire => "expired",
+            Kind::GateRefuse => "refused",
+            _ => return Err(refuse("recovery-ledger-mismatch")),
+        };
+        if field_text(body, "proposal") != Some(spent.proposal.to_string().as_str())
+            || field_text(body, "state") != Some(expected)
+        {
+            return Err(refuse("recovery-ledger-mismatch"));
+        }
+    }
+    if next.epoch < authority.epoch
+        || next.sequence < authority.sequence
+        || Some(prior.hash) != authority.previous_hash
+        || prior.authority.epoch > authority.epoch
+        || occupant.is_some_and(|row| row.hash == stage.state.high_water.head)
+        || transaction
+            .floor_consumption(spent.authorization_sha256, spent.proposal, spent.operation)?
+            .is_some()
+    {
+        return Err(refuse("recovery-ledger-mismatch"));
+    }
+    Ok(())
+}
+
+fn release_order(state: &ProtectedState) -> ReleaseOrder {
+    ReleaseOrder {
+        digest: state.floor.digest,
+        record: state.floor.record,
+        signer_epoch: state.floor.signer_epoch,
+        ledger_seq: state.floor.ledger_seq,
+        signer_key_sha256: state.floor.signer_key_sha256,
+        ledger_hash: state.floor.ledger_hash,
     }
 }
 
