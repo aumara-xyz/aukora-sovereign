@@ -674,21 +674,21 @@ pub(crate) fn observe_settlement<S: crate::target::TargetStore>(
     status: aura::storage::ProposalStatus,
     observed: Option<&crate::target::TargetObservation>,
 ) -> Result<()> {
+    let stored = transaction.proposal(&proposal.id)?;
+    if stored.target != proposal.request.target.as_str() {
+        return Err(crate::refuse("install-target-mismatch"));
+    }
+    let seen = targets.observe(&proposal.request.target)?;
+    match (&seen.digest, &seen.bytes) {
+        (BaseDigest::Absent, None) => (),
+        (BaseDigest::Present(digest), Some(bytes)) if *digest == hash(bytes) => (),
+        _ => return Err(crate::refuse("target-observation")),
+    }
+    // Validate the read before Aura can classify a reader error as Unknown.
     let (read_status, read_digest) = transaction.observe_consumed_target(
         proposal.id,
         approval,
-        |target| {
-            if target != proposal.request.target.as_str() {
-                return Err(crate::refuse("install-target-mismatch"));
-            }
-            let seen = targets.observe(&proposal.request.target)?;
-            match (&seen.digest, &seen.bytes) {
-                (BaseDigest::Absent, None) => (),
-                (BaseDigest::Present(digest), Some(bytes)) if *digest == hash(bytes) => (),
-                _ => return Err(crate::refuse("target-observation")),
-            }
-            Ok(seen.bytes)
-        },
+        |_| Ok(seen.bytes),
     )?;
     if read_status != status || read_digest != observed.map(|seen| seen.digest) {
         return Err(crate::refuse("install-observation-changed"));
