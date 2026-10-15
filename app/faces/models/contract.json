@@ -1,0 +1,32 @@
+{
+  "schema": "aukora-models-face-v1",
+  "service": "body.settings.models",
+  "reply": {
+    "keys": "exactly grant, key, last_reply, model; any other key or type refuses the reply",
+    "model": "null, or exactly name and source; name is a model name as the broker accepts one: 1..256 printable ASCII characters, no space, nothing shaped like a provider key (sk-)",
+    "source": "exactly provider (deepseek or openrouter) for a hosted model, or exactly artifact (64 lowercase hexadecimal digits) for a local model file",
+    "key": "exactly present, a boolean: whether the node holds a provider key; the key itself is never in a reply",
+    "grant": "null, or exactly completion_microusd_per_token, expires_at_ms, frozen, max_requests, per_request_cap_microusd, prompt_microusd_per_token, requests, reserved_microusd, spent_microusd, total_cap_microusd; whole numbers the page holds exactly, total cap, per-request cap, max requests and expiry at least 1, the per-request cap no more than the total, requests no more than max requests, spent plus reserved a safe integer; frozen is a boolean",
+    "last_reply": "null, or exactly charged_microusd, cost_unknown, identity, outcome; outcome is completed, cancelled, refused or unknown",
+    "identity": "exactly reported (null or a model name), requested (a model name) and verified, which is exactly {status: unverified} or exactly {status: verified, model, verifier} with the verifier 1..256 readable characters and no key-shaped text",
+    "source_of_truth": "the broker: its model slot, key state, grant terms and usage, and the identity of the last receipt (requested, reported and verified are three separate claims)"
+  },
+  "refresh": "on load, on request, and every 30 seconds while the page is visible; a read that is superseded is ignored",
+  "screen": {
+    "model": "badge MODEL SET or NO MODEL; the model, who hosts it, and whether the node holds its key; no field for a key",
+    "spend_grant": "badge GRANT SET, FROZEN or NO GRANT; a gauge of spent plus held against the cap, then spent, held for calls in flight, left to spend, most for one call, model calls used, prices per million tokens and when the grant ends; amounts are exact to the millionth of a dollar; the end time carries a hint from this browser's clock only",
+    "last_reply": "what was asked for, what the provider reported, and whether anything independent verified it, kept apart; how it ended and what was charged",
+    "unavailable": "all three cards read UNAVAILABLE with the refusal code and print nothing from the node; a failed read removes the last good figures"
+  },
+  "states": {
+    "initial": "heading, purpose and three cards reading CHECKING",
+    "loading": "the same, until the first read settles",
+    "empty": "NO MODEL, NO GRANT and NONE YET when the broker reports nothing",
+    "ready": "MODEL SET, GRANT SET (or FROZEN) and RECORDED",
+    "refusal": "all three cards UNAVAILABLE with the service's code, for example models:refused",
+    "service-unavailable": "all three cards UNAVAILABLE with app:service-unavailable or app:deadline; a reply this page does not accept, or one with anything key-shaped in it, shows models:reply-invalid",
+    "phone": "cards stack and fact rows become one column at 480 px and below"
+  },
+  "face_holds": "model names, flags and whole numbers; no key, no ticket, no grant bytes; it cannot sign, raise, freeze or revoke a grant, and a grant is signed with the passkey over exact bytes in the owner pane",
+  "authority": "none"
+}

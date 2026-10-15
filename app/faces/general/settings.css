@@ -1,0 +1,95 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Shared by the five System settings faces. Colours are the design tokens of app/design/tokens.json. */
+:root {
+  --text: #e8eaed; --secondary: #b8bcc4; --muted: #8b9099; --border: #ffffff1a; --surface: #262b36b8;
+  --blue: #96b4ff; --mint: #81d4b4; --violet: #c4aaff; --gold: #e0b76a; --failed: #f2555a; --radius: 14px;
+  /* The lane the shell puts this page in is the app's own surface, so the page lets it show through. */
+  background: transparent;
+}
+[hidden] { display: none !important; }
+#face > [role="status"]:empty { display: none; }
+.purpose { max-width: 640px; margin-block: 0 4px; color: var(--secondary); }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-block-start: 12px; }
+.stamp { color: var(--muted); font-size: 12px; }
+.literal { unicode-bidi: isolate; overflow-wrap: anywhere; }
+
+.card { max-width: 680px; margin-block-start: 20px; padding: 16px 18px 20px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.card h2 { margin: 0; font-size: 16px; }
+.card h3 { margin: 20px 0 0; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.badge { margin: 0; padding: 2px 12px; border: 1px solid var(--muted); border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .08em; }
+.badge:empty { display: none; }
+.badge[data-tone="ok"] { border-color: var(--mint); color: var(--mint); }
+.badge[data-tone="attention"] { border-color: var(--gold); color: var(--gold); }
+.badge[data-tone="failed"] { border-color: var(--failed); color: var(--failed); }
+.badge[data-tone="unknown"] { border-style: dashed; }
+.lead { margin: 12px 0 0; color: var(--secondary); }
+.note { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+
+.facts { display: grid; margin: 8px 0 0; }
+.fact { display: grid; grid-template-columns: minmax(120px, 190px) 1fr; gap: 4px 16px; padding-block: 10px; border-block-start: 1px solid var(--border); }
+.fact dt { color: var(--muted); font-size: 13px; }
+.fact dd { margin: 0; overflow-wrap: anywhere; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.digest { line-height: 1.7; word-spacing: .35em; user-select: all; }
+
+/* A state is a word and a dot; the dot is hollow when the state is not known. */
+.state { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; white-space: nowrap; }
+.state::before { content: ""; width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; background: currentColor; }
+.state[data-tone="ok"] { color: var(--mint); }
+.state[data-tone="attention"] { color: var(--gold); }
+.state[data-tone="failed"] { color: var(--failed); }
+.state[data-tone="unknown"]::before { background: transparent; }
+
+/* Models: the spend gauge. */
+.gauge { display: grid; gap: 6px; margin-block-start: 14px; }
+.gauge-text { margin: 0; color: var(--secondary); font-size: 13px; }
+meter { appearance: none; display: block; width: 100%; height: 10px; padding: 0; border: 0; background: none; }
+meter::-webkit-meter-bar { height: 10px; border: 1px solid var(--border); border-radius: 999px; background: #ffffff10; }
+meter::-webkit-meter-optimum-value, meter::-webkit-meter-suboptimum-value, meter::-webkit-meter-even-less-good-value { border-radius: 999px; background: var(--mint); }
+meter::-moz-meter-bar { border-radius: 999px; background: var(--mint); }
+meter[data-tone="attention"]::-webkit-meter-optimum-value { background: var(--gold); }
+meter[data-tone="attention"]::-moz-meter-bar { background: var(--gold); }
+meter[data-tone="failed"]::-webkit-meter-optimum-value { background: var(--failed); }
+meter[data-tone="failed"]::-moz-meter-bar { background: var(--failed); }
+
+/* Plugins: the registry. */
+.entries { margin: 10px 0 0; gap: 0; }
+.entry { display: grid; gap: 4px; padding-block: 10px; border-block-start: 1px solid var(--border); }
+.entry-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.entry-head code { color: var(--muted); }
+.entry-head .state { margin-inline-start: auto; }
+.entry-detail { margin: 0; color: var(--secondary); font-size: 13px; }
+.entry-more { color: var(--muted); font-size: 13px; }
+.entry-more summary { cursor: pointer; }
+.entry-more p { margin: 6px 0 0; color: var(--secondary); }
+
+/* Agent presets: one row per built-in operation. */
+.ops { margin: 8px 0 0; gap: 0; }
+.op { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; padding-block: 10px; border-block-start: 1px solid var(--border); }
+.op-words { display: grid; flex: 1 1 220px; gap: 2px; min-width: 0; }
+.op-detail { color: var(--muted); font-size: 13px; }
+
+/* Archived sessions: the list and the reader. */
+.search { width: 100%; margin-block-start: 14px; }
+.sessions { margin: 12px 0 0; gap: 0; }
+.session { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-block: 10px; border-block-start: 1px solid var(--border); }
+.session-main { display: grid; flex: 1 1 220px; gap: 2px; min-width: 0; }
+.session-meta { color: var(--muted); font-size: 12px; }
+.session button { width: auto; padding: 6px 14px; }
+.card-body > button { margin-block-start: 12px; }
+.log { display: grid; margin: 14px 0 0; padding: 0; list-style: none; }
+.message { display: grid; gap: 4px; padding-block: 12px; border-block-start: 1px solid var(--border); }
+.message-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
+.message[data-origin="owner"] strong { color: var(--blue); }
+.message[data-origin="auma"] strong { color: var(--violet); }
+.chip { padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; }
+.when { margin-inline-start: auto; color: var(--muted); font-size: 12px; }
+.said { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.said.empty { color: var(--muted); }
+.call { margin: 0; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 480px) {
+  .fact { grid-template-columns: 1fr; }
+  .when { margin-inline-start: 0; }
+}

@@ -1,0 +1,27 @@
+{
+  "schema": "aukora-general-face-v1",
+  "service": "body.settings.general",
+  "reply": {
+    "keys": "exactly release; any other key or type refuses the reply",
+    "release": "exactly assets and manifest_sha256",
+    "manifest_sha256": "64 lowercase hexadecimal digits: the digest of the approved release manifest the node is serving",
+    "assets": "integer 2..4096: how many files that manifest lists",
+    "source": "the approved release the frontdoor loaded: the manifest digest and the asset count"
+  },
+  "refresh": "on load, on request, and every 60 seconds while the page is visible; a read that is superseded is ignored",
+  "screen": {
+    "release": "one card from the node: CHECKING, then REPORTED with the digest in groups of eight and the file count, or UNAVAILABLE with the refusal code and every value shown as Unknown; a failed read removes the last good report",
+    "facts_of_the_release": "three cards that print whether or not the node answers, because none of them is a claim about the node: language and appearance, the limits the app keeps (read from app/core: FD4_LIMITS, MAX_RPC_BYTES, RPC_DEADLINE_MS), and how settings change"
+  },
+  "states": {
+    "initial": "heading, purpose and the three fact cards at once; the release card reads CHECKING",
+    "loading": "the same, until the first read settles",
+    "empty": "not applicable: a release always lists its files",
+    "ready": "release card REPORTED",
+    "refusal": "release card UNAVAILABLE with the service's code, for example general:refused",
+    "service-unavailable": "release card UNAVAILABLE with app:service-unavailable or app:deadline; a reply this page does not accept shows general:reply-invalid",
+    "phone": "cards stack and fact rows become one column at 480 px and below"
+  },
+  "face_holds": "a digest and a count; it has no field that saves a setting and no control that approves one",
+  "authority": "none"
+}

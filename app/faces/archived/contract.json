@@ -1,0 +1,39 @@
+{
+  "schema": "aukora-archived-face-v1",
+  "service": "body.session.list and body.session.open",
+  "requests": {
+    "session.list": "exactly thread_id (null), include_archived (true), before (null, or the cursor of the previous page) and limit (100); the node includes archived and active sessions, and this page keeps only those marked archived",
+    "session.open": "exactly session_id, after_sequence (0 for the first page, else the sequence the previous page ended on) and limit (100)",
+    "not_used": "session.event is granted by the manifest and is not subscribed to: an archived session does not change, and the list shows when it was read"
+  },
+  "reply": {
+    "session.list": "exactly items (at most 100 summaries) and next (null, or the 32-hex cursor for the next page)",
+    "summary": "exactly algorithm (sha256), archived, created_at_ms, mode (chat or build), sequence, session_id, thread_id, title, updated_at_ms and v (2); ids are 32 lowercase hexadecimal digits, title is at most 256 UTF-8 bytes and a title with a control, reordering or hidden character is not printed",
+    "session.open": "exactly entries (at most 100), next_sequence (null, or the sequence of the last entry in this page when more follow) and summary of the session asked for",
+    "entry": "exactly algorithm, at_ms, commitment, content (at most 32768 UTF-8 bytes), provenance, role (owner, auma, tool or context), sequence, session_id, tool_call_id, tool_calls (at most 32) and v; entries run on from after_sequence with no gap and belong to the session asked for; a page with more to follow ends at next_sequence, and the last page ends at the sequence in the session's own summary, so a transcript is never shown with an entry missing or cut short",
+    "provenance": "exactly {source} for owner, auma, document, memory or stranger; {source: app, app_id}; or {source: contact, algorithm, npub}",
+    "tool_call": "exactly function {arguments, name}, id and type (function); only the name is printed, as a suggestion, and the arguments are checked but not shown",
+    "source": "the session store (canon SessionPage, SessionOpened, SessionSummary and SessionEntry, version 2)"
+  },
+  "reading": {
+    "list": "on load and on request, never on a timer; the first read takes up to 5 pages, each press of Read more sessions takes up to 5 more; a cursor that comes back refuses the read as archived:cursor-repeated; archived sessions are listed most recently active first and can be searched by title",
+    "entries": "a page of up to 100 at a time; Show more entries asks for the next page",
+    "text": "titles and contents are literal text, printed with textContent in their own direction; nothing is rendered as markup and an old owner message is a record, not a request"
+  },
+  "screen": {
+    "list": "a searchable list with the mode, the entry count and when each session was last active, and a Read button",
+    "reader": "replaces the list while open; Back returns to the list with its search and its place, and puts focus on the button that opened the session",
+    "unavailable": "a failed or malformed read empties the list and the reader and says why; a failed page of entries empties the reader"
+  },
+  "states": {
+    "initial": "heading, purpose and an Archive card reading CHECKING",
+    "loading": "Reading sessions from the node; Reading more sessions while further pages are read; Reading the entries in the reader",
+    "empty": "NONE and No archived sessions; a session with no entries reads This session has no entries",
+    "ready": "N ARCHIVED with the list",
+    "refusal": "UNAVAILABLE with the service's code, for example archived:refused",
+    "service-unavailable": "UNAVAILABLE with app:service-unavailable or app:deadline; a reply this page does not accept shows archived:reply-invalid",
+    "phone": "rows wrap so the Read button sits under the title at 480 px and below"
+  },
+  "face_holds": "session titles and entries as text; it cannot restore, edit, delete, append to or send into a session",
+  "authority": "none"
+}

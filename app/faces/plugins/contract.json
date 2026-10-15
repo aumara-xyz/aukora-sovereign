@@ -1,0 +1,36 @@
+{
+  "schema": "aukora-plugins-face-v1",
+  "service": "body.settings.plugins",
+  "registry": {
+    "source": "FACE_CATALOG in app/faces/catalog.ts, the registry shipped with this release; titles, menu sections, order and the calls each plugin may make come from it and never from the reply",
+    "groups": "Workspace, AUKORA APPS and SYSTEM, each in menu order, with its count",
+    "capabilities": "for each plugin, the organ methods it may call and the topics it may listen to, read from its registered capability lists; a plugin with none asks its organ for nothing yet"
+  },
+  "reply": {
+    "keys": "exactly plugins; any other key or type refuses the reply",
+    "plugins": "at most 256 entries, each exactly error, id, missing and state, ids unique",
+    "id": "1..128 characters, a lowercase letter first, then lowercase letters, digits and . _ : -",
+    "state": "waiting, starting, active, stopping, failed or disposed: the shell's own plugin states",
+    "missing": "at most 16 service names, in the same grammar as id",
+    "error": "null, or a refusal code of the form <organ>:<reason>",
+    "source": "the shell's plugin registry (Organism.status for each registered plugin)"
+  },
+  "refresh": "on load, on request, and every 30 seconds while the page is visible; a read that is superseded is ignored",
+  "screen": {
+    "registry": "every registered plugin is listed whether or not the shell answers; each row shows Running, Starting, Waiting (with the services it waits for), Stopping, Failed to start (with the code), Removed, Not reported (the shell named other plugins but not this one) or Unknown (the read failed); the badge counts how many run, turns red when one failed, and says how many unexpected plugins the shell reported",
+    "unexpected": "plugins the shell reports that the release does not register are listed apart and marked UNEXPECTED",
+    "app_store": "a card saying no app store is connected in this release; the page has no control that installs, removes, starts, stops or updates a plugin",
+    "unavailable": "every state reads Unknown; a failed read removes the last reported states, so nothing keeps reading Running"
+  },
+  "states": {
+    "initial": "heading, purpose, the full registry with every state CHECKING, and the app store card",
+    "loading": "the same, until the first read settles",
+    "empty": "not applicable: the registry shipped with the release is never empty",
+    "ready": "states from the shell; badge ALL RUNNING or N OF 18 RUNNING",
+    "refusal": "badge STATE UNKNOWN with the service's code, every row Unknown",
+    "service-unavailable": "badge STATE UNKNOWN with app:service-unavailable or app:deadline; a reply this page does not accept shows plugins:reply-invalid",
+    "phone": "rows wrap and fact lines become one column at 480 px and below"
+  },
+  "face_holds": "names, states and capability lists; no control, no code and no grant",
+  "authority": "none"
+}
