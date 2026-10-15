@@ -1,0 +1,323 @@
+{
+  "schema": "aukora-prime-accounting-v1",
+  "license": "AGPL-3.0-or-later",
+  "plan": "NORTH-STAR.md",
+  "rows": [15, 98],
+  "scope": "Each immediate plugin and package directory is counted once; nested dependencies and package entry points belong to that directory.",
+  "meaning": "Disposition records where the responsibility belongs. Source state describes this checkout, not installation, acceptance, runtime health or authority.",
+  "dispositions": {
+    "port": "Fresh implementation in the app, with host responsibilities named separately.",
+    "replaced": "The old package or plugin is not loaded; named Sovereign components own its responsibilities.",
+    "later": "Retained by its North Star row; not enabled or claimed as implemented."
+  },
+  "source_states": {
+    "present": "A fresh destination implementation exists; no live result is asserted.",
+    "partial": "Some destination source exists; the entry names the remaining gap.",
+    "absent": "The destination is assigned but this checkout does not implement the carry-in.",
+    "deferred": "The plan explicitly retains the capability for later."
+  },
+  "inventory": {
+    "plugins": 22,
+    "packages": 15
+  },
+  "plugins": [
+    {
+      "name": "aukora-action-gate",
+      "disposition": "port",
+      "rows": [15, 30],
+      "targets": ["app/", "guest/src/action_gate.rs", "crates/laya/"],
+      "source_state": "present",
+      "reason": "The app presents modes; the guest action filter and Laya own tool-call judgment, phi guard and path law. A browser plugin never supplies owner authorization."
+    },
+    {
+      "name": "aukora-auma-theme",
+      "disposition": "port",
+      "rows": [14, 15, 64],
+      "targets": ["app/theme/", "crates/wasmcell/src/theme.rs", "crates/gate/"],
+      "source_state": "partial",
+      "reason": "Theme projection and proposal source use logical target theme. The versioned adapter places canonical theme JSON under the named cell key and supplies the cell effect body as exact target bytes. Shell installation, host theme reads and the supervisor rerun-to-gate apply join are not wired; no applied or live theme is claimed."
+    },
+    {
+      "name": "aukora-aumlok",
+      "disposition": "replaced",
+      "rows": [15, 43, 44, 45, 46, 47, 48, 49, 113],
+      "targets": ["crates/aumlok/", "ui/owner/", "app/faces/aumlok/"],
+      "source_state": "present",
+      "reason": "AUMLOK owns binding, passkey verification and key roles. Trusted owner panes handle ceremonies; the public face receives bounded status and never private control state."
+    },
+    {
+      "name": "aukora-board",
+      "disposition": "port",
+      "rows": [1, 15, 25],
+      "targets": ["app/faces/threads/", "guest/src/context.rs"],
+      "source_state": "absent",
+      "reason": "Retain the bounded view of other conversations as data. Thread and context destinations exist, but cross-conversation board assembly and its app presentation are not implemented; host filesystem scans are not carried into Auma."
+    },
+    {
+      "name": "aukora-box",
+      "disposition": "replaced",
+      "rows": [15, 64],
+      "targets": ["crates/wasmcell/", "crates/wasmcell/cell/"],
+      "source_state": "present",
+      "reason": "The pinned bounded cell and its source belong to wasmcell. This is the proposal transform, with fuel and deadline bounds, not an app runtime or a WASI execution service."
+    },
+    {
+      "name": "aukora-buzz-door",
+      "disposition": "later",
+      "rows": [15, 87],
+      "targets": ["crates/messaging/", "crates/relay/", "app/faces/messages/"],
+      "source_state": "deferred",
+      "reason": "The Buzz door remains row 87. Its relay wakeups and read/post interface are not enabled by this inventory; received text remains data and keys remain with the owning host service."
+    },
+    {
+      "name": "aukora-caged-worker",
+      "disposition": "replaced",
+      "rows": [15, 25, 26, 39],
+      "targets": ["crates/launcher/"],
+      "source_state": "present",
+      "reason": "Launcher owns process creation and confinement profiles. The command sub-cage is a separate disabled profile; the Auma runtime never gains process execution."
+    },
+    {
+      "name": "aukora-composition-gate",
+      "disposition": "replaced",
+      "rows": [15, 65, 128],
+      "targets": ["crates/supervisor/src/runtime.rs", "crates/floor/"],
+      "source_state": "partial",
+      "reason": "Supervisor requires measurement of the actual executable and approved manifest, then floor admission against the approved release. The trusted measure_release/release_ready implementation and installed harness digest comparison remain host wiring obligations; an inventory entry or plugin list is not approval."
+    },
+    {
+      "name": "aukora-core-read-deny",
+      "disposition": "replaced",
+      "rows": [15, 26],
+      "targets": ["crates/launcher/", "guest/"],
+      "source_state": "present",
+      "reason": "Launcher filesystem confinement and the guest's closed operation set replace a same-process filename denylist. Protected server state is not exposed as an agent filesystem capability."
+    },
+    {
+      "name": "aukora-eye",
+      "disposition": "port",
+      "rows": [15],
+      "targets": ["app/core/", "app/shell/"],
+      "source_state": "absent",
+      "reason": "Retain shell capture as an app service with capture denied throughout every owner ceremony. No capture service or ceremony capture fence is implemented in this checkout; absence does not authorize an alternate capture route."
+    },
+    {
+      "name": "aukora-face",
+      "disposition": "port",
+      "rows": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 107, 109],
+      "targets": ["app/shell/", "app/faces/", "app/core/"],
+      "source_state": "present",
+      "reason": "Plain TypeScript shell and registered faces replace the former client composition. Faces run in capability-filtered sandboxed frames; missing face backends remain visibly unavailable."
+    },
+    {
+      "name": "aukora-foundation",
+      "disposition": "port",
+      "rows": [1, 15, 108],
+      "targets": ["app/design/", "app/shell/"],
+      "source_state": "present",
+      "reason": "The design data and shell own palette, typography, icons and brand placement. Pilot screenshot coverage is an independent design requirement; this mapping does not establish visual equivalence."
+    },
+    {
+      "name": "aukora-gate-demo",
+      "disposition": "port",
+      "rows": [14, 15, 33, 64],
+      "targets": ["app/theme/", "crates/gate/", "crates/wasmcell/"],
+      "source_state": "partial",
+      "reason": "The old governed-module fixture has no user-facing feature to mount. The theme is the app's first real governed demonstration; its source path exists, but the installed approve-once demonstration remains unobserved and no fixture grants authority."
+    },
+    {
+      "name": "aukora-goal-resume",
+      "disposition": "port",
+      "rows": [1, 15, 25, 130],
+      "targets": ["app/faces/threads/", "guest/src/session.rs", "crates/supervisor/src/session.rs"],
+      "source_state": "absent",
+      "reason": "Durable sessions are the destination for bounded clean-shutdown goal resumption. Session persistence exists, but clean-shutdown selection and bounded goal resume are not implemented; a recovered record is not a new owner turn."
+    },
+    {
+      "name": "aukora-kira",
+      "disposition": "replaced",
+      "rows": [7, 15, 57, 58, 59, 60, 61],
+      "targets": ["crates/kira/", "guest/", "app/faces/memory/"],
+      "source_state": "present",
+      "reason": "Kira owns encrypted notes, cited recall, demotion and permission checks. The guest uses bounded memory messages; the face displays data and labels unavailable sections."
+    },
+    {
+      "name": "aukora-nostr",
+      "disposition": "replaced",
+      "rows": [8, 11, 15, 54, 69, 70, 71, 135],
+      "targets": ["crates/nostr/", "crates/relay/", "crates/messaging/", "app/faces/messages/", "app/faces/identity/"],
+      "source_state": "present",
+      "reason": "Nostr owns identities and event codecs, relay owns transport and witnesses, and messaging owns contacts and message admission. Auma receives approved-contact content as data and holds no network socket or signing key."
+    },
+    {
+      "name": "aukora-openshell-confinement",
+      "disposition": "replaced",
+      "rows": [15, 26, 39],
+      "targets": ["crates/launcher/"],
+      "source_state": "present",
+      "reason": "Native launcher confinement replaces OpenShell transport and provider wrappers. The guest has no command executor; the separately disabled command cage cannot be enabled by a model or app plugin."
+    },
+    {
+      "name": "aukora-organism",
+      "disposition": "port",
+      "rows": [12, 15, 106, 117],
+      "targets": ["app/core/organism.ts", "app/faces/coherence/", "app/faces/threads/"],
+      "source_state": "partial",
+      "reason": "The app has plugin/service lifetimes and separate organ status presentation. Prime's lane summaries, waiting-on-owner aggregation and cross-conversation activity view are not all carried over; shell data replaces direct Git, CI and host-file inspection."
+    },
+    {
+      "name": "aukora-owner-daemon",
+      "disposition": "replaced",
+      "rows": [15, 19, 21, 35, 128],
+      "targets": ["crates/supervisor/", "crates/frontdoor/", "ui/owner/"],
+      "source_state": "present",
+      "reason": "Supervisor routes requests while frontdoor and owner panes keep claim and approval available independently of the guest. Only the shell creates the owner-origin frame, and only the owner's exact passkey proof authorizes."
+    },
+    {
+      "name": "aukora-relay-auma",
+      "disposition": "later",
+      "rows": [15, 87],
+      "targets": ["crates/messaging/", "crates/relay/", "app/faces/messages/"],
+      "source_state": "deferred",
+      "reason": "The project-relay Auma read/post adapter remains row 87. It is not enabled by the current Nostr message transport or this inventory, and a relay message never becomes an owner instruction."
+    },
+    {
+      "name": "aukora-seatbelt",
+      "disposition": "replaced",
+      "rows": [15, 26],
+      "targets": ["crates/launcher/"],
+      "source_state": "present",
+      "reason": "Linux namespaces, Landlock, seccomp and cgroups replace the old platform-specific process guard. Source availability does not claim kernel enforcement on this machine."
+    },
+    {
+      "name": "aukora-subscription-hands",
+      "disposition": "port",
+      "rows": [13, 15, 39],
+      "targets": ["app/faces/presets/", "app/faces/plugins/", "crates/launcher/"],
+      "source_state": "absent",
+      "reason": "Retain app controls and status for separately caged worker hands. Subscription CLI spawning, worktree orchestration and hand result collection are not implemented; any future execution belongs only to the owner's separately enabled launcher sub-cage, never Auma."
+    }
+  ],
+  "packages": [
+    {
+      "name": "authority",
+      "disposition": "replaced",
+      "rows": [33, 34, 35, 40, 43, 50, 98, 110],
+      "targets": ["crates/gate/", "crates/aumlok/", "crates/aura/", "crates/canon/"],
+      "source_state": "present",
+      "reason": "Gate owns single-use exact-byte authority transactions, AUMLOK verifies the owner's current passkey, and Aura records the result. The older JavaScript authority/kernel service is not loaded or treated as an approval oracle."
+    },
+    {
+      "name": "boundary-gate",
+      "disposition": "replaced",
+      "rows": [26, 28, 30, 33, 34, 35, 64, 98],
+      "targets": ["crates/launcher/", "crates/immune/", "crates/gate/", "crates/laya/", "crates/wasmcell/", "guest/src/action_gate.rs", "ui/owner/"],
+      "source_state": "present",
+      "reason": "Its cage, boot self-check, proposal gate, owner card, atomic target store and theme validation are split across their owning organs. Bearer, typed-confirmation and HMAC approval paths are replaced by the owner's exact passkey proof; guest calls remain propose-only."
+    },
+    {
+      "name": "contracts",
+      "disposition": "replaced",
+      "rows": [32, 98, 139],
+      "targets": ["crates/canon/", "app/core/", "ui/owner/contracts.ts"],
+      "source_state": "present",
+      "reason": "Canon owns the pinned C1-C7 codecs and shared versioned frames, including the browser WASM ABI. Browser adapters use those contracts; Prime transport objects and digest domains are not silently reinterpreted as Sovereign v1 authority."
+    },
+    {
+      "name": "copresence",
+      "disposition": "replaced",
+      "rows": [47, 76, 77, 78, 98, 118, 137],
+      "targets": ["crates/copresence/", "portal/", "crates/pentora/"],
+      "source_state": "present",
+      "reason": "The dedicated receipt reader and pinned v0 verdicts belong to copresence; intent fixes use their own versioned format. Portal owns the exchange and Pentora draws the person-key bloom. Receipts remain evidence and never substitute for owner approval."
+    },
+    {
+      "name": "cordis-tool-provider",
+      "disposition": "replaced",
+      "rows": [25, 30, 39, 98, 106, 128],
+      "targets": ["app/core/", "guest/src/dispatch.rs", "guest/src/action_gate.rs", "crates/supervisor/", "crates/launcher/"],
+      "source_state": "present",
+      "reason": "Closed guest operations, capability-filtered app services and supervisor dispatch replace the private Cordis probe seam. The old foreground printf probe is not mounted; future command work stays in the separately disabled launcher sub-cage."
+    },
+    {
+      "name": "desktop",
+      "disposition": "replaced",
+      "rows": [18, 90, 98],
+      "targets": ["app/", "crates/frontdoor/"],
+      "source_state": "present",
+      "reason": "The one-link browser app replaces the Electron preview for the current node. Native desktop, Windows and phone shells remain retained under row 90; no Electron runtime or privileged desktop bridge is shipped by this mapping."
+    },
+    {
+      "name": "evolution-lab",
+      "disposition": "replaced",
+      "rows": [56, 66, 67, 93, 96, 98, 117],
+      "targets": ["crates/immune/", "app/faces/coherence/"],
+      "source_state": "partial",
+      "reason": "Immune owns experiment-derived checks and posture evidence; Coherence displays health without granting authority. The optional read-only experiment-manifest viewer and later evolution/ideas work are not implemented by that health view and remain retained in rows 93 and 96."
+    },
+    {
+      "name": "execution",
+      "disposition": "replaced",
+      "rows": [25, 26, 39, 98],
+      "targets": ["crates/launcher/", "crates/supervisor/", "guest/"],
+      "source_state": "present",
+      "reason": "Launcher and supervisor own process lifetime and cage admission. Prime's OpenShell SDK and Bash executor are not agent capabilities; the current guest never executes a command, and the separate command cage remains disabled by default."
+    },
+    {
+      "name": "inference",
+      "disposition": "replaced",
+      "rows": [25, 62, 63, 98, 129, 138],
+      "targets": ["crates/broker/", "crates/supervisor/", "guest/", "app/faces/models/"],
+      "source_state": "present",
+      "reason": "Broker owns the network provider, grants, durable reservations and final receipts; supervisor transports bounded frames and the guest handles model streams. App settings select supported routes without exposing provider secrets to Auma."
+    },
+    {
+      "name": "invites",
+      "disposition": "replaced",
+      "rows": [72, 74, 75, 78, 98],
+      "targets": ["crates/invites/", "portal/", "crates/aumlok/"],
+      "source_state": "present",
+      "reason": "The invite crate owns signed single-use admissions, 48-hour expiry and conserved allowances. Portal and AUMLOK own joining and passkey binding; an invite does not prove a unique human or itself authorize an effect."
+    },
+    {
+      "name": "memory",
+      "disposition": "replaced",
+      "rows": [7, 57, 58, 59, 60, 61, 98],
+      "targets": ["crates/kira/", "crates/aura/", "app/faces/memory/", "guest/"],
+      "source_state": "present",
+      "reason": "Kira owns encrypted note storage, cited recall, demotion and permissions, with Aura receipts and bounded guest messages. The old PostgreSQL control-retention workflow is not loaded, and saved text or historical evidence never grants authority."
+    },
+    {
+      "name": "ops",
+      "disposition": "replaced",
+      "rows": [73, 80, 81, 82, 83, 84, 98, 102, 131],
+      "targets": ["checks/", "deploy/", "scripts/", "tests/e2e/", "crates/immune/"],
+      "source_state": "partial",
+      "reason": "Construction checks, deployment guards, release validation and immune checks replace Prime's ops CLI. Installed milestone acceptance belongs to the conductor after landing; no runtime qualification or live acceptance is established by this inventory."
+    },
+    {
+      "name": "owner-key",
+      "disposition": "replaced",
+      "rows": [35, 43, 44, 46, 48, 98, 113, 139],
+      "targets": ["crates/aumlok/", "crates/canon/src/authority.rs", "crates/gate/", "ui/owner/"],
+      "source_state": "present",
+      "reason": "AUMLOK owns key hierarchy and passkey verification; canon and gate bind C5 exact authorization bytes. A software certificate, receipt, phrase or evidence object is never promoted into the owner's passkey authority."
+    },
+    {
+      "name": "runtime-bridge",
+      "disposition": "replaced",
+      "rows": [25, 32, 98, 109, 128, 129, 130],
+      "targets": ["crates/supervisor/", "crates/canon/src/fd3.rs", "crates/canon/src/fd4.rs", "guest/src/fd3.rs", "app/core/"],
+      "source_state": "present",
+      "reason": "Supervisor is the sole FD 3 router and stamps provenance from the channel. Shared framed contracts and the data-only app bridge replace private JavaScript service/worker IPC; old workflow evidence is never treated as dispatch authority."
+    },
+    {
+      "name": "ui",
+      "disposition": "replaced",
+      "rows": [1, 13, 18, 19, 35, 98, 106, 107, 108, 109],
+      "targets": ["app/", "ui/owner/", "crates/frontdoor/"],
+      "source_state": "present",
+      "reason": "The fresh static Spatial app, trusted owner panes and approved asset server replace React/DSH UI transport and mount adapters. The shell alone frames the owner origin; faces receive bounded data and never HTML or executable code from Auma."
+    }
+  ]
+}
