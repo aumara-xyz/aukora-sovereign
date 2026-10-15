@@ -48,8 +48,10 @@ for p in files:
         fail("clutter", p)
     elif low.endswith(".txt") and not low.startswith(allowed_txt):
         fail("clutter", p)
-    elif re.search(r"mutat|evidence|(^|[-_/])results?([-_.]|$)", pathlib.Path(low).name):
-        fail("clutter", p)
+    elif re.search(r"(^|[-_])(mutations?|mutate)([-_.]|$)", pathlib.Path(low).name):
+        fail("clutter", p)  # mutation tooling and its output
+    elif re.search(r"(^|[-_])results?\.(txt|json|log|md)$", pathlib.Path(low).name) or "/evidence/" in f"/{low}":
+        fail("clutter", p)  # run output and evidence folders; evidence stays on the node
 
 # 4. No authored file over 1,000 lines, except carried files pinned by hash until they are split.
 pinned = baseline["oversized_files"]
