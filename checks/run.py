@@ -15,6 +15,9 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import walls  # noqa: E402
 
+# Crates whose compiler wall lands with an in-flight piece of work (removed as soon as it merges).
+WALLS_PENDING = {"canon"}
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FAIL = []
 
@@ -155,6 +158,25 @@ for p in files:
         continue
     for rule, detail in walls.file_findings(p, (ROOT / p).read_text(errors="replace")):
         fail(rule, detail)
+
+# 12. The compiler walls (checks/walls.py): every crate root forbids unsafe code except the launcher and supervisor,
+#     and canon and pentora, which deny it and allow it only in their WASM module; each crate carries the exact
+#     clippy.toml that bans network, process and (for the guest) filesystem paths, which clippy enforces on resolved paths.
+units = [(c, ROOT / "crates" / c) for c in crates] + [("guest", ROOT / "guest")]
+for unit, home in units:
+    root = home / "src" / ("main.rs" if unit in ("guest", "supervisor") else "lib.rs")
+    mode = walls.UNSAFE_ROOT.get(unit, "forbid")
+    if mode and unit not in WALLS_PENDING and root.is_file():
+        head = root.read_text(errors="replace")
+        if not any(f"#![{m}(unsafe_code)]" in head for m in (["forbid"] if mode == "forbid" else ["forbid", "deny"])):
+            fail("compiler-wall", f"{root.relative_to(ROOT)} must carry #![{mode}(unsafe_code)]")
+    toml = home / "clippy.toml"
+    if not toml.is_file() or toml.read_text() != walls.clippy_toml(unit):
+        fail("compiler-wall", f"{toml.relative_to(ROOT)} must be exactly what checks/walls.py generates")
+for p in files:
+    if p.endswith(".rs") and "allow(unsafe_code)" in walls.strip_rs((ROOT / p).read_text(errors="replace")):
+        if p not in walls.WASM_ALLOW and walls.unit_of(p) not in ("launcher", "supervisor"):
+            fail("compiler-wall", f"{p}: allow(unsafe_code) only in the WASM modules")
 
 if FAIL:
     print("\n".join(f"FAIL {f}" for f in FAIL))

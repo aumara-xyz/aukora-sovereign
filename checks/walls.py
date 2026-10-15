@@ -10,7 +10,7 @@ import re
 
 ALLOW = {"net": {"frontdoor", "relay", "broker", "kira", "supervisor", "launcher"},
          "proc": {"launcher", "supervisor"},
-         "unsafe": {"launcher", "canon", "pentora", "wasmcell"}}
+         "unsafe": {"launcher", "supervisor", "canon", "pentora"}}
 # External crates that are themselves network or system access.
 NET_CRATES = {"reqwest", "tokio", "hyper", "hyper-util", "hyper-rustls", "h2", "quinn", "quinn-proto", "quinn-udp", "socket2",
               "mio", "axum", "tungstenite", "tokio-tungstenite", "async-tungstenite", "rustls", "tokio-rustls", "tower",
@@ -19,17 +19,17 @@ SYS_CRATES = {"libc", "nix", "rustix", "landlock", "seccompiler", "memfd", "caps
 NO_SYS = {"guest", "canon"}
 CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
 
-NET = (r"std::net|std::os::unix::(net|\{|\*)|\bUnix(Stream|Listener|Datagram)\b|TcpStream|TcpListener|UdpSocket|"
+NET = (r"\b(ToSocketAddrs|to_socket_addrs|lookup_host)\b|std::net::(?!(IpAddr|Ipv[46]Addr|SocketAddr(V[46])?|AddrParseError)\b)|std::os::unix::(net|\*)|\bUnix(Stream|Listener|Datagram)\b|TcpStream|TcpListener|UdpSocket|"
        r"tokio::(net|\{)|hyper::|hyper_util|tungstenite|rustls::|reqwest|socket2|quinn|\bh2::|axum::|mio::|"
        r"nix::sys::socket|rustix::net|libc::(socket|connect|bind|listen|accept\w*|send\w*|recv\w*|syscall)")
-PROC = (r"std::process::(Command|Child|Stdio)|std::process::\{[^}]*\b(Command|Child|Stdio)\b|\bCommand::new|"
+PROC = (r"std::process(?!::(exit|id|abort|ExitCode)\b)|::\$\w+|std::process::(Command|Child|Stdio)|std::process::\{[^}]*\b(Command|Child|Stdio)\b|\bCommand::new|"
         r"libc::(exec\w*|fork|vfork|posix_spawn\w*|system|popen|clone\w*|syscall)|nix::unistd::(exec\w*|fork)|rustix::runtime")
-UNSAFE = r"(?<![\w#])unsafe\b"
-SMUGGLE = r"\binclude!\s*\(|#!?\[\s*path\s*="
+UNSAFE = r"(?<![\w#])unsafe\b|#!?\[\s*(no_mangle|export_name|link_section)\b"
+SMUGGLE = r"\binclude\s*!|#!?\[[^\]]*\bpath\s*="
 PICTURE = r"HealthSnapshot|organ_map|OrganMap|pentora::"
 PICTURE_STRICT = PICTURE + r"|HealthEvidence|CheckRef"
 TEST_ATTR = (r"#!?\[\s*(test|bench|rstest|quickcheck)\s*[\](]|#!?\[\s*[\w:]*::test\b|#!?\[\s*cfg\s*\(\s*test\s*\)|"
-             r"#!?\[\s*cfg\s*\(\s*(all|any)\s*\([^\]]*\btest\b|\bproptest!\s*[{(]")
+             r"#!?\[\s*cfg\s*\(\s*(all|any)\s*\([^\]]*\btest\b|\bproptest!\s*[{(]|#!?\[\s*cfg_attr\s*\([^\]]*,\s*(test|bench)\s*[,)]")
 TEST_PATH = (r"(^|/)(test|tests|__tests__|benches)/|(^|/)tests\.rs$|(^|/)test\.(m?js|cjs|ts|tsx|jsx|py|sh|rs)$|"
              r"[._-](test|spec)\.[a-z0-9]+$|(^|/)test_[^/]*\.py$")
 JS_BAD = (r"(?<![\w$.])eval\s*\(|(?<![\w$.])Function\s*\(|\bnew\s+Function\b|\bset(Timeout|Interval)\s*\(\s*[\"'`]|"
@@ -38,8 +38,9 @@ JS_BAD = (r"(?<![\w$.])eval\s*\(|(?<![\w$.])Function\s*\(|\bnew\s+Function\b|\bs
           r"\b(window|globalThis|self)\s*\[")
 HTML_BAD = (r"<script(?![^>]*\bsrc\s*=)(?![^>]*\btype\s*=\s*[\"']application/json[\"'])[^>]*>|<script[^>]*\bsrc\s*=[^>]*>\s*[^<\s]|"
             r"\son[a-z]+\s*=|(href|src|action|formaction|xlink:href)\s*=\s*[\"']?\s*javascript:")
+ABI = r"\bextern\s*(\"\"\s*)?\{|\bglobal_asm\b|\basm\s*!|#!?\[\s*(link|link_name)\b|\bextern\s+crate\b|\buse\s+(::)?(std|core|alloc)\s+as\b"
 SCANNED = r"\.(rs|ts|tsx|js|jsx|mjs|cjs|html|htm|svg)$"
-RAW_STRING = re.compile(r'b?r(#*)"')
+RAW_STRING = re.compile(r'[bc]?r(#*)"')
 CHAR = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^\\'])'")
 
 
@@ -68,7 +69,7 @@ def strip_rs(t):
             j = t.find(end, m.end())
             i = n if j < 0 else j + len(end)
             out.append('""')
-        elif c == '"' or (c == "b" and t[i + 1:i + 2] == '"' and boundary):
+        elif c == '"' or (c in "bc" and t[i + 1:i + 2] == '"' and boundary):
             j = i + (2 if c == "b" else 1)
             while j < n and t[j] != '"':
                 j += 2 if t[j] == "\\" else 1
@@ -80,7 +81,30 @@ def strip_rs(t):
         else:
             out.append(c)
             i += 1
-    return re.sub(r"\s*::\s*", "::", "".join(out))
+    code = re.sub(r"\s*::\s*", "::", re.sub(r"\br#(?=[A-Za-z_])", "", "".join(out)))
+    return code + "\n" + "\n".join(p for m in re.finditer(r"\buse\s+([^;]*);", code) for p in expand("", m.group(1)))
+
+
+def expand(prefix, tree):
+    parts, depth, cur = [], 0, ""
+    for ch in tree:
+        depth += (ch == "{") - (ch == "}")
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    out = []
+    for p in (x.strip() for x in parts):
+        m = re.match(r"(.*?)::\{(.*)\}$", p, re.S)
+        if p.startswith("{"):
+            out += expand(prefix, p[1:-1])
+        elif m:
+            out += expand(prefix + m.group(1) + "::", m.group(2))
+        elif p:
+            out.append(prefix + p.split(" as ")[0].strip())
+    return out
 
 
 def unit_of(path):
@@ -98,7 +122,7 @@ def file_findings(path, text):
         code = strip_rs(text)
         for rule, pattern, allowed in (("no-test-suites", TEST_ATTR, set()), ("wall-smuggle", SMUGGLE, set()),
                                        ("wall-network", NET, ALLOW["net"]), ("wall-exec", PROC, ALLOW["proc"]),
-                                       ("wall-unsafe", UNSAFE, ALLOW["unsafe"])):
+                                       ("wall-unsafe", UNSAFE, ALLOW["unsafe"]), ("wall-abi", ABI, {"launcher"})):
             if unit not in allowed and re.search(pattern, code):
                 found.append((rule, path))
         picture = {"gate": PICTURE, "frontdoor": PICTURE_STRICT, "launcher": PICTURE_STRICT}.get(unit)
@@ -119,3 +143,33 @@ def dep_findings(unit, dep):
     if name in SYS_CRATES and unit in NO_SYS:
         found.append(("wall-sys", f"{unit} depends on {name}"))
     return found
+
+
+# The compiler walls (checks/run.py rule 12): which crate roots forbid unsafe code, and each crate's clippy.toml.
+UNSAFE_ROOT = {"launcher": None, "supervisor": None, "canon": "deny", "pentora": "deny"}  # every other unit: forbid
+WASM_ALLOW = {"crates/canon/src/wasm.rs", "crates/pentora/src/wasm.rs"}
+_NET_TYPES = ["std::net::TcpStream", "std::net::TcpListener", "std::net::UdpSocket", "std::os::unix::net::UnixStream",
+              "std::os::unix::net::UnixListener", "std::os::unix::net::UnixDatagram"]
+_NET_METHODS = ["std::net::TcpStream::connect", "std::net::TcpListener::bind", "std::net::UdpSocket::bind",
+                "std::net::ToSocketAddrs::to_socket_addrs", "std::os::unix::net::UnixStream::connect",
+                "std::os::unix::net::UnixListener::bind", "std::os::unix::net::UnixDatagram::bind"]
+_PROC_TYPES = ["std::process::Command", "std::process::Child"]
+_PROC_METHODS = ["std::process::Command::new"]
+_FS_METHODS = ["std::fs::read", "std::fs::read_to_string", "std::fs::write", "std::fs::File::open", "std::fs::File::create",
+               "std::fs::OpenOptions::open", "std::fs::remove_file", "std::fs::create_dir_all", "std::fs::read_dir"]
+
+
+def clippy_toml(unit):
+    """The exact clippy.toml each crate must carry; clippy resolves these paths, so no alias or group can hide them."""
+    types, methods = [], []
+    if unit not in ALLOW["net"]:
+        types += [(t, "only frontdoor, relay, broker, kira, supervisor and launcher touch the network") for t in _NET_TYPES]
+        methods += [(m, "only frontdoor, relay, broker, kira, supervisor and launcher touch the network") for m in _NET_METHODS]
+    if unit not in ALLOW["proc"]:
+        types += [(t, "only launcher and supervisor spawn processes") for t in _PROC_TYPES]
+        methods += [(m, "only launcher and supervisor spawn processes") for m in _PROC_METHODS]
+    if unit == "guest":
+        methods += [(m, "Auma never touches the filesystem; her data comes through FD 3") for m in _FS_METHODS]
+    fmt = lambda xs: "".join(f'  {{ path = "{p}", reason = "{r}" }},\n' for p, r in xs)
+    return ("# Generated by checks/walls.py; checks/run.py fails if it differs. Clippy enforces it on resolved paths.\n"
+            f"disallowed-types = [\n{fmt(types)}]\ndisallowed-methods = [\n{fmt(methods)}]\n")
