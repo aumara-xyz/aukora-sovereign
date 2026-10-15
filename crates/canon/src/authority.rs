@@ -721,6 +721,40 @@ pub struct FactRecord {
 /// transaction and may not be reused after rollback or commit. Aura implements this
 /// interface; cryptographic primitives come only from allowlisted crates.
 pub trait AuthorityTxn {
+    /// Consume an already persisted and consumed owner proof while advancing its
+    /// epoch exactly once. Validate the old/new membership in the approved body,
+    /// exact target and operation, next sequence and predecessor. Atomically append
+    /// the terminal row and advance current owner credentials and membership;
+    /// never promote historical scoped bindings to the new epoch implicitly.
+    /// Any failure rolls back the whole transition. An absent adapter refuses.
+    fn append_epoch_change(
+        &mut self,
+        _proof: VerifiedProof,
+        _record: PendingAuthorityRecord,
+    ) -> Result<AuthorityRecord> {
+        Err(crate::Refusal::new("canon", "epoch-transition-unavailable"))
+    }
+
+    /// Read locked append coordinates and the proposal's C7 operation id. The
+    /// clock comes from the supervisor; authority is the next sequence at the
+    /// current epoch. An adapter without these reads refuses before mutation.
+    fn authority_append_context(
+        &mut self,
+        _proof: &VerifiedProof,
+    ) -> Result<AuthorityAppendContext> {
+        Err(crate::Refusal::new(
+            "canon",
+            "authority-context-unavailable",
+        ))
+    }
+
+    /// Read an organ's materialized authority state under this transaction's
+    /// lock. Values must derive from verified authority rows, never fact rows or
+    /// caller input. Missing state is None; an unavailable reader must refuse.
+    fn authority_state(&mut self, _namespace: &str, _key: &str) -> Result<Option<Value>> {
+        Err(crate::Refusal::new("canon", "authority-state-unavailable"))
+    }
+
     /// Identify this active write transaction; never an authority or a public nonce.
     fn transaction_id(&self) -> Digest32;
 
@@ -837,3 +871,14 @@ pub trait AuthorityTxn {
 
 /// The NORTH-STAR name for exactly the same atomic transaction interface.
 pub use AuthorityTxn as LedgerTxn;
+
+/// Locked coordinates supplied by the transaction owning the approval and Aura.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthorityAppendContext {
+    /// Next Aura sequence and predecessor, with the current owner epoch.
+    pub authority: AuthorityVersion,
+    /// Supervisor time in milliseconds; informational, never ordering authority.
+    pub at: i64,
+    /// Random C7 operation id loaded from the locked gate proposal.
+    pub operation_id: OperationId,
+}

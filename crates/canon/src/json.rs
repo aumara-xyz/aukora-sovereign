@@ -81,6 +81,98 @@ pub enum ValueView<'a> {
 }
 
 impl Value {
+    /// Construct text without invoking the pending wave-0 codec entry point.
+    pub fn checked_text(value: String) -> Result<Self> {
+        Ok(Self {
+            node: Node::Text(value),
+        })
+    }
+
+    /// Construct a bounded-depth array from already checked children.
+    pub fn checked_array(values: Vec<Self>) -> Result<Self> {
+        let value = Self {
+            node: Node::Array(values),
+        };
+        value.check_depth(0)?;
+        Ok(value)
+    }
+
+    /// Construct an object with unique decoded keys and bounded depth.
+    pub fn checked_object(mut members: Vec<(String, Self)>) -> Result<Self> {
+        members.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
+        if members.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err(crate::Refusal::new("canon", "duplicate-key"));
+        }
+        let value = Self {
+            node: Node::Object(members),
+        };
+        value.check_depth(0)?;
+        Ok(value)
+    }
+
+    fn check_depth(&self, depth: usize) -> Result<()> {
+        match &self.node {
+            Node::Array(values) => {
+                if depth >= MAX_DEPTH {
+                    return Err(crate::Refusal::new("canon", "depth"));
+                }
+                for value in values {
+                    value.check_depth(depth + 1)?;
+                }
+            }
+            Node::Object(values) => {
+                if depth >= MAX_DEPTH {
+                    return Err(crate::Refusal::new("canon", "depth"));
+                }
+                for (_, value) in values {
+                    value.check_depth(depth + 1)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Encode checked values using C1's integer, string and UTF-16 ordering rules.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut output = String::new();
+        self.write_checked(&mut output);
+        output.into_bytes()
+    }
+
+    fn write_checked(&self, output: &mut String) {
+        match &self.node {
+            Node::Null => output.push_str("null"),
+            Node::Boolean(value) => output.push_str(if *value { "true" } else { "false" }),
+            Node::Integer(value) => output.push_str(&value.get().to_string()),
+            Node::Text(value) => write_checked_text(value, output),
+            Node::Array(values) => {
+                output.push('[');
+                for (index, value) in values.iter().enumerate() {
+                    if index != 0 {
+                        output.push(',');
+                    }
+                    value.write_checked(output);
+                }
+                output.push(']');
+            }
+            Node::Object(values) => {
+                let mut members: Vec<_> = values.iter().collect();
+                members.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
+                output.push('{');
+                for (index, (key, value)) in members.into_iter().enumerate() {
+                    if index != 0 {
+                        output.push(',');
+                    }
+                    write_checked_text(key, output);
+                    output.push(':');
+                    value.write_checked(output);
+                }
+                output.push('}');
+            }
+        }
+    }
+
     /// Constructs the null literal.
     pub const fn null() -> Self {
         Self { node: Node::Null }
@@ -137,6 +229,27 @@ impl Value {
             _ => None,
         }
     }
+}
+
+fn write_checked_text(value: &str, output: &mut String) {
+    use core::fmt::Write;
+    output.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\u{8}' => output.push_str("\\b"),
+            '\u{c}' => output.push_str("\\f"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            ch if ch < '\u{20}' => {
+                let _ = write!(output, "\\u{:04x}", ch as u32);
+            }
+            ch => output.push(ch),
+        }
+    }
+    output.push('"');
 }
 
 /// Parses one C1 value without a C1 byte cap. Requires UTF-8 without BOM;
