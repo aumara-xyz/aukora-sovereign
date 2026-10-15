@@ -21,6 +21,10 @@ brick (row number = GitHub issue number), who does what, and the rules. Waiting 
 One worker per crate or folder. Claim it here before starting; a diff that does not fit the scaffold is thrown away.
 | Piece | Claimed by | Bricks |
 |---|---|---|
+| app/, guest/, bridge/, test reads of Prime → app/ | Codex w-app | #1-#16, #98 |
+| crates/frontdoor, ui/owner (one link, sign-in and claim inside the app) | Codex w-onelink | #18, #19, #20, #75 |
+| crates/laya (+ gate and supervisor call sites) | Codex w-laya | #36-#39 |
+| crates/messaging, crates/invites (moved out of the supervisor) | Codex w-organs | #71, #72 |
 
 ## Checks
 Main only. `python3 -B checks/run.py` runs the machine rules of NORTH-STAR.md; `sh scripts/check.sh` runs everything.
