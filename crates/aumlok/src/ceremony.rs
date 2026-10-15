@@ -5,6 +5,7 @@ use crate::webauthn::{
     inspect_assertion, verify_registration, AssertionMaterial, Credential, ExtensionPolicy,
     OriginContext, RegistrationCandidate, RegistrationContext, RegistrationMaterial,
 };
+use canon::authority::ceremony::{CeremonyFinish, CeremonyKind};
 use canon::authority::{AuthorityTxn, AuthorityVersion, OwnerBinding};
 use canon::digest::Digest32;
 use canon::ids::{CredentialId, SessionId, SubjectId};
@@ -77,7 +78,7 @@ impl CeremonyState {
 }
 
 /// Non-authorizing persisted state. Secret claim/session values are never stored here.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CeremonySnapshot {
     pub version: u16,
     pub id: CeremonyId,
@@ -164,47 +165,6 @@ pub trait CeremonyReadTxn: AuthorityTxn {
     fn enrolment_identity(&mut self, _id: &CeremonyId) -> Result<EnrolmentIdentity> {
         Err(refusal("ceremony-adapter"))
     }
-
-    /// Consume this capability only in its originating transaction. Re-read ceremony,
-    /// epoch, session, candidate/binding and unused nonce; compare all exact fields.
-    /// Atomically persist the checked counter, consume the nonce, install the first
-    /// credential or sign-in session, and append a signed aumlok.enrol/signin row.
-    /// Enrolment refuses any existing owner. Do not commit here or use a fact row.
-    fn stage_ceremony_finish(&mut self, _proof: VerifiedCeremonyFinish) -> Result<()> {
-        Err(refusal("ceremony-adapter"))
-    }
-}
-
-/// A private-field nonclone capability; it exists only after full WebAuthn verification.
-#[derive(Debug)]
-pub struct VerifiedCeremonyFinish {
-    transaction_id: Digest32,
-    ceremony: CeremonySnapshot,
-    credential: Credential,
-    assertion: AssertionMaterial,
-    signed_bytes_digest: Digest32,
-    now_ms: i64,
-}
-
-impl VerifiedCeremonyFinish {
-    pub fn transaction_id(&self) -> Digest32 {
-        self.transaction_id
-    }
-    pub fn ceremony(&self) -> &CeremonySnapshot {
-        &self.ceremony
-    }
-    pub fn credential(&self) -> &Credential {
-        &self.credential
-    }
-    pub fn assertion(&self) -> &AssertionMaterial {
-        &self.assertion
-    }
-    pub fn signed_bytes_digest(&self) -> Digest32 {
-        self.signed_bytes_digest
-    }
-    pub fn now_ms(&self) -> i64 {
-        self.now_ms
-    }
 }
 
 /// Successful finish remains transaction-bound and noncloneable.
@@ -284,6 +244,7 @@ pub fn finish_enrolment<T: CeremonyReadTxn + ?Sized>(
     assertion: &AssertionMaterial,
     now_ms: i64,
 ) -> Result<Credential> {
+    let transaction_id = txn.transaction_id();
     let row = checked_snapshot(
         txn,
         ceremony,
@@ -331,14 +292,7 @@ pub fn finish_enrolment<T: CeremonyReadTxn + ?Sized>(
         ExtensionPolicy::None,
     )?;
     credential.binding.sign_counter = observation.counter();
-    txn.stage_ceremony_finish(VerifiedCeremonyFinish {
-        transaction_id: txn.transaction_id(),
-        ceremony: row,
-        credential: credential.clone(),
-        assertion: assertion.clone(),
-        signed_bytes_digest: observation.signed_bytes_digest(),
-        now_ms,
-    })?;
+    complete(txn, transaction_id, row, &credential, assertion, now_ms)?;
     Ok(credential)
 }
 
@@ -348,6 +302,7 @@ pub fn finish_signin<T: CeremonyReadTxn + ?Sized>(
     assertion: &AssertionMaterial,
     now_ms: i64,
 ) -> Result<SignIn> {
+    let transaction_id = txn.transaction_id();
     let row = checked_snapshot(
         txn,
         ceremony,
@@ -383,17 +338,56 @@ pub fn finish_signin<T: CeremonyReadTxn + ?Sized>(
         subject,
         credential: credential_id,
         epoch: row.authority.epoch,
-        transaction_id: txn.transaction_id(),
+        transaction_id,
     };
-    txn.stage_ceremony_finish(VerifiedCeremonyFinish {
-        transaction_id: txn.transaction_id(),
-        ceremony: row,
-        credential,
-        assertion: assertion.clone(),
-        signed_bytes_digest: observation.signed_bytes_digest(),
+    complete(txn, transaction_id, row, &credential, assertion, now_ms)?;
+    Ok(signed_in)
+}
+
+fn complete<T: CeremonyReadTxn + ?Sized>(
+    txn: &mut T,
+    transaction_id: Digest32,
+    mut row: CeremonySnapshot,
+    credential: &Credential,
+    assertion: &AssertionMaterial,
+    now_ms: i64,
+) -> Result<()> {
+    if txn.transaction_id() != transaction_id {
+        return Err(refusal("ceremony-stale"));
+    }
+    let kind = match row.purpose {
+        CeremonyPurpose::Enrolment => CeremonyKind::Enrolment,
+        CeremonyPurpose::SignIn => CeremonyKind::SignIn,
+        _ => return Err(refusal("ceremony-kind")),
+    };
+    let assertion_json =
+        serde_json::to_vec(assertion).map_err(|_| refusal("ceremony-data-invalid"))?;
+    txn.finish_ceremony(CeremonyFinish {
+        transaction_id,
+        id: row.id,
+        kind,
+        session: row.session,
+        subject: row.subject.ok_or_else(|| refusal("ceremony-subject"))?,
+        authority: row.authority,
+        nonce: row.nonce,
+        expires_at_ms: row.expires_at_ms,
+        candidate_digest: row.candidate_digest,
+        binding: &credential.binding,
+        owner_id: &credential.owner_id,
+        user_handle: &credential.user_handle,
+        backup_eligible: credential.backup_eligible,
+        assertion_json: &assertion_json,
         now_ms,
     })?;
-    Ok(signed_in)
+    row.state = CeremonyState::Finished;
+    if txn.ceremony(&row.id)? != row
+        || txn.owner_binding(&credential.binding.credential_id)? != credential.binding
+        || txn.credential(&credential.binding.credential_id)? != *credential
+        || txn.transaction_id() != transaction_id
+    {
+        return Err(refusal("canon-ceremony-contract"));
+    }
+    Ok(())
 }
 
 fn refusal(reason: &'static str) -> Refusal {
@@ -439,14 +433,14 @@ mod durable {
     use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
     use serde::{Deserialize, Serialize};
     use subtle::ConstantTimeEq;
-    const SCHEMA: &str = r#"
+    const TABLE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS aumlok_ceremonies_v1(
  id BLOB PRIMARY KEY CHECK(length(id)=16),
  purpose TEXT NOT NULL CHECK(purpose IN ('enrolment','signin','binding','refresh','backup','pair-device')),
  state TEXT NOT NULL CHECK(state IN ('fresh','reserved','registered','spent','finished','failed','expired')),
  context TEXT NOT NULL, nonce BLOB NOT NULL UNIQUE CHECK(length(nonce)=32),
  issued INTEGER NOT NULL CHECK(issued>=0), deadline INTEGER NOT NULL,
- last_seen INTEGER NOT NULL, claim_digest BLOB UNIQUE, resume_digest BLOB,
+ last_seen INTEGER NOT NULL, claim_digest BLOB, resume_digest BLOB,
  candidate TEXT, candidate_digest BLOB,
  CHECK(deadline>issued AND deadline-issued<=300000 AND last_seen>=issued),
  CHECK(claim_digest IS NULL OR length(claim_digest)=32),
@@ -457,12 +451,16 @@ CREATE TABLE IF NOT EXISTS aumlok_ceremonies_v1(
  CHECK(state NOT IN ('reserved','registered') OR resume_digest IS NOT NULL),
  CHECK(state!='registered' OR candidate IS NOT NULL)
 );
+"#;
+    const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS aumlok_ceremony_kdf_v1(id INTEGER PRIMARY KEY CHECK(id=1),key BLOB NOT NULL CHECK(length(key)=32));
 CREATE TRIGGER IF NOT EXISTS aumlok_ceremony_kdf_no_update_v1 BEFORE UPDATE ON aumlok_ceremony_kdf_v1 BEGIN SELECT RAISE(ABORT,'aumlok:ceremony-key-immutable'); END;
 CREATE TRIGGER IF NOT EXISTS aumlok_ceremony_kdf_no_delete_v1 BEFORE DELETE ON aumlok_ceremony_kdf_v1 BEGIN SELECT RAISE(ABORT,'aumlok:ceremony-key-immutable'); END;
 CREATE TRIGGER IF NOT EXISTS aumlok_ceremony_kdf_no_replace_v1 BEFORE INSERT ON aumlok_ceremony_kdf_v1 WHEN EXISTS(SELECT 1 FROM aumlok_ceremony_kdf_v1) BEGIN SELECT RAISE(ABORT,'aumlok:ceremony-key-immutable'); END;
 CREATE UNIQUE INDEX IF NOT EXISTS aumlok_ceremonies_enrolment_v1
  ON aumlok_ceremonies_v1(purpose) WHERE purpose='enrolment' AND state NOT IN ('failed','expired');
+CREATE UNIQUE INDEX IF NOT EXISTS aumlok_ceremonies_claim_v1
+ ON aumlok_ceremonies_v1(claim_digest) WHERE purpose='enrolment' AND state NOT IN ('failed','expired');
 CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_retain_v1
  BEFORE DELETE ON aumlok_ceremonies_v1 BEGIN SELECT RAISE(ABORT,'aumlok:ceremony-retained'); END;
 CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_new_v1
@@ -555,7 +553,7 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_forward_v1
             .map_err(store_error)?;
             Self::from_connection(connection, config)
         }
-        fn from_connection(connection: Connection, config: CeremonyConfig) -> Result<Self> {
+        fn from_connection(mut connection: Connection, config: CeremonyConfig) -> Result<Self> {
             if !connection.is_autocommit() || connection.path().is_none_or(str::is_empty) {
                 return Err(refusal("store-not-durable"));
             }
@@ -581,7 +579,7 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_forward_v1
             if journal != "wal" {
                 return Err(refusal("store-not-durable"));
             }
-            connection.execute_batch(SCHEMA).map_err(store_error)?;
+            crate::ceremony_schema::initialize(&mut connection, TABLE_SCHEMA, SCHEMA)?;
             let mut generated = zeroize::Zeroizing::new([0u8; 32]);
             getrandom::fill(&mut generated[..]).map_err(|_| refusal("random-unavailable"))?;
             connection.execute("INSERT INTO aumlok_ceremony_kdf_v1(id,key) SELECT 1,?1 WHERE NOT EXISTS(SELECT 1 FROM aumlok_ceremony_kdf_v1)",[generated.as_slice()]).map_err(store_error)?;
@@ -701,6 +699,10 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_forward_v1
                     if serde_json::to_string(&row.context).map_err(|_|refusal("store-corrupt"))?!=context || row.claim_digest!=claim { return Err(refusal("ceremony-context-changed")); }
                     touch(tx,&row,now_ms)?;
                     return load_row(tx,&previous)?.snapshot();
+                }
+                if request.purpose == CeremonyPurpose::Enrolment {
+                    let closed: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM aumlok_ceremonies_v1 WHERE purpose='enrolment' AND state NOT IN ('failed','expired'))", [], |row| row.get(0)).map_err(store_error)?;
+                    if closed { return Err(refusal("enrolment-closed")); }
                 }
                 tx.execute("INSERT INTO aumlok_ceremonies_v1(id,purpose,state,context,nonce,issued,deadline,last_seen,claim_digest) VALUES(?1,?2,'fresh',?3,?4,?5,?6,?5,?7)",
                     params![id.as_bytes().as_slice(),request.purpose.wire_name(),context,nonce.as_slice(),now_ms,deadline,claim]).map_err(store_error)?;

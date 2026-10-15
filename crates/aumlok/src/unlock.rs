@@ -1,14 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Principal-scoped unlock contracts. No global bucket or caller-chosen subject key.
 
-use canon::alg::AlgorithmId;
-use canon::health::{
-    Cell, CheckSpec, HealthEvidence, HealthReason, OrganId, HEALTH_FORMAT_VERSION,
-};
 use canon::ids::{SessionId, SubjectId};
 use canon::{Refusal, Result};
-
-use crate::health::{HealthContext, UNLOCK_COUNTERS, UNLOCK_REFUSALS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnlockPolicy {
@@ -183,81 +177,6 @@ pub fn finish<S: UnlockStore + ?Sized>(
         return Err(refused("unlock-admission-expired"));
     }
     Ok(next)
-}
-
-/// Read the current authenticated principal's persisted limit state without mutation.
-/// The store exposes no refused-attempt history, so that check remains NotChecked.
-pub fn observe_health<S: UnlockStore + ?Sized>(
-    store: &mut S,
-    session: &SessionId,
-    context: HealthContext,
-) -> [HealthEvidence; 2] {
-    let observed = inspect_health(store, session, context);
-    let (counter_cell, counter_reason) = match observed {
-        Ok(()) => (Cell::Verified, HealthReason::Satisfied),
-        Err(error) => match error.reason {
-            "unlock-context" => (Cell::Failed, HealthReason::ContextMismatch),
-            "unlock-observation-changed" => (Cell::Undetermined, HealthReason::NotChecked),
-            "unlock-policy" | "unlock-state" | "unlock-principal" | "unlock-epoch" => {
-                (Cell::Failed, HealthReason::InvariantFailed)
-            }
-            "unlock-time" => (Cell::Failed, HealthReason::InvalidEvidence),
-            _ => (Cell::Undetermined, HealthReason::Unreachable),
-        },
-    };
-    [
-        health_report(context, UNLOCK_COUNTERS, counter_cell, counter_reason),
-        health_report(
-            context,
-            UNLOCK_REFUSALS,
-            Cell::Undetermined,
-            HealthReason::NotChecked,
-        ),
-    ]
-}
-
-fn inspect_health<S: UnlockStore + ?Sized>(
-    store: &mut S,
-    session: &SessionId,
-    context: HealthContext,
-) -> Result<()> {
-    let now_ms = i64::try_from(context.observed_at_ms).map_err(|_| refused("unlock-time"))?;
-    let principal = resolve_principal(store, session, now_ms)?;
-    if principal.epoch != context.epoch {
-        return Err(refused("unlock-context"));
-    }
-    validate_policy(store.policy()?)?;
-    let before = load_current(store, &principal)?;
-    if before.last_observed_ms > now_ms {
-        return Err(refused("unlock-context"));
-    }
-    revalidate(store, &principal, now_ms)?;
-    let after = load_current(store, &principal)?;
-    if before != after {
-        return Err(refused("unlock-observation-changed"));
-    }
-    Ok(())
-}
-
-fn health_report(
-    context: HealthContext,
-    spec: CheckSpec,
-    cell: Cell,
-    reason: HealthReason,
-) -> HealthEvidence {
-    HealthEvidence {
-        v: HEALTH_FORMAT_VERSION,
-        algorithm: AlgorithmId::Sha256,
-        check: spec.check,
-        reporter: OrganId::Aumlok,
-        epoch: context.epoch,
-        sequence: context.sequence,
-        observed_at_ms: context.observed_at_ms,
-        expires_at_ms: context.observed_at_ms.saturating_add(spec.freshness_ms),
-        cell,
-        reason,
-        commitment: context.commitment,
-    }
 }
 
 fn revalidate<S: UnlockStore + ?Sized>(

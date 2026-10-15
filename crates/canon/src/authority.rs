@@ -3,6 +3,7 @@
 
 use core::fmt;
 
+pub mod ceremony;
 mod codec;
 mod proof;
 mod standing;
@@ -917,6 +918,12 @@ pub trait AuthorityTxn {
     /// counters, consumption, permissions or any authorizing state. Fact readers must
     /// never treat the row as a capability or a replacement for the owner proof.
     fn append_fact(&mut self, fact: FactRecord) -> Result<AuthorityRecord>;
+
+    /// Standalone ceremonies require an adapter for atomic verification and finish.
+    /// The default refuses without writing a counter, nonce, binding or record.
+    fn finish_ceremony(&mut self, _request: ceremony::CeremonyFinish<'_>) -> Result<()> {
+        Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))
+    }
 }
 
 /// The NORTH-STAR name for exactly the same atomic transaction interface.

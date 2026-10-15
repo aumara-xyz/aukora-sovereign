@@ -18,3 +18,6 @@ pub use canon::authority::{AuthorityTxn, VerifiedProof};
 pub use canon::{Refusal, Result};
 pub use ceremony::CeremonyId;
 pub use webauthn::{AssertionMaterial, RegistrationMaterial};
+
+#[cfg(not(target_arch = "wasm32"))]
+mod ceremony_schema;
