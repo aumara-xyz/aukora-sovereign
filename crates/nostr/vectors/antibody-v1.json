@@ -1,0 +1,35 @@
+{
+  "schema": "aukora-antibody-codec-v1",
+  "event_kind": 8777,
+  "content_schema": "aukora-antibody-v1",
+  "case_id_domain": "aukora:antibody:v1",
+  "event_tags": [],
+  "content_keys": [
+    "cases",
+    "schema",
+    "source_corpus_root"
+  ],
+  "case_keys": [
+    "engine",
+    "expected_refusal",
+    "format_version",
+    "id",
+    "input_b64"
+  ],
+  "vectors": [
+    {
+      "name": "duplicate-key-case",
+      "case": {
+        "engine": "canon",
+        "format_version": 1,
+        "input_b64": "eyJhIjoxLCJhIjoyfQ==",
+        "expected_refusal": "canon:duplicate-key",
+        "id": "a4306dcfc3a956f1a1bec7eb083188c7bc76a364a0d606e96cd32b764c99869d"
+      },
+      "canonical_id_body": "{\"engine\":\"canon\",\"expected_refusal\":\"canon:duplicate-key\",\"format_version\":1,\"input_b64\":\"eyJhIjoxLCJhIjoyfQ==\"}",
+      "id_preimage_hex": "61756b6f72613a616e7469626f64793a7631007b22656e67696e65223a2263616e6f6e222c2265787065637465645f7265667573616c223a2263616e6f6e3a6475706c69636174652d6b6579222c22666f726d61745f76657273696f6e223a312c22696e7075745f623634223a2265794a68496a6f784c434a68496a6f7966513d3d227d",
+      "sha256": "a4306dcfc3a956f1a1bec7eb083188c7bc76a364a0d606e96cd32b764c99869d"
+    }
+  ],
+  "authority": "evidence only; the local registry selects supported engines; imports can add checks only"
+}

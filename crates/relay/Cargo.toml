@@ -6,3 +6,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
+canon = { path = "../canon" }
+nostr = { path = "../nostr" }
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+serde_json = { version = "=1.0.154", features = ["raw_value"] }
+tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
+url = "=2.5.8"

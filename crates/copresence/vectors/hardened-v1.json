@@ -1,0 +1,39 @@
+{
+  "schema": "aukora.copresence.hardened-format.v1",
+  "purpose": "Wave-0 encoding contract; cryptographic accept vectors remain wave-1 work",
+  "receipt_envelope": {"schema": "aukora.copresence.hardened.v1", "body": "ReceiptBody"},
+  "frame_envelope": {"schema": "aukora.copresence.frame.v1", "body": "SignedFrame"},
+  "encoding": {
+    "integer": "unsigned big endian, width specified by each layout",
+    "hex": "lowercase, exactly twice the raw byte length",
+    "option_digest": "00 for absent; 01 followed by 32 raw bytes for present",
+    "text": "BE32 UTF-8 byte length followed by exact UTF-8 bytes",
+    "json_names": "Rust field names; frame bodies have a type key FACE, SEENYOU, HANDSHAKE or BLOOM",
+    "json_order": "UTF-16 sorted keys, compact JSON, integer frame fields, no duplicate keys",
+    "participant": ["node:16", "device_key:65", "BE64(device_epoch)", "session_id:16", "BE64(attempt_sequence)"],
+    "method": {"screen-to-screen": "00", "remote": "01", "relayed": "02"},
+    "required_layers": "one byte: sound bit 0, motion bit 1, intent_ack bit 2; other bits zero",
+    "context_preimage": ["ASCII copresence.context.v1", "00", "participant A", "participant B", "method:1", "required_layers:1", "text(purpose)", "option_digest(intent)"],
+    "nonce_commitment_preimage": ["ASCII copresence.nonce-commitment.v1", "00", "participant", "nonce:32"],
+    "transcript_preimage": ["ASCII copresence.transcript.v1", "00", "BE32(frame count)", "each exact FACE or SEENYOU signed envelope prefixed by its BE32 byte length, in exchange order"],
+    "core_preimage": ["ASCII copresence.v1", "00", "context_digest:32", "nonce_a:32", "nonce_b:32", "BE64(t_a_seconds)", "BE64(t_b_seconds)", "transcript:32", "option_digest(sound)", "option_digest(motion)"],
+    "frame_preimage": ["ASCII copresence.frame.v1", "00", "BE32(unsigned frame body byte length)", "exact unsigned frame body JSON"],
+    "intent_ack_preimage": ["ASCII copresence.intent-ack.v2", "00", "core:32", "context:32", "intent:32", "by:1 (00=A, 01=B)"],
+    "digest": "SHA-256 of the declared preimage",
+    "signature": "P-256 ECDSA with SHA-256 over the 32 digest bytes as message, P1363 r||s"
+  },
+  "layout_vectors": [
+    {"type": "method", "input": "screen-to-screen", "bytes_hex": "00"},
+    {"type": "method", "input": "remote", "bytes_hex": "01"},
+    {"type": "method", "input": "relayed", "bytes_hex": "02"},
+    {"type": "required_layers", "input": {"sound": true, "motion": true, "intent_ack": true}, "bytes_hex": "07"},
+    {"type": "required_layers", "input": {"sound": false, "motion": false, "intent_ack": false}, "bytes_hex": "00"},
+    {"type": "optional_digest", "input": null, "bytes_hex": "00"},
+    {"type": "timestamp", "input": 1, "bytes_hex": "0000000000000001"},
+    {"type": "purpose", "input": "pair", "bytes_hex": "0000000470616972"}
+  ],
+  "first_frame_fields": ["participant", "method", "required_layers", "nonce_commitment", "t_seconds", "frame_index"],
+  "receipt_window_seconds": {"minimum": 0, "maximum": 10},
+  "attempt_rule": "Reserve before any decode or verification; finish durably on accept, refuse or abandon; replayed accepted receipts refuse",
+  "authority": "none"
+}

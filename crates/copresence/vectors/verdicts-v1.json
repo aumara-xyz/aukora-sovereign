@@ -1,0 +1,25 @@
+{
+  "schema": "aukora.copresence.verdict-table.v1",
+  "receipt_reader": "copresence legacy decimal JSON",
+  "intent_text": {
+    "file": "buzz-seam-fixtures/TEXT.txt",
+    "remove_one_trailing_lf": true
+  },
+  "cases": [
+    {"file": "receipts/genuine.json", "operation": "receipt-v0", "expect": "accepted"},
+    {"file": "receipts/sig_a_garbage.json", "operation": "receipt-v0", "expect": "copresence:sig_A_invalid"},
+    {"file": "receipts/sig_b_tampered.json", "operation": "receipt-v0", "expect": "copresence:sig_B_invalid"},
+    {"file": "receipts/pk_b_swapped.json", "operation": "receipt-v0", "expect": "copresence:sig_A_invalid"},
+    {"file": "receipts/window_11s.json", "operation": "receipt-v0", "expect": "copresence:ceremony_window_exceeded"},
+    {"file": "receipts/spacetime_genuine.json", "operation": "receipt-v0", "expect": "accepted"},
+    {"file": "receipts/spacetime_contradiction.json", "operation": "receipt-v0", "expect": "copresence:suspicious_spacetime_contradiction"},
+    {"file": "receipts/spacetime_spoofed_acc0.json", "operation": "receipt-v0", "expect": "copresence:suspicious_spoofed_accuracy"},
+    {"file": "receipts/audio_genuine.json", "operation": "receipt-v0", "expect": "accepted"},
+    {"file": "receipts/audio_nonce_mismatch.json", "operation": "receipt-v0", "expect": "copresence:suspicious_audio_nonce_mismatch"},
+    {"file": "receipts/audio_relay_delayed.json", "operation": "receipt-v0", "expect": "copresence:suspicious_audio_relay_detected"},
+    {"file": "buzz-seam-fixtures/good.json", "operation": "intent-v0", "expect": "accepted"},
+    {"file": "buzz-seam-fixtures/fail-wrong-text.json", "operation": "intent-v0", "expect": "copresence:intent_mismatch"},
+    {"file": "buzz-seam-fixtures/fail-missing-ack.json", "operation": "intent-v0", "expect": "copresence:no_owner_signature"},
+    {"file": "buzz-seam-fixtures/fail-bad-ack-signature.json", "operation": "intent-v0", "expect": "copresence:bad_owner_signature"}
+  ]
+}
