@@ -5,8 +5,8 @@
 - **Bricks:** 47, 77, 132, 137 (NORTH-STAR.md).
 
 The v0 verifier retains the signed core layout and requires integer timestamp spellings.
-Optional telemetry returns a sentinel verdict on accepted evidence; the active verdict table
-is `vectors/verdicts-v2.json`. Earlier vectors remain unchanged.
+Telemetry failures refuse in legacy order after signature verification. The v0 verdict table
+is `vectors/verdicts-v1.json`; accepted receipts expose only an informational sentinel claim.
 
 The v1 exchange fixes local method and layers before decoding a signed first frame, journals
 attempts before parsing, and exposes explicit abandonment. Its frozen wire context remains
@@ -18,5 +18,6 @@ A met-in-person mark requires the v2 receipt, a matching completed local exchang
 screen-to-screen method and the host's local camera source. Imported v0/v1 receipts retain
 an unverified-method mark. Every mark is evidence only.
 
-The new `hardened-v2.json`, `exchange-start-v2.json` and `verdicts-v2.json` data await conductor
-pinning. `vectors/person-bloom-v2.json` retains the person-key display composition.
+The new `hardened-v2.json` and `exchange-start-v2.json` data await conductor pinning.
+`verdicts-v2.json` supplements the v0 table with timestamp and telemetry cases; it does not
+replace `verdicts-v1.json`. `vectors/person-bloom-v2.json` retains the person-key display composition.

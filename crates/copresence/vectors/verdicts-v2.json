@@ -1,12 +1,12 @@
 {
   "schema": "aukora.copresence.verdict-table.v2",
   "receipt_reader": "copresence decimal JSON with exact unsigned integer timestamp spellings",
-  "supersedes": "verdicts-v1.json",
+  "supplements": "verdicts-v1.json",
   "intent_text": {
     "file": "buzz-seam-fixtures/TEXT.txt",
     "remove_one_trailing_lf": true
   },
-  "telemetry": "Optional telemetry cannot reject a cryptographically valid receipt; malformed telemetry is UNDETERMINED. Sentinel claims never authorize.",
+  "telemetry": "V0 telemetry refusals follow signature verification. An accepted receipt's sentinel claim remains evidence only.",
   "cases": [
     {
       "file": "receipts/genuine.json",
@@ -28,16 +28,14 @@
       "file": "receipts/spacetime_contradiction.json",
       "operation": "receipt-v0",
       "expect": {
-        "receipt": "accepted",
-        "sentinel": "SUSPICIOUS"
+        "refusal": "copresence:suspicious_spacetime_contradiction"
       }
     },
     {
       "file": "receipts/spacetime_spoofed_acc0.json",
       "operation": "receipt-v0",
       "expect": {
-        "receipt": "accepted",
-        "sentinel": "SUSPICIOUS"
+        "refusal": "copresence:suspicious_spoofed_accuracy"
       }
     },
     {
@@ -52,16 +50,14 @@
       "file": "receipts/audio_nonce_mismatch.json",
       "operation": "receipt-v0",
       "expect": {
-        "receipt": "accepted",
-        "sentinel": "SUSPICIOUS"
+        "refusal": "copresence:suspicious_audio_nonce_mismatch"
       }
     },
     {
       "file": "receipts/audio_relay_delayed.json",
       "operation": "receipt-v0",
       "expect": {
-        "receipt": "accepted",
-        "sentinel": "SUSPICIOUS"
+        "refusal": "copresence:suspicious_audio_relay_detected"
       }
     },
     {
@@ -191,7 +187,7 @@
       "file": "receipts/genuine.json",
       "replace_optional_telemetry": {
         "geo_A": {
-          "lat": 91,
+          "lat": "north",
           "lon": 0
         },
         "geo_B": {
@@ -201,8 +197,7 @@
       },
       "operation": "receipt-v0",
       "expect": {
-        "receipt": "accepted",
-        "sentinel": "UNDETERMINED"
+        "refusal": "copresence:invalid_geo_coordinates"
       }
     },
     {
@@ -214,8 +209,7 @@
       },
       "operation": "receipt-v0",
       "expect": {
-        "receipt": "accepted",
-        "sentinel": "UNDETERMINED"
+        "refusal": "copresence:invalid_audio_delay"
       }
     }
   ]

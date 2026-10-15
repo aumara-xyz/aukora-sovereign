@@ -20,4 +20,4 @@ impl SentinelVerdict {
 }
 
 pub const POSITION_SOURCE: &str = "SELF_REPORTED_UNVERIFIABLE";
-pub const VERDICT_TABLE: &str = "vectors/verdicts-v2.json";
+pub const VERDICT_TABLE: &str = "vectors/verdicts-v1.json";

@@ -108,7 +108,7 @@ pub fn core_digest(input: &CoreInput) -> Result<Digest32> {
 }
 
 /// V0 signatures retain their byte layout. Timestamps require unsigned integer
-/// spellings; self-reported sentinel observations remain accepted evidence.
+/// spellings; telemetry refusals follow the v1 verdict table.
 pub fn verify_receipt(bytes: &[u8]) -> Result<VerifiedReceipt> {
     validate(bytes).map(|(_, receipt)| receipt)
 }
@@ -358,15 +358,14 @@ fn validate(bytes: &[u8]) -> Result<(Value, VerifiedReceipt)> {
         verify_signature(&pk_b, core.as_bytes(), &sig_b),
         "sig_B_invalid",
     )?;
-    // Malformed optional observations remain undetermined evidence.
-    let sentinel = telemetry(&value).unwrap_or(SentinelVerdict::Undetermined);
+    telemetry(&value)?;
     let receipt = VerifiedReceipt {
         core,
         pk_a,
         pk_b,
         t_a_seconds: *t_a,
         t_b_seconds: *t_b,
-        sentinel,
+        sentinel: accepted_sentinel(&value),
     };
     Ok((value, receipt))
 }
@@ -533,12 +532,9 @@ fn coercible(value: &Value) -> bool {
     true
 }
 
-fn telemetry(value: &Value) -> Result<SentinelVerdict> {
-    let mut observed = false;
-    let mut suspicious = false;
+fn telemetry(value: &Value) -> Result<()> {
     let (a, b) = (field(value, "geo_A"), field(value, "geo_B"));
     if truthy(a) && truthy(b) {
-        observed = true;
         let coordinates = [
             field(a, "lat"),
             field(a, "lon"),
@@ -549,12 +545,6 @@ fn telemetry(value: &Value) -> Result<SentinelVerdict> {
             coordinates.iter().all(|v| v.is_number()),
             "invalid_geo_coordinates",
         )?;
-        let coordinates_are_bounded = coordinates.iter().enumerate().all(|(index, coordinate)| {
-            let number = js_number(coordinate);
-            let limit = if index % 2 == 0 { 90.0 } else { 180.0 };
-            number.is_finite() && (-limit..=limit).contains(&number)
-        });
-        require(coordinates_are_bounded, "invalid_geo_coordinates")?;
         let default = Value::Number(15.0);
         let (acc_a, acc_b) = (
             present(a, "acc").unwrap_or(&default),
@@ -564,25 +554,18 @@ fn telemetry(value: &Value) -> Result<SentinelVerdict> {
             coercible(acc_a) && coercible(acc_b),
             "telemetry_coercion_error",
         )?;
-        require(
-            js_number(acc_a).is_finite() && js_number(acc_b).is_finite(),
-            "invalid_geo_coordinates",
-        )?;
-        suspicious |= js_number(acc_a) < 1.0 || js_number(acc_b) < 1.0;
-        let radians = |number: f64| (number * std::f64::consts::PI) / 180.0;
-        let lat_a = radians(js_number(coordinates[0]));
-        let lat_b = radians(js_number(coordinates[2]));
-        let d_lat = radians(js_number(coordinates[2]) - js_number(coordinates[0]));
-        let d_lon = radians(js_number(coordinates[3]) - js_number(coordinates[1]));
-        let hav =
-            (d_lat / 2.0).sin().powi(2) + lat_a.cos() * lat_b.cos() * (d_lon / 2.0).sin().powi(2);
-        let distance = 12_742_000.0 * hav.sqrt().atan2((1.0 - hav).sqrt());
+        if js_number(acc_a) < 1.0 || js_number(acc_b) < 1.0 {
+            return Err(error("suspicious_spoofed_accuracy"));
+        }
+        let distance = geo_distance(a, b);
         let bound = js_number(&js_add(&js_add(acc_a, acc_b), &Value::Number(50.0)));
-        require(
-            distance.is_finite() && bound.is_finite(),
-            "invalid_geo_coordinates",
-        )?;
-        suspicious |= distance > bound;
+        let claimed = field(value, "sentinel_verdict");
+        if distance > bound
+            && (text_is(claimed, "CONSISTENT_CLAIMED")
+                || text_is(claimed, "GENUINE_LOCAL_PROXIMITY"))
+        {
+            return Err(error("suspicious_spacetime_contradiction"));
+        }
     }
     let audio = field(value, "audio");
     if truthy(audio) {
@@ -594,20 +577,70 @@ fn telemetry(value: &Value) -> Result<SentinelVerdict> {
                 matches!(matched, Value::Boolean(_)),
                 "invalid_audio_matched",
             )?;
-            observed = true;
-            suspicious |= matches!(matched, Value::Boolean(false));
+            if matches!(matched, Value::Boolean(false)) {
+                return Err(error("suspicious_audio_nonce_mismatch"));
+            }
         }
         if let Some(delay) = present(audio, "delay_ms") {
             let delay = delay.as_f64().ok_or(error("invalid_audio_delay"))?;
-            observed = true;
-            suspicious |= !(5.0..=150.0).contains(&delay);
+            require(delay >= 5.0, "suspicious_audio_delay_impossible")?;
+            require(delay <= 150.0, "suspicious_audio_relay_detected")?;
         }
     }
-    Ok(if suspicious {
-        SentinelVerdict::Suspicious
-    } else if observed {
+    Ok(())
+}
+
+fn geo_distance(a: &Value, b: &Value) -> f64 {
+    let radians = |number: f64| (number * std::f64::consts::PI) / 180.0;
+    let latitude = |point: &Value| js_number(field(point, "lat"));
+    let longitude = |point: &Value| js_number(field(point, "lon"));
+    let north = (radians(latitude(b) - latitude(a)) / 2.0).sin().powi(2);
+    let east = (radians(longitude(b) - longitude(a)) / 2.0).sin().powi(2);
+    let haversine = north + radians(latitude(a)).cos() * radians(latitude(b)).cos() * east;
+    12_742_000.0 * haversine.sqrt().atan2((1.0 - haversine).sqrt())
+}
+
+// Classification runs only after the legacy refusal checks succeed.
+fn accepted_sentinel(value: &Value) -> SentinelVerdict {
+    let mut observed = false;
+    let (a, b) = (field(value, "geo_A"), field(value, "geo_B"));
+    if truthy(a) && truthy(b) {
+        for point in [a, b] {
+            for (name, limit) in [("lat", 90.0), ("lon", 180.0)] {
+                if !(-limit..=limit).contains(&js_number(field(point, name))) {
+                    return SentinelVerdict::Undetermined;
+                }
+            }
+        }
+        let default = Value::Number(15.0);
+        let accuracies = [
+            present(a, "acc").unwrap_or(&default),
+            present(b, "acc").unwrap_or(&default),
+        ];
+        let distance = geo_distance(a, b);
+        let bound = js_number(&js_add(
+            &js_add(accuracies[0], accuracies[1]),
+            &Value::Number(50.0),
+        ));
+        if !distance.is_finite()
+            || !bound.is_finite()
+            || accuracies
+                .iter()
+                .any(|accuracy| !js_number(accuracy).is_finite())
+        {
+            return SentinelVerdict::Undetermined;
+        }
+        if distance > bound {
+            return SentinelVerdict::Suspicious;
+        }
+        observed = true;
+    }
+    let audio = field(value, "audio");
+    observed |= truthy(audio)
+        && (present(audio, "matched").is_some() || present(audio, "delay_ms").is_some());
+    if observed {
         SentinelVerdict::ConsistentClaimed
     } else {
         SentinelVerdict::Undetermined
-    })
+    }
 }
