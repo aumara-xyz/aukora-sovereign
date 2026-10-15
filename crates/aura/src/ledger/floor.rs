@@ -1,0 +1,507 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Release state is persisted only with its consumed proof and matching signed row.
+
+use super::*;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use canon::{
+    alg::AlgorithmId,
+    authority::{Kind, OwnerOperation, Phase},
+    ids::ProposalId,
+    json::{self, Value, ValueView},
+};
+use rusqlite::{params, OptionalExtension};
+use std::collections::{BTreeMap, BTreeSet};
+
+impl LedgerTxn<'_> {
+    pub fn floor_state(&self) -> Result<Option<Vec<u8>>> {
+        self.active()?;
+        self.transaction
+            .query_row("SELECT state FROM authority_floor WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(sql)
+    }
+
+    pub fn stage_floor(
+        &mut self,
+        proof: &VerifiedProof,
+        expected_state_digest: Option<Digest32>,
+        next_state_bytes: &[u8],
+    ) -> Result<()> {
+        self.mutate(|this| {
+            let auth = proof.authorization();
+            let approval = Digest32::sha256(proof.authorization_bytes());
+            if proof.transaction_id() != this.identity || auth.op != OwnerOperation::Release
+                || auth.target != "release" || auth.cell.is_some() || auth.epoch != this.state.epoch
+                || this.floor_obligation.is_some() || !this.consumptions.contains(&approval.to_string()) {
+                return Err(refusal("floor-proof"));
+            }
+            let proposal = this.proposal(&auth.proposal)?;
+            if proposal.status != crate::storage::ProposalStatus::Consumed
+                || proposal.operation_digest != auth.operation || Digest32::sha256(&proposal.new_bytes) != auth.new_sha256 {
+                return Err(refusal("floor-proposal"));
+            }
+            let consumed: i64 = this.transaction.query_row("SELECT count(*) FROM authority_consumptions WHERE approval=?1 AND proposal=?2 AND operation=?3 AND credential=?4 AND counter=?5 AND action='release' AND appended=0",
+                params![approval.to_string(),auth.proposal.to_string(),proposal.operation.to_string(),URL_SAFE_NO_PAD.encode(proof.credential_id().as_bytes()),proof.sign_counter()],|row|row.get(0)).map_err(sql)?;
+            if consumed != 1 { return Err(refusal("floor-consumption")); }
+            let next = state(next_state_bytes)?;
+            let next_context = authority(member(&next,"authority")?)?;
+            if next_context != this.current_version()? { return Err(refusal("floor-context")); }
+            let current_bytes = this.floor_state()?;
+            if current_bytes.as_deref().map(Digest32::sha256) != expected_state_digest {
+                return Err(refusal("floor-base"));
+            }
+            let current = current_bytes.as_deref().map(state).transpose()?;
+            if let Some(current) = &current { this.verify_floor_history(current)?; }
+            check_successor(current.as_ref(), &next, proof, proposal.operation)?;
+            let floor = member(&next,"floor")?;
+            if hash(floor,"record")? != auth.new_sha256 || positive(floor,"signer_epoch")? != auth.epoch {
+                return Err(refusal("floor-release"));
+            }
+            release_pointer(&proposal.new_bytes,hash(floor,"digest")?)?;
+            let source = this.record_at(authority_for_sequence(this,positive(floor,"ledger_seq")?)?)?;
+            let payload = super::gate_payload(&source.body);
+            if source.hash != hash(floor,"ledger_hash")? || source.authority.epoch != positive(floor,"signer_epoch")?
+                || !matches!(source.kind,Kind::GateApply|Kind::GateRecover) || source.phase != Phase::Terminal
+                || field_text(payload,"target")? != "release" || field_text(payload,"state")? != "applied"
+                || hash(payload,"new_sha256")? != auth.new_sha256 || source.authority.sequence >= next_context.sequence {
+                return Err(refusal("floor-ordering"));
+            }
+            let keys = this.services.signer.public_keys()?;
+            let ed_keys = keys.iter().filter(|key|key.algorithm==AlgorithmId::Ed25519).collect::<Vec<_>>();
+            if ed_keys.len()!=1 || Digest32::sha256(&ed_keys[0].bytes)!=hash(floor,"signer_key_sha256")? {
+                return Err(refusal("floor-signer"));
+            }
+            this.transaction.execute("INSERT INTO authority_floor(id,state) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET state=excluded.state",[next_state_bytes]).map_err(sql)?;
+            this.floor_obligation = Some(approval);
+            Ok(())
+        })
+    }
+
+    pub(super) fn check_floor_append(&self, proof: &VerifiedProof, body: &Value) -> Result<()> {
+        let approval = Digest32::sha256(proof.authorization_bytes());
+        if self.floor_obligation != Some(approval) {
+            return Err(refusal("floor-not-staged"));
+        }
+        let bytes = self.floor_state()?.ok_or(refusal("floor-not-staged"))?;
+        let staged = state(&bytes)?;
+        exact(
+            body,
+            &["schema", "floor", "proposal", "authorization_sha256"],
+        )?;
+        if field_text(body, "schema")? != "aukora-floor-advance-v1"
+            || field_text(body, "proposal")? != proof.authorization().proposal.to_string()
+            || hash(body, "authorization_sha256")? != approval
+            || member(body, "floor")? != member(&staged, "floor")?
+        {
+            return Err(refusal("floor-append"));
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_floor_record(&mut self, record: &AuthorityRecord) -> Result<()> {
+        let approval = self.floor_obligation.ok_or(refusal("floor-not-staged"))?;
+        let bytes = self.floor_state()?.ok_or(refusal("floor-not-staged"))?;
+        let staged = state(&bytes)?;
+        let payload = super::gate_payload(&record.body);
+        if record.kind != Kind::FloorAdvance
+            || record.phase != Phase::Terminal
+            || record.authority != authority(member(&staged, "authority")?)?
+            || record.hash != hash(member(&staged, "high_water")?, "head")?
+            || hash(payload, "authorization_sha256")? != approval
+            || member(payload, "floor")? != member(&staged, "floor")?
+        {
+            return Err(refusal("floor-receipt"));
+        }
+        self.floor_obligation = None;
+        Ok(())
+    }
+
+    fn verify_floor_history(&self, value: &Value) -> Result<()> {
+        let high = member(value, "high_water")?;
+        let context = authority(member(value, "authority")?)?;
+        let head = self.record_at(context)?;
+        if head.hash != hash(high, "head")?
+            || member(super::gate_payload(&head.body), "floor")? != member(value, "floor")?
+        {
+            return Err(refusal("floor-retained-head"));
+        }
+        for spent in array(high, "spent")? {
+            let record = self.record_at(authority(member(spent, "authority")?)?)?;
+            let payload = super::gate_payload(&record.body);
+            if record.kind != Kind::FloorAdvance
+                || record.phase != Phase::Terminal
+                || record.operation != Some(OperationId::from_hex(field_text(spent, "operation")?)?)
+                || field_text(payload, "schema")? != "aukora-floor-advance-v1"
+                || field_text(payload, "proposal")? != field_text(spent, "proposal")?
+                || hash(payload, "authorization_sha256")? != hash(spent, "authorization_sha256")?
+            {
+                return Err(refusal("floor-retained-spent"));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn authority_for_sequence(transaction: &LedgerTxn<'_>, sequence: u64) -> Result<AuthorityVersion> {
+    Ok(io::record_at(&transaction.transaction, sequence)?.authority)
+}
+fn member<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
+    value.get(key).ok_or(refusal("floor-format"))
+}
+fn text(value: &Value) -> Result<&str> {
+    match value.view() {
+        ValueView::Text(value) => Ok(value),
+        _ => Err(refusal("floor-format")),
+    }
+}
+fn field_text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
+    text(member(value, key)?)
+}
+fn number(value: &Value, key: &str) -> Result<u64> {
+    match member(value, key)?.view() {
+        ValueView::Integer(value) if value.get() >= 0 => Ok(value.get() as u64),
+        _ => Err(refusal("floor-format")),
+    }
+}
+fn positive(value: &Value, key: &str) -> Result<u64> {
+    let number = number(value, key)?;
+    if number == 0 {
+        Err(refusal("floor-format"))
+    } else {
+        Ok(number)
+    }
+}
+fn hash(value: &Value, key: &str) -> Result<Digest32> {
+    Digest32::from_hex(field_text(value, key)?)
+}
+fn array<'a>(value: &'a Value, key: &str) -> Result<&'a [Value]> {
+    match member(value, key)?.view() {
+        ValueView::Array(value) => Ok(value),
+        _ => Err(refusal("floor-format")),
+    }
+}
+fn exact(value: &Value, keys: &[&str]) -> Result<()> {
+    match value.view() {
+        ValueView::Object(members)
+            if members.len() == keys.len()
+                && members.iter().all(|(key, _)| keys.contains(&key.as_str())) =>
+        {
+            Ok(())
+        }
+        _ => Err(refusal("floor-format")),
+    }
+}
+fn authority(value: &Value) -> Result<AuthorityVersion> {
+    exact(value, &["epoch", "sequence", "previous_hash"])?;
+    let context = AuthorityVersion {
+        epoch: positive(value, "epoch")?,
+        sequence: positive(value, "sequence")?,
+        previous_hash: match member(value, "previous_hash")?.view() {
+            ValueView::Null => None,
+            _ => Some(hash(value, "previous_hash")?),
+        },
+    };
+    if (context.sequence == 1) != context.previous_hash.is_none() {
+        return Err(refusal("floor-context"));
+    }
+    Ok(context)
+}
+fn signature_algorithm(value: &Value) -> Result<AlgorithmId> {
+    match AlgorithmId::from_wire(field_text(value, "algorithm")?)? {
+        algorithm @ (AlgorithmId::Ed25519 | AlgorithmId::EcdsaP256Sha256) => Ok(algorithm),
+        _ => Err(refusal("floor-algorithm")),
+    }
+}
+
+fn state(bytes: &[u8]) -> Result<Value> {
+    if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+        return Err(refusal("floor-size"));
+    }
+    let value = json::parse_strict(bytes)?;
+    if value.canonical_bytes() != bytes {
+        return Err(refusal("floor-canonical"));
+    }
+    exact(
+        &value,
+        &["schema", "algorithm", "authority", "floor", "high_water"],
+    )?;
+    if field_text(&value, "schema")? != "aukora-floor-state-v2"
+        || field_text(&value, "algorithm")? != "sha256"
+    {
+        return Err(refusal("floor-schema"));
+    }
+    let context = authority(member(&value, "authority")?)?;
+    let floor = member(&value, "floor")?;
+    exact(
+        floor,
+        &[
+            "digest",
+            "record",
+            "signer_epoch",
+            "ledger_seq",
+            "signer_key_sha256",
+            "ledger_hash",
+            "history",
+        ],
+    )?;
+    let digest = hash(floor, "digest")?;
+    for key in ["record", "signer_key_sha256", "ledger_hash"] {
+        hash(floor, key)?;
+    }
+    if positive(floor, "signer_epoch")? > context.epoch
+        || positive(floor, "ledger_seq")? > context.sequence
+    {
+        return Err(refusal("floor-context"));
+    }
+    let history = array(floor, "history")?;
+    let mut digests = BTreeSet::new();
+    if history.len() > 64 {
+        return Err(refusal("floor-history"));
+    }
+    for item in history {
+        let item = Digest32::from_hex(text(item)?)?;
+        if item == digest || !digests.insert(item.to_string()) {
+            return Err(refusal("floor-history"));
+        }
+    }
+    let high = member(&value, "high_water")?;
+    exact(
+        high,
+        &[
+            "highest_epoch",
+            "highest_sequence",
+            "head",
+            "credentials",
+            "spent",
+        ],
+    )?;
+    if positive(high, "highest_epoch")? != context.epoch
+        || positive(high, "highest_sequence")? != context.sequence
+    {
+        return Err(refusal("floor-context"));
+    }
+    hash(high, "head")?;
+    let mut identities = BTreeSet::new();
+    let mut current = false;
+    for credential in array(high, "credentials")? {
+        exact(
+            credential,
+            &["credential", "algorithm", "key_sha256", "epoch", "counter"],
+        )?;
+        signature_algorithm(credential)?;
+        let id = field_text(credential, "credential")?;
+        let raw = URL_SAFE_NO_PAD
+            .decode(id)
+            .map_err(|_| refusal("floor-credential"))?;
+        if raw.is_empty()
+            || raw.len() > 1024
+            || URL_SAFE_NO_PAD.encode(&raw) != id
+            || !identities.insert(id)
+        {
+            return Err(refusal("floor-credential"));
+        }
+        hash(credential, "key_sha256")?;
+        let epoch = positive(credential, "epoch")?;
+        if epoch > context.epoch || number(credential, "counter")? > u32::MAX as u64 {
+            return Err(refusal("floor-credential"));
+        }
+        current |= epoch == context.epoch;
+    }
+    if !current {
+        return Err(refusal("floor-credential"));
+    }
+    let (mut operations, mut proposals, mut approvals, mut ordered) = (
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeMap::new(),
+    );
+    let mut current = false;
+    for spent in array(high, "spent")? {
+        exact(
+            spent,
+            &[
+                "algorithm",
+                "authority",
+                "operation",
+                "proposal",
+                "authorization_sha256",
+            ],
+        )?;
+        signature_algorithm(spent)?;
+        let at = authority(member(spent, "authority")?)?;
+        let op = OperationId::from_hex(field_text(spent, "operation")?)?;
+        let proposal = ProposalId::from_hex(field_text(spent, "proposal")?)?;
+        let approval = hash(spent, "authorization_sha256")?;
+        if at.epoch > context.epoch
+            || at.sequence > context.sequence
+            || !operations.insert(op)
+            || !proposals.insert(proposal)
+            || !approvals.insert(approval.to_string())
+            || ordered.insert(at.sequence, at.epoch).is_some()
+        {
+            return Err(refusal("floor-spent"));
+        }
+        current |= at == context;
+    }
+    let mut epoch = 0;
+    for next in ordered.into_values() {
+        if next < epoch {
+            return Err(refusal("floor-epoch"));
+        }
+        epoch = next;
+    }
+    if !current {
+        return Err(refusal("floor-spent"));
+    }
+    Ok(value)
+}
+
+fn check_successor(
+    current: Option<&Value>,
+    next: &Value,
+    proof: &VerifiedProof,
+    operation: OperationId,
+) -> Result<()> {
+    let context = authority(member(next, "authority")?)?;
+    let high = member(next, "high_water")?;
+    let new_spent = array(high, "spent")?;
+    let old_high = current
+        .map(|value| member(value, "high_water"))
+        .transpose()?;
+    let old_spent = old_high
+        .map(|value| array(value, "spent"))
+        .transpose()?
+        .unwrap_or(&[]);
+    if new_spent.len() != old_spent.len() + 1 {
+        return Err(refusal("floor-unspent"));
+    }
+    for spent in old_spent {
+        if !new_spent.contains(spent) {
+            return Err(refusal("floor-unspent"));
+        }
+    }
+    let approval = Digest32::sha256(proof.authorization_bytes());
+    let fresh = new_spent
+        .iter()
+        .filter(|spent| !old_spent.contains(spent))
+        .collect::<Vec<_>>();
+    if fresh.len() != 1
+        || authority(member(fresh[0], "authority")?)? != context
+        || field_text(fresh[0], "operation")? != operation.to_string()
+        || field_text(fresh[0], "proposal")? != proof.authorization().proposal.to_string()
+        || hash(fresh[0], "authorization_sha256")? != approval
+        || signature_algorithm(fresh[0])? != proof.algorithm()
+    {
+        return Err(refusal("floor-spent"));
+    }
+    let credentials = array(high, "credentials")?;
+    let old_credentials = old_high
+        .map(|value| array(value, "credentials"))
+        .transpose()?
+        .unwrap_or(&[]);
+    let id = URL_SAFE_NO_PAD.encode(proof.credential_id().as_bytes());
+    let mut known = false;
+    for old in old_credentials {
+        let old_id = field_text(old, "credential")?;
+        let matching = credentials
+            .iter()
+            .find(|pin| field_text(pin, "credential").ok() == Some(old_id))
+            .ok_or(refusal("floor-credential-lost"))?;
+        if old_id == id {
+            known = true;
+            if hash(old, "key_sha256")? != hash(matching, "key_sha256")?
+                || signature_algorithm(old)? != signature_algorithm(matching)?
+                || positive(old, "epoch")? > positive(matching, "epoch")?
+                || (number(old, "counter")? != 0
+                    && number(matching, "counter")? <= number(old, "counter")?)
+            {
+                return Err(refusal("floor-counter"));
+            }
+        } else if old != matching {
+            return Err(refusal("floor-credential-changed"));
+        }
+    }
+    if credentials.len() != old_credentials.len() + usize::from(!known) {
+        return Err(refusal("floor-credential-added"));
+    }
+    let pin = credentials
+        .iter()
+        .find(|pin| field_text(pin, "credential").ok() == Some(id.as_str()))
+        .ok_or(refusal("floor-credential-missing"))?;
+    if signature_algorithm(pin)? != proof.algorithm()
+        || hash(pin, "key_sha256")? != Digest32::sha256(&proof.public_key().bytes)
+        || positive(pin, "epoch")? != proof.authorization().epoch
+        || number(pin, "counter")? != u64::from(proof.sign_counter())
+    {
+        return Err(refusal("floor-credential-proof"));
+    }
+    if let Some(old) = old_high {
+        if context.epoch < positive(old, "highest_epoch")?
+            || context.sequence <= positive(old, "highest_sequence")?
+            || hash(high, "head")? == hash(old, "head")?
+        {
+            return Err(refusal("floor-rollback"));
+        }
+        if context.sequence == positive(old, "highest_sequence")? + 1
+            && context.previous_hash != Some(hash(old, "head")?)
+        {
+            return Err(refusal("floor-predecessor"));
+        }
+    }
+    let floor = member(next, "floor")?;
+    let mut history = Vec::new();
+    if let Some(current) = current {
+        let old = member(current, "floor")?;
+        let old_order = (positive(old, "signer_epoch")?, positive(old, "ledger_seq")?);
+        let new_order = (
+            positive(floor, "signer_epoch")?,
+            positive(floor, "ledger_seq")?,
+        );
+        if new_order <= old_order
+            || (new_order.0 == old_order.0
+                && hash(floor, "signer_key_sha256")? != hash(old, "signer_key_sha256")?)
+        {
+            return Err(refusal("floor-order"));
+        }
+        let new_digest = member(floor, "digest")?;
+        history = array(old, "history")?
+            .iter()
+            .filter(|entry| *entry != new_digest)
+            .cloned()
+            .collect();
+        if member(old, "digest")? != new_digest {
+            history.push(member(old, "digest")?.clone());
+        }
+        let discard = history.len().saturating_sub(64);
+        history.drain(..discard);
+    }
+    if array(floor, "history")? != history {
+        return Err(refusal("floor-history"));
+    }
+    Ok(())
+}
+
+fn release_pointer(bytes: &[u8], digest: Digest32) -> Result<()> {
+    let pointer = json::parse_strict(bytes)?;
+    if pointer.canonical_bytes() != bytes {
+        return Err(refusal("floor-release-pointer"));
+    }
+    if pointer.get("components").is_some() {
+        exact(&pointer, &["v", "digest", "components"])?;
+    } else {
+        exact(&pointer, &["v", "digest"])?;
+    }
+    if number(&pointer, "v")? != 1 || hash(&pointer, "digest")? != digest {
+        return Err(refusal("floor-release-pointer"));
+    }
+    if let Some(components) = pointer.get("components") {
+        exact(components, &["node", "harness", "guest"])?;
+        for key in ["node", "harness", "guest"] {
+            hash(components, key)?;
+        }
+    }
+    Ok(())
+}
