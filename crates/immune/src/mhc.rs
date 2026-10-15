@@ -17,6 +17,11 @@ use canon::{
     },
     Refusal, Result,
 };
+
+pub use crate::thymus::quarantine::{
+    quarantine, recover, ImmuneAuthorityTxn, QuarantineAction, QuarantineRequest, QuarantineState,
+    QuarantineTransition,
+};
 use pentora::geometry::Geometry;
 
 pub const CADENCE_MS: u64 = 5_000;
