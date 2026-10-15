@@ -417,6 +417,11 @@ const fn refusal(reason: &'static str) -> Refusal {
     }
 }
 
+// These obsolete authority declarations have no name outside this scope and
+// cannot be called outside it. The constant evaluates no authority transition.
+#[allow(dead_code)]
+#[rustfmt::skip]
+const _: () = {
 /// Exact owner-approved state transition; concern labels do not select an action.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QuarantineAction {
@@ -676,3 +681,4 @@ fn quarantine_resource(resource: &str) -> Result<()> {
     }
     Ok(())
 }
+};

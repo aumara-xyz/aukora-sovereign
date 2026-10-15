@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 /// The pinned RNG dependency is part of this generator's replay identity.
 pub const GENERATOR: &str = "immune-hypermutation-rand-0.10.3-v1";
 pub const MAX_INPUT_BYTES: usize = 4096;
-/// Reserved for generator state, its current case, digest input and one result.
+/// Reserved for generator state, current case, digest input, result and cache metadata.
 pub const WORKING_MEMORY_BYTES: u64 = 4 * MAX_INPUT_BYTES as u64 + 8192;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +46,12 @@ pub trait Driver {
     fn verify_tampering(&mut self, _request: &Request, _record: Digest32) -> Result<()> {
         Err(refusal("hypermutation-record-unverified"))
     }
+
+    /// Cumulative attack and verification usage, including retained host buffers.
+    /// Unmeasured verification cannot produce an accepted proven finding.
+    fn verification_usage(&mut self, _request: &Request) -> Result<Usage> {
+        Err(refusal("hypermutation-usage"))
+    }
 }
 
 pub fn run(request: &Request, driver: &mut impl Driver) -> Result<Observation> {
@@ -54,9 +60,17 @@ pub fn run(request: &Request, driver: &mut impl Driver) -> Result<Observation> {
     let report = driver.run_isolated(request)?;
     check_wall(started, request.limits)?;
     validate_report(request, &report)?;
+    let mut previous_usage = None;
     for finding in &report.new_findings {
         if let Concern::ProvenTampering { verified_record } = finding {
             driver.verify_tampering(request, *verified_record)?;
+            let measured = driver.verification_usage(request)?;
+            if let Some(previous) = previous_usage {
+                check_usage_progress(previous, measured)?;
+            }
+            request.limits.permits(measured, report.attempted)?;
+            previous_usage = Some(measured);
+            check_wall(started, request.limits)?;
         }
     }
     check_wall(started, request.limits)?;
@@ -353,15 +367,36 @@ pub trait AttackHost {
     fn verify_tampering(&mut self, _request: &Request, _record: Digest32) -> Result<()> {
         Err(refusal("hypermutation-record-unverified"))
     }
+
+    /// Aggregate the completed attack and every verification for this binding.
+    /// Include verification CPU, IO and peak memory; Executor adds its buffers.
+    fn verification_usage(
+        &mut self,
+        _request: &Request,
+        _binding: Digest32,
+        _attack_usage: Usage,
+    ) -> Result<Usage> {
+        Err(refusal("hypermutation-usage"))
+    }
 }
 
 pub struct Executor<H> {
     host: H,
+    verified: Option<VerifiedRun>,
+}
+
+struct VerifiedRun {
+    request: Request,
+    records: Vec<Digest32>,
+    usage: Usage,
 }
 
 impl<H> Executor<H> {
     pub fn new(host: H) -> Self {
-        Self { host }
+        Self {
+            host,
+            verified: None,
+        }
     }
 
     pub fn into_host(self) -> H {
@@ -371,6 +406,7 @@ impl<H> Executor<H> {
 
 impl<H: AttackHost> Driver for Executor<H> {
     fn run_isolated(&mut self, request: &Request) -> Result<Observation> {
+        self.verified = None;
         let schedule = Schedule::new(request)?;
         let binding = schedule.binding();
         let started = Instant::now();
@@ -397,17 +433,58 @@ impl<H: AttackHost> Driver for Executor<H> {
             report.attempted,
         )?;
         validate_report(request, &report)?;
+        let record_count = report
+            .new_findings
+            .iter()
+            .filter(|finding| matches!(finding, Concern::ProvenTampering { .. }))
+            .count();
+        request.limits.permits(
+            with_verification_memory(finished.usage, &report, record_count)?,
+            report.attempted,
+        )?;
+        let mut records = Vec::with_capacity(record_count);
+        let mut measured = finished.usage;
+        let mut accounted = with_verification_memory(measured, &report, records.capacity())?;
+        request.limits.permits(accounted, report.attempted)?;
         for finding in &report.new_findings {
             if let Concern::ProvenTampering { verified_record } = finding {
                 self.host.verify_tampering(request, *verified_record)?;
+                let current = self
+                    .host
+                    .verification_usage(request, binding, finished.usage)?;
+                check_usage_progress(measured, current)?;
+                accounted = with_verification_memory(current, &report, records.capacity())?;
+                request.limits.permits(accounted, report.attempted)?;
+                check_wall(started, request.limits)?;
+                measured = current;
+                records.push(*verified_record);
             }
         }
         check_wall(started, request.limits)?;
+        self.verified = Some(VerifiedRun {
+            request: request.clone(),
+            records,
+            usage: accounted,
+        });
         Ok(report)
     }
 
     fn verify_tampering(&mut self, request: &Request, record: Digest32) -> Result<()> {
-        self.host.verify_tampering(request, record)
+        if self.verified.as_ref().is_some_and(|verified| {
+            verified.request == *request && verified.records.contains(&record)
+        }) {
+            Ok(())
+        } else {
+            Err(refusal("hypermutation-record-unverified"))
+        }
+    }
+
+    fn verification_usage(&mut self, request: &Request) -> Result<Usage> {
+        self.verified
+            .as_ref()
+            .filter(|verified| verified.request == *request)
+            .map(|verified| verified.usage)
+            .ok_or(refusal("hypermutation-usage"))
     }
 }
 
@@ -590,6 +667,22 @@ fn check_usage_progress(before: Usage, after: Usage) -> Result<()> {
 fn with_observer_memory(mut usage: Usage, report: &Observation) -> Result<Usage> {
     let retained = WORKING_MEMORY_BYTES
         + report.new_findings.capacity() as u64 * core::mem::size_of::<Concern>() as u64;
+    usage.memory_bytes = usage
+        .memory_bytes
+        .checked_add(retained)
+        .ok_or(refusal("hypermutation-budget"))?;
+    Ok(usage)
+}
+
+fn with_verification_memory(
+    usage: Usage,
+    report: &Observation,
+    record_capacity: usize,
+) -> Result<Usage> {
+    let mut usage = with_observer_memory(usage, report)?;
+    let retained = (record_capacity as u64)
+        .checked_mul(core::mem::size_of::<Digest32>() as u64)
+        .ok_or(refusal("hypermutation-budget"))?;
     usage.memory_bytes = usage
         .memory_bytes
         .checked_add(retained)

@@ -80,9 +80,16 @@ impl ShadowRequest {
         self.limits.validate()?;
         if !target_valid(&self.target)
             || self.exact_proposed_bytes.len() > TARGET_BYTES
-            || self.exact_proposed_bytes.len() as u64 > self.limits.memory_bytes
+            || self.exact_proposed_bytes.capacity() as u64 > self.limits.memory_bytes
         {
             return Err(refusal("shadow-input"));
+        }
+        let source = match self.base {
+            BaseDigest::Absent => Digest32::sha256(&[]),
+            BaseDigest::Present(digest) => digest,
+        };
+        if self.source_snapshot != source {
+            return Err(refusal("shadow-binding"));
         }
         Ok(())
     }
@@ -113,7 +120,8 @@ pub struct Candidate<'a> {
 }
 
 /// An inspector supplies its own measured work and records incomplete checks.
-/// TargetShadow adds its retained byte buffers and target-read byte counts.
+/// TargetShadow reserves its buffers and target reads before assigning the
+/// inspector's remaining memory and IO limits, then checks aggregate usage.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Inspection {
     pub verdict: Verdict,
@@ -302,6 +310,11 @@ impl<R: TargetReader, I: Inspector> ShadowDriver for TargetShadow<R, I> {
     fn inspect_shadow(&mut self, request: &ShadowRequest) -> Result<ShadowObservation> {
         request.validate()?;
         let began = Instant::now();
+        let source_len = self.source.as_ref().map_or(0, Vec::len);
+        let read_bytes = 2 * source_len as u64;
+        if read_bytes > request.limits.io_bytes {
+            return Err(refusal("attack-budget"));
+        }
         let live = self.reader.read_target(&self.target)?;
         if live != self.source {
             return Err(refusal("shadow-stale-source"));
@@ -315,16 +328,23 @@ impl<R: TargetReader, I: Inspector> ShadowDriver for TargetShadow<R, I> {
         {
             return Err(refusal("shadow-binding"));
         }
-        let source_len = self.source.as_ref().map_or(0, Vec::len);
         // Bound owned buffer capacity, including the request retained by the caller.
         let source_capacity = self.source.as_ref().map_or(0, Vec::capacity) as u64;
         let live_capacity = live.as_ref().map_or(0, Vec::capacity) as u64;
         let shadow_capacity = source_len.max(request.exact_proposed_bytes.len());
         let retained = source_capacity + request.exact_proposed_bytes.capacity() as u64;
         let mut resident = retained + live_capacity + shadow_capacity as u64;
-        if resident > request.limits.memory_bytes {
+        if resident > request.limits.memory_bytes
+            || began.elapsed() > Duration::from_millis(request.limits.wall_ms)
+        {
             return Err(refusal("attack-budget"));
         }
+        let inspection_limits = Limits {
+            memory_bytes: request.limits.memory_bytes - resident,
+            io_bytes: request.limits.io_bytes - read_bytes,
+            ..request.limits
+        }
+        .validate()?;
         let mut shadow = Vec::with_capacity(shadow_capacity);
         if let Some(source) = &self.source {
             shadow.extend_from_slice(source);
@@ -338,8 +358,9 @@ impl<R: TargetReader, I: Inspector> ShadowDriver for TargetShadow<R, I> {
                 after: &shadow,
                 release: self.release,
             },
-            request.limits,
+            inspection_limits,
         )?;
+        inspection_limits.permits(inspected.usage, inspected.usage.cases)?;
         drop(live);
         let after = self.reader.read_target(&self.target)?;
         if after != self.source {
@@ -372,7 +393,7 @@ impl<R: TargetReader, I: Inspector> ShadowDriver for TargetShadow<R, I> {
             .ok_or(refusal("attack-budget"))?;
         usage.io_bytes = usage
             .io_bytes
-            .checked_add(2 * source_len as u64)
+            .checked_add(read_bytes)
             .ok_or(refusal("attack-budget"))?;
         request.limits.permits(usage, usage.cases)?;
         Ok(ShadowObservation {
