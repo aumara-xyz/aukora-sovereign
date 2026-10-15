@@ -2,8 +2,8 @@
 import { connectFace } from "../core/index.js";
 import type { FaceClient, JsonValue } from "../core/index.js";
 import { FACE_CATALOG } from "./catalog.js";
-import { createCoherenceViews } from "./coherence/views.js";
-import type { HealthDecoder, PentoraExpansion } from "./coherence/views.js";
+import { createCoherenceViews } from "./views.js";
+import type { HealthDecoder, PentoraExpansion } from "./views.js";
 import { mountThreads } from "./threads/view.js";
 
 export interface FaceAdapters {
@@ -53,53 +53,79 @@ function opaqueBytes(value: JsonValue): Uint8Array {
   return Uint8Array.from(decoded, char => char.charCodeAt(0));
 }
 
-async function displayDigest(value: JsonValue): Promise<Uint8Array> {
+function headBytes(value: JsonValue): Uint8Array {
   const { head } = record(value);
   if (typeof head !== "string" || !/^[0-9a-f]{64}$/.test(head)) throw new Error("coherence:head-invalid");
-  const domain = new TextEncoder().encode("pentora.display.v1\0");
-  const bytes = new Uint8Array(domain.length + 32);
-  bytes.set(domain);
-  for (let at = 0; at < 32; at++) bytes[domain.length + at] = parseInt(head.slice(at * 2, at * 2 + 2), 16);
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Uint8Array.from({ length: 32 }, (_, at) => parseInt(head.slice(at * 2, at * 2 + 2), 16));
 }
 
 async function coherence(root: HTMLElement, client: FaceClient, adapters: FaceAdapters, signal: AbortSignal) {
   const views = createCoherenceViews(root);
-  signal.addEventListener("abort", () => views.dispose(), { once: true });
   let headVersion = 0;
+  let headTimer: number | undefined;
+  let pendingHead: Uint8Array | undefined;
+  let settledAt = 0;
+  signal.addEventListener("abort", () => {
+    ++headVersion;
+    window.clearTimeout(headTimer);
+    views.dispose();
+  }, { once: true });
+  const failFingerprint = (error: unknown) => {
+    if (signal.aborted) return;
+    ++headVersion;
+    window.clearTimeout(headTimer);
+    headTimer = undefined;
+    pendingHead = undefined;
+    views.clearFingerprint(`Unavailable · ${refusalText(error)}`);
+  };
   const health = (value: JsonValue) => {
+    if (signal.aborted) return;
     try {
       if (!adapters.health) throw new Error("coherence:health-decoder-unavailable");
       views.health(opaqueBytes(value), adapters.health);
     } catch (error) { views.clearHealth(`Unavailable · ${refusalText(error)}`); }
   };
-  const fingerprint = async (value: JsonValue) => {
+  const fingerprint = (value: JsonValue) => {
+    if (signal.aborted) return;
     const version = ++headVersion;
-    views.clearFingerprint("Loading fingerprint");
+    window.clearTimeout(headTimer);
+    headTimer = undefined;
+    views.clearFingerprint("Fingerprint settling");
     try {
-      if (!adapters.pentora) throw new Error("coherence:pentora-unavailable");
-      const digest = await displayDigest(value);
-      if (!signal.aborted && version === headVersion) views.fingerprint(digest, adapters.pentora);
-    } catch (error) {
-      if (!signal.aborted && version === headVersion) views.clearFingerprint(`Unavailable · ${refusalText(error)}`);
-    }
+      const pentora = adapters.pentora;
+      if (!pentora) throw new Error("coherence:pentora-unavailable");
+      const head = headBytes(value);
+      if (!pendingHead || head.some((byte, at) => byte !== pendingHead?.[at])) {
+        settledAt = performance.now() + (pendingHead ? 1_200 : 0);
+        pendingHead = head;
+      }
+      const publish = () => {
+        if (signal.aborted || version !== headVersion) return;
+        const remaining = settledAt - performance.now();
+        if (remaining > 0) {
+          headTimer = window.setTimeout(publish, Math.ceil(remaining));
+          return;
+        }
+        headTimer = undefined;
+        try { views.fingerprint(head, pentora); }
+        catch (error) { failFingerprint(error); }
+      };
+      publish();
+    } catch (error) { failFingerprint(error); }
   };
   await Promise.all([
     client.call("body", "health.snapshot", {}, { signal }).then(health,
       error => views.clearHealth(`Unavailable · ${refusalText(error)}`)),
-    client.call("gate-aura", "head", {}, { signal }).then(fingerprint,
-      error => views.clearFingerprint(`Unavailable · ${refusalText(error)}`)),
+    client.call("gate-aura", "head", {}, { signal }).then(fingerprint, failFingerprint),
   ]);
   if (signal.aborted) return;
   await Promise.all([
     client.subscribe("body", "health.snapshot", {}, health, {
       signal, onError: code => { if (!signal.aborted) views.clearHealth(`Unavailable · ${code}`); },
     }).catch(error => { if (!signal.aborted) views.clearHealth(`Unavailable · ${refusalText(error)}`); }),
-    client.subscribe("gate-aura", "head", {}, value => { void fingerprint(value); }, {
-      signal, onError: code => { if (!signal.aborted) { ++headVersion; views.clearFingerprint(`Unavailable · ${code}`); } },
-    }).catch(error => {
-      if (!signal.aborted) { ++headVersion; views.clearFingerprint(`Unavailable · ${refusalText(error)}`); }
-    }),
+    client.subscribe("gate-aura", "head", {}, fingerprint, {
+      signal, onError: code => failFingerprint(new Error(code)),
+    }).catch(failFingerprint),
   ]);
 }
 

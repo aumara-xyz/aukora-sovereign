@@ -1,0 +1,22 @@
+{
+  "schema": "aukora-pentora-face-adapter-v1",
+  "consumer": "app/faces/runtime.ts imports app/faces/views.ts",
+  "source": "gate-aura head: 64 lowercase hexadecimal characters representing the current Aura root",
+  "input": "Decode head to exactly 32 raw bytes; JavaScript does not hash the head",
+  "adapter": "bindPentora takes the pinned WASM instance exports; PentoraExpansion.pentora_expand takes raw head bytes and returns a copied 142-byte result",
+  "wasm": {
+    "allocate": "pentora_allocate_root32() reserves 32 bytes; zero refuses",
+    "expand": "pentora_expand(root_offset) returns a descriptor offset; zero refuses",
+    "descriptor": "Four little-endian u32 words: version=1, status, data_offset, data_length",
+    "success": "status=0, data_length=142: digest bytes [0,32), then 110 trit bytes [32,142), each 0..2",
+    "refusal": "status=1: UTF-8 pentora:<reason>; all other versions or statuses refuse",
+    "release": "Copy output before pentora_release_result(descriptor_offset); always release allocated root with pentora_release_root32(root_offset)"
+  },
+  "derivation": "Only WASM derives sha256(UTF8(pentora.display.v1) || 0x00 || raw head) and expands its big-endian integer into 110 least-significant-first base-3 digits",
+  "rendering": "The existing coherence canvas renderer receives the returned digest and fixed returned trits; it never calls the WASM expansion a second time",
+  "settling": "First valid head renders immediately; keep picture and digest cleared for 1200 ms after a changed head, matching the Rust display settle interval; repeated identical heads retain that deadline; no wire keys are added",
+  "geometry": "Existing coherence/geometry.ts maps trits in increasing cell order excluding centre 55; pinned geometry sha256 96b27c9b4de41cd961612be5b1e88d40e973a2fded16bd320415b3e15e3b8c61",
+  "unavailable": "Clear picture and digest before head processing; missing head, invalid ABI/output, missing adapter, or stream failure stays cleared; superseded work and callbacks after abort cannot publish",
+  "health": "Separate labelled canvas and decoder; health cells never enter PentoraExpansion",
+  "authority": "none"
+}
