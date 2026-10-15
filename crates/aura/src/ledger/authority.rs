@@ -21,6 +21,18 @@ use rusqlite::params;
 pub(super) use super::epochs::verify_epoch_body;
 
 impl AuthorityTxn for LedgerTxn<'_> {
+    fn authority_state(&mut self, namespace: &str, key: &str) -> Result<Option<Value>> {
+        self.read_broker_absence(namespace, key)
+    }
+
+    fn committed_authority_state(&mut self, namespace: &str, key: &str) -> Result<Option<Value>> {
+        self.read_broker_absence(namespace, key)
+    }
+
+    fn pending_broker_reservations(&mut self) -> Result<Vec<Value>> {
+        self.read_empty_broker_pending()
+    }
+
     fn committed_immune_records(&mut self) -> Result<Vec<AuthorityRecord>> {
         self.immune_committed_records()
     }

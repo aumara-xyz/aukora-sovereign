@@ -240,6 +240,9 @@ fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zero
 
 /// Owner APIs stay on the owner host; shell APIs are documents and the data bridge only.
 fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
+    if role == HostRole::Shell && path == crate::api::service_reads::PATH {
+        return crate::api::service_reads::resolve(role, method, path);
+    }
     if role == HostRole::Owner {
         if path.starts_with("/api/") {
             OwnerRoute::resolve(role, method, path).map(|_| ())

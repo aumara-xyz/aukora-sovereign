@@ -2532,13 +2532,19 @@ version = "0.0.0"
 dependencies = [
  "aumlok",
  "aura",
+ "base64 0.22.1",
  "broker",
  "canon",
  "copresence",
+ "ed25519-dalek",
  "floor",
  "frontdoor",
  "gate",
  "getrandom 0.4.3",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "immune",
  "invites",
  "kira",
@@ -2550,6 +2556,7 @@ dependencies = [
  "rustix",
  "tokio",
  "wasmcell",
+ "zeroize",
 ]
 
 [[package]]

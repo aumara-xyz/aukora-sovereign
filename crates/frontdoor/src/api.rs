@@ -12,6 +12,8 @@ use canon::{
     Refusal, Result,
 };
 
+pub mod service_reads;
+
 pub const MAX_JSON_BYTES: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

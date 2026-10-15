@@ -700,6 +700,11 @@ fn load(transaction: &LedgerTxn<'_>, id: ProposalId) -> Result<Proposal> {
     proposal::from_stored(stored, &record)
 }
 
+/// Reads proposal data after matching its stored fields to the signed lifecycle record.
+pub fn read_proposal(transaction: &LedgerTxn<'_>, id: ProposalId) -> Result<Proposal> {
+    load(transaction, id)
+}
+
 fn recovery_work(
     transaction: &LedgerTxn<'_>,
     proposal: &Proposal,

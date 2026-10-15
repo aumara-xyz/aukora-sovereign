@@ -197,7 +197,8 @@ impl<'a> Router<'a> {
             id: request.id,
         };
         let scope = self.context.scope();
-        if !matches!(request.body, Request::Status | Request::Organs) {
+        let binding_required = !matches!(request.body, Request::Status | Request::Organs);
+        if binding_required {
             self.require_binding().await?;
         }
         if self
@@ -214,7 +215,11 @@ impl<'a> Router<'a> {
         let body = match request.body {
             Request::SitePropose(proposal) => {
                 self.proposal_capacity()?;
-                let accepted = self.ports.gate.propose_site(scope, &correlation.id, proposal).await?;
+                let accepted = self
+                    .ports
+                    .gate
+                    .propose_site(scope, &correlation.id, proposal)
+                    .await?;
                 self.track_proposal(&correlation, accepted.proposal_id, false)?;
                 Reply::Accepted(accepted)
             }
@@ -389,6 +394,9 @@ impl<'a> Router<'a> {
                 Reply::SessionFlushed(receipt)
             }
         };
+        if binding_required {
+            self.require_binding().await?;
+        }
         correlation.frame(body)
     }
 
@@ -648,6 +656,7 @@ impl<'a> Router<'a> {
             }
             match self.next_event().await {
                 Ok(Some(event)) => {
+                    self.require_binding().await?;
                     channel.send(&event).map_err(|e| e.refusal)?;
                     self.event_delivered().await?;
                 }

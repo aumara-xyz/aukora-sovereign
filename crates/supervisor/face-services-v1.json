@@ -1,0 +1,133 @@
+{
+  "schema": "aukora-face-services-v1",
+  "transport": "App RPC response values; canonical C1 JSON; at most 60000 bytes before the existing RPC envelope. No keys are added to C4 v1.",
+  "requests": {
+    "documents.list": {
+      "directory": "relative path or null",
+      "after": "relative path or null",
+      "limit": "integer 1..100"
+    },
+    "documents.read": {
+      "path": "relative path"
+    },
+    "contacts.list": {
+      "before": "npub or null",
+      "limit": "integer 1..100"
+    },
+    "messages.list": {
+      "before": "opaque cursor or null",
+      "limit": "integer 1..100"
+    },
+    "refusals.counts": {},
+    "memory.list": {
+      "tier": "remembered or forgotten",
+      "before": "note id or null"
+    },
+    "memory.recall": {
+      "query": "literal text",
+      "limit": "C4 bounded integer"
+    },
+    "session.list": "canon SessionList v2, unchanged",
+    "session.open": "canon SessionOpen v2, unchanged",
+    "settings.general": {},
+    "settings.models": {},
+    "settings.plugins": {},
+    "settings.presets": {},
+    "health.snapshot": {},
+    "health.snapshot.page.v2": {
+      "offset": "0 initially; next_offset subsequently",
+      "snapshot_sha256": "null initially; exact first-page digest subsequently"
+    }
+  },
+  "replies": {
+    "documents.list": {
+      "entries": [
+        {
+          "path": "relative child path",
+          "bytes": "safe nonnegative integer",
+          "directory": "boolean"
+        }
+      ],
+      "next": "relative cursor or null"
+    },
+    "documents.read": {
+      "path": "requested path",
+      "text": "UTF-8, at most 32768 bytes",
+      "sha256": "lowercase hex64 of exact bytes"
+    },
+    "contacts.list": {
+      "items": [
+        {
+          "key": "npub",
+          "npub": "same npub",
+          "label": "approved contact label",
+          "pairing": "null or {method,verified_at,verified_at_ms}; timestamp aliases are identical safe integers"
+        }
+      ],
+      "next": "npub or null"
+    },
+    "messages.list": {
+      "items": [
+        {
+          "id": "opaque id",
+          "direction": "in or out",
+          "contact": "npub",
+          "at": "safe nonnegative milliseconds",
+          "text": "at most 16384 UTF-8 bytes",
+          "transport": "nostr-relays",
+          "state": "null inbound; queued/published/unconfirmed/failed outbound",
+          "code": "refusal exactly when state is failed; null otherwise"
+        }
+      ],
+      "next": "opaque cursor or null"
+    },
+    "refusals.counts": "exactly envelope, signature, recipient, stranger, replay, payload, stale_contact, total, last_aura_sequence; safe nonnegative integers",
+    "memory.list": "canon MemoryListReply unchanged",
+    "memory.recall": "canon Recall unchanged",
+    "session.list": "canon SessionPage v2 unchanged",
+    "session.open": "canon SessionOpened v2 unchanged",
+    "settings.general": "exact app/faces/general/contract.json reply",
+    "settings.models": "exact app/faces/models/contract.json reply",
+    "settings.plugins": "exact app/faces/plugins/contract.json reply; runtime state must come from the shell",
+    "settings.presets": "exact app/faces/presets/contract.json reply; operations use underscore spellings",
+    "health.snapshot": {
+      "snapshot_b64": "complete unchanged canonical snapshot in standard padded base64, only when entire reply fits"
+    },
+    "health.snapshot.page.v2": {
+      "schema": "aukora-health-snapshot-page-v2",
+      "snapshot_sha256": "digest of complete canonical snapshot",
+      "offset": "byte offset",
+      "total_bytes": "complete snapshot byte length, at most 65536",
+      "chunk_b64": "standard padded base64 of at most 24576 bytes",
+      "next_offset": "next byte offset or null"
+    }
+  },
+  "health_reassembly": "Concatenate decoded chunks in exact offset order; require identical digest and total_bytes; verify digest then use canon health_decode_snapshot. Never paint incomplete chunks. Changed snapshots refuse and restart.",
+  "contact_aliases": "Humangraph reads key and verified_at_ms; Messages reads npub and verified_at. Both aliases retain the same approved person key and observed timestamp; neither gives authority.",
+  "unavailable": "Missing sources refuse supervisor:<reason>; no fabricated empty state, grant, key, plugin, history or health evidence.",
+  "authority": "none",
+  "session_stream_event_v3": {
+    "schema": "aukora-session-stream-event-v3",
+    "session_id": "the store-owned dispatch fence session id",
+    "event": {
+      "kind": "model.start/model.delta/model.end/model.cancel/model.error",
+      "body": "unchanged canon v2 model event body"
+    },
+    "binding": "Supervisor binds only broker-admitted request/reservation ids to the durable dispatch fence; unknown or cross-principal streams refuse."
+  },
+  "http": {
+    "path": "/api/faces/read",
+    "method": "POST",
+    "host": "shell",
+    "request": {
+      "schema": "aukora-face-read-v1",
+      "face": "approved face id",
+      "service": "registered organ service",
+      "method": "closed read method",
+      "params": "the method object"
+    },
+    "response": "the corresponding reply value in replies",
+    "authorization": "frontdoor closed face grants, currently approved release/floor, and live shell session; supervisor rechecks subject and epoch",
+    "health_page_grant": "health.snapshot.page.v2 is the paged transport of the coherence face health.snapshot read"
+  }
+}
