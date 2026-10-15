@@ -1,0 +1,229 @@
+{
+  "schema": "aukora:invite-health-vectors:v1",
+  "commitment": {
+    "domain": "aukora:invite-health:v1",
+    "preimage": [
+      "ASCII(domain)",
+      "NUL",
+      "UTF8(canonical)"
+    ],
+    "state": {
+      "network": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "snapshot": {
+        "version": {
+          "epoch": 7,
+          "sequence": 0,
+          "previous": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "issued": 3,
+        "available": 3,
+        "reserved": 0,
+        "consumed": 0
+      },
+      "members": [
+        {
+          "member": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "subject": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+          "version": {
+            "epoch": 7,
+            "sequence": 0,
+            "previous": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "available": 3,
+          "reserved": 0,
+          "outstanding_invites": 0,
+          "lifetime_redeemed": 0
+        }
+      ],
+      "reservations": []
+    },
+    "canonical": "{\"members\":[{\"available\":3,\"lifetime_redeemed\":0,\"member\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"outstanding_invites\":0,\"reserved\":0,\"subject\":\"aukora:1:1111111111111111111111111111111111111111111111111111111111111111\",\"version\":{\"epoch\":7,\"previous\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"sequence\":0}}],\"network\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"reservations\":[],\"snapshot\":{\"available\":3,\"consumed\":0,\"issued\":3,\"reserved\":0,\"version\":{\"epoch\":7,\"previous\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"sequence\":0}}}",
+    "sha256": "80516c2fb8084499f42c2303f4a180df2cb89f4440f727d8be524112e2636150"
+  },
+  "context_cases": [
+    {
+      "name": "matching",
+      "context": {
+        "epoch": 7,
+        "sequence": 0,
+        "observed_at_ms": 1800000000000,
+        "commitment": "80516c2fb8084499f42c2303f4a180df2cb89f4440f727d8be524112e2636150"
+      },
+      "consumption": {
+        "cell": "verified",
+        "reason": "satisfied"
+      },
+      "bounds": {
+        "cell": "verified",
+        "reason": "satisfied"
+      }
+    },
+    {
+      "name": "wrong-epoch",
+      "context": {
+        "epoch": 8,
+        "sequence": 0,
+        "observed_at_ms": 1800000000000,
+        "commitment": "80516c2fb8084499f42c2303f4a180df2cb89f4440f727d8be524112e2636150"
+      },
+      "consumption": {
+        "cell": "failed",
+        "reason": "context-mismatch"
+      },
+      "bounds": {
+        "cell": "failed",
+        "reason": "context-mismatch"
+      }
+    },
+    {
+      "name": "wrong-sequence",
+      "context": {
+        "epoch": 7,
+        "sequence": 1,
+        "observed_at_ms": 1800000000000,
+        "commitment": "80516c2fb8084499f42c2303f4a180df2cb89f4440f727d8be524112e2636150"
+      },
+      "consumption": {
+        "cell": "failed",
+        "reason": "context-mismatch"
+      },
+      "bounds": {
+        "cell": "failed",
+        "reason": "context-mismatch"
+      }
+    },
+    {
+      "name": "wrong-commitment",
+      "context": {
+        "epoch": 7,
+        "sequence": 0,
+        "observed_at_ms": 1800000000000,
+        "commitment": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "consumption": {
+        "cell": "failed",
+        "reason": "context-mismatch"
+      },
+      "bounds": {
+        "cell": "failed",
+        "reason": "context-mismatch"
+      }
+    }
+  ],
+  "lifetime": {
+    "context_matches": true,
+    "audit_passed": true,
+    "issued_at_seconds": 1800000000,
+    "ttl_seconds": 172800,
+    "cases": [
+      {
+        "outcome": "active",
+        "observed_at_ms": 1799999999999,
+        "consumption": {
+          "cell": "verified",
+          "reason": "satisfied"
+        },
+        "bounds": {
+          "cell": "failed",
+          "reason": "invariant-failed"
+        }
+      },
+      {
+        "outcome": "active",
+        "observed_at_ms": 1800000000000,
+        "consumption": {
+          "cell": "verified",
+          "reason": "satisfied"
+        },
+        "bounds": {
+          "cell": "verified",
+          "reason": "satisfied"
+        }
+      },
+      {
+        "outcome": "active",
+        "observed_at_ms": 1800172799999,
+        "consumption": {
+          "cell": "verified",
+          "reason": "satisfied"
+        },
+        "bounds": {
+          "cell": "verified",
+          "reason": "satisfied"
+        }
+      },
+      {
+        "outcome": "active",
+        "observed_at_ms": 1800172800000,
+        "consumption": {
+          "cell": "verified",
+          "reason": "satisfied"
+        },
+        "bounds": {
+          "cell": "failed",
+          "reason": "invariant-failed"
+        }
+      },
+      {
+        "outcome": "active",
+        "observed_at_ms": 1800172800001,
+        "consumption": {
+          "cell": "verified",
+          "reason": "satisfied"
+        },
+        "bounds": {
+          "cell": "failed",
+          "reason": "invariant-failed"
+        }
+      },
+      {
+        "outcome": "released",
+        "observed_at_ms": 1800172800000,
+        "consumption": {
+          "cell": "verified",
+          "reason": "satisfied"
+        },
+        "bounds": {
+          "cell": "verified",
+          "reason": "satisfied"
+        }
+      },
+      {
+        "outcome": "consumed",
+        "observed_at_ms": 1800172800000,
+        "consumption": {
+          "cell": "verified",
+          "reason": "satisfied"
+        },
+        "bounds": {
+          "cell": "verified",
+          "reason": "satisfied"
+        }
+      }
+    ]
+  },
+  "audit_failure": {
+    "context_matches": true,
+    "audit_passed": false,
+    "consumption": {
+      "cell": "failed",
+      "reason": "invariant-failed"
+    },
+    "bounds": {
+      "cell": "failed",
+      "reason": "invariant-failed"
+    }
+  },
+  "mismatch_precedence": {
+    "context_matches": false,
+    "audit_passed": false,
+    "consumption": {
+      "cell": "failed",
+      "reason": "context-mismatch"
+    },
+    "bounds": {
+      "cell": "failed",
+      "reason": "context-mismatch"
+    }
+  }
+}

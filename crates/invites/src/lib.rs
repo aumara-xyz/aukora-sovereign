@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod allowance;
+mod health;
 mod wire;
 use wire::*;
 pub use wire::{sign_admission_confirmation, LegacyStatement};

@@ -436,24 +436,32 @@ impl ConservedLedger {
         &self.reservations
     }
 
-    /// Observe the retained conservation and bound checks in the supervisor's
-    /// health context. These reports are separate from signing and admission.
+    /// Observe conservation and live bounds independently. The context must name
+    /// this allowance epoch and sequence, with `health_commitment()` as its digest;
+    /// an unrelated Aura head is not an allowance observation context.
+    /// These reports are separate from signing and admission.
     pub fn health(
         &self,
         context: &nostr::health::HealthContext,
     ) -> Vec<canon::health::HealthEvidence> {
         use canon::health::{Cell, HealthEvidence, HealthReason, OrganId, HEALTH_FORMAT_VERSION};
-        let (cell, reason) = if self.audit().is_err() {
-            (Cell::Failed, HealthReason::InvariantFailed)
-        } else {
-            (Cell::Verified, HealthReason::Satisfied)
-        };
+        let context_matches = context.epoch == self.snapshot.version.epoch
+            && context.sequence == self.snapshot.version.sequence
+            && self
+                .health_commitment()
+                .is_ok_and(|commitment| commitment == context.commitment);
+        let consumption_valid = self.audit().is_ok();
+        let bounds_valid = consumption_valid
+            && self.reservations.iter().all(|entry| {
+                entry.outcome != ReservationOutcome::Active
+                    || invite_time(&entry.reservation.draft, context.observed_at_ms / 1000).is_ok()
+            });
         [
-            nostr::health::INVITE_CONSUMPTION,
-            nostr::health::INVITE_BOUNDS,
+            (nostr::health::INVITE_CONSUMPTION, consumption_valid),
+            (nostr::health::INVITE_BOUNDS, bounds_valid),
         ]
         .into_iter()
-        .map(|spec| HealthEvidence {
+        .map(|(spec, valid)| HealthEvidence {
             v: HEALTH_FORMAT_VERSION,
             algorithm: AlgorithmId::Sha256,
             check: spec.check,
@@ -462,8 +470,18 @@ impl ConservedLedger {
             sequence: context.sequence,
             observed_at_ms: context.observed_at_ms,
             expires_at_ms: context.observed_at_ms.saturating_add(spec.freshness_ms),
-            cell,
-            reason,
+            cell: if context_matches && valid {
+                Cell::Verified
+            } else {
+                Cell::Failed
+            },
+            reason: if !context_matches {
+                HealthReason::ContextMismatch
+            } else if valid {
+                HealthReason::Satisfied
+            } else {
+                HealthReason::InvariantFailed
+            },
             commitment: context.commitment,
         })
         .collect()
