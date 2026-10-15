@@ -13,6 +13,9 @@ use canon::json::{SafeInteger, Value, ValueView, MAX_SAFE_INTEGER};
 use canon::{Refusal, Result};
 use sha2::{Digest, Sha256};
 
+/// Personal Nostr derivation and bindings with independent rotation and owner epochs.
+pub mod person_nostr;
+
 /// Version of the key-binding body; C3's outer field set is unchanged.
 pub const KEY_BINDING_VERSION: u16 = 1;
 /// Domain for canonical key-binding bodies, distinct from identity-root derivation.
@@ -26,74 +29,58 @@ pub const MAX_SCOPE_RESOURCES: usize = 32;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct KeyId(pub Digest32);
 
-/// Closed key-role vocabulary; roles are data, never an approval capability.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum KeyRole {
-    /// The approving credential; uses bound delegation, owner actions are descriptive.
-    OwnerPasskey,
-    /// Identity-root commitment or public identity key; never an owner proof.
-    IdentityRoot,
-    /// Scoped identity, session and agent statements.
-    Operational,
-    /// A paired device with its own bounded possession and identity scope.
-    Device,
-    /// Session authentication and identity within a device delegation.
-    Session,
-    /// Agent identity within a session delegation; no owner actions.
-    Agent,
-    /// Node identity statements.
-    Node,
-    /// Node Nostr events using its separate Schnorr key.
-    NodeNostr,
-    /// Agent Nostr events using its separate Schnorr key.
-    AgentNostr,
-    /// Shard receipts only; never owner replacement.
-    GuardianShardHolder,
-    /// Recovery statements only; never owner replacement.
-    GuardianRecovery,
-    /// Veto acknowledgements only; never owner replacement.
-    GuardianVeto,
-    /// Sealed backup encryption commitment; no signing authority.
-    BackupEncryption,
-    /// Aura record signatures; never owner approval.
-    AuraSigning,
-    /// Reserved mesh signing role; every use refuses until mesh activation.
-    DeviceMeshIdentity,
-    /// Reserved mesh agreement role; every use refuses until mesh activation.
-    DeviceMeshAgreement,
+macro_rules! key_vocabulary {
+    ($name:ident, $table:ident, $doc:literal; $(#[doc = $entry_doc:literal] $variant:ident => $wire:literal,)+) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+        pub enum $name { $(#[doc = $entry_doc] $variant,)+ }
+        impl $name {
+            fn wire_name(self) -> &'static str {
+                use $name::*;
+                match self { $($variant => $wire,)+ }
+            }
+        }
+        const $table: &[($name, &str)] = &{ use $name::*; [$(($variant, $wire),)+] };
+    };
+}
+key_vocabulary! {
+    KeyRole, ROLES, "Closed key-role vocabulary; roles are data, never an approval capability.";
+    #[doc = "The approving credential; uses bound delegation, owner actions are descriptive."] OwnerPasskey => "owner-passkey",
+    #[doc = "Identity-root commitment or public identity key; never an owner proof."] IdentityRoot => "identity-root",
+    #[doc = "Scoped identity, session and agent statements."] Operational => "operational",
+    #[doc = "A paired device with its own bounded possession and identity scope."] Device => "device",
+    #[doc = "Session authentication and identity within a device delegation."] Session => "session",
+    #[doc = "Agent identity within a session delegation; no owner actions."] Agent => "agent",
+    #[doc = "Node identity statements."] Node => "node",
+    #[doc = "Node Nostr events using its separate Schnorr key."] NodeNostr => "node-nostr",
+    #[doc = "Agent Nostr events using its separate Schnorr key."] AgentNostr => "agent-nostr",
+    #[doc = "Personal Nostr events, derived from the phrase-sealed identity root."] PersonNostr => "person-nostr",
+    #[doc = "Shard receipts only; never owner replacement."] GuardianShardHolder => "guardian-shard-holder",
+    #[doc = "Recovery statements only; never owner replacement."] GuardianRecovery => "guardian-recovery",
+    #[doc = "Veto acknowledgements only; never owner replacement."] GuardianVeto => "guardian-veto",
+    #[doc = "Sealed backup encryption commitment; no signing authority."] BackupEncryption => "backup-encryption",
+    #[doc = "Aura record signatures; never owner approval."] AuraSigning => "aura-signing",
+    #[doc = "Reserved mesh signing role; every use refuses until mesh activation."] DeviceMeshIdentity => "device-mesh-identity",
+    #[doc = "Reserved mesh agreement role; every use refuses until mesh activation."] DeviceMeshAgreement => "device-mesh-agreement",
 }
 
-/// Closed non-owner uses; none represents approval, release, or credential mutation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum KeyUse {
-    /// An identity statement, not owner authorization.
-    IdentityStatement,
-    /// An Aura record signature, not an approval.
-    AuraRecord,
-    /// An event under the node's Nostr identity.
-    NodeNostrEvent,
-    /// An event under the agent's Nostr identity.
-    AgentNostrEvent,
-    /// Possession evidence in addition to separate owner approval.
-    DevicePossession,
-    /// Authentication within the session's exact scope.
-    SessionAuthentication,
-    /// A delegated agent identity statement.
-    AgentIdentity,
-    /// Backup encryption only, without owner actions.
-    BackupEncrypt,
-    /// Backup decryption only, without owner actions.
-    BackupDecrypt,
-    /// A shard receipt, never owner replacement.
-    GuardianShardReceipt,
-    /// A recovery statement, never owner replacement.
-    GuardianRecoveryStatement,
-    /// A veto acknowledgement, never owner replacement.
-    GuardianVetoAcknowledgement,
-    /// Reserved mesh signing use; currently refused.
-    MeshIdentity,
-    /// Reserved mesh agreement use; currently refused.
-    MeshAgreement,
+key_vocabulary! {
+    KeyUse, USES, "Closed non-owner uses; none represents approval, release, or credential mutation.";
+    #[doc = "An identity statement, not owner authorization."] IdentityStatement => "identity-statement",
+    #[doc = "An Aura record signature, not an approval."] AuraRecord => "aura-record",
+    #[doc = "An event under the node's Nostr identity."] NodeNostrEvent => "node-nostr-event",
+    #[doc = "An event under the agent's Nostr identity."] AgentNostrEvent => "agent-nostr-event",
+    #[doc = "An event under the person's own Nostr identity."] PersonNostrEvent => "person-nostr-event",
+    #[doc = "Possession evidence in addition to separate owner approval."] DevicePossession => "device-possession",
+    #[doc = "Authentication within the session's exact scope."] SessionAuthentication => "session-authentication",
+    #[doc = "A delegated agent identity statement."] AgentIdentity => "agent-identity",
+    #[doc = "Backup encryption only, without owner actions."] BackupEncrypt => "backup-encrypt",
+    #[doc = "Backup decryption only, without owner actions."] BackupDecrypt => "backup-decrypt",
+    #[doc = "A shard receipt, never owner replacement."] GuardianShardReceipt => "guardian-shard-receipt",
+    #[doc = "A recovery statement, never owner replacement."] GuardianRecoveryStatement => "guardian-recovery-statement",
+    #[doc = "A veto acknowledgement, never owner replacement."] GuardianVetoAcknowledgement => "guardian-veto-acknowledgement",
+    #[doc = "Reserved mesh signing use; currently refused."] MeshIdentity => "mesh-identity",
+    #[doc = "Reserved mesh agreement use; currently refused."] MeshAgreement => "mesh-agreement",
 }
 
 /// Exact subject, node, resources and uses requested for a binding.
@@ -105,8 +92,7 @@ pub struct KeyScope {
     pub node: NodeId,
     /// Closed uses; for owner bindings these also bound root delegation scope.
     pub uses: Vec<KeyUse>,
-    /// Descriptive owner operations, never approval capabilities. Only OwnerPasskey
-    /// bindings may carry entries; every delegated scope must carry an empty list.
+    /// Descriptive owner operations, permitted only for OwnerPasskey bindings.
     pub owner_actions: Vec<OwnerOperation>,
     /// Exact resource names; an empty list denotes no resources, never a wildcard.
     pub resources: Vec<String>,
@@ -188,7 +174,18 @@ pub fn bind_key<T: AuthorityTxn + ?Sized>(
     approval: VerifiedProof,
     request: KeyBindingRequest,
 ) -> Result<AuthorityRecord> {
+    bind_key_body(txn, approval, request, None)
+}
+fn bind_key_body<T: AuthorityTxn + ?Sized>(
+    txn: &mut T,
+    approval: VerifiedProof,
+    request: KeyBindingRequest,
+    person_epoch: Option<u32>,
+) -> Result<AuthorityRecord> {
     validate_request(&request)?;
+    if (request.role == KeyRole::PersonNostr) != person_epoch.is_some() {
+        return Err(canon::codes::AUMLOK_PERSON_NOSTR_EPOCH_REQUIRED);
+    }
     let context = txn.authority_append_context(&approval)?;
     if request.epoch != context.authority.epoch || request.operation_id != context.operation_id {
         return Err(refuse("key-context"));
@@ -247,17 +244,15 @@ pub fn bind_key<T: AuthorityTxn + ?Sized>(
     {
         return Err(refuse("owner-key-mismatch"));
     }
-    let body = request_value(&request)?;
+    let (domain, body) = match person_epoch {
+        Some(epoch) => (
+            person_nostr::BINDING_DOMAIN,
+            person_nostr::binding_value(&request, epoch)?,
+        ),
+        None => (KEY_BINDING_DOMAIN, request_value(&request)?),
+    };
     let target = format!("aumlok:key:{}", request.key_id.0);
-    append_change(
-        txn,
-        approval,
-        context,
-        body,
-        KEY_BINDING_DOMAIN,
-        &target,
-        request.epoch,
-    )
+    append_change(txn, approval, context, body, domain, &target, request.epoch)
 }
 
 /// Revoke an existing binding under a fresh exact-byte owner approval.
@@ -280,10 +275,8 @@ pub fn revoke_key<T: AuthorityTxn + ?Sized>(
     {
         return Err(refuse("key-revoked-or-future"));
     }
-    if matches!(
-        binding.request.role,
-        KeyRole::OwnerPasskey | KeyRole::Device
-    ) {
+    let role = binding.request.role;
+    if matches!(role, KeyRole::OwnerPasskey | KeyRole::Device) {
         return Err(refuse("membership-transition-required"));
     }
     if binding.request.scope.subject != approval.authorization().subject
@@ -366,53 +359,6 @@ pub(crate) fn version_json(version: &AuthorityVersion) -> Result<Value> {
         ),
     ])
 }
-const ROLES: &[(KeyRole, &str)] = &[
-    (KeyRole::OwnerPasskey, "owner-passkey"),
-    (KeyRole::IdentityRoot, "identity-root"),
-    (KeyRole::Operational, "operational"),
-    (KeyRole::Device, "device"),
-    (KeyRole::Session, "session"),
-    (KeyRole::Agent, "agent"),
-    (KeyRole::Node, "node"),
-    (KeyRole::NodeNostr, "node-nostr"),
-    (KeyRole::AgentNostr, "agent-nostr"),
-    (KeyRole::GuardianShardHolder, "guardian-shard-holder"),
-    (KeyRole::GuardianRecovery, "guardian-recovery"),
-    (KeyRole::GuardianVeto, "guardian-veto"),
-    (KeyRole::BackupEncryption, "backup-encryption"),
-    (KeyRole::AuraSigning, "aura-signing"),
-    (KeyRole::DeviceMeshIdentity, "device-mesh-identity"),
-    (KeyRole::DeviceMeshAgreement, "device-mesh-agreement"),
-];
-const USES: &[(KeyUse, &str)] = &[
-    (KeyUse::IdentityStatement, "identity-statement"),
-    (KeyUse::AuraRecord, "aura-record"),
-    (KeyUse::NodeNostrEvent, "node-nostr-event"),
-    (KeyUse::AgentNostrEvent, "agent-nostr-event"),
-    (KeyUse::DevicePossession, "device-possession"),
-    (KeyUse::SessionAuthentication, "session-authentication"),
-    (KeyUse::AgentIdentity, "agent-identity"),
-    (KeyUse::BackupEncrypt, "backup-encrypt"),
-    (KeyUse::BackupDecrypt, "backup-decrypt"),
-    (KeyUse::GuardianShardReceipt, "guardian-shard-receipt"),
-    (KeyUse::GuardianRecoveryStatement, "guardian-recovery-statement"),
-    (KeyUse::GuardianVetoAcknowledgement, "guardian-veto-acknowledgement"),
-    (KeyUse::MeshIdentity, "mesh-identity"),
-    (KeyUse::MeshAgreement, "mesh-agreement"),
-];
-fn role_name(role: KeyRole) -> Result<&'static str> {
-    ROLES
-        .iter()
-        .find(|(r, _)| *r == role)
-        .map(|(_, n)| *n)
-        .ok_or(refuse("key-role"))
-}
-fn use_name(purpose: KeyUse) -> Result<&'static str> {
-    USES.iter()
-        .find(|(u, _)| *u == purpose)
-        .map(|(_, n)| *n)
-        .ok_or(refuse("key-use"))
-}
 fn unique<T: PartialEq>(items: &[T]) -> bool {
     items
         .iter()
@@ -457,8 +403,11 @@ pub(crate) fn scope_attenuates(child: &KeyScope, parent: &KeyScope) -> Result<()
 }
 pub(crate) fn scope_json(scope: &KeyScope) -> Result<Value> {
     validate_scope(scope)?;
-    let uses = scope.uses.iter().map(|value| text(use_name(*value)?));
-    let actions = scope.owner_actions.iter().map(|value| text(value.wire_name()));
+    let uses = scope.uses.iter().map(|value| text(value.wire_name()));
+    let actions = scope
+        .owner_actions
+        .iter()
+        .map(|value| text(value.wire_name()));
     object([
         ("subject", text(scope.subject)?),
         ("node", text(scope.node)?),
@@ -480,7 +429,7 @@ fn role_use(role: KeyRole, purpose: KeyUse) -> bool {
     use KeyUse as U;
     match role {
         R::IdentityRoot | R::Node => purpose == U::IdentityStatement,
-        R::Operational => matches!(
+        R::Operational | R::Session => matches!(
             purpose,
             U::IdentityStatement | U::SessionAuthentication | U::AgentIdentity
         ),
@@ -491,13 +440,10 @@ fn role_use(role: KeyRole, purpose: KeyUse) -> bool {
                 | U::AgentIdentity
                 | U::IdentityStatement
         ),
-        R::Session => matches!(
-            purpose,
-            U::SessionAuthentication | U::AgentIdentity | U::IdentityStatement
-        ),
         R::Agent => matches!(purpose, U::AgentIdentity | U::IdentityStatement),
         R::NodeNostr => purpose == U::NodeNostrEvent,
         R::AgentNostr => purpose == U::AgentNostrEvent,
+        R::PersonNostr => purpose == U::PersonNostrEvent,
         R::GuardianShardHolder => purpose == U::GuardianShardReceipt,
         R::GuardianRecovery => purpose == U::GuardianRecoveryStatement,
         R::GuardianVeto => purpose == U::GuardianVetoAcknowledgement,
@@ -531,7 +477,7 @@ pub(crate) fn validate_request(request: &KeyBindingRequest) -> Result<()> {
             }
             let permitted = match role {
                 R::OwnerPasskey => matches!(algorithm, A::Ed25519 | A::EcdsaP256Sha256),
-                R::NodeNostr | R::AgentNostr => algorithm == A::Secp256k1Schnorr,
+                R::NodeNostr | R::AgentNostr | R::PersonNostr => algorithm == A::Secp256k1Schnorr,
                 R::DeviceMeshAgreement => algorithm == A::X25519,
                 R::BackupEncryption => false,
                 _ => algorithm == A::Ed25519,
@@ -544,19 +490,21 @@ pub(crate) fn validate_request(request: &KeyBindingRequest) -> Result<()> {
         _ => Err(refuse("key-material")),
     }
 }
+fn ed25519_public(key: &PublicKey) -> Result<ed25519_dalek::VerifyingKey> {
+    let bytes = key
+        .bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| refuse("public-key"))?;
+    ed25519_dalek::VerifyingKey::from_bytes(bytes).map_err(|_| refuse("public-key"))
+}
 fn validate_public_key(key: &PublicKey) -> Result<()> {
     if key.v != 1 {
         return Err(refuse("key-version"));
     }
     match key.algorithm {
         AlgorithmId::Ed25519 => {
-            let bytes: &[u8; 32] = key
-                .bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| refuse("public-key"))?;
-            let key =
-                ed25519_dalek::VerifyingKey::from_bytes(bytes).map_err(|_| refuse("public-key"))?;
+            let key = ed25519_public(key)?;
             if key.is_weak() {
                 return Err(refuse("public-key"));
             }
@@ -566,11 +514,8 @@ fn validate_public_key(key: &PublicKey) -> Result<()> {
                 .map_err(|_| refuse("public-key"))?;
         }
         AlgorithmId::Secp256k1Schnorr => {
-            k256::schnorr::VerifyingKey::from_bytes(
-                &k256::FieldBytes::try_from(key.bytes.as_slice())
-                    .map_err(|_| refuse("public-key"))?,
-            )
-            .map_err(|_| refuse("public-key"))?;
+            k256::schnorr::VerifyingKey::from_slice(&key.bytes)
+                .map_err(|_| refuse("public-key"))?;
         }
         AlgorithmId::X25519 if key.bytes.len() == 32 && key.bytes.iter().any(|v| *v != 0) => {}
         _ => return Err(refuse("key-algorithm")),
@@ -602,7 +547,7 @@ pub(crate) fn request_value(request: &KeyBindingRequest) -> Result<Value> {
         ("v", number(request.v.into())?),
         ("algorithm", text(request.algorithm.wire_name())?),
         ("key_id", text(request.key_id.0)?),
-        ("role", text(role_name(request.role)?)?),
+        ("role", text(request.role.wire_name())?),
         ("material", material),
         ("scope", scope_json(&request.scope)?),
         ("epoch", number(request.epoch)?),
@@ -637,13 +582,7 @@ pub(crate) fn verify_signature_component<T: AuthorityTxn + ?Sized>(
     use signature::Verifier;
     match key.algorithm {
         AlgorithmId::Ed25519 => {
-            let raw: &[u8; 32] = key
-                .bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| refuse("public-key"))?;
-            let verifier =
-                ed25519_dalek::VerifyingKey::from_bytes(raw).map_err(|_| refuse("public-key"))?;
+            let verifier = ed25519_public(key)?;
             let sig = ed25519_dalek::Signature::from_slice(&signature.bytes)
                 .map_err(|_| refuse("signature"))?;
             verifier
@@ -660,11 +599,8 @@ pub(crate) fn verify_signature_component<T: AuthorityTxn + ?Sized>(
                 .map_err(|_| refuse("signature"))?;
         }
         AlgorithmId::Secp256k1Schnorr => {
-            let verifier = k256::schnorr::VerifyingKey::from_bytes(
-                &k256::FieldBytes::try_from(key.bytes.as_slice())
-                    .map_err(|_| refuse("public-key"))?,
-            )
-            .map_err(|_| refuse("public-key"))?;
+            let verifier = k256::schnorr::VerifyingKey::from_slice(&key.bytes)
+                .map_err(|_| refuse("public-key"))?;
             let sig = k256::schnorr::Signature::try_from(signature.bytes.as_slice())
                 .map_err(|_| refuse("signature"))?;
             verifier
@@ -856,8 +792,18 @@ pub(crate) fn load_binding<T: AuthorityTxn + ?Sized>(
         .authority_state("aumlok.key-binding", &key.0.to_string())?
         .ok_or(refuse("key-missing"))?;
     exact_fields(&value, &["request", "version", "record_hash"])?;
+    let stored_request = field(&value, "request")?;
+    let request = if stored_request.get("schema").is_some() {
+        person_nostr::parse_binding(stored_request)?.binding
+    } else {
+        let request = parse_request(stored_request)?;
+        if request.role == KeyRole::PersonNostr {
+            return Err(canon::codes::AUMLOK_PERSON_NOSTR_EPOCH_REQUIRED);
+        }
+        request
+    };
     let binding = KeyBinding {
-        request: parse_request(field(&value, "request")?)?,
+        request,
         version: parse_version(field(&value, "version")?)?,
         record_hash: Digest32::from_hex(value_text(field(&value, "record_hash")?)?)?,
     };
@@ -916,7 +862,9 @@ pub(crate) fn append_change<T: AuthorityTxn + ?Sized>(
     }
     let context = current;
     let now = checked_time(context.at)?;
-    let bounded = if domain == crate::devices::DEVICE_APPROVAL_DOMAIN {
+    let bounded = if domain == crate::devices::DEVICE_APPROVAL_DOMAIN
+        || domain == person_nostr::BINDING_DOMAIN
+    {
         field(&body, "body")?
     } else {
         &body

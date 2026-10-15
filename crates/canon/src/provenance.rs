@@ -12,6 +12,17 @@ pub struct Npub {
 }
 
 impl Npub {
+    /// Encode public bytes using the pinned Bech32 primitive, without asserting curve membership.
+    pub fn encode_key_bytes(bytes: [u8; 32]) -> Result<Self> {
+        let prefix = bech32::Hrp::parse("npub").map_err(|_| crate::codes::ID_INVALID)?;
+        let encoded =
+            bech32::encode::<bech32::Bech32>(prefix, &bytes).map_err(|_| crate::codes::ID_INVALID)?;
+        Ok(Self {
+            algorithm: AlgorithmId::Secp256k1Schnorr,
+            encoded,
+        })
+    }
+
     /// Encode 32 public-key bytes as canonical lowercase NIP-19 Bech32, tagged
     /// `Secp256k1Schnorr`. This checks representation by construction, not curve
     /// membership, contact approval or owner authority.

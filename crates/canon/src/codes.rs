@@ -28,6 +28,8 @@ macro_rules! registry {
 }
 
 registry! {
+    AUMLOK_PERSON_NOSTR_EPOCH_REQUIRED => ("aumlok", "person-nostr-epoch-required", "A personal Nostr binding must record its rotation epoch in the versioned wrapper."),
+    AUMLOK_PERSON_NOSTR_OUT_OF_RANGE => ("aumlok", "person-nostr-out-of-range", "The derived personal Nostr scalar is zero or outside the secp256k1 order."),
     CANON_AUTHORIZATION_STATE_UNAVAILABLE => ("canon", "authorization-state-unavailable", "The authority transaction cannot establish live authorization state."),
     CANON_STANDING_REVOCATION_UNAVAILABLE => ("canon", "standing-revocation-unavailable", "The authority transaction has no standing-permission revocation adapter."),
     GATE_STANDING_ACTION => ("gate", "standing-action", "Standing permission permits only a routine Apply action."),
