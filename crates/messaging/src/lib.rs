@@ -53,12 +53,22 @@ pub fn contact_record(npub: &str, label: &str, add: bool) -> Result<serde_json::
 }
 
 /// The exact record a send card approves; the content is sealed until applied.
-pub fn send_record(store: &dyn Store, npub: &str, content: &str, seal: &dyn Fn(&[u8], &[u8]) -> Result<Vec<u8>, Refusal>) -> Result<serde_json::Value, Refusal> {
+pub fn send_record(
+    store: &dyn Store,
+    npub: &str,
+    content: &str,
+    seal: &dyn Fn(&[u8], &[u8]) -> Result<Vec<u8>, Refusal>,
+) -> Result<serde_json::Value, Refusal> {
     todo!("brick #71")
 }
 
 /// Take one gift wrap from a relay: only from an approved contact, addressed to this node, never replayed.
-pub fn receive(store: &mut dyn Store, node_key: &nostr::SecretKey, event: &nostr::event::Event, now: u64) -> Result<(), Refusal> {
+pub fn receive(
+    store: &mut dyn Store,
+    node_key: &nostr::SecretKey,
+    event: &nostr::event::Event,
+    now: u64,
+) -> Result<(), Refusal> {
     todo!("brick #71")
 }
 

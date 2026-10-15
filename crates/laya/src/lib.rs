@@ -55,7 +55,15 @@ pub const STANDING_TARGET: &str = "gate/permission";
 pub const MAX_STANDING_MS: i64 = 86_400_000;
 
 /// Decide whether a proposal pops up. Protected and risky targets always pop up.
-pub fn triage(mode: Mode, risk: Risk, target: &str, kind: &str, standing: Option<&StandingPermission>, used: u32, now_ms: i64) -> Verdict {
+pub fn triage(
+    mode: Mode,
+    risk: Risk,
+    target: &str,
+    kind: &str,
+    standing: Option<&StandingPermission>,
+    used: u32,
+    now_ms: i64,
+) -> Verdict {
     todo!("brick #36")
 }
 
