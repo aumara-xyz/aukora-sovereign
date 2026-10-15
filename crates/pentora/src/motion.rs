@@ -5,6 +5,7 @@ use crate::fingerprint::{pentora_expand, Expansion, FingerprintTrit, TRIT_COUNT}
 use crate::snapshot::{absence_text, source_name, AuraDisplaySnapshot};
 use crate::Geometry;
 use canon::{digest::Digest32, Result};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const TRANSITION_MS: u64 = 400;
 pub const SETTLE_MS: u64 = 1_200;
@@ -45,12 +46,19 @@ struct Transition {
     changed_head: bool,
 }
 
-/// Only this display's latest observation ticket can publish or fail its frame.
+/// Each display takes its own number, so a ticket is honoured by the display that issued it.
+static NEXT_DISPLAY: AtomicU64 = AtomicU64::new(1);
+
+/// Only the latest ticket the issuing display handed out can publish or fail its frame.
 #[derive(Debug, Eq, PartialEq)]
-pub struct ObservationTicket(u64);
+pub struct ObservationTicket {
+    display: u64,
+    generation: u64,
+}
 
 #[derive(Debug)]
 pub struct FingerprintDisplay {
+    id: u64,
     generation: u64,
     pending: bool,
     transition: Option<Transition>,
@@ -60,6 +68,7 @@ impl FingerprintDisplay {
     pub fn new() -> Result<Self> {
         Geometry::pinned()?;
         Ok(Self {
+            id: NEXT_DISPLAY.fetch_add(1, Ordering::Relaxed),
             generation: 0,
             pending: false,
             transition: None,
@@ -75,7 +84,10 @@ impl FingerprintDisplay {
         };
         self.generation = next;
         self.pending = true;
-        Ok(ObservationTicket(next))
+        Ok(ObservationTicket {
+            display: self.id,
+            generation: next,
+        })
     }
 
     pub fn complete(
@@ -139,7 +151,7 @@ impl FingerprintDisplay {
     }
 
     fn require_ticket(&self, ticket: ObservationTicket) -> Result<()> {
-        if !self.pending || ticket.0 != self.generation {
+        if !self.pending || ticket.display != self.id || ticket.generation != self.generation {
             return Err(crate::refusal("stale-observation"));
         }
         Ok(())

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Browser ABI. Offsets are accepted only for buffers owned by this WASM instance.
-
-#![allow(unsafe_code)]
+//!
+//! The root buffer holds the 32 raw bytes of an Aura root: not hexadecimal text, and not the
+//! display digest, which `pentora_expand` computes itself.
+//!
+//! This file has no `unsafe` block. The `unsafe_code` lint also rejects `#[no_mangle]`, so only
+//! the four exports below carry an `allow`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -36,6 +40,7 @@ thread_local! {
 }
 
 /// Reserve exactly 32 zeroed bytes. Zero means the instance buffer limit was reached.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn pentora_allocate_root32() -> u32 {
     BUFFERS.with(|buffers| {
@@ -50,8 +55,10 @@ pub extern "C" fn pentora_allocate_root32() -> u32 {
     })
 }
 
-/// Borrow an allocated root, returning a descriptor or zero on unknown allocation.
-/// Successful data is digest32 followed by 110 raw trit bytes, with no terminator.
+/// Borrow an allocated root, returning a descriptor or zero on unknown allocation or when
+/// `MAX_LIVE_BUFFERS` results are unreleased. Successful data is the 32-byte display digest
+/// followed by 110 raw trit bytes, each 0, 1 or 2, with no terminator.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn pentora_expand(root32: u32) -> u32 {
     BUFFERS.with(|buffers| {
@@ -86,12 +93,14 @@ pub extern "C" fn pentora_expand(root32: u32) -> u32 {
 }
 
 /// Release the exact root allocation once; unknown or already freed offsets return one.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn pentora_release_root32(root32: u32) -> u32 {
     BUFFERS.with(|buffers| u32::from(buffers.borrow_mut().roots.remove(&root32).is_none()))
 }
 
 /// Release the descriptor and its output without reading browser-controlled pointers.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn pentora_release_result(descriptor: u32) -> u32 {
     BUFFERS.with(|buffers| {

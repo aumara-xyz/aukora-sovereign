@@ -13,6 +13,9 @@ pub const GEOMETRY_SHA256: &str =
     "96b27c9b4de41cd961612be5b1e88d40e973a2fded16bd320415b3e15e3b8c61";
 pub const PINNED_GEOMETRY: &[u8] = include_bytes!("../vectors/geometry_index_table_v1.json");
 
+// One trit for each non-centre cell, and for no other.
+const _: () = assert!(crate::fingerprint::TRIT_COUNT == POINT_COUNT - 1);
+
 /// A non-centre global cell index. It names a position, never a state or grant.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct CellIndex(u8);
@@ -37,6 +40,18 @@ impl CellIndex {
         } else {
             global
         }
+    }
+
+    /// The cell that trit `digit` is drawn on; the inverse of `digit`.
+    pub fn from_digit(digit: usize) -> Result<Self> {
+        if digit >= POINT_COUNT - 1 {
+            return Err(crate::refusal("cell-index"));
+        }
+        Self::new(if digit >= CENTRE_INDEX {
+            digit + 1
+        } else {
+            digit
+        })
     }
 }
 
@@ -107,9 +122,15 @@ impl Geometry {
             }
             for edge in array(&cube["edges_global_indices"], 12)? {
                 let ends = array(edge, 2)?;
-                let a = CellIndex::new(index(&ends[0])?)?;
-                let b = CellIndex::new(index(&ends[1])?)?;
-                if a >= b
+                // The table lists some edges high end first; the geometry keeps the lower cell first.
+                let first = CellIndex::new(index(&ends[0])?)?;
+                let second = CellIndex::new(index(&ends[1])?)?;
+                let (a, b) = if first <= second {
+                    (first, second)
+                } else {
+                    (second, first)
+                };
+                if a == b
                     || !cells.contains(&a.global())
                     || !cells.contains(&b.global())
                     || !edges.insert([a, b])
