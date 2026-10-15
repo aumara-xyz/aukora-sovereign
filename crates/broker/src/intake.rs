@@ -2,7 +2,12 @@
 //! Intake observations never grant spending authority. The runner is supervisor supplied.
 
 use crate::{identity::ModelName, provider::ModelSource};
-use canon::{codes, digest::Digest32, Result};
+use canon::{
+    codes,
+    digest::Digest32,
+    json::{SafeInteger, Value},
+    Result,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
@@ -10,6 +15,38 @@ pub struct Candidate {
     pub source: ModelSource,
     pub cage_digest: Digest32,
     pub release_digest: Digest32,
+}
+
+impl Candidate {
+    fn body(&self) -> Result<Value> {
+        let source = match self.source {
+            ModelSource::Hosted(provider) => Value::object(vec![(
+                "provider".into(),
+                Value::text(provider.name().into())?,
+            )])?,
+            ModelSource::Local { artifact } => Value::object(vec![(
+                "artifact".into(),
+                Value::text(artifact.to_string())?,
+            )])?,
+        };
+        Value::object(vec![
+            ("model".into(), Value::text(self.model.as_str().into())?),
+            ("source".into(), source),
+            (
+                "cage_digest".into(),
+                Value::text(self.cage_digest.to_string())?,
+            ),
+            (
+                "release_digest".into(),
+                Value::text(self.release_digest.to_string())?,
+            ),
+        ])
+    }
+
+    /// The canonical candidate binds provider or local artifact, cage and release.
+    pub fn commitment(&self) -> Result<Digest32> {
+        Ok(Digest32::sha256(&self.body()?.canonical_bytes()))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +64,39 @@ pub struct IntakePolicy {
     pub required_heldout: u32,
 }
 
+impl IntakeChallenge {
+    fn body(&self) -> Result<Value> {
+        let policy = Value::object(vec![
+            (
+                "corpus_root".into(),
+                Value::text(self.policy.corpus_root.to_string())?,
+            ),
+            (
+                "required_active".into(),
+                number(u64::from(self.policy.required_active))?,
+            ),
+            (
+                "required_heldout".into(),
+                number(u64::from(self.policy.required_heldout))?,
+            ),
+        ])?;
+        Value::object(vec![
+            ("candidate".into(), self.candidate.body()?),
+            (
+                "nonce".into(),
+                Value::text(Digest32::from_bytes(self.nonce).to_string())?,
+            ),
+            ("generation".into(), number(self.generation)?),
+            ("policy".into(), policy),
+        ])
+    }
+
+    /// Binds one slot generation and fresh nonce to the full admission policy.
+    pub fn commitment(&self) -> Result<Digest32> {
+        Ok(Digest32::sha256(&self.body()?.canonical_bytes()))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CageAttackReport {
     pub challenge: IntakeChallenge,
@@ -40,6 +110,53 @@ pub struct CageAttackReport {
     pub report_commitment: Digest32,
 }
 
+impl CageAttackReport {
+    /// Binds the runner's evidence digest to every observation checked by the slot.
+    pub fn commitment(&self) -> Result<Digest32> {
+        let body = Value::object(vec![
+            ("challenge".into(), self.challenge.body()?),
+            (
+                "completed_active".into(),
+                number(u64::from(self.completed_active))?,
+            ),
+            (
+                "completed_heldout".into(),
+                number(u64::from(self.completed_heldout))?,
+            ),
+            ("failures".into(), number(u64::from(self.failures))?),
+            (
+                "guest_grants_at_start".into(),
+                number(u64::from(self.guest_grants_at_start))?,
+            ),
+            (
+                "guest_grants_at_end".into(),
+                number(u64::from(self.guest_grants_at_end))?,
+            ),
+            (
+                "guest_was_driven_by_candidate".into(),
+                Value::boolean(self.guest_was_driven_by_candidate),
+            ),
+            (
+                "isolated_cgroup".into(),
+                Value::boolean(self.isolated_cgroup),
+            ),
+            (
+                "report_commitment".into(),
+                Value::text(self.report_commitment.to_string())?,
+            ),
+        ])?;
+        Ok(Digest32::sha256(&body.canonical_bytes()))
+    }
+}
+
+fn number(value: u64) -> Result<Value> {
+    i64::try_from(value)
+        .map_err(|_| codes::BROKER_STATE)
+        .and_then(SafeInteger::new)
+        .map(Value::integer)
+}
+
+/// A supervisor-owned capability, never a report deserialized from guest data.
 pub trait IntakeRunner {
     fn attack_cage(&mut self, challenge: &IntakeChallenge) -> Result<CageAttackReport>;
 }
@@ -120,10 +237,11 @@ impl ModelSlot {
         {
             return Err(codes::BROKER_PROVIDER_UNAVAILABLE);
         }
+        let intake_commitment = report.commitment()?;
         self.admitted = Some(AdmittedModel {
             candidate: challenge.candidate,
             generation: self.generation,
-            intake_commitment: report.report_commitment,
+            intake_commitment,
         });
         self.admitted.as_ref().ok_or(codes::BROKER_STATE)
     }

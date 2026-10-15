@@ -13,3 +13,5 @@ pub mod posture;
 pub mod ratchet;
 pub mod registry;
 pub mod thymus;
+
+pub mod herd;

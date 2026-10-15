@@ -53,6 +53,17 @@ impl PairingEvidence {
     pub const fn source(&self) -> CaptureSource {
         self.source
     }
+
+    /// Compare a retained contact mark with this verified receipt and channel.
+    pub fn check_retained_label(&self, receipt: Digest32, label: &str) -> Result<()> {
+        if receipt != self.receipt || label != self.label.as_str() {
+            return Err(crate::Refusal {
+                organ: "copresence",
+                reason: "pairing-label-mismatch",
+            });
+        }
+        Ok(())
+    }
 }
 
 /// A local screen capture and signed screen method are both required by the
@@ -70,17 +81,13 @@ pub fn from_hardened(
         });
     }
     let method = receipt.body().context.exchange.method;
-    let label = match source {
-        CaptureSource::RemoteChannel => PairingLabel::Remote,
-        CaptureSource::RelayedChannel => PairingLabel::Relayed,
-        CaptureSource::LocalScreenCamera | CaptureSource::ImportedReceipt => match method {
-            v1::Method::Remote => PairingLabel::Remote,
-            v1::Method::Relayed => PairingLabel::Relayed,
-            v1::Method::ScreenToScreen if source == CaptureSource::LocalScreenCamera => {
-                PairingLabel::MetInPerson
-            }
-            v1::Method::ScreenToScreen => PairingLabel::UnverifiedMethod,
-        },
+    let label = match (source, method) {
+        (CaptureSource::RelayedChannel, _) | (_, v1::Method::Relayed) => PairingLabel::Relayed,
+        (CaptureSource::RemoteChannel, _) | (_, v1::Method::Remote) => PairingLabel::Remote,
+        (CaptureSource::LocalScreenCamera, v1::Method::ScreenToScreen) => PairingLabel::MetInPerson,
+        (CaptureSource::ImportedReceipt, v1::Method::ScreenToScreen) => {
+            PairingLabel::UnverifiedMethod
+        }
     };
     Ok(PairingEvidence {
         label,
