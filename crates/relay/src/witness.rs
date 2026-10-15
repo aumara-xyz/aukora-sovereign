@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Aura head witness contracts; signing, parsing and comparison remain row-54 stubs.
+//! Canonical Aura head witnesses, bound to authenticated local expectations.
 
 use crate::{
     auth::AuthContext,
-    client::{Client, PublishAck},
+    client::{Client, Filter, PublishAck},
 };
-use canon::{digest::Digest32, ids::NodeId};
+use canon::{digest::Digest32, domain::RFC6962_LEAF_CONVENTION, ids::NodeId};
 use nostr::{identity::EventDraft, Event, PublicKey, VerifiedEvent};
 
 /// Pinned replaceable-event kind used by the existing head witness format.
@@ -29,15 +29,71 @@ pub struct RetainedHeadV1 {
 }
 
 impl RetainedHeadV1 {
-    /// Row-54 parser for the exact C3 canonical shape; currently panics.
-    pub fn parse(_bytes: &[u8]) -> crate::Result<Self> {
-        todo!("row 54")
+    /// Parse only the exact canonical six-key C3 object.
+    pub fn parse(bytes: &[u8]) -> crate::Result<Self> {
+        if bytes.len() > 512 {
+            return Err(malformed());
+        }
+        let text = core::str::from_utf8(bytes).map_err(|_| malformed())?;
+        let rest = text.strip_prefix("{\"hash\":\"").ok_or_else(malformed)?;
+        let (hash, rest) = rest
+            .split_once("\",\"leafConvention\":\"")
+            .ok_or_else(malformed)?;
+        let (leaf_convention, rest) = rest.split_once("\",\"root\":\"").ok_or_else(malformed)?;
+        let (root, rest) = rest.split_once("\",\"schema\":\"").ok_or_else(malformed)?;
+        let (schema, rest) = rest.split_once("\",\"sequence\":").ok_or_else(malformed)?;
+        let (sequence, tree_size) = rest.split_once(",\"treeSize\":").ok_or_else(malformed)?;
+        if leaf_convention != RFC6962_LEAF_CONVENTION || schema != RETAINED_HEAD_SCHEMA {
+            return Err(malformed());
+        }
+        let head = Self {
+            sequence: parse_size(sequence)?,
+            hash: Digest32::from_hex(hash).map_err(|_| malformed())?,
+            tree_size: parse_size(tree_size.strip_suffix('}').ok_or_else(malformed)?)?,
+            root: Digest32::from_hex(root).map_err(|_| malformed())?,
+        };
+        head.validate()?;
+        Ok(head)
     }
 
-    /// Row-54 encoder for the six-key C3 retained head; currently panics.
+    /// Encode the six frozen keys in C1 order, with no local context fields.
     pub fn canonical_bytes(&self) -> crate::Result<Vec<u8>> {
-        todo!("row 54")
+        self.validate()?;
+        Ok(format!(
+            "{{\"hash\":\"{}\",\"leafConvention\":\"{}\",\"root\":\"{}\",\"schema\":\"{}\",\"sequence\":{},\"treeSize\":{}}}",
+            self.hash,
+            RFC6962_LEAF_CONVENTION,
+            self.root,
+            RETAINED_HEAD_SCHEMA,
+            self.sequence,
+            self.tree_size,
+        )
+        .into_bytes())
     }
+
+    fn validate(&self) -> crate::Result<()> {
+        if self.sequence == 0
+            || self.sequence > canon::json::MAX_SAFE_INTEGER as u64
+            || self.sequence != self.tree_size
+        {
+            return Err(malformed());
+        }
+        Ok(())
+    }
+}
+
+fn malformed() -> canon::Refusal {
+    canon::Refusal {
+        organ: "relay",
+        reason: "witness-malformed",
+    }
+}
+
+fn parse_size(text: &str) -> crate::Result<u64> {
+    if text.is_empty() || text.starts_with('0') || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(malformed());
+    }
+    text.parse().map_err(|_| malformed())
 }
 
 /// Local comparison context, never added as keys to the v1 witness event.
@@ -60,11 +116,35 @@ pub struct HeadWitness {
 }
 
 impl HeadWitness {
-    /// Row-54 verification boundary; currently panics.
-    /// The implementation must verify the signature, sole exact `d` tag, kind,
-    /// canonical six-key head, delegated signer and complete expected head.
-    pub fn verify(_event: &Event, _expected: &HeadExpectation) -> crate::Result<Self> {
-        todo!("row 54")
+    /// Verify the signature, exact sole `d` tag, kind, canonical head and signer
+    /// against the complete head from the caller's authenticated local record.
+    pub fn verify(event: &Event, expected: &HeadExpectation) -> crate::Result<Self> {
+        expected.head.validate()?;
+        let verified = event.clone().verify()?;
+        if event.pubkey != expected.signer {
+            return Err(canon::Refusal {
+                organ: "relay",
+                reason: "witness-binding",
+            });
+        }
+        if event.kind != HEAD_WITNESS_KIND
+            || event.tags.len() != 1
+            || event.tags[0].len() != 2
+            || event.tags[0][0] != "d"
+            || event.tags[0][1] != HEAD_WITNESS_IDENTIFIER
+        {
+            return Err(malformed());
+        }
+        if RetainedHeadV1::parse(event.content.as_bytes())? != expected.head {
+            return Err(canon::Refusal {
+                organ: "relay",
+                reason: "witness-head",
+            });
+        }
+        Ok(Self {
+            event: verified,
+            expectation: expected.clone(),
+        })
     }
 
     /// Verified event retained behind the witness boundary.
@@ -79,12 +159,29 @@ impl HeadWitness {
 }
 
 /// Compare the bound identity with the local expectation before encoding and
-/// delegated signing. The retained-head encoder remains the row-54 stub.
+/// current-delegation signing.
 pub fn sign_head(
     auth: &mut AuthContext<'_>,
     expected: &HeadExpectation,
     created_at_seconds: u64,
 ) -> crate::Result<VerifiedEvent> {
+    check_binding(auth, expected)?;
+    let content =
+        String::from_utf8(expected.head.canonical_bytes()?).map_err(|_| canon::Refusal {
+            organ: "relay",
+            reason: "witness-malformed",
+        })?;
+    let event = auth.sign(EventDraft {
+        created_at_seconds,
+        kind: HEAD_WITNESS_KIND,
+        tags: vec![vec![String::from("d"), HEAD_WITNESS_IDENTIFIER.to_owned()]],
+        content,
+    })?;
+    HeadWitness::verify(event.event(), expected)?;
+    Ok(event)
+}
+
+fn check_binding(auth: &AuthContext<'_>, expected: &HeadExpectation) -> crate::Result<()> {
     if auth.node() != expected.node
         || auth.epoch() != expected.epoch
         || auth.public_key() != expected.signer
@@ -94,45 +191,75 @@ pub fn sign_head(
             reason: "witness-binding",
         });
     }
-    let content =
-        String::from_utf8(expected.head.canonical_bytes()?).map_err(|_| canon::Refusal {
-            organ: "relay",
-            reason: "witness-malformed",
-        })?;
-    auth.sign(EventDraft {
-        created_at_seconds,
-        kind: HEAD_WITNESS_KIND,
-        tags: vec![vec![String::from("d"), HEAD_WITNESS_IDENTIFIER.to_owned()]],
-        content,
-    })
+    Ok(())
 }
 
-/// Row-54 publication boundary; currently panics. An acknowledgement is not delivery.
+/// Publish a verified witness; an acknowledgement is not delivery.
 pub fn publish_head(
-    _client: &mut Client,
-    _witness: &HeadWitness,
-    _auth: Option<&mut AuthContext<'_>>,
-    _now_seconds: u64,
-    _deadline_ms: u64,
+    client: &mut Client,
+    witness: &HeadWitness,
+    auth: Option<&mut AuthContext<'_>>,
+    now_seconds: u64,
+    deadline_ms: u64,
 ) -> crate::Result<PublishAck> {
-    todo!("row 54")
+    if let Some(context) = auth.as_deref() {
+        check_binding(context, &witness.expectation)?;
+    }
+    client.publish(&witness.event, auth, now_seconds, deadline_ms)
 }
 
 /// Evidence returned by a completed fetch, including absence and rejected candidates.
 pub struct WitnessFetch {
-    /// Independently fetched matching witness; `None` records observed absence only.
+    /// Latest fetched witness if it matches; `None` grants no trust to an older head.
     pub witness: Option<HeadWitness>,
     /// Every candidate rejected for signature, shape, signer or head mismatch.
     pub rejected_candidates: u64,
 }
 
-/// Row-54 bounded fetch and verification boundary; currently panics.
+/// Fetch with exact filters and require a completed query before reporting absence.
 pub fn fetch_head(
-    _client: &mut Client,
-    _expected: &HeadExpectation,
-    _auth: Option<&mut AuthContext<'_>>,
-    _now_seconds: u64,
-    _deadline_ms: u64,
+    client: &mut Client,
+    expected: &HeadExpectation,
+    auth: Option<&mut AuthContext<'_>>,
+    now_seconds: u64,
+    deadline_ms: u64,
 ) -> crate::Result<WitnessFetch> {
-    todo!("row 54")
+    expected.head.validate()?;
+    if let Some(context) = auth.as_deref() {
+        check_binding(context, expected)?;
+    }
+    let filter = Filter {
+        authors: vec![expected.signer],
+        kinds: vec![HEAD_WITNESS_KIND],
+        identifiers: vec![HEAD_WITNESS_IDENTIFIER.to_owned()],
+        ..Filter::default()
+    };
+    let result = client.query(&[filter], auth, now_seconds, deadline_ms)?;
+    if !result.end_of_stored_events {
+        return Err(canon::Refusal {
+            organ: "relay",
+            reason: "witness-incomplete",
+        });
+    }
+    let mut fetch = WitnessFetch {
+        witness: None,
+        rejected_candidates: result.rejected_events,
+    };
+    let mut latest = None;
+    for event in result.events {
+        let incoming = event.event();
+        let key = (incoming.created_at, incoming.id);
+        let is_latest = latest.is_none_or(|(created_at, id)| {
+            key.0 > created_at || (key.0 == created_at && key.1 < id)
+        });
+        let observation = HeadWitness::verify(incoming, expected);
+        if observation.is_err() {
+            fetch.rejected_candidates = fetch.rejected_candidates.saturating_add(1);
+        }
+        if is_latest {
+            latest = Some(key);
+            fetch.witness = observation.ok();
+        }
+    }
+    Ok(fetch)
 }
