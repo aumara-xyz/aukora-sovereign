@@ -387,14 +387,20 @@ impl HttpIngress {
             else {
                 return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
             };
-            let parent = referrer
-                .strip_suffix('/')
-                .filter(|origin| *origin == context.expected_top_origin.as_str())
-                .ok_or(codes::FRONTDOOR_ORIGIN_REFUSED)?;
+            let referrer = referrer
+                .parse::<http::Uri>()
+                .map_err(|_| codes::FRONTDOOR_ORIGIN_REFUSED)?;
+            // Exact authority matching excludes userinfo and explicit ports.
+            if referrer.scheme_str() != Some("https")
+                || referrer.authority().map(|authority| authority.as_str())
+                    != Some(context.expected_top_origin.host())
+            {
+                return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
+            }
             Some(crate::owner_origin::admit_frame_navigation(
                 &context,
                 destination,
-                parent,
+                context.expected_top_origin.as_str(),
             )?)
         } else {
             None
