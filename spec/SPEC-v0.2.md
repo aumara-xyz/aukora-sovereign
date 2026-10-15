@@ -1,3 +1,5 @@
+> **Frozen input to [NORTH-STAR.md](../NORTH-STAR.md), the only plan.** Kept so nothing is lost; never edited, never a plan of its own.
+
 # AUKORA Sovereign — master plan v0.2
 
 **Status:** approved by Peter ("time to rock", 2026-10-14). Nothing is built yet.

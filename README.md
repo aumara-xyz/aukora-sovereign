@@ -5,9 +5,8 @@ Restarted 2026-10-15 from a clean scaffold. The previous repo is frozen, read-on
 when it ran live and the target needs it.
 
 ## Target
-[NORTH-STAR.md](NORTH-STAR.md): what we are building, and the seven milestones Peter watches.
-[MASTER-PLAN.md](MASTER-PLAN.md): how it fits together, the full checklist (58 rows, nothing dropped), who does what,
-and the rules. Waiting for Peter's yes on the scaffold.
+[NORTH-STAR.md](NORTH-STAR.md) is the only plan: what we are building, the seven milestones Peter watches, every
+brick (row number = GitHub issue number), who does what, and the rules. Waiting for Peter's yes on the scaffold.
 
 ## Milestones (only Peter says done)
 1. Fresh node, one link, the whole Spatial app: NOT YET

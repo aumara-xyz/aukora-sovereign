@@ -1,3 +1,5 @@
+> **Frozen input to [NORTH-STAR.md](../NORTH-STAR.md), the only plan.** Kept so nothing is lost; never edited, never a plan of its own.
+
 # Carry list: nothing left behind
 
 Compiled 2026-10-14 from seven read-only sweeps of every older source, merged and deduplicated:

@@ -1,3 +1,5 @@
+> **Frozen input to [NORTH-STAR.md](../NORTH-STAR.md), the only plan.** Kept so nothing is lost; never edited, never a plan of its own.
+
 # Contracts v1 (frozen; issue #1)
 
 Every crate and the guest bridge code against this file. Changing it needs an issue and Claude's merge. **Version every format. Old records never gain authority under a new version.**
