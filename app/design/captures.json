@@ -1,0 +1,9 @@
+{
+  "schema": "aukora-design-captures-v1",
+  "referenceBuild": "3673b98",
+  "status": "unavailable",
+  "files": [],
+  "requiredFaces": ["threads", "sidebar", "lingwa", "live", "zetaharp", "humangraph", "media", "memory", "messages", "documents", "aumlok", "identity", "coherence", "general", "models", "plugins", "presets", "archived"],
+  "requiredStates": ["initial", "loading", "empty", "ready", "refusal", "service-unavailable", "phone"],
+  "requiredLaneWeights": [[0, 0, 3], [0, 1, 2], [0, 2, 1], [0, 3, 0], [1, 0, 2], [1, 1, 1], [1, 2, 0], [2, 0, 1], [2, 1, 0], [3, 0, 0]]
+}

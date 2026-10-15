@@ -1,0 +1,32 @@
+{
+  "id": "coherence",
+  "title": "Aura Coherence",
+  "organ": "gate-aura",
+  "requires": [
+    "gate-aura",
+    "body"
+  ],
+  "menu": {
+    "section": "system",
+    "order": 12
+  },
+  "surface": "./faces/coherence/index.html",
+  "capabilities": {
+    "gate-aura": {
+      "methods": [
+        "head"
+      ],
+      "topics": [
+        "head"
+      ]
+    },
+    "body": {
+      "methods": [
+        "health.snapshot"
+      ],
+      "topics": [
+        "health.snapshot"
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "aukora-design-icons-v1",
+  "viewBox": "0 0 24 24",
+  "paths": {
+    "threads": "M4 5h16v11H9l-5 4V5Z",
+    "apps": "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+    "system": "M5 5h14v14H5zM9 9h6v6H9z",
+    "close": "m6 6 12 12M18 6 6 18",
+    "owner": "M12 3 4 7v5c0 4 8 9 8 9s8-5 8-9V7z"
+  }
+}

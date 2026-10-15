@@ -1,0 +1,21 @@
+{
+  "id": "aumlok",
+  "title": "AUMLOK",
+  "organ": "aumlok",
+  "requires": [
+    "aumlok"
+  ],
+  "menu": {
+    "section": "system",
+    "order": 10
+  },
+  "surface": "./faces/aumlok/index.html",
+  "capabilities": {
+    "aumlok": {
+      "methods": [
+        "status"
+      ],
+      "topics": []
+    }
+  }
+}

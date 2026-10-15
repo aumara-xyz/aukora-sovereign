@@ -1,0 +1,27 @@
+{
+  "id": "threads",
+  "title": "Threads",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "workspace",
+    "order": 0
+  },
+  "surface": "./faces/threads/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [
+        "session.create",
+        "session.open",
+        "session.list",
+        "chat.turn",
+        "model.cancel"
+      ],
+      "topics": [
+        "session.event"
+      ]
+    }
+  }
+}

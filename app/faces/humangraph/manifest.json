@@ -1,0 +1,19 @@
+{
+  "id": "humangraph",
+  "title": "Human Graph",
+  "organ": "network",
+  "requires": [
+    "network"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 5
+  },
+  "surface": "./faces/humangraph/index.html",
+  "capabilities": {
+    "network": {
+      "methods": [],
+      "topics": []
+    }
+  }
+}

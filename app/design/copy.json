@@ -1,0 +1,14 @@
+{
+  "schema": "aukora-design-copy-v1",
+  "appTitle": "AUKORA Sovereign",
+  "appsHeading": "AUKORA APPS",
+  "systemHeading": "SYSTEM",
+  "threadsHeading": "Threads · Auma",
+  "emptySurface": "Choose an app or a System entry.",
+  "waiting": "Waiting for required services",
+  "ownerTitle": "Owner ceremony",
+  "fingerprint": "Aura fingerprint",
+  "health": "Organ health",
+  "undetermined": "Undetermined · verification unavailable",
+  "missingCaptures": "The pilot's build 3673b98 screenshot set has not been supplied. Visual matching is not verified."
+}

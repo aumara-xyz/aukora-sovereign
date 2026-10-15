@@ -1,0 +1,21 @@
+{
+  "id": "plugins",
+  "title": "Plugins",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "system",
+    "order": 15
+  },
+  "surface": "./faces/plugins/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [
+        "settings.plugins"
+      ],
+      "topics": []
+    }
+  }
+}

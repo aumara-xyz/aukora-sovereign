@@ -1,0 +1,24 @@
+{
+  "id": "sidebar",
+  "title": "Sidebar",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "workspace",
+    "order": 1
+  },
+  "surface": "./faces/sidebar/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [
+        "session.list",
+        "session.open"
+      ],
+      "topics": [
+        "session.event"
+      ]
+    }
+  }
+}

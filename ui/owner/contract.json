@@ -1,0 +1,40 @@
+{
+  "schema": "aukora.owner-contract.v1",
+  "entry": "index.ts",
+  "mount": "mountOwner(root, modules)",
+  "configuration": "trusted owner release injects shellOrigin and owner-only modules; no configuration from parent messages or URL",
+  "protocol": "aukora.owner.v1",
+  "frame": "direct child of the configured shell origin only; shell alone creates and navigates the frame",
+  "parent_payload": "route only",
+  "routes": ["/passkey", "/phrase", "/approval/<32 lowercase hex proposal id>", "/claim"],
+  "passkey": {
+    "implementation": "passkey/",
+    "expected_top_origin": "configured shell origin",
+    "authority": "owner passkey over the exact C5 challenge bytes only"
+  },
+  "phrase": {
+    "implementation": "phrase/",
+    "entry_and_derivation": "owner origin only",
+    "minimum_entropy_bits": 41.5,
+    "average_entropy_bits": 43.1,
+    "identity_root": "phrase-sealed random 32-byte secret; subject derives only from this secret",
+    "default_backup": "v2; same credential PRF at original RP ID",
+    "phrase_only_v1": "explicit owner request only",
+    "parent_exports": "none"
+  },
+  "approval": {
+    "implementation": "cards/",
+    "load": "supervisor service by proposal id only",
+    "display": "injective rendering of the exact canonical C6 bytes",
+    "authorization": "supervisor supplies canonical C5 bytes; gate rebuilds and checks them",
+    "parent_supplied_card_or_authorization": false
+  },
+  "witness": {
+    "implementation": "witness/",
+    "interface": "observeVisit(signal)",
+    "schedule": "each mount and each restored browser visit",
+    "alarms": ["rollback", "fork", "unavailable", "undetermined"],
+    "authority": "none; alarms do not enable or disable owner actions"
+  },
+  "claim": { "implementation": "claim/", "status": "reserved" }
+}

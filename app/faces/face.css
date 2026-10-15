@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+:root { color-scheme: dark; font-family: system-ui, sans-serif; color: #e4e9f1; background: #111520; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { padding: 24px; min-width: 0; }
+h1 { font-size: 22px; font-weight: 600; }
+h2 { font-size: 15px; margin-top: 24px; }
+p, label, button, input, select, textarea { font-size: 14px; }
+p { line-height: 1.6; overflow-wrap: anywhere; }
+button, input, select, textarea { color: inherit; background: #1b1f2a; border: 1px solid #3c4659; border-radius: 9px; padding: 10px 14px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #8bc7ff; outline-offset: 3px; }
+form { display: grid; gap: 12px; margin-block: 16px; }
+textarea { resize: vertical; min-height: 100px; width: 100%; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #3c4659; border-radius: 12px; padding: 16px; font-size: 13px; }
+article { border-block-end: 1px solid #333d50; padding-block: 12px; }
+article p { white-space: pre-wrap; }
+ul { list-style: none; padding: 0; display: grid; gap: 8px; }
+li button { width: 100%; text-align: start; }
+canvas { display: block; width: 100%; max-width: 640px; height: auto; }
+[role="status"] { color: #adbad0; }
+[role="alert"] { color: #ff9ba3; }

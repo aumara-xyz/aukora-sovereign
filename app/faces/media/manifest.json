@@ -1,0 +1,19 @@
+{
+  "id": "media",
+  "title": "Media",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 6
+  },
+  "surface": "./faces/media/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [],
+      "topics": []
+    }
+  }
+}

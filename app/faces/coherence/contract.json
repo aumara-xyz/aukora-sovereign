@@ -1,0 +1,27 @@
+{
+  "schema": "aukora-coherence-face-v1",
+  "health": {
+    "input": "FD 4 health.snapshot snapshot_b64 decoded to opaque bytes",
+    "decoder": "HealthDecoder.decode_snapshot; canon health decoder adapter required",
+    "bounds": "1..65536 bytes; 90 private cells and 20 corner cells",
+    "order": "canon CHECKS then CORNERS mapped to the pinned geometry",
+    "states": {
+      "verified": "solid blue",
+      "undetermined": "dim grey; never healthy",
+      "failed": "solid red"
+    },
+    "repairing": "separate presentation set adds a shimmering ring; never changes the evidence cell or v1 snapshot keys",
+    "unavailable": "cleared canvas with an explicit unavailable label"
+  },
+  "fingerprint": {
+    "source": "gate-aura head service returns the current Aura display head as 64 lowercase hex characters",
+    "digest": "sha256(UTF8(pentora.display.v1) || 0x00 || 32 raw head bytes)",
+    "expansion": "PentoraExpansion.pentora_expand takes exactly the 32-byte display digest and returns 110 trits",
+    "digit_order": "least significant base-3 digit first; increasing global cell index excluding 55",
+    "geometry": "crates/pentora/vectors/geometry_index_table_v1.json",
+    "geometry_digest": "GEOMETRY_SHA256 in geometry.ts",
+    "unavailable": "cleared canvas; no JavaScript expansion fallback"
+  },
+  "canvases": ["Health · organ evidence", "Fingerprint · display digest"],
+  "authority": "none"
+}

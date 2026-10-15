@@ -1,0 +1,22 @@
+{
+  "id": "memory",
+  "title": "Memory",
+  "organ": "kira",
+  "requires": [
+    "kira"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 7
+  },
+  "surface": "./faces/memory/index.html",
+  "capabilities": {
+    "kira": {
+      "methods": [
+        "memory.list",
+        "memory.recall"
+      ],
+      "topics": []
+    }
+  }
+}

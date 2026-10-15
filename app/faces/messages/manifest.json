@@ -1,0 +1,19 @@
+{
+  "id": "messages",
+  "title": "Messages",
+  "organ": "network",
+  "requires": [
+    "network"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 8
+  },
+  "surface": "./faces/messages/index.html",
+  "capabilities": {
+    "network": {
+      "methods": [],
+      "topics": []
+    }
+  }
+}

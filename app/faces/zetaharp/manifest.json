@@ -1,0 +1,19 @@
+{
+  "id": "zetaharp",
+  "title": "Zeta Harp",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 4
+  },
+  "surface": "./faces/zetaharp/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [],
+      "topics": []
+    }
+  }
+}

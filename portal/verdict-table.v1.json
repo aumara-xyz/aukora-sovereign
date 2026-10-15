@@ -1,0 +1,28 @@
+{
+  "schema": "aukora.copresence-verdict-table.v1",
+  "domain": "copresence.v0",
+  "authority": "none",
+  "receipt_directory": "crates/copresence/vectors/receipts/",
+  "intent_directory": "crates/copresence/vectors/buzz-seam-fixtures/",
+  "approved_text": "crates/copresence/vectors/buzz-seam-fixtures/TEXT.txt",
+  "approved_text_transform": "remove one trailing LF",
+  "receipts": [
+    { "file": "genuine.json", "accepted": true, "code": null, "sha256": "5a5862ff5ae658e583d12733ad1d22255117d5bb70626359975ac776219674e9" },
+    { "file": "audio_genuine.json", "accepted": true, "code": null, "sha256": "6cb76b57ccbd7f1a510ed4202263dc5a14f4834aa871e593cd61ac0a742cb7a6" },
+    { "file": "spacetime_genuine.json", "accepted": true, "code": null, "sha256": "86f3fb61fb1f2ac6d3b174e9bf2c9f19a51df0b33ab9b42b35f64f5b1b5d5b1e" },
+    { "file": "window_11s.json", "accepted": false, "code": "copresence:ceremony_window_exceeded", "sha256": "49bcf3d88b6cb2a0660bee477d0d378165f370109f6821d78d7198d60844901a" },
+    { "file": "pk_b_swapped.json", "accepted": false, "code": "copresence:sig_A_invalid", "sha256": "4fa56665732b63c7d259fc81f31c582030149abbde97043dccf2a2668c6b3815" },
+    { "file": "sig_a_garbage.json", "accepted": false, "code": "copresence:sig_A_invalid", "sha256": "f3b0bb00a3cf9c6cad67cc397dedc5b61db197f6b3340626413597673b56a51f" },
+    { "file": "sig_b_tampered.json", "accepted": false, "code": "copresence:sig_B_invalid", "sha256": "a6a29669ec43650d9ae2a921aa90088925980dd77af0c999c3af7b7c6f0c9e93" },
+    { "file": "spacetime_spoofed_acc0.json", "accepted": false, "code": "copresence:suspicious_spoofed_accuracy", "sha256": "46392686500db3992845a755b6d6bc95b7edfb1804ff42afbcaecfd93744e961" },
+    { "file": "spacetime_contradiction.json", "accepted": false, "code": "copresence:suspicious_spacetime_contradiction", "sha256": "772f30ed252863a2d0deff7571bc272b11a8a1977b9749e048747ca87726903a" },
+    { "file": "audio_nonce_mismatch.json", "accepted": false, "code": "copresence:suspicious_audio_nonce_mismatch", "sha256": "50505c8b815d29ad04966b1a82d742f69adefbd067fc3bf67c9e17d63b4980e3" },
+    { "file": "audio_relay_delayed.json", "accepted": false, "code": "copresence:suspicious_audio_relay_detected", "sha256": "3df9859fe3b82ce4c6d6e070ca8a9cf3d1d20ef116d6ff203fdfd8147f0018d1" }
+  ],
+  "intent": [
+    { "file": "good.json", "accepted": true, "code": null, "sha256": "cf935f0524bc07059d5d44daa47a7527f8ae144e7508af864098c3c4a2e29225" },
+    { "file": "fail-wrong-text.json", "accepted": false, "code": "copresence:intent_mismatch", "sha256": "e2ca666a363c356352ef8cef1a8839f84d96b2f5c3c7e5a75475aabc2ab39958" },
+    { "file": "fail-missing-ack.json", "accepted": false, "code": "copresence:no_owner_signature", "sha256": "70c25d8c4de6d788ef4994f1270471a28626466f14f3f2d556c2abfe58945323" },
+    { "file": "fail-bad-ack-signature.json", "accepted": false, "code": "copresence:bad_owner_signature", "sha256": "46ba9fd5b7e9750a6e2808fb50f8ab02597d7a5e1b51b05228024eca24fef3ff" }
+  ]
+}

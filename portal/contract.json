@@ -1,0 +1,46 @@
+{
+  "schema": "aukora.portal-contract.v1",
+  "owner": "worker-18",
+  "entry": "contracts.ts",
+  "evidence_only": true,
+  "legacy": {
+    "domain": "copresence.v0",
+    "mode": "verify-only",
+    "core_timestamp": "t_B",
+    "window": "0 <= t_B - t_A <= 10 seconds",
+    "receipt_parser": "copresence JSON reader; decimal coordinates remain valid",
+    "vectors": "crates/copresence/vectors/receipts/"
+  },
+  "context_exchange": {
+    "domain": "copresence.v1",
+    "mode": "requires-new-versioned-schema-and-pinned-vectors",
+    "timestamp_binding": ["t_A", "t_B"],
+    "bind": ["identities", "nonces", "method", "attempt", "full-context", "approved-text"],
+    "first_frame": "no nonce disclosure",
+    "method": "fixed before exchange",
+    "attempts": "persist every attempt before its first frame, including refused and cancelled attempts",
+    "wire": "new outer version wrapper; existing v0 receipts are unchanged"
+  },
+  "page": {
+    "phases": ["FACE", "SEENYOU", "HANDSHAKE", "BLOOM", "REFUSED"],
+    "rotation_ms": 1000,
+    "network_during_exchange": false,
+    "relay_broadcast": "manual opt-in after exchange only",
+    "bloom": "visual relationship evidence only",
+    "authority": "none"
+  },
+  "intent": {
+    "fixture_text": "crates/copresence/vectors/buzz-seam-fixtures/TEXT.txt",
+    "file_sha256": "1c89504be6c1916a3632fa98c6b096cdefb9b2574dcf0881b2c1b94b8dadf230",
+    "approved_bytes": "TEXT.txt with its one trailing LF removed",
+    "encoding": "crates/copresence/vectors/buzz-seam-fixtures/ENCODING.md"
+  },
+  "verdict_table": {
+    "owner": "worker-18",
+    "file": "portal/verdict-table.v1.json",
+    "requirement": "expected v0 outcomes reference pinned fixture hashes; conductor pins this table before implementation is enabled",
+    "claimed_label": "CONSISTENT_CLAIMED",
+    "position_source": "SELF_REPORTED_UNVERIFIABLE",
+    "confidence_percentages": false
+  }
+}

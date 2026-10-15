@@ -1,0 +1,19 @@
+{
+  "id": "lingwa",
+  "title": "Auma Lingwa",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 2
+  },
+  "surface": "./faces/lingwa/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [],
+      "topics": []
+    }
+  }
+}

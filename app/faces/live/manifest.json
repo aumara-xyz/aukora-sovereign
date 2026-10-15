@@ -1,0 +1,19 @@
+{
+  "id": "live",
+  "title": "Auma Live",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 3
+  },
+  "surface": "./faces/live/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [],
+      "topics": []
+    }
+  }
+}

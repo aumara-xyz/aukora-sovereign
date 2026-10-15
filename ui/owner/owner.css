@@ -1,0 +1,11 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111217; color: #eef0f4; }
+body { margin: 0; }
+main { margin-inline: auto; max-width: 44rem; padding: 1.5rem; }
+header { align-items: center; display: flex; justify-content: space-between; gap: 1rem; }
+h1 { font-size: 1.25rem; }
+button { background: #262833; color: inherit; border: 1px solid #6b7280; border-radius: .5rem; padding: .65rem 1rem; }
+button:focus-visible { outline: 2px solid #b9d2ff; outline-offset: 3px; }
+.owner-witness { border: 1px solid #626979; padding: .75rem; margin-block: 1rem; }
+.owner-witness[data-state="alarm"] { border-color: #ed7979; color: #ffc6c6; }
+.owner-witness[data-state="first"] { color: #c0c4ce; }
+.owner-pane { min-height: 10rem; }

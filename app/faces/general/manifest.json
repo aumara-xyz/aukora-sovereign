@@ -1,0 +1,21 @@
+{
+  "id": "general",
+  "title": "General",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "system",
+    "order": 13
+  },
+  "surface": "./faces/general/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [
+        "settings.general"
+      ],
+      "topics": []
+    }
+  }
+}

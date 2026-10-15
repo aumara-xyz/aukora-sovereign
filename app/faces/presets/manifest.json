@@ -1,0 +1,21 @@
+{
+  "id": "presets",
+  "title": "Agent presets",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "system",
+    "order": 16
+  },
+  "surface": "./faces/presets/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [
+        "settings.presets"
+      ],
+      "topics": []
+    }
+  }
+}

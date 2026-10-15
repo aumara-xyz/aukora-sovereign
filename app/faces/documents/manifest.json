@@ -1,0 +1,19 @@
+{
+  "id": "documents",
+  "title": "Documents",
+  "organ": "kira",
+  "requires": [
+    "kira"
+  ],
+  "menu": {
+    "section": "aukora_apps",
+    "order": 9
+  },
+  "surface": "./faces/documents/index.html",
+  "capabilities": {
+    "kira": {
+      "methods": [],
+      "topics": []
+    }
+  }
+}

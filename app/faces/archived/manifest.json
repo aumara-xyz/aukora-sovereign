@@ -1,0 +1,24 @@
+{
+  "id": "archived",
+  "title": "Archived sessions",
+  "organ": "body",
+  "requires": [
+    "body"
+  ],
+  "menu": {
+    "section": "system",
+    "order": 17
+  },
+  "surface": "./faces/archived/index.html",
+  "capabilities": {
+    "body": {
+      "methods": [
+        "session.list",
+        "session.open"
+      ],
+      "topics": [
+        "session.event"
+      ]
+    }
+  }
+}
