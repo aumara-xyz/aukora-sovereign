@@ -207,25 +207,14 @@ impl BodyState {
     pub fn read_deploy(&mut self, context: Context, active: &Path, egress: &Path) {
         self.active_release = Measured::At(context, read_active(active, context.observed_at_ms));
         self.egress_status = match read_egress(egress) {
-            Some(status)
-                if context
-                    .observed_at_ms
-                    .checked_sub(status.observed_at_ms)
-                    .is_some_and(|age| {
-                        age <= CORNER_CHECKS[6]
-                            .freshness_ms
-                            .min(CORNER_CHECKS[7].freshness_ms)
-                    }) =>
-            {
-                Measured::At(
-                    Context {
-                        observed_at_ms: status.observed_at_ms,
-                        ..context
-                    },
-                    Some(status),
-                )
-            }
-            _ => Measured::At(context, None),
+            Some(status) => Measured::At(
+                Context {
+                    observed_at_ms: status.observed_at_ms,
+                    ..context
+                },
+                Some(status),
+            ),
+            None => Measured::At(context, None),
         };
     }
 }
@@ -301,8 +290,7 @@ pub fn observe(context: Context, state: &BodyState) -> Vec<BodyObservation> {
 /// A check with no observation reports Unwritten and a duplicated one reports
 /// invalid evidence. An observation timed after the sample is invalid; one from
 /// another epoch, sequence or commitment is a context mismatch; all of these fail.
-/// A satisfied observation older than its freshness limit is stale. Deploy checks
-/// fail on stale observations; the other checks become undetermined.
+/// A satisfied observation older than its freshness limit is stale and undetermined.
 /// Observations of checks Body does not own produce no evidence.
 pub fn health(facts: &BodyFacts<'_>) -> Vec<HealthEvidence> {
     PRIVATE_CHECKS
@@ -336,27 +324,47 @@ pub fn evidence(context: Context, state: &BodyState) -> Vec<HealthEvidence> {
 fn deploy_input<'a, T>(
     requested: Context,
     input: &'a Measured<T>,
-    spec: &CheckSpec,
-) -> Option<(Context, &'a T)> {
+    holds: impl Fn(Context, &T) -> bool,
+) -> Result<(Context, &'a T), (Context, Finding)> {
     match input {
         Measured::At(at, value)
             if at.epoch == requested.epoch
                 && at.sequence == requested.sequence
                 && at.commitment == requested.commitment
                 && at.observed_at_ms > 0
-                && requested.observed_at_ms.checked_sub(at.observed_at_ms)?
-                    <= spec.freshness_ms =>
+                && at.observed_at_ms <= requested.observed_at_ms
+                && holds(*at, value) =>
         {
-            Some((*at, value))
+            Ok((*at, value))
         }
-        _ => None,
+        _ => Err(probe(requested, input, |_| false)),
     }
 }
 
-fn deploy_finding(context: Context, passed: Option<Context>) -> (Context, Finding) {
-    match passed {
-        Some(at) => (at, Finding::Satisfied),
-        None => (context, Finding::Failed),
+/// Each input is checked before combining timestamps. A measured failure or an
+/// unwired source takes precedence over a pending or unreachable measurement.
+fn deploy_pair<L, R>(
+    left: Result<(Context, &L), (Context, Finding)>,
+    right: Result<(Context, &R), (Context, Finding)>,
+    agrees: impl Fn(&L, &R) -> bool,
+) -> (Context, Finding) {
+    match (left, right) {
+        (Ok((left_at, left)), Ok((right_at, right))) => (
+            oldest(left_at, right_at),
+            if agrees(left, right) {
+                Finding::Satisfied
+            } else {
+                Finding::Failed
+            },
+        ),
+        (Err(failure @ (_, Finding::Failed)), _)
+        | (_, Err(failure @ (_, Finding::Failed)))
+        | (Err(failure @ (_, Finding::Unwritten)), _)
+        | (_, Err(failure @ (_, Finding::Unwritten)))
+        | (Err(failure @ (_, Finding::Unreachable)), _)
+        | (_, Err(failure @ (_, Finding::Unreachable)))
+        | (Err(failure), _)
+        | (_, Err(failure)) => failure,
     }
 }
 
@@ -368,23 +376,26 @@ fn oldest(left: Context, right: Context) -> Context {
 }
 
 fn deploy_release(context: Context, state: &BodyState) -> (Context, Finding) {
-    let passed = || {
-        let spec = &PRIVATE_CHECKS[17];
-        let (active_at, active) = deploy_input(context, &state.active_release, spec)?;
-        let active = active.as_ref()?;
-        let (pointer_at, pointer) = deploy_input(context, &state.release_pointer, spec)?;
-        (hex(&active.commit, 40)
-            && active.activated_at_ms > 0
-            && active.activated_at_ms <= active_at.observed_at_ms
-            && active.commit == pointer.commit
-            && active.sequence > 0
-            && active.sequence == pointer.sequence
-            && active.pointer_sha256 == Some(pointer.pointer_sha256)
-            && active.release == pointer.release.recorded
-            && pointer.release.holds())
-        .then_some(oldest(active_at, pointer_at))
-    };
-    deploy_finding(context, passed())
+    let active = deploy_input(context, &state.active_release, |at, active| {
+        active.as_ref().is_some_and(|active| {
+            hex(&active.commit, 40)
+                && active.activated_at_ms > 0
+                && active.activated_at_ms <= at.observed_at_ms
+                && active.sequence > 0
+                && active.pointer_sha256.is_some()
+        })
+    });
+    let pointer = deploy_input(context, &state.release_pointer, |_, pointer| {
+        hex(&pointer.commit, 40) && pointer.sequence > 0 && pointer.release.holds()
+    });
+    deploy_pair(active, pointer, |active, pointer| {
+        active.as_ref().is_some_and(|active| {
+            active.commit == pointer.commit
+                && active.sequence == pointer.sequence
+                && active.pointer_sha256 == Some(pointer.pointer_sha256)
+                && active.release == pointer.release.recorded
+        })
+    })
 }
 
 impl EgressStatus {
@@ -397,41 +408,29 @@ impl EgressStatus {
 }
 
 fn deploy_egress(context: Context, state: &BodyState) -> (Context, Finding) {
-    let passed = || {
-        let spec = &CORNER_CHECKS[6];
-        let (status_at, status) = deploy_input(context, &state.egress_status, spec)?;
-        let status = status.as_ref()?;
-        let (policy_at, policy) = deploy_input(context, &state.relay_policy, spec)?;
-        (status.observed_at_ms == status_at.observed_at_ms
-            && status.holds()
-            && status.policy == *policy)
-            .then_some(oldest(status_at, policy_at))
-    };
-    deploy_finding(context, passed())
+    let status = deploy_input(context, &state.egress_status, |at, status| {
+        status
+            .as_ref()
+            .is_some_and(|status| status.observed_at_ms == at.observed_at_ms && status.holds())
+    });
+    let policy = deploy_input(context, &state.relay_policy, |_, policy| policy.epoch > 0);
+    deploy_pair(status, policy, |status, policy| {
+        status
+            .as_ref()
+            .is_some_and(|status| status.policy == *policy)
+    })
 }
 
 fn deploy_address(context: Context, state: &BodyState) -> (Context, Finding) {
-    let passed = || {
-        let spec = &CORNER_CHECKS[7];
-        let (active_at, active) = deploy_input(context, &state.active_release, spec)?;
-        let active = active.as_ref()?;
-        let (status_at, status) = deploy_input(context, &state.egress_status, spec)?;
-        let status = status.as_ref()?;
-        let (identity_at, identity) = deploy_input(context, &state.address_tls_identity, spec)?;
-        (active.activated_at_ms > 0
-            && active.activated_at_ms <= active_at.observed_at_ms
-            && status.observed_at_ms == status_at.observed_at_ms
-            && status.holds()
-            && !identity.measured.address.is_empty()
+    probe(context, &state.address_tls_identity, |identity| {
+        !identity.measured.address.is_empty()
             && !identity
                 .measured
                 .address
                 .chars()
                 .any(|c| c.is_whitespace() || c.is_control())
-            && identity.holds())
-        .then_some(oldest(oldest(active_at, status_at), identity_at))
-    };
-    deploy_finding(context, passed())
+            && identity.holds()
+    })
 }
 
 /// Bounded, nonblocking reads of root-owned regular files; a symlink at the final
@@ -632,14 +631,7 @@ fn measured(spec: &CheckSpec, requested: Context, observation: &BodyObservation)
     };
     let mut evidence = report(spec, observed, cell, reason);
     if cell == Cell::Verified && requested.observed_at_ms > evidence.expires_at_ms {
-        evidence.cell = if spec.check == PRIVATE_CHECKS[17].check
-            || spec.check == CORNER_CHECKS[6].check
-            || spec.check == CORNER_CHECKS[7].check
-        {
-            Cell::Failed
-        } else {
-            Cell::Undetermined
-        };
+        evidence.cell = Cell::Undetermined;
         evidence.reason = HealthReason::Stale;
     }
     evidence
