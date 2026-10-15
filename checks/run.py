@@ -133,6 +133,9 @@ for p in files:
 
 # 7. The scaffold lock: every planned piece exists, and nothing unplanned appears at the top or among the crates.
 top = sorted({p.split("/", 1)[0] for p in files if "/" in p})
+for p in files:
+    if "/" not in p and p not in scaffold["root_files"]:
+        fail("scaffold", f"unplanned file at the root: {p}")
 for d in scaffold["top_level_dirs"]:
     if d not in top:
         fail("scaffold", f"missing {d}/")

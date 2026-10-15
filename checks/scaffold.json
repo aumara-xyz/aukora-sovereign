@@ -91,5 +91,13 @@
   "crates/aumlok/vectors/",
   "crates/copresence/vectors/"
  ],
- "vendored_prefixes": []
+ "vendored_prefixes": [],
+ "root_files": [
+  ".gitignore",
+  "Cargo.lock",
+  "Cargo.toml",
+  "LICENSE",
+  "NORTH-STAR.md",
+  "README.md"
+ ]
 }

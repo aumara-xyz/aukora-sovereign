@@ -27,6 +27,8 @@ NET = (r"\b(ToSocketAddrs|to_socket_addrs|lookup_host)\b|std::net::(?!(IpAddr|Ip
 PROC = (r"std::process(?!::(exit|id|abort|ExitCode)\b)|::\$\w+|std::process::(Command|Child|Stdio)|std::process::\{[^}]*\b(Command|Child|Stdio)\b|\bCommand::new|"
         r"libc::(exec\w*|fork|vfork|posix_spawn\w*|system|popen|clone\w*|syscall)|nix::unistd::(exec\w*|fork)|rustix::runtime")
 UNSAFE = r"(?<![\w#])unsafe\b|#!?\[\s*(no_mangle|export_name|link_section)\b"
+# Lint levels that would switch the compiler walls off from inside the source.
+LINT_OFF = r"\b(allow|expect|warn)\s*\([^)]*clippy::(disallowed|all|restriction)|\ballow\s*\(\s*warnings\b"
 SMUGGLE = r"\binclude\s*!|#!?\[[^\]]*\bpath\s*="
 PICTURE = r"HealthSnapshot|organ_map|OrganMap|pentora::"
 PICTURE_STRICT = PICTURE + r"|HealthEvidence|CheckRef"
@@ -124,7 +126,7 @@ def file_findings(path, text):
         code = strip_rs(text)
         for rule, pattern, allowed in (("no-test-suites", TEST_ATTR, set()), ("wall-smuggle", SMUGGLE, set()),
                                        ("wall-network", NET, ALLOW["net"]), ("wall-exec", PROC, ALLOW["proc"]),
-                                       ("wall-unsafe", UNSAFE, ALLOW["unsafe"]), ("wall-abi", ABI, {"launcher"})):
+                                       ("wall-unsafe", UNSAFE, ALLOW["unsafe"]), ("wall-lint", LINT_OFF, set()), ("wall-abi", ABI, {"launcher"})):
             if unit not in allowed and re.search(pattern, code):
                 found.append((rule, path))
         picture = {"gate": PICTURE, "frontdoor": PICTURE_STRICT, "launcher": PICTURE_STRICT}.get(unit)

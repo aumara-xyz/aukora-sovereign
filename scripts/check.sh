@@ -5,5 +5,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 -B checks/run.py
-cargo clippy --workspace --offline --quiet -- -A clippy::all -D clippy::disallowed_types -D clippy::disallowed_methods
+cargo clippy --workspace --offline --quiet -- -A clippy::all -F clippy::disallowed_types -F clippy::disallowed_methods
 echo "CONSTRUCTION GREEN"
