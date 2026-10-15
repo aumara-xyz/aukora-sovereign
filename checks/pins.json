@@ -111,6 +111,7 @@
  "crates/pentora/vectors/expansion_vectors_4354.json": "930bfbb5d8088de1c8aa94b99cdbc868505c79acde504c26b813b714c846e044",
  "crates/pentora/vectors/geometry_index_table_v1.json": "96b27c9b4de41cd961612be5b1e88d40e973a2fded16bd320415b3e15e3b8c61",
  "crates/wasmcell/cell/memory-put-proposal.wasm": "34ce6cab618b626243e876befb49ccf8a6780dc836e757484886b34ae977a438",
+ "crates/wasmcell/cell/probes/ambient-import-mutation.wasm": "13f993d6a6c392f2d8e7184444216fdb78543ae9804b547587159481c7d43be9",
  "crates/wasmcell/cell/probes/ambient-write-probe.wasm": "fbdd00cdc2463459a02d09f395639ee9e01f47de82f84d7bce8c3a574a9c5a3f",
  "crates/wasmcell/cell/probes/invalid-json-probe.wasm": "b0aac63560dd7239978997f9389a71b8bb7e9868ba7567678b7befa571a63edb",
  "crates/wasmcell/cell/probes/invalid-range-probe.wasm": "7baa47a1faf71233146455197542f0c59ec2b12caa568238e22ca86f05b1e26f",
