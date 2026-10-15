@@ -54,6 +54,7 @@ export const COPY = {
     creating: "Starting the chat…",
     waiting: "Waiting for Auma…",
     replying: "Auma is replying…",
+    unconfirmed: "No recent update. The reply's outcome is unconfirmed.",
     stopping: "Stopping…",
     unsaved: "Not saved in the chat yet.",
     stopped: "Stopped before the reply finished.",

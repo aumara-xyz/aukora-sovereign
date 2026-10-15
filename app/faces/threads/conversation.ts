@@ -25,14 +25,14 @@ export interface Turn {
 export interface Stream {
   readonly request: string;
   readonly reservation: string;
-  // The chat the reply belongs to: the one a turn was sent to from this face. Empty when no turn of this face started it.
-  readonly session: string | null;
-  // The last saved sequence when the stream began; a saved Auma entry after it is this reply.
+  // The chat of the turn that admitted this stream.
+  readonly session: string;
+  // The turn's saved sequence in its own chat; a saved Auma entry after it is this reply.
   readonly since: number;
   readonly text: string;
   readonly index: number;
   readonly calls: number;
-  readonly phase: "streaming" | "ended" | "failed" | "cancelled";
+  readonly phase: "streaming" | "unconfirmed" | "ended" | "failed" | "cancelled";
   readonly gap: boolean;
   readonly clipped: boolean;
   readonly stopping: boolean;
@@ -139,6 +139,8 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
   let watching: number | undefined;
   let activity = Date.now();
   let calls = new Set<string>();
+  // Retain observed identities after dismissal or rejection so late events cannot attach to a later turn.
+  const seenRequests = new Set<string>();
   const timers = new Set<number>();
   const changed = () => { if (!signal.aborted) options.changed(); };
   const later = (ms: number, run: () => void) => {
@@ -222,7 +224,7 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
     if (stream && stream.session === entry.sessionId && stream.persisted === null && entry.role === "auma"
       && entry.sequence > stream.since) {
       stream.persisted = entry.sequence;
-      if (stream.phase !== "streaming") {
+      if (stream.receipt !== null) {
         forget(stream);
         if (stream.phase !== "failed") state.stream = null;
       }
@@ -275,12 +277,10 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
     if (!state.live) void catchUp();
     const lost = state.stream;
     if (streaming && lost && Date.now() - activity > STREAM_QUIET_MS) {
-      // A reply the node has said nothing about for a long while is shown as lost rather than waited for for ever.
-      lost.phase = "failed";
-      lost.code = "app:deadline";
+      // Silence releases the composer, but only a receipt can settle this reply.
+      lost.phase = "unconfirmed";
       lost.stopping = false;
       state.turn = null;
-      if (lost.session === null) state.stream = null;
       changed();
       return;
     }
@@ -380,16 +380,22 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
     else void catchUp();
   };
 
-  const fresh = (request: string, reservation: string): Writable<Stream> => ({
-    request, reservation, session: state.turn ? state.turn.session : null, since: state.last, text: "", index: 0,
+  const fresh = (request: string, reservation: string, turn: Turn): Writable<Stream> => ({
+    request, reservation, session: turn.session, since: turn.base, text: "", index: 0,
     calls: 0, phase: "streaming", gap: false, clipped: false, stopping: false, finish: null, receipt: null, code: null,
     next: null, persisted: null,
   });
 
-  const streamFor = (request: string, reservation: string): Writable<Stream> => {
+  const streamFor = (request: string, reservation: string): Writable<Stream> | null => {
     let stream = state.stream;
-    if (!stream || stream.request !== request) {
-      stream = fresh(request, reservation);
+    if (stream?.request === request) {
+      if (stream.reservation !== reservation) return null;
+    } else {
+      const seen = seenRequests.has(request);
+      seenRequests.add(request);
+      if ((stream && stream.receipt === null) || seen
+        || !state.turn || state.turn.phase === "creating") return null;
+      stream = fresh(request, reservation, state.turn);
       state.stream = stream;
       calls = new Set();
     }
@@ -425,6 +431,7 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
         break;
       case "delta": {
         const stream = streamFor(event.request, event.reservation);
+        if (!stream || stream.receipt !== null) return;
         if (event.index === stream.index) {
           stream.index++;
           if (event.text !== null && !stream.gap && !stream.clipped) {
@@ -441,12 +448,14 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
       }
       case "end": {
         const stream = streamFor(event.request, event.reservation);
+        if (!stream) return;
         stream.finish = event.finish;
         settleStream(stream, event.cancelled ? "cancelled" : "ended", event.receipt);
         break;
       }
       case "failed": {
         const stream = streamFor(event.request, event.reservation);
+        if (!stream) return;
         stream.code = event.code;
         stream.next = event.next;
         settleStream(stream, "failed", event.receipt);

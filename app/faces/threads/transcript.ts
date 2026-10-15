@@ -173,7 +173,8 @@ export function createTranscript(options: TranscriptOptions): Transcript {
       return parts;
     }
     const parts: Array<Node | string> = [];
-    if (stream.phase === "failed") {
+    if (stream.phase === "unconfirmed") parts.push(COPY.chat.unconfirmed);
+    else if (stream.phase === "failed") {
       const code = stream.code ?? "app:service-failed";
       parts.push(h("strong", {}, COPY.chat.failed), " ", explain(code), " ", h("code", {}, code));
       if (stream.next) parts.push(" ", ...neutralize(clip(stream.next, 400)));
@@ -201,7 +202,10 @@ export function createTranscript(options: TranscriptOptions): Transcript {
       live.text = stream.text;
       grew = true;
     }
-    const signature = `${stream.phase}:${stream.stopping}:${stream.calls}:${stream.gap}:${stream.clipped}`;
+    const signature = JSON.stringify([
+      stream.phase, stream.stopping, stream.calls, stream.gap, stream.clipped,
+      stream.code, stream.next, stream.receipt?.seq ?? null,
+    ]);
     if (live.signature === signature) return;
     live.signature = signature;
     const parts = foot(stream);
