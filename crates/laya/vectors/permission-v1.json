@@ -1,0 +1,76 @@
+{
+  "schema": "aukora-laya-permission-v1-vectors",
+  "accept": [
+    {
+      "name": "ask-keeps-no-standing-scope",
+      "issued_at": 0,
+      "bytes": "{\"expires_at\":86400000,\"kinds\":[\"put\"],\"max_count\":0,\"mode\":\"ask\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[],\"v\":1}"
+    },
+    {
+      "name": "risky-routine-scope",
+      "issued_at": 1000,
+      "bytes": "{\"expires_at\":86401000,\"kinds\":[\"put\"],\"max_count\":12,\"mode\":\"risky\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1}"
+    },
+    {
+      "name": "limits-routine-scope",
+      "issued_at": 1000,
+      "bytes": "{\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"sites/home\"],\"v\":1}"
+    }
+  ],
+  "refuse": [
+    {
+      "name": "extra-key",
+      "bytes": "{\"epoch\":1,\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1}",
+      "code": "laya:permission-schema"
+    },
+    {
+      "name": "duplicate-decoded-key",
+      "bytes": "{\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1,\"\\u0076\":1}",
+      "code": "laya:permission-schema"
+    },
+    {
+      "name": "unknown-mode",
+      "bytes": "{\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"yolo\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1}",
+      "code": "laya:unknown-setting"
+    },
+    {
+      "name": "unknown-operation",
+      "bytes": "{\"expires_at\":2000,\"kinds\":[\"execute\"],\"max_count\":1,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1}",
+      "code": "laya:permission-bounds"
+    },
+    {
+      "name": "protected-scope",
+      "bytes": "{\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"gate/permission\"],\"v\":1}",
+      "code": "laya:permission-scope"
+    },
+    {
+      "name": "duplicate-target",
+      "bytes": "{\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\",\"theme.json\"],\"v\":1}",
+      "code": "laya:permission-scope"
+    },
+    {
+      "name": "noncanonical-whitespace",
+      "bytes": " {\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1}",
+      "code": "laya:permission-not-canonical"
+    },
+    {
+      "name": "zero-use-limit",
+      "bytes": "{\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":0,\"mode\":\"limits\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1}",
+      "code": "laya:permission-bounds"
+    }
+  ],
+  "lifetime": [
+    {"issued_at": 0, "expires_at": 86400000, "accept": true},
+    {"issued_at": 0, "expires_at": 86400001, "code": "laya:permission-bounds"},
+    {"issued_at": 1000, "expires_at": 1000, "code": "laya:permission-bounds"},
+    {"issued_at": -1, "expires_at": 1000, "code": "laya:permission-bounds"}
+  ],
+  "standing_filter": [
+    {"risk": "critical", "action": "apply", "code": "laya:standing-critical"},
+    {"risk": "routine", "action": "permission", "code": "laya:standing-critical"},
+    {"risk": "routine", "action": "retire", "code": "laya:standing-critical"},
+    {"risk": "routine", "action": "release", "code": "laya:standing-critical"},
+    {"risk": "routine", "action": "grant", "code": "laya:standing-critical"}
+  ],
+  "gate_required": ["reload-exact-grant", "verify-grant-proof", "current-epoch", "not-revoked", "not-expired", "scope", "count", "consume-once"]
+}

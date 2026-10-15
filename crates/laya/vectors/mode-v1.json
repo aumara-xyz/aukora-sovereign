@@ -1,0 +1,11 @@
+{
+  "schema": "aukora-laya-mode-v1-vectors",
+  "default": "chat",
+  "cases": [
+    {"wire": "chat", "proposal_code": "laya:chat-mode"},
+    {"wire": "build", "proposal_eligible": true},
+    {"wire": "yolo", "parse_code": "laya:unknown-mode"},
+    {"wire": "Build", "parse_code": "laya:unknown-mode"},
+    {"wire": "", "parse_code": "laya:unknown-mode"}
+  ]
+}
