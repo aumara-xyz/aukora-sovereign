@@ -98,9 +98,9 @@ never dropped; Peter decides when.
 ### A. The Spatial app
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
-| 1 | The Spatial app shell: threads, chat with Auma, panels, spatial frontend, brought in whole and pinned to the build the Nebius pilot runs | PORT | Prime plugins/aukora-face + aukora-foundation + vendor/dsh harness | app/ | M1 |
+| 1 | The Spatial app shell: threads, chat with Auma, panels, spatial frontend, brought in whole and pinned to the build the Nebius pilot runs | PORT | Prime plugins/aukora-face + aukora-foundation + vendor/dsh harness (the archive ran a reduced copy with plugins hidden) | app/ | M1 |
 | 2 | AUKORA APPS: Auma Lingwa | PORT | Prime aukora-face apps (vendored auma-lingwa) | app/ | M1 |
-| 3 | AUKORA APPS: Auma Live (voice), honest about whether voice is installed | PORT | Prime aukora-face apps, Prime voice runtime | app/ | M1 |
+| 3 | AUKORA APPS: Auma Live: the face from M1, saying plainly whether voice is installed; speaking comes after the core milestones (spec v0.2 §11) | PORT | Prime aukora-face apps, Prime voice runtime | app/ | M1 |
 | 4 | AUKORA APPS: Zeta Harp | PORT | Prime aukora-face apps | app/ | M1 |
 | 5 | AUKORA APPS: Human Graph (holding place for connections and media) | PORT | Prime aukora-face apps | app/ | M1 |
 | 6 | AUKORA APPS: Media | PORT | Prime aukora-face apps | app/ | M1 |
@@ -109,12 +109,13 @@ never dropped; Peter decides when.
 | 9 | AUKORA APPS: Documents (read-only, full-page rendered) | PORT | Prime aukora-face documents | app/ | M1 |
 | 10 | SYSTEM: AUMLOK (seven-word binding witness), opening the trusted panes | PORT | Prime aukora-face aumlok + archive owner panes | app/, owner-panes/ | M1 |
 | 11 | SYSTEM: Identity (public contact card, contact codes, safety numbers) | PORT | Prime aukora-face aumlok (contact-qr, contact-verification) | app/, crates/nostr | M6 |
-| 12 | SYSTEM: Aura Coherence (the Pentora picture) | RAN | archive pentora + organs snapshot (7257d39) | app/, crates/pentora | M5 |
+| 12 | SYSTEM: Aura Coherence (the Pentora picture) | RAN | archive pentora + organs snapshot (7257d39); seen rendering on S2 on 2026-10-15 | app/, crates/pentora | M5 |
 | 13 | SYSTEM: General, Models, Plugins, Agent presets, Archived sessions | PORT | Prime aukora-face settings, threads | app/ | M1 |
 | 14 | Auma theme: the first self-change target | PORT | Prime plugins/aukora-auma-theme | app/ | M3 |
-| 15 | The other Prime plugins (board, goal-resume, eye, organism, relay-auma, subscription-hands, gate-demo, seatbelt, core-read-deny, caged-worker): each carried into the app or marked replaced by a crate | PORT | Prime plugins/ | app/ | M1 |
+| 15 | Every Prime plugin accounted for. Into the app: aukora-face, aukora-foundation, aukora-auma-theme, aukora-board, aukora-goal-resume, aukora-eye (its capture denied during ceremonies), aukora-organism, aukora-subscription-hands, aukora-gate-demo, aukora-action-gate (brick 30). Replaced by a crate: aukora-aumlok (aumlok), aukora-box (wasmcell; it holds the cell's source), aukora-kira (kira), aukora-nostr (nostr, relay, messaging), aukora-owner-daemon (supervisor, owner-panes), aukora-composition-gate (the supervisor's harness digest check), aukora-openshell-confinement, aukora-seatbelt, aukora-core-read-deny and aukora-caged-worker (launcher). Later: aukora-buzz-door and aukora-relay-auma (brick 87) | PORT | Prime plugins/ | app/ | M1 |
 | 16 | App lock: Peter's app and System entries are registered, visible and opening, never hidden | BUILD | new | checks/ | M1 |
-| 17 | App start speed: warm the plugin bundle when the agent starts (first chat took 49 s on a 2-vCPU VM) | BUILD | archive #47 | guest/ | M1 |
+| 17 | App start speed: warm the plugin bundle when the agent starts (first chat took 49 s on a 2-vCPU VM) | SOURCE | archive #47 (a warm-up exists in the archive frontdoor; the 49 s first load is unmeasured) | guest/ | M1 |
+| 98 | Every Prime package accounted for: authority, contracts, copresence, cordis-tool-provider, desktop, evolution-lab, execution, inference, invites, memory, ops, owner-key, runtime-bridge, ui; each carried into a crate, ported, or marked replaced | PORT | Prime packages/ | crates/, app/ | M1 |
 
 ### B. One link
 | # | Brick | Status | From | Lives in | Milestone |
@@ -145,8 +146,8 @@ never dropped; Peter decides when.
 | 33 | Gate: exact-bytes proposals, consumed once, recovery sweep, crash injection at every transition | RAN | archive gate | crates/gate | M3 |
 | 34 | Retire and reconcile (Prime I1-I9): a declined or interrupted proposal never blocks its target | RAN | archive gate (#32), Prime #7 | crates/gate | M3 |
 | 35 | Approval card: every field shown; the passkey signs the C5 authorization of exact bytes | RAN | archive gate + owner panes | crates/gate, owner-panes/ | M3 |
-| 36 | Laya slider: ask for everything, only for risky things, or not within today's limits; standing permission by fingerprint | RAN | archive gate standing (01a2093), cold verifier (#29) | crates/laya, crates/gate | M3 |
-| 37 | Laya triage (escalate only) with its benchmark | PORT | Prime lab (13.5% false alarms recorded) | crates/laya | M3 |
+| 36 | Laya slider: ask for everything, only for risky things, or not within today's limits; standing permission by fingerprint | SOURCE | archive gate standing (01a2093); the card was raised and retired on S2, and no standing permission was used live yet | crates/laya, crates/gate | M3 |
+| 37 | Laya triage (escalate only) with its benchmark; each Laya fine-tune ships as a pinned, reviewed model release | PORT | Prime lab (13.5% false alarms recorded) | crates/laya | M3 |
 | 38 | Chat, Build and Yolo modes | BUILD | archive #23 | crates/laya | M3 |
 | 39 | Standing bounds: one signature, one folder, N commands, enforced by the cage | BUILD | Buzz shim design | crates/laya, crates/launcher | M3 |
 | 40 | Three-valued decisions: Deny, Unknown, Allow; Unknown never becomes Allow | RAN | archive gate | crates/gate | M3 |
@@ -157,8 +158,8 @@ never dropped; Peter decides when.
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
 | 43 | Passkey enrolment and WebAuthn (Prime semantics on RustCrypto), durable ceremonies | RAN | archive aumlok | crates/aumlok | M1 |
-| 44 | Acrostic seven-word phrase (ROOT, UNITE, RISE), honest entropy, envelope over a random root | RAN | archive aumlok | crates/aumlok | M1 |
-| 45 | Phrase refresh screen | SOURCE | archive aumlok (1e8a53b) | crates/aumlok, owner-panes/ | M1 |
+| 44 | Acrostic seven-word phrase (ROOT, UNITE, RISE), honest entropy, envelope over a random root; decide whether the phrase is derived in a browser worker or on the node | RAN | archive aumlok | crates/aumlok | M1 |
+| 45 | Phrase refresh screen | RAN | archive aumlok (1e8a53b); ran live on S2 with a software key; Touch ID refresh not yet | crates/aumlok, owner-panes/ | M1 |
 | 46 | Passkey-bound backup (WebAuthn PRF) | SOURCE | archive aumlok (#50) | crates/aumlok | M4 |
 | 47 | Add a machine; pair a device by co-presence | BUILD | archive #24, contact portal | crates/aumlok, crates/copresence | M7 |
 | 48 | Delegation lineage root to device to session to agent; revocation rechecked at every use | BUILD | archive #61, kernel spec | crates/aumlok | M7 |
@@ -169,17 +170,17 @@ never dropped; Peter decides when.
 |---|---|---|---|---|---|
 | 50 | Aura: one signed record, two arms, export with proofs (vectors at 1 to 32) | RAN | archive aura | crates/aura | M5 |
 | 51 | Cold proof export: one download any stranger can verify offline | SOURCE | archive #27 | crates/aura, crates/verifier | M5 |
-| 52 | The minimal verifier: aukora-verify and verify.py, from an empty folder, with Prime's regressions | RAN | archive verifier + tools/verify.py | crates/verifier | M5 |
+| 52 | The minimal verifier: aukora-verify and verify.py, from an empty folder, with Prime's regressions | SOURCE | archive verifier + tools/verify.py; the witness check ran against S2's relays; the stranger line is pending | crates/verifier | M5 |
 | 53 | Owner-browser head witness: rollback and fork alarm on every visit | SOURCE | archive owner-witness | owner-panes/ | M5 |
-| 54 | Aura head witnessed on Nostr relays | RAN | archive relay (b8ecb85) | crates/relay | M5 |
+| 54 | Aura head witnessed on Nostr relays | RAN | archive relay (b8ecb85); S2's head verified from the Mac against two public relays on 2026-10-15 | crates/relay | M5 |
 | 55 | Pentora digest: 110 trits, identical on every device | RAN | archive pentora | crates/pentora | M5 |
 | 56 | Live posture rows: the node attests its sandbox state into Aura on a schedule | BUILD | archive #26 | crates/immune, crates/aura | M5 |
 
 ### G. Kira
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
-| 57 | Kira: encrypted notes, content-free commitments, demote never delete, cited recall (found, empty, undetermined) | SOURCE | archive kira | crates/kira | M4 |
-| 58 | OpenViking recall by meaning inside the node, with a local embedder | RAN | archive openviking + ops scripts | crates/kira, ops/ | M4 |
+| 57 | Kira: encrypted notes, content-free commitments, demote never delete, cited recall (found, empty, undetermined); doctrines: usage never raises confidence, a summary is never the only copy, TTL means review-by | SOURCE | archive kira | crates/kira | M4 |
+| 58 | OpenViking recall by meaning inside the node, with a local embedder | SOURCE | archive openviking; the service ran healthy under the supervisor on S2 on 2026-10-15; recall by meaning not yet shown | crates/kira, ops/ | M4 |
 | 59 | Memory permissions: disclose (done), store, dataset, export, train, activate | BUILD | carry list, Prime I-09 | crates/kira | M4 |
 | 60 | Encrypted memory backup on relays and between the owner's own nodes | BUILD | archive #65, Prime records plan | crates/kira, crates/messaging | M6 |
 | 61 | Member exit: export keys, memory and receipts; verify offline; restore with original ids | BUILD | archive #66, Prime #4 | crates/supervisor, crates/verifier | M7 |
@@ -187,14 +188,14 @@ never dropped; Peter decides when.
 ### H. Broker and the model
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
-| 62 | Broker: model key by one-time ticket, passkey spend grant, reservation, receipts | RAN | archive broker (real DeepSeek reply on S1) | crates/broker | M2 |
+| 62 | Broker: model key by one-time ticket, passkey spend grant, reservation, receipts; the model identity is recorded as requested, reported and verified | RAN | archive broker (real DeepSeek reply on S1) | crates/broker | M2 |
 | 63 | Broker twins: a 'print your key' injection, an overspend race, and route off saying unavailable | SOURCE | archive broker tests | crates/broker, tests/ | M2 |
 
 ### I. WASM core, floor and immune
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
 | 64 | WASM core: the 101-byte cell in the proposal path | SOURCE | archive wasmcell (#19) | crates/wasmcell | M3 |
-| 65 | Release floor and high-water marks; a spent approval never revives | SOURCE | archive floor (#5, #54; S2 install bugs fixed) | crates/floor | M4 |
+| 65 | Release floor and high-water marks; a spent approval never revives | SOURCE | archive floor (#5, #54): installed once on S2 on 2026-10-15; the two bugs found there are fixed in source, not yet re-run | crates/floor | M4 |
 | 66 | Immune: antibody ratchet on every release (888 antibodies, including the fixes for archive #30 to #39 and #48) | RAN | archive immune + immune/ANTIBODIES.tsv | crates/immune | M3 |
 | 67 | Immune: thymus, MHC and hypermutation | BUILD | archive #42, #43, #44 | crates/immune | M4 |
 | 68 | Attack corpora: 815 attacks, 81 aumlok issues, 5,360 Pentora vectors (locate them first) | BUILD | archive #64 | crates/immune | M4 |
@@ -204,19 +205,19 @@ never dropped; Peter decides when.
 |---|---|---|---|---|---|
 | 69 | Nostr node and agent identities, bound to Aura | RAN | archive nostr identity (#52) | crates/nostr, crates/supervisor | M6 |
 | 70 | Relay client and an allowlisted egress path per relay | RAN | archive relay + spawn egress (#57) | crates/relay, ops/ | M6 |
-| 71 | Node-to-node gift-wrapped messages; contacts and sends are passkey cards | RAN | archive messaging (S2 to S4 live) | crates/messaging | M6 |
+| 71 | Node-to-node gift-wrapped messages; contacts and sends are passkey cards | RAN | archive messaging; ran live S2 to S4 through public relays on 2026-10-15 (archive #60) | crates/messaging | M6 |
 
 ### K. Growth: invites, spawn, Go Sovereign, co-presence
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
-| 72 | Invites: signed, 48 hours, three per member, provenance in the new node's first record | RAN | archive invites (S2 to S4 live) | crates/invites | M7 |
+| 72 | Invites: signed, 48 hours, three per member, provenance in the new node's first record | RAN | archive invites; ran live S2 to S4 on 2026-10-15 (archive #59) | crates/invites | M7 |
 | 73 | One-command spawn: LXD on the host and Nebius VMs | RAN | archive deploy/spawn | ops/spawn | M1 |
 | 74 | Go Sovereign page: paste a code, get a node | BUILD | new (Prime North Star step 11) | ops/go-sovereign | M7 |
 | 75 | Claim with the invite's secret, in the browser | BUILD | archive claim API | owner-panes/ | M7 |
-| 76 | Co-presence portal (Point-and-Bloom), screen to screen | PORT | aukora-contact copresence-portal-v0 (ran on Mac and iPhone) | portal/ | M7 |
+| 76 | Co-presence portal (Point-and-Bloom), screen to screen; the sound, motion and intent-ack layers (built, never run) come with it | PORT | aukora-contact copresence-portal-v0 (ran on Mac and iPhone) | portal/ | M7 |
 | 77 | Co-presence receipt verifier | SOURCE | archive copresence (ef368ee) | crates/copresence | M7 |
 | 78 | Joining ceremony: co-presence with your own two devices, then phrase and passkey | BUILD | Prime North Star, Prime I-17 | portal/, crates/invites | M7 |
-| 79 | A second independent node passes the core lines (A4); one node's cookies and proofs fail on the other | RAN | archive S2 and S4 | tests/e2e/ | M7 |
+| 79 | A second independent node passes the core lines (A4); one node's cookies and proofs fail on the other | BUILD | S2 and S4 ran claim, binding and release; the A4 lines on two nodes never ran | tests/e2e/ | M7 |
 
 ### L. Operations and quality
 | # | Brick | Status | From | Lives in | Milestone |
@@ -224,8 +225,11 @@ never dropped; Peter decides when.
 | 80 | Upgrade without losing the binding; release switch with rollback | BUILD | archive scratch scripts, #22 | ops/ | M1 |
 | 81 | Reproducible build and byte-compare | SOURCE | archive reproduce.sh (#63) | ops/reproduce | M1 |
 | 82 | Pin-drift check on the launcher and policy | BUILD | archive #62 | checks/ | M2 |
-| 83 | Repository checks: no logs, no file over 1,000 lines, no absolute or cross-repository paths, crate dependency allowlists, one plan | BUILD | new | checks/ | M1 |
+| 83 | Repository checks: no logs, no file over 1,000 lines, no absolute or cross-repository paths, crate dependency allowlists, one plan; a commit-metadata privacy scan before any public push | BUILD | new | checks/ | M1 |
 | 84 | Scaffold lock: how much of the scaffold still stands, checked on main | BUILD | new | checks/ | M1 |
+| 102 | Per-unit systemd hardening, checked with systemd-analyze security | PORT | Prime hardening proposals, carry list | ops/ | M2 |
+| 103 | S1, Peter's archive-era node: keeps running untouched until the new node passes; then its record and memory move by the exit and restore path, or it retires | BUILD | archive #8 | ops/ | M7 |
+| 104 | The archive's open review findings (#46) re-checked against the new code | BUILD | archive #46 | tests/ | M1 |
 
 ### M. Later: kept, never dropped
 | # | Brick | Status | From | Lives in | Milestone |
@@ -233,16 +237,20 @@ never dropped; Peter decides when.
 | 85 | Recursion v0: an environment-graded loop through the gate, replay first | LATER | archive #28 | later | Later |
 | 86 | Ornith as Auma's mind; capped ask_model routing to other models; local models | LATER | Prime North Star (the mind), I-08 | later | Later |
 | 87 | Phone approval (NIP-46), the Buzz relay under the node, Bitchat | LATER | Prime North Star, aukora-buzz | later | Later |
-| 88 | Confidential VMs, so 'we cannot see inside' is guaranteed by hardware | LATER | WHIP CRACKER, 2026-10-15 | later | Later |
-| 89 | Hardware keys and a trusted hash display; succession (k of n); witness committees | LATER | carry list, Prime I-16 | later | Later |
+| 88 | Confidential VMs and the whole 'we cannot see your node' list: user-held keys, encrypted disk, the cloud control plane, abuse of free compute, KYC, the Nebius spend stop | LATER | WHIP CRACKER, 2026-10-15 | later | Later |
+| 89 | Hardware keys and a trusted hash display; succession (k of n); witness committees, multi-observer heads and drand time anchors | LATER | carry list, Prime I-16 | later | Later |
 | 90 | Desktop app (Electron), Windows build, phone app, AR and glasses | LATER | Prime apps/aukora-desktop, I-12, I-18 | later | Later |
 | 91 | Invite chain and vouching against bots; a network of Aumas improving each other | LATER | Prime North Star, I-15 | later | Later |
 | 92 | REA as a caged guest tool; immune self-inspection; herd immunity broadcasts | LATER | archive #45 | later | Later |
 | 93 | Contact's System 1 and System 2 slot, the builder and breaker loop, the goal loop | LATER | aukora-contact, aukora-buzz | later | Later |
-| 94 | Egress broker, mission envelopes and grant frames | LATER | carry list | later | Later |
+| 94 | Egress broker, mission envelopes and grant frames; the Merkle disclosure privacy note | LATER | carry list | later | Later |
 | 95 | Public conformance corpus and LIMITS | LATER | coverage audit | later | Later |
-| 96 | Honey Pot absorb order (73 families) and Prime's ideas ledger I-01 to I-19 | LATER | Prime North Star, plan/IDEAS-LEDGER.md | later | Later |
-| 97 | Vision R&D: tokens (AUM and AURA), PALADIN, Manifold, KNVS UI, the AUMA glyph language, Gaussian memory, mesh, Bhutan NDI | LATER | iCloud vision documents | later | Later |
+| 96 | Honey Pot absorb order (73 families); about 72 unpushed commits in an old private Prime checkout; the experience schema and dataset release; anti-self-consensus; dreaming as proposals; Prime's ideas ledger I-01 to I-19, each mapped to its brick on the issue | LATER | Prime North Star, plan/IDEAS-LEDGER.md | later | Later |
+| 97 | Vision R&D: tokens (AUM and AURA), PALADIN, Manifold and URHE, the Shear Engine, Trader Helm, KNVS UI, the AUMA glyph language, Gaussian memory, mesh, Bhutan NDI, the MEGA-SPEC vertical packs and economics | LATER | iCloud vision documents | later | Later |
+| 99 | Licence questions for counsel: the AUMA language (CC BY-SA or AGPL), and an Apache fork loading the AGPL engine | LATER | Prime I-14, carry list | later | Later |
+| 100 | Post-quantum hybrid signatures (Ed25519 with ML-DSA-65, downgrade refused) and unlinkable scoped identities | LATER | carry list, Prime labs/pq-hybrid, aumlok-id #65 | later | Later |
+| 101 | First Echo: keep or drop | LATER | Prime North Star wave 1, carry list | later | Later |
+| 105 | Metal: a bare-metal authority kernel (Rust no_std hosting WASM proposers), collapse to touch, trust onto metal in trust order; ternary tesseract memory; Auma the field with agents as organs | LATER | Prime I-01, I-02, I-03, I-05, I-07 | later | Later |
 
 ## Who does what
 - **Claude (SOVEREIGN MAIN):**
