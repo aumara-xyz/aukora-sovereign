@@ -1,0 +1,39 @@
+{
+  "schema": "aukora-threads-face-v1",
+  "faces": "threads (read and write); sidebar and archived (read only, the same readers)",
+  "service": "body, filtered by each face's manifest; no other service is called",
+  "calls": {
+    "session.list": {
+      "params": "{thread_id: null, include_archived: boolean, before: 32 hex | null, limit: 100}",
+      "reply": "session page: {items: [session summary v2], next: 32 hex | null}; the node pages in its own order, so the face reads pages up to a bound and sorts by updated_at_ms"
+    },
+    "session.open": {
+      "params": "{session_id, after_sequence, limit: 100}",
+      "reply": "{summary, entries: [session entry v2], next_sequence}; entries are contiguous from after_sequence + 1 and next_sequence is the last entry returned whenever another page exists; the face starts near the end and reads earlier pages on request"
+    },
+    "session.create": {
+      "params": "{thread_id: fresh 32 hex, title: first line of the first message, at most 256 bytes, mode}",
+      "reply": "session summary v2; called only when the first message of a new chat is sent, never for an empty chat"
+    },
+    "chat.turn": {
+      "params": "{session_id, expected_sequence: last saved sequence, text: at most 32,768 bytes, mode}",
+      "reply": "not read; the saved entries and the event topic are the record. A deadline is shown as unconfirmed, not as failed"
+    },
+    "model.cancel": {
+      "params": "{request_id, reservation_id} of the stream in flight",
+      "reply": "not read; only the final receipt event settles the stream"
+    }
+  },
+  "topic": {
+    "session.event": {
+      "value": "an FD 4 event as {kind, body}, or with its envelope fields v (2), id and provenance; any other key breaks the shape",
+      "read": "session.entry, session.append (its entry), session.create, model.start, model.delta, model.end, model.cancel, model.error, accepted, outcome, refusal",
+      "ignored": "every other kind, including memory and health events; a read kind whose body breaks its shape is dropped and counted"
+    }
+  },
+  "records": "v2 session summary, entry, model delta and receipt, read exactly as crates/canon fixes them: unknown keys, wrong types, stranger provenance and an owner or Auma role without its own provenance refuse the whole value",
+  "streams": "model events carry no session id; a stream is shown in the chat of the turn this face sent, and in no other. A saved Auma entry replaces it, and its receipt is shown beside that entry",
+  "rendering": "text only: fenced code blocks and inline code spans, no markup, links or images; hidden and bidi characters are shown as code points; a function-call suggestion is listed and never run; tool and context entries are labelled as data",
+  "sending": "from the send button's click or Enter in the box; there is no form, because the frame is sandboxed without allow-forms",
+  "authority": "none"
+}

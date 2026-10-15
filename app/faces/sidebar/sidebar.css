@@ -1,0 +1,19 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* The Sidebar face: the list column and the reader. The colours and the shared pieces are in ../threads/threads.css. */
+.side { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.side-list { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 16px 16px 2px; font-size: 17px; font-weight: 600; letter-spacing: .04em; }
+.brand .mark { width: 28px; height: 28px; }
+.side-heading { margin: 14px 16px 0; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; }
+.side-reader { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.reader-bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-block-end: 1px solid var(--line); }
+.back {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 6px 10px; border-color: transparent; border-radius: 10px;
+  background: transparent; color: var(--secondary);
+}
+.back:hover { background: #c4aaff1f; color: var(--text); }
+.heading-block { flex: 1; min-width: 0; }
+.readonly { margin: 0; padding: 8px 16px 12px; color: var(--muted); font-size: 12.5px; text-align: center; }
+@media (max-width: 480px) {
+  .back span { display: none; }
+}

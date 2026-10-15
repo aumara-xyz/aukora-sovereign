@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mountFace } from "../runtime.js";
+import { boot } from "./boot.js";
+import { mountChat } from "./chat.js";
 
-mountFace("threads");
+boot("threads", mountChat);
