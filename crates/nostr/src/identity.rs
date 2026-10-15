@@ -5,8 +5,8 @@ use crate::{PublicKey, Refusal, Result, SecretKey, VerifiedEvent};
 use canon::{
     alg::AlgorithmId,
     authority::{
-        AuthorityRecord, AuthorityTxn, AuthorityVersion, BaseDigest, Kind, OwnerAuthorization,
-        OwnerOperation, PendingAuthorityRecord, Phase, VerifiedProof,
+        AuthorityRecord, AuthorityTxn, AuthorityVersion, Kind, OwnerOperation,
+        PendingAuthorityRecord, Phase, VerifiedProof,
     },
     digest::Digest32,
     ids::{NodeId, SubjectId},
@@ -125,7 +125,10 @@ pub fn bind<T: IdentityTxn + ?Sized>(
         return Err(refusal("binding-authorization"));
     }
     if txn.rebuild_authorization(&auth.proposal, OwnerOperation::Permission)? != *auth
-        || authorization_bytes(auth)? != proof.authorization_bytes()
+        || auth
+            .canonical_bytes()
+            .map_err(|_| refusal("binding-authorization"))?
+            != proof.authorization_bytes()
     {
         return Err(refusal("binding-authorization"));
     }
@@ -168,44 +171,6 @@ pub fn bind<T: IdentityTxn + ?Sized>(
         binding: request,
         receipt,
     })
-}
-
-// This binding permits no cell. Rebuild the unchanged C5 field set and operation
-// preimage here without invoking canon's pending authorization codec.
-fn authorization_bytes(auth: &OwnerAuthorization) -> Result<Vec<u8>> {
-    let base = match auth.base_sha256 {
-        BaseDigest::Absent => text("absent")?,
-        BaseDigest::Present(digest) => text(digest)?,
-    };
-    let mut fields = vec![
-        ("v".to_owned(), number(u64::from(auth.v))?),
-        ("node".to_owned(), text(auth.node)?),
-        ("target".to_owned(), text(&auth.target)?),
-        ("base_sha256".to_owned(), base),
-        ("new_sha256".to_owned(), text(auth.new_sha256)?),
-        ("cell".to_owned(), Value::null()),
-    ];
-    let operation = Value::checked_object(fields.clone())?.canonical_bytes();
-    let mut preimage = canon::domain::OPERATION_CONTENT_DOMAIN.as_bytes().to_vec();
-    preimage.push(0);
-    preimage.extend(operation);
-    if *auth.operation.digest() != hash(&preimage) {
-        return Err(refusal("binding-authorization"));
-    }
-    fields.extend([
-        ("subject".to_owned(), text(auth.subject)?),
-        ("op".to_owned(), text(auth.op.wire_name())?),
-        ("proposal".to_owned(), text(auth.proposal)?),
-        ("display_sha256".to_owned(), text(auth.display_sha256)?),
-        ("challenge".to_owned(), text(auth.challenge)?),
-        (
-            "expires_at".to_owned(),
-            Value::integer(SafeInteger::new(auth.expires_at)?),
-        ),
-        ("epoch".to_owned(), number(auth.epoch)?),
-        ("operation".to_owned(), text(auth.operation)?),
-    ]);
-    Ok(Value::checked_object(fields)?.canonical_bytes())
 }
 
 fn hash(bytes: &[u8]) -> Digest32 {

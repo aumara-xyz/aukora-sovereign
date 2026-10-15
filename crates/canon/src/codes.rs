@@ -28,6 +28,12 @@ macro_rules! registry {
 }
 
 registry! {
+    NOSTR_BINDING_INVALID => ("nostr", "binding-invalid", "The binding version or distinct role keys are invalid."),
+    NOSTR_BINDING_AUTHORITY => ("nostr", "binding-authority", "The binding authority coordinates, append clock or approval expiry are invalid."),
+    NOSTR_BINDING_TRANSACTION => ("nostr", "binding-transaction", "The binding proof belongs to a different authority transaction."),
+    NOSTR_BINDING_AUTHORIZATION => ("nostr", "binding-authorization", "The binding does not match the exact C5 permission authorization."),
+    NOSTR_BINDING_OWNER => ("nostr", "binding-owner", "The current owner binding does not match the verified passkey proof."),
+    NOSTR_NPUB_INVALID => ("nostr", "npub-invalid", "The address is not canonical NIP-19 for a valid x-only public key."),
     PENTORA_IDENTITY_INVALID => ("pentora", "identity-invalid", "A person public key must contain exactly 32 bytes."),
     PENTORA_IDENTITIES_EQUAL => ("pentora", "identities-equal", "A relationship requires two different person public keys."),
     PENTORA_COMMITMENT_EMPTY => ("pentora", "commitment-empty", "Legacy bloom v1 refuses an all-zero commitment."),
