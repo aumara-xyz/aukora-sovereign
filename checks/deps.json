@@ -388,6 +388,14 @@
   "version": "0.3.34"
  },
  {
+  "name": "futures-io",
+  "version": "0.3.34"
+ },
+ {
+  "name": "futures-macro",
+  "version": "0.3.34"
+ },
+ {
   "name": "futures-sink",
   "version": "0.3.34"
  },
@@ -1186,6 +1194,10 @@
  {
   "name": "wasm-encoder",
   "version": "0.233.0"
+ },
+ {
+  "name": "wasm-streams",
+  "version": "0.5.0"
  },
  {
   "name": "wasmparser",
