@@ -5,6 +5,8 @@ remembers, grows and even changes itself. It can never act past the boundary wit
 a receipt anyone can check.
 
 **The plan is [NORTH-STAR.md](NORTH-STAR.md), the only plan.** Row number = GitHub issue number.
+**The charter is [spec/GOLDEN-BOUNDARY.md](spec/GOLDEN-BOUNDARY.md)**: the Golden Boundary and the Unownable Core,
+which every row answers to. AUKORA Light carries the same file.
 
 ## Milestones (only Peter says "done")
 | | Milestone | State |
