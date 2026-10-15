@@ -5,7 +5,7 @@
     "presented.json": {"same_bytes_as": "retained.json"},
     "missing.json": {"filesystem_kind": "absent"},
     "directory": {"filesystem_kind": "directory"},
-    "oversize.json": {"filesystem_kind": "regular", "byte_length": 1048577, "fill_byte": 0},
+    "oversize.json": {"filesystem_kind": "regular", "byte_length": 8388609, "fill_byte": 0},
     "encoding.json": {"hex": "ff"}
   },
   "cases": [

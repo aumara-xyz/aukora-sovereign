@@ -133,7 +133,21 @@ impl VerificationReport {
         }
     }
 
-    pub(crate) fn scopes(&mut self, integrity: IntegrityScope, observations: ObservationScope) {
+    pub(crate) fn scopes(&mut self, mut integrity: IntegrityScope, observations: ObservationScope) {
+        if self.findings.iter().any(|finding| {
+            finding.code.organ == "verifier"
+                && matches!(
+                    finding.code.reason,
+                    "shorter-than-checkpoint"
+                        | "checkpoint-mismatch"
+                        | "presented-size"
+                        | "presented-root"
+                        | "bundle-tail-size"
+                        | "bundle-head"
+                )
+        }) {
+            integrity.tree_root = Scope::Unchecked;
+        }
         self.integrity = integrity;
         self.observations = observations;
         if !matches!(self.verdict, Verdict::Verified | Verdict::Unchecked) {
@@ -453,7 +467,7 @@ fn owner_consumption<'a>(rows: &'a [Row], row: &'a Value) -> Result<(&'a Value, 
         let proof = text(field(body, "proof_hex")?)?;
         owner_require(
             !proof.is_empty()
-                && proof.len().is_multiple_of(2)
+                && proof.len() % 2 == 0
                 && proof
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),

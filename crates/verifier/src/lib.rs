@@ -120,7 +120,16 @@ struct Row {
 fn key(bytes: &[u8]) -> Result<VerifyingKey> {
     let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     let s = std::str::from_utf8(bytes).map_err(|_| refusal("key"))?;
-    VerifyingKey::from_bytes(&hex32(s)?).map_err(|_| refusal("key"))
+    public_key(s)
+}
+
+fn public_key(encoded: &str) -> Result<VerifyingKey> {
+    let key = VerifyingKey::from_bytes(&hex32(encoded)?).map_err(|_| refusal("key"))?;
+    if key.is_weak() {
+        Err(refusal("key-weak"))
+    } else {
+        Ok(key)
+    }
 }
 
 fn row(value: Value, _index: usize) -> Result<Row> {
@@ -198,7 +207,7 @@ fn bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
     keys(&value, &["schema", "publicKey", "head", "rows"])?;
     format::ExportVersion::from_schema(text(field(&value, "schema")?)?)?;
     let embedded = text(field(&value, "publicKey")?)?;
-    let embedded_key = VerifyingKey::from_bytes(&hex32(embedded)?).map_err(|_| refusal("key"))?;
+    let embedded_key = public_key(embedded)?;
     let values = array(field(&value, "rows")?)?;
     if let Some(pinned) = inputs.pinned_key {
         if key(pinned)? != embedded_key {
@@ -268,6 +277,7 @@ fn bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
             false,
         );
     }
+    report.scopes(report.integrity(), report.observations());
     Ok(report)
 }
 
@@ -399,15 +409,6 @@ fn chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
             );
         } else {
             let prior = self::rows(bytes).map_err(|(_, code)| code)?;
-            if prior.len() == rows.len()
-                && prior
-                    .iter()
-                    .zip(&rows)
-                    .all(|(old, now)| old.value == now.value)
-            {
-                integrity.tree_root = Scope::Checked;
-                observations.covering_checkpoint = Scope::Checked;
-            }
             for (index, old) in prior.iter().enumerate() {
                 if rows.get(index).is_none_or(|now| old.value != now.value) {
                     report.finding(
@@ -423,14 +424,10 @@ fn chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
     }
     let retained = inputs.retained.map(consistency::retained).transpose()?;
     let checkpoint = inputs.checkpoint.map(consistency::retained).transpose()?;
-    for (head, independent) in retained
-        .iter()
-        .map(|h| (h, true))
-        .chain(checkpoint.iter().map(|h| (h, true)))
-    {
+    for head in retained.iter().chain(checkpoint.iter()) {
         if anchor(head, &rows) {
-            integrity.tree_root = Scope::Checked;
-            if head.size == rows.len() as u64 && independent {
+            if head.size == rows.len() as u64 {
+                integrity.tree_root = Scope::Checked;
                 observations.covering_checkpoint = Scope::Checked;
             }
         } else {

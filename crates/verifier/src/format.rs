@@ -384,73 +384,16 @@ fn schnorr_signature(
         .map_err(|_| refusal(reason))
 }
 
-fn npub_checksum_step(checksum: u32, symbol: u8) -> u32 {
-    let high = checksum >> 25;
-    let mut next = ((checksum & 0x01ff_ffff) << 5) ^ u32::from(symbol);
-    for (bit, generator) in [
-        0x3b6a_57b2,
-        0x2650_8e6d,
-        0x1ea1_19fa,
-        0x3d42_33dd,
-        0x2a14_62b3,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        if high & (1 << bit) != 0 {
-            next ^= generator;
-        }
-    }
-    next
-}
-
-// NIP-19 uses the original Bech32 checksum and zero-padded 8-to-5 conversion.
-fn npub(public: &[u8; 32]) -> String {
-    const ALPHABET: &[u8; 32] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-    let mut symbols = Vec::with_capacity(52);
-    let mut buffer = 0u16;
-    let mut bits = 0;
-    for byte in public {
-        buffer = (buffer << 8) | u16::from(*byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            symbols.push(((buffer >> bits) & 31) as u8);
-        }
-        buffer &= (1 << bits) - 1;
-    }
-    if bits != 0 {
-        symbols.push((buffer << (5 - bits)) as u8);
-    }
-    let mut checksum = 1;
-    for byte in b"npub" {
-        checksum = npub_checksum_step(checksum, byte >> 5);
-    }
-    checksum = npub_checksum_step(checksum, 0);
-    for byte in b"npub" {
-        checksum = npub_checksum_step(checksum, byte & 31);
-    }
-    let mut output = String::from("npub1");
-    for symbol in &symbols {
-        checksum = npub_checksum_step(checksum, *symbol);
-        output.push(char::from(ALPHABET[usize::from(*symbol)]));
-    }
-    for _ in 0..6 {
-        checksum = npub_checksum_step(checksum, 0);
-    }
-    checksum ^= 1;
-    for shift in (0..6).rev() {
-        output.push(char::from(
-            ALPHABET[((checksum >> (shift * 5)) & 31) as usize],
-        ));
-    }
-    output
+fn npub(public: &[u8; 32]) -> Result<String> {
+    canon::provenance::Npub::encode_key_bytes(*public)
+        .map(|address| address.as_str().to_owned())
+        .map_err(|_| refusal("nostr-npub"))
 }
 
 fn bound_identity(value: &Value) -> Result<[u8; 32]> {
     keys(value, &["pubkey", "npub"]).map_err(|_| refusal("nostr-binding-shape"))?;
     let public = hex32(text(field(value, "pubkey")?)?)?;
-    if text(field(value, "npub")?)? != npub(&public) {
+    if text(field(value, "npub")?)? != npub(&public)? {
         return Err(refusal("nostr-npub"));
     }
     Ok(public)

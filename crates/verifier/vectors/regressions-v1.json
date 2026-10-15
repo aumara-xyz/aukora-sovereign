@@ -6,7 +6,8 @@
     "pointers": "JSON pointers use zero-based array indexes.",
     "canonical": "Serialize structured inputs with C1 and no trailing newline; rows-jsonl uses one newline after every row.",
     "rehash_and_sign": "Recompute C3 hashes from the indicated row onward, set later predecessor hashes, and sign raw 32-byte hashes with the supplied Ed25519 seed.",
-    "rebuild_head": "Set the six-key retained head from the resulting row count, tail hash and RFC 6962 root."
+    "rebuild_head": "Set the six-key retained head from the resulting row count, tail hash and RFC 6962 root.",
+    "head_reference": "For retained, presented and checkpoint references, clone the selected source head then apply reference-local edits. If prefix_rows is present, first rebuild the exact six-key retained head over that many leading source rows; this does not change the chain input."
   },
   "fixtures": {
     "aura-4": {
@@ -51,6 +52,47 @@
       "checkpoint": {"source": "original", "pointer": "/head"},
       "edits": [],
       "expected": {"verdict": "UNCHECKED", "exit": 1, "pinned_identity": "UNCHECKED", "covering_checkpoint": "CHECKED", "codes": ["verifier:identity-no-pinned-key"]}
+    },
+    {
+      "id": "prefix-checkpoint-does-not-check-the-full-tail-root",
+      "mode": "chain",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "checkpoint": {"source": "original", "pointer": "/head", "prefix_rows": 2},
+      "edits": [],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "rows": 4, "tree_root": "UNCHECKED", "covering_checkpoint": "UNCHECKED"}
+    },
+    {
+      "id": "presented-root-mismatch-clears-anchored-tail-root",
+      "mode": "chain",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "retained": {"source": "original", "pointer": "/head"},
+      "presented": {"source": "original", "pointer": "/head", "edits": [{"op": "remove", "pointer": "/sequence"}, {"op": "remove", "pointer": "/hash"}, {"op": "replace", "pointer": "/schema", "value": "aukora-aura-presented-head-v1"}, {"op": "add", "pointer": "/retainedTreeSize", "value": 4}, {"op": "add", "pointer": "/proofFromPrevious", "value": []}, {"op": "replace", "pointer": "/root", "value": "0000000000000000000000000000000000000000000000000000000000000000"}]},
+      "edits": [],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "tree_root": "UNCHECKED"}
+    },
+    {
+      "id": "presented-size-mismatch-clears-anchored-tail-root",
+      "mode": "chain",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "retained": {"source": "original", "pointer": "/head"},
+      "presented": {"source": "original", "pointer": "/head", "edits": [{"op": "remove", "pointer": "/sequence"}, {"op": "remove", "pointer": "/hash"}, {"op": "replace", "pointer": "/schema", "value": "aukora-aura-presented-head-v1"}, {"op": "add", "pointer": "/retainedTreeSize", "value": 4}, {"op": "add", "pointer": "/proofFromPrevious", "value": []}, {"op": "replace", "pointer": "/treeSize", "value": 3}]},
+      "edits": [],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "tree_root": "UNCHECKED"}
+    },
+    {
+      "id": "conflicting-checkpoint-does-not-inherit-matching-retained-head",
+      "mode": "chain",
+      "engine": "rust",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "retained": {"source": "original", "pointer": "/head"},
+      "presented": {"source": "original", "pointer": "/head", "edits": [{"op": "remove", "pointer": "/sequence"}, {"op": "remove", "pointer": "/hash"}, {"op": "replace", "pointer": "/schema", "value": "aukora-aura-presented-head-v1"}, {"op": "add", "pointer": "/retainedTreeSize", "value": 4}, {"op": "add", "pointer": "/proofFromPrevious", "value": []}]},
+      "checkpoint": {"source": "original", "pointer": "/head", "edits": [{"op": "replace", "pointer": "/root", "value": "0000000000000000000000000000000000000000000000000000000000000000"}]},
+      "edits": [],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "tree_root": "UNCHECKED", "codes": ["verifier:checkpoint-mismatch"]}
     },
     {
       "id": "body-flipped-without-resigning",
@@ -171,7 +213,15 @@
       "mode": "bundle",
       "fixture": "aura-4",
       "edits": [{"op": "replace", "pointer": "/publicKey", "value": "0100000000000000000000000000000000000000000000000000000000000000"}],
-      "expected": {"not_verdict": "VERIFIED", "codes": ["verifier:key-weak"]}
+      "expected": {"not_verdict": "VERIFIED", "exit": 64, "codes": ["verifier:key-weak"]}
+    },
+    {
+      "id": "weak-pinned-chain-key",
+      "mode": "chain",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "prepared", "pointer": "/publicKey"},
+      "edits": [{"op": "replace", "pointer": "/publicKey", "value": "0100000000000000000000000000000000000000000000000000000000000000"}],
+      "expected": {"not_verdict": "VERIFIED", "exit": 64, "codes": ["verifier:key-weak"]}
     },
     {
       "id": "extra-v1-bundle-key",

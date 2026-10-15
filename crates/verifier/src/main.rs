@@ -116,9 +116,9 @@ fn emit(report: &VerificationReport) {
     println!("],\"scope\":\"supplied bytes and retained observations; passkey signatures and physical effects independently unchecked\"}}");
 }
 
-fn run(args: &[std::ffi::OsString]) -> Result<u8> {
+fn run(args: &[std::ffi::OsString]) -> std::result::Result<u8, String> {
     let Some(first) = args.first().and_then(|s| s.to_str()) else {
-        return Err("verifier:usage");
+        return Err("verifier:usage".into());
     };
     if first == "--help" && args.len() == 1 {
         println!("{HELP}");
@@ -126,7 +126,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
     }
     if first == "consistency" {
         if args.len() != 3 {
-            return Err("verifier:usage");
+            return Err("verifier:usage".into());
         }
         let retained = read(Path::new(&args[1]))?;
         let presented = read(Path::new(&args[2]))?;
@@ -134,7 +134,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
             retained: &retained,
             presented: &presented,
         })
-        .map_err(|_| "verifier:consistency-input")?;
+        .map_err(|code| code.to_string())?;
         let (label, exit) = match report.verdict() {
             verifier::consistency::ConsistencyVerdict::AppendOnly => ("APPEND_ONLY", 0),
             verifier::consistency::ConsistencyVerdict::ObservationConflict => {
@@ -150,7 +150,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
     }
     if first == "witness" {
         if args.len() < 3 {
-            return Err("verifier:usage");
+            return Err("verifier:usage".into());
         }
         let bundle = read(Path::new(&args[1]))?;
         let event = read(Path::new(&args[2]))?;
@@ -159,7 +159,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
             .keys()
             .any(|k| !["--key", "--checkpoint"].contains(&k.as_str()))
         {
-            return Err("verifier:usage");
+            return Err("verifier:usage".into());
         }
         let report = verifier::verify_witness(WitnessInputs {
             export: BundleInputs {
@@ -169,7 +169,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
             },
             event: &event,
         })
-        .map_err(|_| "verifier:witness-invalid")?;
+        .map_err(|code| code.to_string())?;
         emit(&report);
         return Ok(report.verdict().exit_code());
     }
@@ -180,7 +180,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
             .keys()
             .any(|k| !["--bundle", "--key", "--checkpoint"].contains(&k.as_str()))
         {
-            return Err("verifier:usage");
+            return Err("verifier:usage".into());
         }
         verifier::verify_bundle(BundleInputs {
             bundle,
@@ -189,7 +189,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
         })
     } else {
         if files.contains_key("--retained") != files.contains_key("--presented") {
-            return Err("verifier:usage");
+            return Err("verifier:usage".into());
         }
         verifier::verify_chain(ChainInputs {
             pinned_key: get("--key").ok_or("verifier:usage")?,
@@ -200,7 +200,7 @@ fn run(args: &[std::ffi::OsString]) -> Result<u8> {
             checkpoint: get("--checkpoint"),
         })
     }
-    .map_err(|_| "verifier:invalid-input")?;
+    .map_err(|code| code.to_string())?;
     emit(&report);
     Ok(report.verdict().exit_code())
 }

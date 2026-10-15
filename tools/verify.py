@@ -147,6 +147,15 @@ def _root(leaves):
     return _node(_root(leaves[:cut]), _root(leaves[cut:]))
 
 
+def _checked_key(key):
+    try:
+        from nacl.bindings import crypto_core_ed25519_is_valid_point
+    except ImportError:
+        raise Refusal("verifier:crypto-unavailable") from None
+    _require(crypto_core_ed25519_is_valid_point(key), "key-weak")
+    return key
+
+
 def _key(raw):
     if isinstance(raw, str):
         raw = raw.encode("ascii")
@@ -157,7 +166,7 @@ def _key(raw):
         raise Refusal("verifier:key-encoding") from None
     if text.endswith("\n"):
         text = text[:-1]
-    return _hex(text, reason="key-encoding")
+    return _checked_key(_hex(text, reason="key-encoding"))
 
 
 def _ed25519(key, message, text):
@@ -455,17 +464,17 @@ def _nostr_binding(row, aura_key):
     body = row["body"]
     expected = {"schema", "node", "agent", "aura_key", "statement_sha256", "node_sig", "agent_sig"}
     _require(row["phase"] == "fact" and set(body) == expected and body["schema"] == "aukora-nostr-bind-v1", "nostr-binding-shape")
-    _require(_hex(body["aura_key"]) == aura_key, "nostr-aura-key")
+    _require(_hex(body["aura_key"], reason="hex") == aura_key, "nostr-aura-key")
     public = {}
     for role in ("node", "agent"):
         identity = body[role]
         _require(isinstance(identity, dict) and set(identity) == {"pubkey", "npub"}, "nostr-binding-shape")
-        public[role] = _hex(identity["pubkey"])
+        public[role] = _hex(identity["pubkey"], reason="hex")
         _require(identity["npub"] == _npub(public[role]), "nostr-npub")
     statement = {"domain": "aukora:nostr-identity-binding:v1", "aura_key": body["aura_key"],
                  "node": body["node"]["pubkey"], "agent": body["agent"]["pubkey"]}
     digest = _sha(_bytes(statement))
-    _require(digest.hex() == body["statement_sha256"], "nostr-statement")
+    _require(digest == _hex(body["statement_sha256"], reason="hex"), "nostr-statement")
     for role in public:
         _schnorr(public[role], digest, body[role + "_sig"], "nostr-" + role + "-signature")
 
@@ -540,7 +549,7 @@ def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None):
     value = _parse(bundle, canonical=True)
     _require(isinstance(value, dict) and set(value) == {"schema", "publicKey", "head", "rows"}, "bundle-format")
     export_version(value["schema"])
-    key = _hex(value["publicKey"])
+    key = _checked_key(_hex(value["publicKey"]))
     if pinned_key is not None:
         _require(_key(pinned_key) == key, "bundle-key-mismatch")
     head = _head(value["head"])
@@ -638,16 +647,15 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
         for index, entry in enumerate(earlier):
             _require(index < len(values), "shorter-than-checkpoint", index + 1)
             _require(_same(entry, values[index]), "retained-row-mismatch", index + 1)
-        if len(earlier) == len(values):
-            covering, anchored = True, True
     _require((retained is None) == (presented is None), "observation-pair")
     if retained is not None:
         old, new = _head(_parse(retained)), _parse(presented)
         _anchor(old, values, leaves)
-        anchored = True
+        anchored = old["treeSize"] == len(values)
         covering = covering or old["treeSize"] == len(values)
         proof = verify_consistency(retained, presented)
         _require(new["treeSize"] == len(values) and new["root"] == _root(leaves).hex(), "presented-head-mismatch")
+        anchored = True
         _require(proof["verdict"] != "OBSERVATION_CONFLICT", "consistency-prefix-mismatch", old["treeSize"], False)
         consistent = proof["verdict"] == "APPEND_ONLY"
         if not consistent:
@@ -656,7 +664,7 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
         kept = _head(_parse(checkpoint))
         _anchor(kept, values, leaves)
         covering = covering or kept["treeSize"] == len(values)
-        anchored = True
+        anchored = anchored or kept["treeSize"] == len(values)
     return _report(len(values), identity=True, covering=covering, consistency=consistent, semantic=semantic, tree_root=anchored, findings=findings)
 
 

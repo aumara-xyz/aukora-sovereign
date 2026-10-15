@@ -144,7 +144,7 @@
         {"id": "one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/aura_key", "length": 62}]},
         {"id": "one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/aura_key", "text": "00"}]}
       ],
-      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes_by_engine": {"rust": ["verifier:hex"], "python": ["verifier:bad-digest"]}}
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:hex"]}
     },
     {
       "id": "statement-digest-hex-is-canonical",
@@ -153,7 +153,7 @@
         {"id": "one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/statement_sha256", "length": 62}]},
         {"id": "one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/statement_sha256", "text": "00"}]}
       ],
-      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes_by_engine": {"rust": ["verifier:hex"], "python": ["verifier:nostr-statement"]}}
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:hex"]}
     },
     {
       "id": "both-public-keys-have-canonical-hex",
@@ -165,7 +165,7 @@
         {"id": "agent-one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/agent/pubkey", "length": 62}]},
         {"id": "agent-one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/agent/pubkey", "text": "00"}]}
       ],
-      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes_by_engine": {"rust": ["verifier:hex"], "python": ["verifier:bad-digest"]}}
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:hex"]}
     }
   ]
 }
