@@ -941,6 +941,19 @@ dependencies = [
 [[package]]
 name = "kira"
 version = "0.0.0"
+dependencies = [
+ "aura",
+ "canon",
+ "chacha20poly1305",
+ "getrandom",
+ "hkdf",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "zeroize",
+]
 
 [[package]]
 name = "landlock"
