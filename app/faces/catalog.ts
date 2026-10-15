@@ -193,7 +193,11 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
     "surface": "./faces/messages/index.html",
     "capabilities": {
       "network": {
-        "methods": [],
+        "methods": [
+          "contacts.list",
+          "messages.list",
+          "refusals.counts"
+        ],
         "topics": []
       }
     }
