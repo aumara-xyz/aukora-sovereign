@@ -86,10 +86,24 @@ pub fn health(sources: ObservationSources<'_>, context: ObservationContext) -> V
         max_bytes: 16 * 1024 * 1024,
         max_rows: 65_536,
     };
-    let observation = sources.ledger.export_cold_proof(limits).and_then(|proof| {
-        proof.canonical_bytes(limits)?;
-        Ok(proof)
-    });
+    let observation = sources
+        .ledger
+        .export_cold_proof(limits)
+        .map_err(|_| (Cell::Undetermined, HealthReason::Unreachable))
+        .and_then(|proof| {
+            check_context(&proof, context).map_err(|reason| {
+                let cell = if reason == HealthReason::NotChecked {
+                    Cell::Undetermined
+                } else {
+                    Cell::Failed
+                };
+                (cell, reason)
+            })?;
+            proof
+                .canonical_bytes(limits)
+                .map_err(|_| (Cell::Failed, HealthReason::InvalidEvidence))?;
+            Ok(proof)
+        });
     PRIVATE_CHECKS
         .iter()
         .chain(CORNER_CHECKS.iter())
@@ -99,24 +113,21 @@ pub fn health(sources: ObservationSources<'_>, context: ObservationContext) -> V
                 || spec.check == CHAIN_HEAD.check
             {
                 match &observation {
-                    Err(_) => (Cell::Undetermined, HealthReason::Unreachable),
-                    Ok(proof) => match check_context(proof, context) {
-                        Err(reason) => (Cell::Undetermined, reason),
-                        Ok(()) => {
-                            let result = if spec.check == OPERATION_TERMINALS.check {
-                                crate::coverage::check_ledger_rows(&proof.rows).map(|_| ())
-                            } else if spec.check == CONSUMPTION_ONCE.check {
-                                crate::coverage::check_consumption_rows(&proof.rows)
-                            } else {
-                                Ok(())
-                            };
-                            if result.is_ok() {
-                                (Cell::Verified, HealthReason::Satisfied)
-                            } else {
-                                (Cell::Failed, HealthReason::InvariantFailed)
-                            }
+                    Err(failure) => *failure,
+                    Ok(proof) => {
+                        let result = if spec.check == OPERATION_TERMINALS.check {
+                            crate::coverage::check_ledger_rows(&proof.rows).map(|_| ())
+                        } else if spec.check == CONSUMPTION_ONCE.check {
+                            crate::coverage::check_consumption_rows(&proof.rows)
+                        } else {
+                            Ok(())
+                        };
+                        if result.is_ok() {
+                            (Cell::Verified, HealthReason::Satisfied)
+                        } else {
+                            (Cell::Failed, HealthReason::InvariantFailed)
                         }
-                    },
+                    }
                 }
             } else {
                 (Cell::Failed, HealthReason::Unwritten)
@@ -142,8 +153,28 @@ fn check_context(
     proof: &aura::export::ColdProofV1,
     context: ObservationContext,
 ) -> core::result::Result<(), HealthReason> {
-    if proof.head.sequence != context.sequence {
+    if proof.head.sequence != context.sequence || proof.head.hash != context.commitment {
         return Err(HealthReason::ContextMismatch);
+    }
+    if proof.rows.is_empty()
+        || u64::try_from(proof.rows.len()).ok() != Some(proof.head.sequence)
+        || proof.head.tree_size != proof.head.sequence
+    {
+        return Err(HealthReason::InvariantFailed);
+    }
+    let mut previous = None;
+    for (index, row) in proof.rows.iter().enumerate() {
+        if row.sequence != index as u64 + 1 || row.previous != previous {
+            return Err(HealthReason::InvariantFailed);
+        }
+        let hash = aura::record::entry_hash_v1(row).map_err(|_| HealthReason::InvalidEvidence)?;
+        if row.hash != hash {
+            return Err(HealthReason::InvariantFailed);
+        }
+        previous = Some(hash);
+    }
+    if previous != Some(proof.head.hash) {
+        return Err(HealthReason::InvariantFailed);
     }
     let mut epoch = None;
     for row in proof.rows.iter().rev() {

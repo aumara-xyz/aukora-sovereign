@@ -134,12 +134,7 @@ pub fn validate_new_evidence(
     if source.authority != change.source_record {
         return Err(crate::refuse("evidence-source"));
     }
-    if source.hash != change.current
-        && record_payload(&source.body)?
-            .get("evidence_sha256")
-            .and_then(as_text)
-            != Some(change.current.to_string().as_str())
-    {
+    if source.hash != change.current {
         return Err(crate::refuse("evidence-mismatch"));
     }
     Ok(())
