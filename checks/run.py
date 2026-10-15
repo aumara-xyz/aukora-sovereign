@@ -76,25 +76,29 @@ for p in files:
     if pattern.search((ROOT / p).read_text(errors="replace")) and p not in baseline["foreign_paths"]:
         fail("foreign-path", p)
 
-# 6. Each crate depends only on what its README allows, and only on allowed external crates.
+# 6. Dependencies as cargo itself reads them (every table form): path dependencies only as each README allows, and
+#    external crates only from checks/deps.json.
+meta = json.loads(subprocess.run(["cargo", "metadata", "--offline", "--no-deps", "--format-version", "1"], cwd=ROOT,
+                                 capture_output=True, text=True, check=True).stdout)
 crates = sorted(d.name for d in (ROOT / "crates").iterdir() if (d / "Cargo.toml").is_file())
-manifests = [(c, ROOT / "crates" / c) for c in crates] + [("guest", ROOT / "guest")]
-for c, d in manifests:
-    readme = d / "README.md"
+for pkg in meta["packages"]:
+    home = pathlib.Path(pkg["manifest_path"]).parent
+    readme = home / "README.md"
     if not readme.is_file():
-        fail("crate-readme", c)
+        fail("crate-readme", pkg["name"])
         continue
-    m = re.search(r"\*\*May depend on:\*\* (.*?)\.", readme.read_text()) or re.search(r"May depend on: (.*?)\.", readme.read_text())
+    m = re.search(r"May depend on:\*?\*? (.*?)\.", readme.read_text())
     said = m.group(1).strip() if m else "nothing"
-    cargo = (d / "Cargo.toml").read_text()
-    for section in ("dependencies", "build-dependencies", "dev-dependencies"):
-        body = cargo.split(f"[{section}]", 1)[1].split("\n[", 1)[0] if f"[{section}]" in cargo else ""
-        for name, spec in re.findall(r'^([A-Za-z0-9_-]+)\s*=\s*(.+)$', body, re.M):
-            if "path" in spec:
-                if said != "every organ crate" and name not in {x.strip() for x in said.split(",")}:
-                    fail("crate-deps", f"{c} depends on {name}, not in its README")
-            elif name not in allowed_deps:
-                fail("deps-allowlist", f"{c} uses {name}, not in checks/deps.json")
+    allowed = {x.strip() for x in said.split(",")}
+    for dep in pkg["dependencies"]:
+        if dep.get("path"):
+            if said != "every organ crate" and dep["name"] not in allowed:
+                fail("crate-deps", f"{pkg['name']} depends on {dep['name']}, not in its README")
+        elif dep["name"] not in allowed_deps:
+            fail("deps-allowlist", f"{pkg['name']} uses {dep['name']}, not in checks/deps.json")
+    cargo = (home / "Cargo.toml").read_text()
+    if (home / "build.rs").exists() or re.search(r"^\s*(build|links)\s*=", cargo, re.M) or re.search(r"proc-macro\s*=\s*true", cargo):
+        fail("build-time-code", f"{pkg['name']}: no build scripts, links or proc-macro crates of our own")
 
 # 7. The scaffold lock: every planned piece exists, and nothing unplanned appears at the top or among the crates.
 top = sorted({p.split("/", 1)[0] for p in files if "/" in p})
@@ -128,8 +132,49 @@ inventory += f"; Codex's 522-row list {'present' if codex_list else 'not saved y
 
 # 10. The deploy guard's list (row 131): S1 is never touched by spawn or upgrade.
 nodes = (ROOT / "deploy/EXISTING-NODES").read_text() if (ROOT / "deploy/EXISTING-NODES").is_file() else ""
-if not re.search(r"^s1\s", nodes, re.M):
-    fail("deploy-guard", "deploy/EXISTING-NODES must list s1")
+for node in ("s1", "s2", "s3", "s4", "pilot"):
+    if not re.search(rf"^{node}\s", nodes, re.M):
+        fail("deploy-guard", f"deploy/EXISTING-NODES must keep {node}")
+
+# 11. The walls, by source scan (comments stripped): the agent never executes, opens a socket or uses unsafe; only the
+#     crates that must touch the network or processes do; the gate, frontdoor and launcher never read the health map or
+#     a picture; the browser code never evaluates strings or writes raw HTML; and there are no test suites.
+NET = r"std::net|std::os::unix::net|TcpStream|TcpListener|UdpSocket|tokio::net|hyper::|tungstenite|rustls::"
+PROC = r"std::process::(Command|Child|Stdio)|\bCommand::new|libc::(exec|fork|vfork|posix_spawn)"
+PICTURE = r"HealthSnapshot|organ_map|OrganMap|pentora::"
+JS_BAD = r"\beval\s*\(|new\s+Function\s*\(|\.innerHTML\b|\.outerHTML\b|document\.write\s*\(|javascript:"
+ALLOW = {"net": {"frontdoor", "relay", "broker", "kira", "supervisor", "launcher"}, "proc": {"launcher", "supervisor"},
+         "unsafe": {"launcher", "canon", "pentora", "wasmcell"}}
+
+
+def strip(text):
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    return re.sub(r"(?m)//.*$", "", text)
+
+
+for p in files:
+    if p in pins:
+        continue
+    low = p.lower()
+    if ("/tests/" in f"/{low}" and not low.startswith("tests/e2e/")) or re.search(r"\.(test|spec)\.(ts|js|mjs)$", low):
+        fail("no-test-suites", p)
+    if not re.search(r"\.(rs|ts|js|mjs|html)$", p):
+        continue
+    code = strip((ROOT / p).read_text(errors="replace"))
+    unit = p.split("/")[1] if p.startswith("crates/") else p.split("/")[0]
+    if p.endswith(".rs"):
+        if re.search(r"#\[(test|cfg\(test\))\]", code):
+            fail("no-test-suites", p)
+        if re.search(NET, code) and unit not in ALLOW["net"]:
+            fail("wall-network", p)
+        if re.search(PROC, code) and unit not in ALLOW["proc"]:
+            fail("wall-exec", p)
+        if re.search(r"\bunsafe\b", code) and unit not in ALLOW["unsafe"]:
+            fail("wall-unsafe", p)
+        if unit in ("gate", "frontdoor", "launcher") and re.search(PICTURE, code):
+            fail("wall-picture", p)
+    elif re.search(JS_BAD, code) or (p.endswith(".html") and re.search(r"<script(?![^>]*\bsrc=)[^>]*>", code)):
+        fail("wall-browser", p)
 
 if FAIL:
     print("\n".join(f"FAIL {f}" for f in FAIL))
