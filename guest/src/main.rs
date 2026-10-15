@@ -8,6 +8,7 @@ pub mod compaction;
 pub mod context;
 pub mod dispatch;
 pub mod fd3;
+pub mod fd4;
 pub mod presets;
 pub mod rails;
 pub mod session;

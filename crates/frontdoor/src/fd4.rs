@@ -11,6 +11,38 @@ use canon::{
 
 pub const MAX_QUEUED_FRAMES: usize = 32;
 pub const MAX_QUEUED_BYTES: usize = 256 * 1024;
+pub const DATA_PATH: &str = "/api/data";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DataEndpoint {
+    Command,
+    Event,
+}
+
+impl DataEndpoint {
+    pub fn resolve(
+        role: crate::ingress::HostRole,
+        method: crate::ingress::Method,
+        path: &str,
+    ) -> Result<Self> {
+        use crate::ingress::{HostRole, Method};
+        if role != HostRole::Shell {
+            return Err(canon::codes::FRONTDOOR_HOST_REFUSED);
+        }
+        crate::ingress::validate_path(path)?;
+        match (method, path) {
+            (Method::Post, DATA_PATH) => Ok(Self::Command),
+            (Method::Get, DATA_PATH) => Ok(Self::Event),
+            _ => Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE),
+        }
+    }
+}
+
+/// A command submission acknowledges transport only; events remain canonical FD 4 data.
+pub enum DataResponse {
+    Submitted,
+    Event(Vec<u8>),
+}
 
 /// An already-connected supervisor channel supplied at trusted startup.
 /// Implementations serialize writes, preserve correlation ids and close on framing failures.
@@ -28,6 +60,33 @@ pub struct DataBridge<C> {
 impl<C: DataChannel> DataBridge<C> {
     pub fn new(channel: C) -> Self {
         Self { channel }
+    }
+
+    /// HTTP dispatch retains the shell's live-session guard through one channel operation.
+    pub fn dispatch<S: crate::session::SessionStore>(
+        &mut self,
+        sessions: &mut S,
+        admitted: &crate::ingress::AdmittedRequest,
+        node: canon::ids::NodeId,
+        now_ms: u64,
+    ) -> Result<DataResponse> {
+        let endpoint = DataEndpoint::resolve(admitted.role(), admitted.method(), admitted.path())?;
+        crate::session::with_bound_session(
+            sessions,
+            admitted
+                .cookie()
+                .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?,
+            node,
+            admitted.origin(),
+            now_ms,
+            |session| match endpoint {
+                DataEndpoint::Command => {
+                    self.submit(&session, &canon::json::to_canonical(admitted.body()))?;
+                    Ok(DataResponse::Submitted)
+                }
+                DataEndpoint::Event => self.next_event(&session).map(DataResponse::Event),
+            },
+        )
     }
 
     /// Canon decodes exact bounded commands; ingress source comes from the live session.

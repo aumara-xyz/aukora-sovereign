@@ -1,0 +1,53 @@
+{
+  "schema": "launcher-refusal-registry-v1-vectors",
+  "cases": [
+    {
+      "input": "launcher:boot-attack-required",
+      "expected": { "organ": "launcher", "reason": "boot-attack-required" }
+    },
+    {
+      "input": "launcher:boot-kernel",
+      "expected": { "organ": "launcher", "reason": "boot-kernel" }
+    },
+    {
+      "input": "launcher:boot-landlock",
+      "expected": { "organ": "launcher", "reason": "boot-landlock" }
+    },
+    {
+      "input": "launcher:boot-number-range",
+      "expected": { "organ": "launcher", "reason": "boot-number-range" }
+    },
+    {
+      "input": "launcher:boot-receipt",
+      "expected": { "organ": "launcher", "reason": "boot-receipt" }
+    },
+    {
+      "input": "launcher:probe-budget",
+      "expected": { "organ": "launcher", "reason": "probe-budget" }
+    },
+    {
+      "input": "launcher:probe-fixture",
+      "expected": { "organ": "launcher", "reason": "probe-fixture" }
+    },
+    {
+      "input": "launcher:probe-fork",
+      "expected": { "organ": "launcher", "reason": "probe-fork" }
+    },
+    {
+      "input": "launcher:probe-output-limit",
+      "expected": { "organ": "launcher", "reason": "probe-output-limit" }
+    },
+    {
+      "input": "launcher:probe-pipe",
+      "expected": { "organ": "launcher", "reason": "probe-pipe" }
+    },
+    {
+      "input": "launcher:probe-report",
+      "expected": { "organ": "launcher", "reason": "probe-report" }
+    },
+    {
+      "input": "launcher:probe-wait",
+      "expected": { "organ": "launcher", "reason": "probe-wait" }
+    }
+  ]
+}

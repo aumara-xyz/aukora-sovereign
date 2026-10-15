@@ -1,0 +1,271 @@
+{
+  "schema": "frontdoor-refusal-registry-v1-vectors",
+  "cases": [
+    {
+      "input": "frontdoor:approval-notification-mismatch",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "approval-notification-mismatch"
+      }
+    },
+    {
+      "input": "frontdoor:approval-page-invalid",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "approval-page-invalid"
+      }
+    },
+    {
+      "input": "frontdoor:approval-page-limit",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "approval-page-limit"
+      }
+    },
+    {
+      "input": "frontdoor:approval-sequence-changed",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "approval-sequence-changed"
+      }
+    },
+    {
+      "input": "frontdoor:asset-count-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-count-refused"
+      }
+    },
+    {
+      "input": "frontdoor:asset-digest-mismatch",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-digest-mismatch"
+      }
+    },
+    {
+      "input": "frontdoor:asset-kind-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-kind-refused"
+      }
+    },
+    {
+      "input": "frontdoor:asset-length-mismatch",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-length-mismatch"
+      }
+    },
+    {
+      "input": "frontdoor:asset-not-approved",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-not-approved"
+      }
+    },
+    {
+      "input": "frontdoor:asset-observation-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-observation-refused"
+      }
+    },
+    {
+      "input": "frontdoor:asset-path-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-path-refused"
+      }
+    },
+    {
+      "input": "frontdoor:asset-size-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "asset-size-refused"
+      }
+    },
+    {
+      "input": "frontdoor:capability-denied",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "capability-denied"
+      }
+    },
+    {
+      "input": "frontdoor:config-invalid",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "config-invalid"
+      }
+    },
+    {
+      "input": "frontdoor:document-directory-too-large",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-directory-too-large"
+      }
+    },
+    {
+      "input": "frontdoor:document-kind-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-kind-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-list-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-list-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-page-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-page-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-path-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-path-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-read-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-read-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-root-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-root-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-session-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-session-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-symlink-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-symlink-refused"
+      }
+    },
+    {
+      "input": "frontdoor:document-too-large",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-too-large"
+      }
+    },
+    {
+      "input": "frontdoor:document-utf8-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "document-utf8-refused"
+      }
+    },
+    {
+      "input": "frontdoor:duplicate-asset",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "duplicate-asset"
+      }
+    },
+    {
+      "input": "frontdoor:manifest-digest-mismatch",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "manifest-digest-mismatch"
+      }
+    },
+    {
+      "input": "frontdoor:manifest-entry-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "manifest-entry-refused"
+      }
+    },
+    {
+      "input": "frontdoor:manifest-invalid",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "manifest-invalid"
+      }
+    },
+    {
+      "input": "frontdoor:manifest-size-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "manifest-size-refused"
+      }
+    },
+    {
+      "input": "frontdoor:manifest-version-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "manifest-version-refused"
+      }
+    },
+    {
+      "input": "frontdoor:preload-count-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "preload-count-refused"
+      }
+    },
+    {
+      "input": "frontdoor:preload-deadline",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "preload-deadline"
+      }
+    },
+    {
+      "input": "frontdoor:preload-size-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "preload-size-refused"
+      }
+    },
+    {
+      "input": "frontdoor:release-size-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "release-size-refused"
+      }
+    },
+    {
+      "input": "frontdoor:response-too-large",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "response-too-large"
+      }
+    },
+    {
+      "input": "frontdoor:session-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "session-refused"
+      }
+    },
+    {
+      "input": "frontdoor:shell-entry-refused",
+      "expected": {
+        "organ": "frontdoor",
+        "reason": "shell-entry-refused"
+      }
+    }
+  ]
+}

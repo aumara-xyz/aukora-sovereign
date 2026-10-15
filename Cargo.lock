@@ -1065,9 +1065,7 @@ dependencies = [
 name = "guest"
 version = "0.0.0"
 dependencies = [
- "base64 0.23.1",
  "canon",
- "getrandom 0.4.3",
 ]
 
 [[package]]

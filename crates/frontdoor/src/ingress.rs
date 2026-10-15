@@ -97,6 +97,12 @@ pub fn admit(input: RequestInput) -> Result<AdmittedRequest> {
         if !matches!(body.view(), ValueView::Object(_)) {
             return Err(codes::FRONTDOOR_BODY_INVALID);
         }
+        if input.transport.role() == HostRole::Shell
+            && input.path == crate::fd4::DATA_PATH
+            && json::to_canonical(&body) != input.body
+        {
+            return Err(codes::FRAME_NOT_CANONICAL);
+        }
         body
     } else {
         if !input.body.is_empty() {
@@ -232,7 +238,7 @@ fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zero
     Ok(selected)
 }
 
-/// Only the owner host resolves API routes; shell HTTP admits static asset reads.
+/// Owner APIs stay on the owner host; shell APIs are documents and the data bridge only.
 fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
     if role == HostRole::Owner {
         if path.starts_with("/api/") {
@@ -242,7 +248,11 @@ fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
         } else {
             Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
         }
-    } else if matches!(method, Method::Get | Method::Head) && !path.starts_with("/api/") {
+    } else if path == crate::fd4::DATA_PATH {
+        crate::fd4::DataEndpoint::resolve(role, method, path).map(|_| ())
+    } else if path.starts_with("/api/") {
+        crate::api::FaceEndpoint::resolve(role, method, path).map(|_| ())
+    } else if matches!(method, Method::Get | Method::Head) {
         Ok(())
     } else {
         Err(codes::FRONTDOOR_UNKNOWN_ROUTE)

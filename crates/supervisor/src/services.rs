@@ -85,8 +85,8 @@ pub trait BrokerService: Send + Sync {
     /// if this future is dropped before its acknowledgement reaches the router.
     fn start(&self, scope: PrincipalScope, request: ModelStart) -> ServiceFuture<'_, ModelStarted>;
 
-    /// Legacy polling port: observes a stream and never requests cancellation.
-    fn next(&self, scope: PrincipalScope, stream: ModelCancel) -> ServiceFuture<'_, BrokerEvent>;
+    /// Observes the identified stream without requesting cancellation.
+    fn next(&self, scope: PrincipalScope, stream: StreamHandle) -> ServiceFuture<'_, BrokerEvent>;
 
     /// Observe currently available output without cancelling or waiting for provider I/O.
     /// Adapters must implement this port before the router admits streaming work.

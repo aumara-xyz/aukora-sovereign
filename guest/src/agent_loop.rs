@@ -349,7 +349,7 @@ impl<L: SupervisorLink> BoundedAgentLoop<L> {
     }
 
     /// A failed FD 4 write retains the event and leaves every reservation outstanding.
-    pub fn forward_event(&mut self, app: &mut impl crate::fd3::AppLink) -> Result<bool> {
+    pub fn forward_event(&mut self, app: &mut impl crate::fd4::AppLink) -> Result<bool> {
         let Some(event) = self.events.front().cloned() else {
             return Ok(false);
         };

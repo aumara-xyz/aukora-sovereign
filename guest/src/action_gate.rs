@@ -65,12 +65,11 @@ pub struct PhiAssessment {
 pub struct LocalGate {
     preset: PresetId,
     targets: Vec<TargetName>,
-    veto: PhiState,
 }
 
 impl LocalGate {
-    /// The legacy phi argument can veto a proposal; Verified skips no local check.
-    pub fn new(preset: PresetId, targets: Vec<TargetName>, phi: PhiState) -> Result<Self> {
+    /// Assessments are computed from each request; callers supply no guard verdict.
+    pub fn new(preset: PresetId, targets: Vec<TargetName>) -> Result<Self> {
         if targets.len() > 128
             || targets
                 .iter()
@@ -79,11 +78,7 @@ impl LocalGate {
         {
             return Err(codes::FRAME_INVALID_FIELD);
         }
-        Ok(Self {
-            preset,
-            targets,
-            veto: phi,
-        })
+        Ok(Self { preset, targets })
     }
 
     /// Recomputes the guard from the actual closed target and argument payload.
@@ -127,9 +122,6 @@ impl LocalGate {
         assessment.checks_passed += 1;
         assessment.request_sha256 = Some(Digest32::sha256(&bytes));
         assessment.state = PhiState::Verified;
-        if consequential && self.veto != PhiState::Verified {
-            assessment.state = self.veto;
-        }
         (assessment, None)
     }
 

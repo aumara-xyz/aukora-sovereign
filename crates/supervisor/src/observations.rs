@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Independent evidence collection for immune; not a routing or admission input.
+//! Rows 12, 56 and 117: independent evidence collection for immune.
+//! Evidence is not a routing or admission input.
 
 use crate::services::ServiceFuture;
 use canon::{
@@ -44,13 +45,13 @@ pub struct CollectedEvidence {
     pub unavailable: Vec<ObservationFailure>,
 }
 
-/// Exact opaque bytes returned by immune for the coherence data endpoint.
+/// Exact opaque bytes returned by immune for the FD 4 health snapshot event.
 /// This wrapper provides no authorization or fingerprint conversion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoherenceBytes(Vec<u8>);
 
 impl CoherenceBytes {
-    /// Row 128: retain only an immune-produced canonical snapshot within the FD 4 cap.
+    /// Retain only an immune-produced canonical snapshot within the FD 4 cap.
     /// The health reducer validates cells; the frontdoor only relays these bytes.
     pub fn from_immune(bytes: Vec<u8>) -> Result<Self> {
         let bounded = canon::fd4::OpaqueHealthSnapshot::new(bytes)?;
@@ -68,7 +69,7 @@ pub trait ImmuneService: Send + Sync {
     fn reduce(&self, evidence: CollectedEvidence) -> ServiceFuture<'_, CoherenceBytes>;
 }
 
-/// Row 128: call each of the five distinct trusted observers at most once per sample.
+/// Call each of the five distinct trusted observers at most once per sample.
 /// Validate reporter against the registered channel/owner, check duplicates and the
 /// 130-report cap, and retain all failures for immune. No result feeds back to routing,
 /// credentials, release admission, grant admission or an authority transaction.
