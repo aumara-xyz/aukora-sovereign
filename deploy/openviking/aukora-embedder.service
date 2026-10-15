@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=AUKORA local CPU memory embedder
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=aukora
+Group=aukora
+StateDirectory=aukora-openviking
+StateDirectoryMode=0700
+WorkingDirectory=%S/aukora-openviking/models
+ReadOnlyPaths=%S/aukora-openviking/venv %S/aukora-openviking/bin %S/aukora-openviking/models
+UMask=0077
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy OPENAI_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY
+ExecStartPre=sha256sum --check model.sha256
+ExecStart=%S/aukora-openviking/bin/llama-server --model Qwen3-Embedding-0.6B-Q8_0.gguf --alias 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439 --embedding --pooling last --host 127.0.0.1 --port 1934 --ctx-size 2048 --parallel 1 --threads 2 --n-gpu-layers 0
+ExecStartPost=sleep 60
+TimeoutStartSec=75s
+TimeoutStopSec=15s
+Restart=always
+RestartSec=5s
+KillMode=control-group
+StandardInput=null
+StandardOutput=null
+StandardError=null
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitCORE=0
+MemoryMax=2G
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
