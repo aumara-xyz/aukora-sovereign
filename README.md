@@ -1,33 +1,33 @@
 # AUKORA Sovereign
 
-Restarted 2026-10-15 from a clean scaffold. The previous repo is frozen, read-only, at
-[aukora-sovereign-archive](https://github.com/aumara-xyz/aukora-sovereign-archive). Code comes over from it only
-when it ran live and the target needs it.
+Your own AI home base on a server you control. One link opens the Spatial app, where a personal AI organism lives,
+remembers, grows and even changes itself. It can never act past the boundary without its owner's approval, and it leaves
+a receipt anyone can check.
 
-## Target
-[NORTH-STAR.md](NORTH-STAR.md) is the only plan: what we are building, the seven milestones Peter watches, every
-brick (row number = GitHub issue number), who does what, and the rules. Waiting for Peter's yes on the scaffold.
+**The plan is [NORTH-STAR.md](NORTH-STAR.md), the only plan.** Row number = GitHub issue number.
 
-## Milestones (only Peter says done)
-1. Fresh node, one link, the whole Spatial app: NOT YET
-2. Real model reply, cage holds: NOT YET
-3. Self-change through Laya, the passkey and the WASM core, applied once: NOT YET
-4. Memory and approvals survive a real reboot: NOT YET
-5. Stranger verifies; Aura Coherence shows the same record: NOT YET
-6. Two nodes talk over Nostr: NOT YET
-7. Go Sovereign: invite, co-presence, a friend's fresh node: NOT YET
-
-## Claim board
-One worker per crate or folder. Claim it here before starting; a diff that does not fit the scaffold is thrown away.
-| Piece | Claimed by | Bricks |
+## Milestones (only Peter says "done")
+| | Milestone | State |
 |---|---|---|
-| app/, guest/, bridge/, test reads of Prime → app/ | Codex w-app | #1-#16, #98 |
-| crates/frontdoor, ui/owner (one link, sign-in and claim inside the app) | Codex w-onelink | #18, #19, #20, #75 |
-| crates/laya (+ gate and supervisor call sites) | Codex w-laya | #36-#39 |
-| crates/messaging, crates/invites (moved out of the supervisor) | Codex w-organs | #71, #72 |
+| M1 | His fresh node: one link, the whole Spatial app, claimed with passkey and phrase | NOT YET |
+| M2 | Auma answers with a real model; the cage holds | NOT YET |
+| M3 | She proposes a change to herself; Laya, passkey, WASM core; applied once | NOT YET |
+| M4 | She remembers after a real reboot; spent approvals stay spent | NOT YET |
+| M5 | A stranger verifies everything; Aura Coherence shows the health map | NOT YET |
+| M6 | Two nodes talk over public Nostr relays | NOT YET |
+| M7 | Go Sovereign: an invite, co-presence, a friend's own node | NOT YET |
+| M8 | Home base: a website on request; an app from the store | NOT YET |
+
+## How it is built (Peter, 2026-10-15)
+- **Fresh, every line.** The archive and Prime are the cheat sheet; nothing is copied. Only data comes over as it is,
+  pinned by hash in `checks/pins.json`.
+- **Code goes to main, and main is tested after it lands**: on a fresh node, then attacked by every major AI. Nothing
+  goes public before it survives that.
+- **Every change takes the same path:** a Codex worker writes it, Kimi red-teams it, Grok checks it, and the conductor
+  zips it onto main. The worker's clone is deleted at once.
 
 ## Checks
-Main only. `python3 -B checks/run.py` runs the machine rules of NORTH-STAR.md; `sh scripts/check.sh` runs everything.
+`scripts/check.sh` runs the construction checks (`checks/run.py`), then `cargo check` on the workspace.
 
 ## Ideas
-None yet.
+New ideas go here, each with one question to Peter: "switch target or park it?"

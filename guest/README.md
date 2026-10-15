@@ -1,21 +1,4 @@
-# Guest bridge contract choices
+# guest/
+Our harness: Auma's agent loop inside the cage, one static Rust binary (package `guest`, binary `auma`). Her only operations are chat, threads, sessions, streaming replies, presets, compaction, proposals and memory. FD 3 is her only channel. She never executes a command or opens a socket. May depend on: canon.
 
-This clone has no `bridge/canon.mjs`, `crates/canon/vectors`, or refusal-code registry. `guest/canon.mjs` supplies the minimal C1 serializer and strict parser, with local canonical byte vectors. Shared Rust/JS vector parity is untested until the canon builder's implementation and corpus are integrated.
-
-C4 does not define the `key` and `value` reconstructed for `memory.put`. The guest uses `value = {category, statement, quote?}` and `key = "memory:" + sha256(canon(value))`. The supervisor must reconstruct exactly this pair before re-running the pinned cell. `input_sha256` hashes the canonical pair; `effect_sha256` hashes the same bytes followed by one LF, as Prime's `cellEffectBody` defines. This identifier commits to model-authored plaintext inside the guest protocol; it must not be copied into the encrypted Kira ledger commitment.
-
-C4 defines no memory-write acknowledgement. The closest existing reply is `accepted {proposal_id}`; `kira_save` exposes it only as `ACKNOWLEDGED_PENDING`, never as saved. An `outcome` for a memory call yields `unknown` because its semantics for captured memory are unspecified. The supervisor and guest must agree on a versioned memory acknowledgement before claiming a confirmed save. Memory capture remains tracked rather than owner-approved, as SPEC §6 requires.
-
-`aukora_propose` accepts `{target, text, note}` or `{target, cell: {key, value}, note}`, with exactly one of `text` and `cell`. The cell variant runs the pinned module and sends its exact canonical `{key,value}` bytes followed by one LF, together with C4 cell digests. Both variants read the base bytes through FD 3 and validate the returned digest. The tool returns `PENDING_OWNER` after `accepted`; it never calls that acknowledgement applied. `kira_recall` accepts `{query, limit?}`, with a default limit of 10 and a local limit of 1..100.
-
-The WASM wrapper restates Prime's AGPL-3.0-or-later proposal logic and embeds the unchanged 101-byte module. It pins the SHA-256, exact imports and exports, one 64 KiB memory, and a 100 ms execution deadline. It serializes and validates all cell output before computing C4 digests. These guest checks are tripwires; the supervisor re-runs the cell and owns the authority boundary.
-
-C4 does not carry temperature, stop sequences, reasoning controls, or image/file/reasoning content blocks. The adapter refuses those inputs with named non-retryable errors. It maps text, function calls and tool results, emits harness stream events from one non-streaming model reply, and preserves receipt sequence and cost in replay metadata. Its provider policy permits zero retries.
-
-The overlay disables the pinned effect rows and the preset service: otherwise a session's standard preset remounts effect tools. The pinned session controller has a no-preset composition fallback. Connection Host/Origin trust remains configured through the harness startup/runtime services; front-door authentication, cookie isolation, and chat CSP need live integration verification. The JSON overlay is valid YAML and resolves `./plugin.mjs` beside itself.
-
-The integrator must add the inherited-listener patch to the release's pinned patch manifest and build the harness before using `listenFd: 4`. Load the preload with Node's `--import` and supply the overlay through the harness `--patch` option. `DSH_SOVEREIGN_MODEL` selects the broker model and defaults to `deepseek/deepseek-chat`; the guest obtains a current grant through C4 status. The launcher supplies writable guest home/workspace paths and inherits FD 3 and FD 4.
-
-Run `/Users/peterviviani/.local/node-v24.11.1/bin/node --test guest/test/*.test.mjs`. The fake supervisor uses Python's `socket.socketpair` and spawns Node with its peer on FD 3. Tests cover the adapter and tools over that channel. Composition tests inspect the pinned reference source in memory without starting the harness. The manual `run-mutations.mjs`, `adapter-mutations.mjs`, `tools-mutations.mjs`, and `overlay-mutations.mjs` runners in `guest/test` each restore altered source files before returning; run them sequentially with no concurrent guest tests.
-
-The harness, live sandbox, inherited FD 4 listener, real broker, encrypted memory persistence, and installed application were not run here.
+**Bricks:** 7, 8, 17, 25, 30, 31, 32, 122, 129, 130, 135 (NORTH-STAR.md).

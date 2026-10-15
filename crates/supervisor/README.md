@@ -1,9 +1,5 @@
-# supervisor
-
-**Owns:** Wiring only: starts the organs, owns process lifecycle, routes FD 3 frames and owner API calls to organ crates. Package and binary are named `sovereign`.
-
-**Never owns:** Policy, SQL beyond wiring, domain logic (being moved out to the organ crates).
-
-**May depend on:** every organ crate.
-
-**Bricks:** #23, #25, #69, #103 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/supervisor
+- **Owns:** wiring only: it starts the organs and routes FD 3 (proposals to the gate, model calls to the broker, memory to Kira).
+- **Never owns:** policy.
+- **May depend on:** every organ crate.
+- **Bricks:** 23, 61, 69, 128 (NORTH-STAR.md).

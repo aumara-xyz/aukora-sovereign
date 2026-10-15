@@ -1,9 +1,5 @@
-# kira
-
-**Owns:** Memory: encrypted notes, content-free commitments, demote (never delete), cited tri-state recall, memory permissions, the OpenViking ranking client.
-
-**Never owns:** Approving; plaintext leaving the node.
-
-**May depend on:** canon, aura.
-
-**Bricks:** #57, #58, #59, #60 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/kira
+- **Owns:** encrypted memory, cited recall, demotion (never deletion), memory permissions, the OpenViking adapter.
+- **Never owns:** authority or model calls.
+- **May depend on:** canon, aura.
+- **Bricks:** 57, 58, 59, 60, 124 (NORTH-STAR.md).

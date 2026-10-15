@@ -1,9 +1,5 @@
-# broker
-
-**Owns:** Model calls: key custody by one-time ticket, passkey spend grants, reservation and settlement, receipts.
-
-**Never owns:** Issuing its own grants; putting the key in context or logs.
-
-**May depend on:** canon, aura.
-
-**Bricks:** #62, #63 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/broker
+- **Owns:** the model key outside the model, one-time tickets, the passkey spend grant, reservations, receipts, model streams, model intake.
+- **Never owns:** authority from a prompt, or any network beyond the model endpoint.
+- **May depend on:** canon, aura, gate.
+- **Bricks:** 62, 63, 129, 138 (NORTH-STAR.md).

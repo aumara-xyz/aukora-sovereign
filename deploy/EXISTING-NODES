@@ -1,0 +1,6 @@
+# Nodes that spawn and upgrade never touch (row 131). One name per line.
+s1      Peter's archive-era node
+s2      Claude's archive-era test node
+s3      archive-era node, on hold
+s4      archive-era test node spawned from S2's invite
+pilot   the Nebius pilot (aukora-genesis)

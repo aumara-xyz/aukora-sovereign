@@ -1,0 +1,1362 @@
+[
+ {
+  "name": "addr2line",
+  "version": "0.24.2"
+ },
+ {
+  "name": "aead",
+  "version": "0.6.1"
+ },
+ {
+  "name": "allocator-api2",
+  "version": "0.2.21"
+ },
+ {
+  "name": "anyhow",
+  "version": "1.0.104"
+ },
+ {
+  "name": "ar_archive_writer",
+  "version": "0.5.3"
+ },
+ {
+  "name": "arbitrary",
+  "version": "1.5.0"
+ },
+ {
+  "name": "argon2",
+  "version": "0.6.0"
+ },
+ {
+  "name": "asn1-rs",
+  "version": "0.7.2"
+ },
+ {
+  "name": "asn1-rs-derive",
+  "version": "0.6.0"
+ },
+ {
+  "name": "asn1-rs-impl",
+  "version": "0.2.0"
+ },
+ {
+  "name": "async-trait",
+  "version": "0.1.92"
+ },
+ {
+  "name": "atomic-waker",
+  "version": "1.1.2"
+ },
+ {
+  "name": "autocfg",
+  "version": "1.5.1"
+ },
+ {
+  "name": "aws-lc-rs",
+  "version": "1.18.2"
+ },
+ {
+  "name": "aws-lc-sys",
+  "version": "0.46.0"
+ },
+ {
+  "name": "axum",
+  "version": "0.8.9"
+ },
+ {
+  "name": "axum-core",
+  "version": "0.5.6"
+ },
+ {
+  "name": "base16ct",
+  "version": "1.0.0"
+ },
+ {
+  "name": "base64",
+  "version": "0.22.1"
+ },
+ {
+  "name": "base64",
+  "version": "0.23.1"
+ },
+ {
+  "name": "base64ct",
+  "version": "1.8.3"
+ },
+ {
+  "name": "bech32",
+  "version": "0.12.0"
+ },
+ {
+  "name": "bit-vec",
+  "version": "0.9.1"
+ },
+ {
+  "name": "bitflags",
+  "version": "2.13.2"
+ },
+ {
+  "name": "blake2",
+  "version": "0.11.0"
+ },
+ {
+  "name": "block-buffer",
+  "version": "0.12.1"
+ },
+ {
+  "name": "bumpalo",
+  "version": "3.20.3"
+ },
+ {
+  "name": "bytes",
+  "version": "1.12.1"
+ },
+ {
+  "name": "cc",
+  "version": "1.8.0"
+ },
+ {
+  "name": "cfg-if",
+  "version": "1.0.5"
+ },
+ {
+  "name": "cfg_aliases",
+  "version": "0.2.2"
+ },
+ {
+  "name": "chacha20",
+  "version": "0.10.2"
+ },
+ {
+  "name": "chacha20poly1305",
+  "version": "0.11.0"
+ },
+ {
+  "name": "ciborium",
+  "version": "0.2.2"
+ },
+ {
+  "name": "ciborium-io",
+  "version": "0.2.2"
+ },
+ {
+  "name": "ciborium-ll",
+  "version": "0.2.2"
+ },
+ {
+  "name": "cipher",
+  "version": "0.5.2"
+ },
+ {
+  "name": "cmake",
+  "version": "0.1.58"
+ },
+ {
+  "name": "cmov",
+  "version": "0.5.4"
+ },
+ {
+  "name": "cobs",
+  "version": "0.3.0"
+ },
+ {
+  "name": "combine",
+  "version": "4.6.8"
+ },
+ {
+  "name": "const-oid",
+  "version": "0.10.2"
+ },
+ {
+  "name": "core-foundation",
+  "version": "0.10.1"
+ },
+ {
+  "name": "core-foundation-sys",
+  "version": "0.8.7"
+ },
+ {
+  "name": "cpubits",
+  "version": "0.1.1"
+ },
+ {
+  "name": "cpufeatures",
+  "version": "0.3.1"
+ },
+ {
+  "name": "cranelift-assembler-x64",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-assembler-x64-meta",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-bforest",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-bitset",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-codegen",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-codegen-meta",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-codegen-shared",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-control",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-entity",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-frontend",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-isle",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-native",
+  "version": "0.121.2"
+ },
+ {
+  "name": "cranelift-srcgen",
+  "version": "0.121.2"
+ },
+ {
+  "name": "crc32fast",
+  "version": "1.5.2"
+ },
+ {
+  "name": "crunchy",
+  "version": "0.2.4"
+ },
+ {
+  "name": "crypto-bigint",
+  "version": "0.7.5"
+ },
+ {
+  "name": "crypto-common",
+  "version": "0.2.2"
+ },
+ {
+  "name": "ctutils",
+  "version": "0.4.3"
+ },
+ {
+  "name": "curve25519-dalek",
+  "version": "5.0.0"
+ },
+ {
+  "name": "curve25519-dalek-derive",
+  "version": "0.1.1"
+ },
+ {
+  "name": "data-encoding",
+  "version": "2.11.1"
+ },
+ {
+  "name": "der",
+  "version": "0.8.2"
+ },
+ {
+  "name": "der-parser",
+  "version": "10.0.0"
+ },
+ {
+  "name": "deranged",
+  "version": "0.5.9"
+ },
+ {
+  "name": "digest",
+  "version": "0.11.3"
+ },
+ {
+  "name": "displaydoc",
+  "version": "0.2.7"
+ },
+ {
+  "name": "dunce",
+  "version": "1.0.5"
+ },
+ {
+  "name": "ecdsa",
+  "version": "0.17.0"
+ },
+ {
+  "name": "ed25519",
+  "version": "3.0.0"
+ },
+ {
+  "name": "ed25519-dalek",
+  "version": "3.0.0"
+ },
+ {
+  "name": "either",
+  "version": "1.19.0"
+ },
+ {
+  "name": "elliptic-curve",
+  "version": "0.14.1"
+ },
+ {
+  "name": "embedded-io",
+  "version": "0.4.0"
+ },
+ {
+  "name": "embedded-io",
+  "version": "0.6.1"
+ },
+ {
+  "name": "enumflags2",
+  "version": "0.7.12"
+ },
+ {
+  "name": "enumflags2_derive",
+  "version": "0.7.12"
+ },
+ {
+  "name": "equivalent",
+  "version": "1.0.3"
+ },
+ {
+  "name": "errno",
+  "version": "0.3.14"
+ },
+ {
+  "name": "fallible-iterator",
+  "version": "0.3.0"
+ },
+ {
+  "name": "fallible-streaming-iterator",
+  "version": "0.1.9"
+ },
+ {
+  "name": "fastrand",
+  "version": "2.5.0"
+ },
+ {
+  "name": "ff",
+  "version": "0.14.0"
+ },
+ {
+  "name": "fiat-crypto",
+  "version": "0.3.0"
+ },
+ {
+  "name": "find-msvc-tools",
+  "version": "0.1.14"
+ },
+ {
+  "name": "fnv",
+  "version": "1.0.7"
+ },
+ {
+  "name": "foldhash",
+  "version": "0.1.5"
+ },
+ {
+  "name": "foldhash",
+  "version": "0.2.0"
+ },
+ {
+  "name": "form_urlencoded",
+  "version": "1.2.2"
+ },
+ {
+  "name": "fs_extra",
+  "version": "1.3.0"
+ },
+ {
+  "name": "futures-channel",
+  "version": "0.3.34"
+ },
+ {
+  "name": "futures-core",
+  "version": "0.3.34"
+ },
+ {
+  "name": "futures-sink",
+  "version": "0.3.34"
+ },
+ {
+  "name": "futures-task",
+  "version": "0.3.34"
+ },
+ {
+  "name": "futures-util",
+  "version": "0.3.34"
+ },
+ {
+  "name": "getrandom",
+  "version": "0.2.17"
+ },
+ {
+  "name": "getrandom",
+  "version": "0.4.3"
+ },
+ {
+  "name": "gimli",
+  "version": "0.31.1"
+ },
+ {
+  "name": "group",
+  "version": "0.14.0"
+ },
+ {
+  "name": "h2",
+  "version": "0.4.20"
+ },
+ {
+  "name": "half",
+  "version": "2.7.1"
+ },
+ {
+  "name": "hashbrown",
+  "version": "0.15.5"
+ },
+ {
+  "name": "hashbrown",
+  "version": "0.16.1"
+ },
+ {
+  "name": "hashbrown",
+  "version": "0.17.1"
+ },
+ {
+  "name": "hashlink",
+  "version": "0.12.2"
+ },
+ {
+  "name": "hex",
+  "version": "0.4.3"
+ },
+ {
+  "name": "hkdf",
+  "version": "0.13.0"
+ },
+ {
+  "name": "hmac",
+  "version": "0.13.0"
+ },
+ {
+  "name": "http",
+  "version": "1.5.0"
+ },
+ {
+  "name": "http-body",
+  "version": "1.1.0"
+ },
+ {
+  "name": "http-body-util",
+  "version": "0.1.5"
+ },
+ {
+  "name": "httparse",
+  "version": "1.10.1"
+ },
+ {
+  "name": "httpdate",
+  "version": "1.0.3"
+ },
+ {
+  "name": "hybrid-array",
+  "version": "0.4.15"
+ },
+ {
+  "name": "hyper",
+  "version": "1.12.0"
+ },
+ {
+  "name": "hyper-rustls",
+  "version": "0.27.10"
+ },
+ {
+  "name": "hyper-util",
+  "version": "0.1.21"
+ },
+ {
+  "name": "icu_collections",
+  "version": "2.3.0"
+ },
+ {
+  "name": "icu_locale_core",
+  "version": "2.3.0"
+ },
+ {
+  "name": "icu_normalizer",
+  "version": "2.3.0"
+ },
+ {
+  "name": "icu_normalizer_data",
+  "version": "2.3.0"
+ },
+ {
+  "name": "icu_properties",
+  "version": "2.3.0"
+ },
+ {
+  "name": "icu_properties_data",
+  "version": "2.3.0"
+ },
+ {
+  "name": "icu_provider",
+  "version": "2.3.1"
+ },
+ {
+  "name": "idna",
+  "version": "1.1.0"
+ },
+ {
+  "name": "idna_adapter",
+  "version": "1.2.2"
+ },
+ {
+  "name": "indexmap",
+  "version": "2.14.2"
+ },
+ {
+  "name": "inout",
+  "version": "0.2.2"
+ },
+ {
+  "name": "instant-acme",
+  "version": "0.8.5"
+ },
+ {
+  "name": "ipnet",
+  "version": "2.12.2"
+ },
+ {
+  "name": "itertools",
+  "version": "0.14.0"
+ },
+ {
+  "name": "itoa",
+  "version": "1.0.18"
+ },
+ {
+  "name": "jni",
+  "version": "0.22.4"
+ },
+ {
+  "name": "jni-macros",
+  "version": "0.22.4"
+ },
+ {
+  "name": "jni-sys",
+  "version": "0.4.1"
+ },
+ {
+  "name": "jni-sys-macros",
+  "version": "0.4.1"
+ },
+ {
+  "name": "jobserver",
+  "version": "0.1.35"
+ },
+ {
+  "name": "js-sys",
+  "version": "0.3.106"
+ },
+ {
+  "name": "k256",
+  "version": "0.14.0"
+ },
+ {
+  "name": "landlock",
+  "version": "0.4.7"
+ },
+ {
+  "name": "lazy_static",
+  "version": "1.5.1"
+ },
+ {
+  "name": "leb128fmt",
+  "version": "0.1.0"
+ },
+ {
+  "name": "libc",
+  "version": "0.2.190"
+ },
+ {
+  "name": "libm",
+  "version": "0.2.16"
+ },
+ {
+  "name": "libsqlite3-sys",
+  "version": "0.38.2"
+ },
+ {
+  "name": "linux-raw-sys",
+  "version": "0.12.1"
+ },
+ {
+  "name": "litemap",
+  "version": "0.8.3"
+ },
+ {
+  "name": "lock_api",
+  "version": "0.4.14"
+ },
+ {
+  "name": "log",
+  "version": "0.4.34"
+ },
+ {
+  "name": "lru-slab",
+  "version": "0.1.3"
+ },
+ {
+  "name": "mach2",
+  "version": "0.4.3"
+ },
+ {
+  "name": "matchit",
+  "version": "0.8.4"
+ },
+ {
+  "name": "memchr",
+  "version": "2.8.3"
+ },
+ {
+  "name": "memfd",
+  "version": "0.6.6"
+ },
+ {
+  "name": "memoffset",
+  "version": "0.9.1"
+ },
+ {
+  "name": "mime",
+  "version": "0.3.17"
+ },
+ {
+  "name": "minimal-lexical",
+  "version": "0.2.1"
+ },
+ {
+  "name": "mio",
+  "version": "1.2.4"
+ },
+ {
+  "name": "nix",
+  "version": "0.31.3"
+ },
+ {
+  "name": "nom",
+  "version": "7.1.3"
+ },
+ {
+  "name": "num-bigint",
+  "version": "0.4.8"
+ },
+ {
+  "name": "num-conv",
+  "version": "0.2.2"
+ },
+ {
+  "name": "num-integer",
+  "version": "0.1.47"
+ },
+ {
+  "name": "num-traits",
+  "version": "0.2.19"
+ },
+ {
+  "name": "object",
+  "version": "0.36.7"
+ },
+ {
+  "name": "object",
+  "version": "0.39.1"
+ },
+ {
+  "name": "oid-registry",
+  "version": "0.8.1"
+ },
+ {
+  "name": "once_cell",
+  "version": "1.21.4"
+ },
+ {
+  "name": "openssl-probe",
+  "version": "0.2.1"
+ },
+ {
+  "name": "p256",
+  "version": "0.14.0"
+ },
+ {
+  "name": "parking_lot",
+  "version": "0.12.5"
+ },
+ {
+  "name": "parking_lot_core",
+  "version": "0.9.12"
+ },
+ {
+  "name": "password-hash",
+  "version": "0.6.1"
+ },
+ {
+  "name": "pem",
+  "version": "4.0.0"
+ },
+ {
+  "name": "pem-rfc7468",
+  "version": "1.0.0"
+ },
+ {
+  "name": "percent-encoding",
+  "version": "2.3.2"
+ },
+ {
+  "name": "phc",
+  "version": "0.6.1"
+ },
+ {
+  "name": "pin-project-lite",
+  "version": "0.2.17"
+ },
+ {
+  "name": "pkcs8",
+  "version": "0.11.0"
+ },
+ {
+  "name": "pkg-config",
+  "version": "0.3.34"
+ },
+ {
+  "name": "poly1305",
+  "version": "0.9.1"
+ },
+ {
+  "name": "postcard",
+  "version": "1.1.3"
+ },
+ {
+  "name": "potential_utf",
+  "version": "0.1.6"
+ },
+ {
+  "name": "powerfmt",
+  "version": "0.2.1"
+ },
+ {
+  "name": "primefield",
+  "version": "0.14.0"
+ },
+ {
+  "name": "primeorder",
+  "version": "0.14.0"
+ },
+ {
+  "name": "proc-macro2",
+  "version": "1.0.107"
+ },
+ {
+  "name": "psm",
+  "version": "0.1.32"
+ },
+ {
+  "name": "pulley-interpreter",
+  "version": "34.0.2"
+ },
+ {
+  "name": "pulley-macros",
+  "version": "34.0.2"
+ },
+ {
+  "name": "quinn",
+  "version": "0.11.12"
+ },
+ {
+  "name": "quinn-proto",
+  "version": "0.11.19"
+ },
+ {
+  "name": "quinn-udp",
+  "version": "0.5.16"
+ },
+ {
+  "name": "quote",
+  "version": "1.0.47"
+ },
+ {
+  "name": "r-efi",
+  "version": "6.0.0"
+ },
+ {
+  "name": "rand",
+  "version": "0.10.3"
+ },
+ {
+  "name": "rand_core",
+  "version": "0.10.1"
+ },
+ {
+  "name": "rand_pcg",
+  "version": "0.10.2"
+ },
+ {
+  "name": "rcgen",
+  "version": "0.14.10"
+ },
+ {
+  "name": "redox_syscall",
+  "version": "0.5.18"
+ },
+ {
+  "name": "regalloc2",
+  "version": "0.12.2"
+ },
+ {
+  "name": "reqwest",
+  "version": "0.13.5"
+ },
+ {
+  "name": "rfc6979",
+  "version": "0.6.0"
+ },
+ {
+  "name": "ring",
+  "version": "0.17.14"
+ },
+ {
+  "name": "rsqlite-vfs",
+  "version": "0.1.1"
+ },
+ {
+  "name": "rusqlite",
+  "version": "0.40.2"
+ },
+ {
+  "name": "rustc-hash",
+  "version": "2.1.3"
+ },
+ {
+  "name": "rustc_version",
+  "version": "0.4.1"
+ },
+ {
+  "name": "rusticata-macros",
+  "version": "4.1.0"
+ },
+ {
+  "name": "rustix",
+  "version": "1.1.5"
+ },
+ {
+  "name": "rustls",
+  "version": "0.23.45"
+ },
+ {
+  "name": "rustls-native-certs",
+  "version": "0.8.5"
+ },
+ {
+  "name": "rustls-pki-types",
+  "version": "1.15.1"
+ },
+ {
+  "name": "rustls-platform-verifier",
+  "version": "0.7.1"
+ },
+ {
+  "name": "rustls-platform-verifier-android",
+  "version": "0.2.0"
+ },
+ {
+  "name": "rustls-webpki",
+  "version": "0.103.15"
+ },
+ {
+  "name": "rustversion",
+  "version": "1.0.23"
+ },
+ {
+  "name": "ryu",
+  "version": "1.0.23"
+ },
+ {
+  "name": "same-file",
+  "version": "1.0.6"
+ },
+ {
+  "name": "schannel",
+  "version": "0.1.29"
+ },
+ {
+  "name": "scopeguard",
+  "version": "1.2.0"
+ },
+ {
+  "name": "sec1",
+  "version": "0.8.1"
+ },
+ {
+  "name": "seccompiler",
+  "version": "0.5.0"
+ },
+ {
+  "name": "security-framework",
+  "version": "3.7.0"
+ },
+ {
+  "name": "security-framework-sys",
+  "version": "2.17.0"
+ },
+ {
+  "name": "semver",
+  "version": "1.0.28"
+ },
+ {
+  "name": "serde",
+  "version": "1.0.229"
+ },
+ {
+  "name": "serde_core",
+  "version": "1.0.229"
+ },
+ {
+  "name": "serde_derive",
+  "version": "1.0.229"
+ },
+ {
+  "name": "serde_json",
+  "version": "1.0.154"
+ },
+ {
+  "name": "serde_path_to_error",
+  "version": "0.1.20"
+ },
+ {
+  "name": "serde_urlencoded",
+  "version": "0.7.1"
+ },
+ {
+  "name": "serdect",
+  "version": "0.4.3"
+ },
+ {
+  "name": "sha1",
+  "version": "0.11.0"
+ },
+ {
+  "name": "sha2",
+  "version": "0.11.1"
+ },
+ {
+  "name": "shlex",
+  "version": "2.0.1"
+ },
+ {
+  "name": "signal-hook-registry",
+  "version": "1.4.8"
+ },
+ {
+  "name": "signature",
+  "version": "3.0.0"
+ },
+ {
+  "name": "simd_cesu8",
+  "version": "1.2.0"
+ },
+ {
+  "name": "simdutf8",
+  "version": "0.1.5"
+ },
+ {
+  "name": "slab",
+  "version": "0.4.12"
+ },
+ {
+  "name": "smallvec",
+  "version": "1.16.3"
+ },
+ {
+  "name": "socket2",
+  "version": "0.6.5"
+ },
+ {
+  "name": "spki",
+  "version": "0.8.1"
+ },
+ {
+  "name": "sqlite-wasm-rs",
+  "version": "0.5.5"
+ },
+ {
+  "name": "stable_deref_trait",
+  "version": "1.2.1"
+ },
+ {
+  "name": "subtle",
+  "version": "2.6.1"
+ },
+ {
+  "name": "syn",
+  "version": "2.0.119"
+ },
+ {
+  "name": "syn",
+  "version": "3.0.9"
+ },
+ {
+  "name": "sync_wrapper",
+  "version": "1.0.2"
+ },
+ {
+  "name": "synstructure",
+  "version": "0.13.2"
+ },
+ {
+  "name": "synstructure",
+  "version": "0.14.0"
+ },
+ {
+  "name": "target-lexicon",
+  "version": "0.13.5"
+ },
+ {
+  "name": "tempfile",
+  "version": "3.27.0"
+ },
+ {
+  "name": "termcolor",
+  "version": "1.4.1"
+ },
+ {
+  "name": "thiserror",
+  "version": "2.0.21"
+ },
+ {
+  "name": "thiserror-impl",
+  "version": "2.0.21"
+ },
+ {
+  "name": "time",
+  "version": "0.3.55"
+ },
+ {
+  "name": "time-core",
+  "version": "0.1.9"
+ },
+ {
+  "name": "time-macros",
+  "version": "0.2.32"
+ },
+ {
+  "name": "tinystr",
+  "version": "0.8.4"
+ },
+ {
+  "name": "tinyvec",
+  "version": "1.13.3"
+ },
+ {
+  "name": "tokio",
+  "version": "1.53.3"
+ },
+ {
+  "name": "tokio-macros",
+  "version": "2.7.2"
+ },
+ {
+  "name": "tokio-rustls",
+  "version": "0.26.6"
+ },
+ {
+  "name": "tokio-tungstenite",
+  "version": "0.30.0"
+ },
+ {
+  "name": "tokio-util",
+  "version": "0.7.20"
+ },
+ {
+  "name": "tower",
+  "version": "0.5.3"
+ },
+ {
+  "name": "tower-http",
+  "version": "0.6.11"
+ },
+ {
+  "name": "tower-layer",
+  "version": "0.3.3"
+ },
+ {
+  "name": "tower-service",
+  "version": "0.3.3"
+ },
+ {
+  "name": "tracing",
+  "version": "0.1.44"
+ },
+ {
+  "name": "tracing-core",
+  "version": "0.1.36"
+ },
+ {
+  "name": "try-lock",
+  "version": "0.2.5"
+ },
+ {
+  "name": "tungstenite",
+  "version": "0.30.0"
+ },
+ {
+  "name": "typenum",
+  "version": "1.20.1"
+ },
+ {
+  "name": "unicode-ident",
+  "version": "1.0.27"
+ },
+ {
+  "name": "universal-hash",
+  "version": "0.6.1"
+ },
+ {
+  "name": "untrusted",
+  "version": "0.7.1"
+ },
+ {
+  "name": "untrusted",
+  "version": "0.9.0"
+ },
+ {
+  "name": "url",
+  "version": "2.5.8"
+ },
+ {
+  "name": "utf8_iter",
+  "version": "1.0.4"
+ },
+ {
+  "name": "vcpkg",
+  "version": "0.2.15"
+ },
+ {
+  "name": "walkdir",
+  "version": "2.5.0"
+ },
+ {
+  "name": "want",
+  "version": "0.3.2"
+ },
+ {
+  "name": "wasi",
+  "version": "0.11.1+wasi-snapshot-preview1"
+ },
+ {
+  "name": "wasm-bindgen",
+  "version": "0.2.129"
+ },
+ {
+  "name": "wasm-bindgen-futures",
+  "version": "0.4.79"
+ },
+ {
+  "name": "wasm-bindgen-macro",
+  "version": "0.2.129"
+ },
+ {
+  "name": "wasm-bindgen-macro-support",
+  "version": "0.2.129"
+ },
+ {
+  "name": "wasm-bindgen-shared",
+  "version": "0.2.129"
+ },
+ {
+  "name": "wasm-encoder",
+  "version": "0.233.0"
+ },
+ {
+  "name": "wasmparser",
+  "version": "0.233.0"
+ },
+ {
+  "name": "wasmprinter",
+  "version": "0.233.0"
+ },
+ {
+  "name": "wasmtime",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-asm-macros",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-cranelift",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-environ",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-fiber",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-jit-icache-coherence",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-math",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-slab",
+  "version": "34.0.2"
+ },
+ {
+  "name": "wasmtime-versioned-export-macros",
+  "version": "34.0.2"
+ },
+ {
+  "name": "web-sys",
+  "version": "0.3.106"
+ },
+ {
+  "name": "web-time",
+  "version": "1.1.0"
+ },
+ {
+  "name": "webpki-root-certs",
+  "version": "1.0.9"
+ },
+ {
+  "name": "winapi-util",
+  "version": "0.1.11"
+ },
+ {
+  "name": "windows-link",
+  "version": "0.2.1"
+ },
+ {
+  "name": "windows-sys",
+  "version": "0.52.0"
+ },
+ {
+  "name": "windows-sys",
+  "version": "0.59.0"
+ },
+ {
+  "name": "windows-sys",
+  "version": "0.61.2"
+ },
+ {
+  "name": "windows-targets",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_aarch64_gnullvm",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_aarch64_msvc",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_i686_gnu",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_i686_gnullvm",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_i686_msvc",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_x86_64_gnu",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_x86_64_gnullvm",
+  "version": "0.52.6"
+ },
+ {
+  "name": "windows_x86_64_msvc",
+  "version": "0.52.6"
+ },
+ {
+  "name": "wnaf",
+  "version": "0.14.1"
+ },
+ {
+  "name": "writeable",
+  "version": "0.6.4"
+ },
+ {
+  "name": "x509-parser",
+  "version": "0.18.1"
+ },
+ {
+  "name": "yasna",
+  "version": "0.6.0"
+ },
+ {
+  "name": "yoke",
+  "version": "0.8.3"
+ },
+ {
+  "name": "yoke-derive",
+  "version": "0.8.4"
+ },
+ {
+  "name": "zerocopy",
+  "version": "0.8.63"
+ },
+ {
+  "name": "zerocopy-derive",
+  "version": "0.8.63"
+ },
+ {
+  "name": "zerofrom",
+  "version": "0.1.8"
+ },
+ {
+  "name": "zerofrom-derive",
+  "version": "0.1.8"
+ },
+ {
+  "name": "zeroize",
+  "version": "1.9.1"
+ },
+ {
+  "name": "zerotrie",
+  "version": "0.2.5"
+ },
+ {
+  "name": "zerovec",
+  "version": "0.11.8"
+ },
+ {
+  "name": "zerovec-derive",
+  "version": "0.11.6"
+ },
+ {
+  "name": "zmij",
+  "version": "1.0.23"
+ }
+]

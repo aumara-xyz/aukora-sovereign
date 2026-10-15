@@ -1,9 +1,5 @@
-# aura
-
-**Owns:** The one signed record: hash chain plus RFC 6962 tree, entry signatures, export with proofs, schema migrations.
-
-**Never owns:** Deciding anything; authorization; UI.
-
-**May depend on:** canon.
-
-**Bricks:** #18, #27, #50 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/aura
+- **Owns:** the signed append-only record, epochs, the ledger transaction, cold export.
+- **Never owns:** approvals, keys or policy.
+- **May depend on:** canon.
+- **Bricks:** 27, 41, 50, 51, 56, 110, 139 (NORTH-STAR.md).

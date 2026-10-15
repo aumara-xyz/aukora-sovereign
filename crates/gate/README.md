@@ -1,9 +1,5 @@
-# gate
-
-**Owns:** Proposals and their state machine: exact-bytes cards, challenge, consume once, apply, retire, reconcile, recovery sweep; three-valued decisions.
-
-**Never owns:** Owner identity, passkey verification, deciding what pops up (that is laya).
-
-**May depend on:** canon, aura.
-
-**Bricks:** #33, #34, #35, #40 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/gate
+- **Owns:** proposals as exact bytes, the owner authorization (C5), consume once, retire and reconcile, three-valued decisions, declined memory, coverage.
+- **Never owns:** keys, model calls or UI.
+- **May depend on:** canon, aura, aumlok.
+- **Bricks:** 33, 34, 35, 36, 40, 110, 112, 120, 122, 125, 126 (NORTH-STAR.md).

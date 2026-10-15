@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "crates/copresence"]
+members = ["crates/aumlok", "crates/aura", "crates/broker", "crates/canon", "crates/copresence", "crates/floor", "crates/frontdoor", "crates/gate", "crates/immune", "crates/invites", "crates/kira", "crates/launcher", "crates/laya", "crates/messaging", "crates/nostr", "crates/pentora", "crates/relay", "crates/supervisor", "crates/verifier", "crates/wasmcell", "guest"]
 
 [workspace.package]
 edition = "2021"
@@ -8,7 +8,7 @@ license = "AGPL-3.0-or-later"
 rust-version = "1.85"
 publish = false
 
-# Small target dirs: several builders share one disk.
+# Small target dirs: many workers share one disk.
 [profile.dev]
 debug = 0
 incremental = false
@@ -18,4 +18,3 @@ debug = false
 
 [profile.release]
 debug = 0
-lto = "thin"

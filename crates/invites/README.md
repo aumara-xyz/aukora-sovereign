@@ -1,9 +1,5 @@
-# invites
-
-**Owns:** Signed invites (48 h, three per member), quota, offline redemption check, first-record provenance.
-
-**Never owns:** Spawning nodes; any authority over the friend's node.
-
-**May depend on:** canon, nostr.
-
-**Bricks:** #72 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/invites
+- **Owns:** signed one-time invites (48 hours, three per member), conserved allowances, admission.
+- **Never owns:** creating nodes (deploy does).
+- **May depend on:** canon, gate, nostr.
+- **Bricks:** 72, 78 (NORTH-STAR.md).

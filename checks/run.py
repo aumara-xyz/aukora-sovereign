@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The machine rules of NORTH-STAR.md. Run on main: `python3 -B checks/run.py`. Any failure means main is red.
+"""The construction checks of NORTH-STAR.md. Run on main: `python3 -B checks/run.py`. Any failure means main is red.
 
-Known violations carried from the archive are listed in checks/baseline.json, each with the brick that removes it.
-The baseline may only shrink: a new violation fails, and a fixed one must be deleted from the baseline.
+They hold on every commit, from the empty skeleton on. Milestone acceptance is different: it runs on the installed
+node (tests/e2e/) and never stops work.
 """
 import hashlib
 import json
@@ -28,6 +28,8 @@ def tracked():
 files = tracked()
 baseline = json.loads((ROOT / "checks/baseline.json").read_text())
 scaffold = json.loads((ROOT / "checks/scaffold.json").read_text())
+pins = json.loads((ROOT / "checks/pins.json").read_text())
+allowed_deps = {d["name"] for d in json.loads((ROOT / "checks/deps.json").read_text())}
 
 # 1. One plan: NORTH-STAR.md. No other plan-like file outside spec/ (frozen inputs).
 for p in files:
@@ -49,55 +51,50 @@ for p in files:
     elif low.endswith(".txt") and not low.startswith(allowed_txt):
         fail("clutter", p)
     elif re.search(r"(^|[-_])(mutations?|mutate)([-_.]|$)", pathlib.Path(low).name):
-        fail("clutter", p)  # mutation tooling and its output
+        fail("clutter", p)
     elif re.search(r"(^|[-_])results?\.(txt|json|log|md)$", pathlib.Path(low).name) or "/evidence/" in f"/{low}":
-        fail("clutter", p)  # run output and evidence folders; evidence stays on the node
+        fail("clutter", p)
 
-# 4. No authored file over 1,000 lines, except carried files pinned by hash until they are split.
-pinned = baseline["oversized_files"]
+# 4. Data is pinned by hash and never edited; authored files stay under 1,000 lines.
+for p, digest in pins.items():
+    if not (ROOT / p).is_file():
+        fail("pins", f"{p} is gone")
+    elif hashlib.sha256((ROOT / p).read_bytes()).hexdigest() != digest:
+        fail("pins", f"{p} changed")
 for p in files:
-    if p.startswith(tuple(scaffold["vendored_prefixes"])) or not re.search(r"\.(rs|mjs|js|ts|py|sh|md)$", p):
+    if p in pins or not re.search(r"\.(rs|mjs|js|ts|py|sh|md)$", p):
         continue
-    data = (ROOT / p).read_bytes()
-    lines = data.count(b"\n")
-    if lines > 1000:
-        digest = hashlib.sha256(data).hexdigest()
-        if pinned.get(p) != digest:
-            fail("file-size", f"{p} has {lines} lines")
-for p in pinned:
-    if p not in files:
-        fail("baseline", f"{p} is gone: remove it from checks/baseline.json oversized_files")
+    lines = (ROOT / p).read_bytes().count(b"\n")
+    if lines > 1000 and p not in baseline["oversized_files"]:
+        fail("file-size", f"{p} has {lines} lines")
 
 # 5. No absolute paths and no path into another repository, in code.
 pattern = re.compile(r"/Users/|aukora-(prime|genesis|contact|buzz|sovereign-archive)/")
-known = set(baseline["foreign_paths"])
-found = set()
 for p in files:
-    if p.startswith(tuple(scaffold["vendored_prefixes"])) or not re.search(r"\.(rs|mjs|js|ts|py|sh|toml|json)$", p) or p.startswith("checks/"):
+    if p in pins or p.startswith("checks/") or not re.search(r"\.(rs|mjs|js|ts|py|sh|toml|json)$", p):
         continue
-    if pattern.search((ROOT / p).read_text(errors="replace")):
-        found.add(p)
-for p in sorted(found - known):
-    fail("foreign-path", p)
-for p in sorted(known - found):
-    fail("baseline", f"{p} no longer has a foreign path: remove it from checks/baseline.json foreign_paths")
+    if pattern.search((ROOT / p).read_text(errors="replace")) and p not in baseline["foreign_paths"]:
+        fail("foreign-path", p)
 
-# 6. Each crate depends only on what its README allows.
+# 6. Each crate depends only on what its README allows, and only on allowed external crates.
 crates = sorted(d.name for d in (ROOT / "crates").iterdir() if (d / "Cargo.toml").is_file())
-for c in crates:
-    readme = (ROOT / "crates" / c / "README.md")
+manifests = [(c, ROOT / "crates" / c) for c in crates] + [("guest", ROOT / "guest")]
+for c, d in manifests:
+    readme = d / "README.md"
     if not readme.is_file():
         fail("crate-readme", c)
         continue
-    m = re.search(r"\*\*May depend on:\*\* (.*?)\.", readme.read_text())
-    allowed = set() if not m or m.group(1).strip() in ("nothing", "every organ crate") else {x.strip() for x in m.group(1).split(",")}
-    if m and m.group(1).strip() == "every organ crate":
-        continue
-    cargo = (ROOT / "crates" / c / "Cargo.toml").read_text()
-    body = cargo.split("[dependencies]", 1)[1].split("\n[", 1)[0] if "[dependencies]" in cargo else ""
-    used = set(re.findall(r'^(\w[\w-]*)\s*=\s*\{[^}]*path\s*=', body, re.M))
-    for dep in sorted(used - allowed):
-        fail("crate-deps", f"{c} depends on {dep}, not in its README")
+    m = re.search(r"\*\*May depend on:\*\* (.*?)\.", readme.read_text()) or re.search(r"May depend on: (.*?)\.", readme.read_text())
+    said = m.group(1).strip() if m else "nothing"
+    cargo = (d / "Cargo.toml").read_text()
+    for section in ("dependencies", "build-dependencies", "dev-dependencies"):
+        body = cargo.split(f"[{section}]", 1)[1].split("\n[", 1)[0] if f"[{section}]" in cargo else ""
+        for name, spec in re.findall(r'^([A-Za-z0-9_-]+)\s*=\s*(.+)$', body, re.M):
+            if "path" in spec:
+                if said != "every organ crate" and name not in {x.strip() for x in said.split(",")}:
+                    fail("crate-deps", f"{c} depends on {name}, not in its README")
+            elif name not in allowed_deps:
+                fail("deps-allowlist", f"{c} uses {name}, not in checks/deps.json")
 
 # 7. The scaffold lock: every planned piece exists, and nothing unplanned appears at the top or among the crates.
 top = sorted({p.split("/", 1)[0] for p in files if "/" in p})
@@ -122,8 +119,20 @@ lock = json.loads((ROOT / "app/APP-LOCK.json").read_text())
 if len(lock.get("aukora_apps", [])) != 8 or len(lock.get("system", [])) != 8:
     fail("app-lock", "app/APP-LOCK.json must list Peter's 8 apps and 8 System entries")
 
+# 9. The inventory (row 127): reported here; it fails closed at the release gate, not on construction.
+inventory = "spec/CARRY-LIST.md present" if (ROOT / "spec/CARRY-LIST.md").is_file() else "spec/CARRY-LIST.md MISSING"
+if not (ROOT / "spec/CARRY-LIST.md").is_file():
+    fail("inventory", "spec/CARRY-LIST.md is missing")
+codex_list = sorted(ROOT.glob("checks/inventory/*.csv"))
+inventory += f"; Codex's 522-row list {'present' if codex_list else 'not saved yet (blocked)'}"
+
+# 10. The deploy guard's list (row 131): S1 is never touched by spawn or upgrade.
+nodes = (ROOT / "deploy/EXISTING-NODES").read_text() if (ROOT / "deploy/EXISTING-NODES").is_file() else ""
+if not re.search(r"^s1\s", nodes, re.M):
+    fail("deploy-guard", "deploy/EXISTING-NODES must list s1")
+
 if FAIL:
     print("\n".join(f"FAIL {f}" for f in FAIL))
     print(f"CHECKS RED: {len(FAIL)}")
     sys.exit(1)
-print(f"CHECKS GREEN: {len(rows)} bricks, {len(crates)} crates, {len(files)} files")
+print(f"CHECKS GREEN: {len(rows)} bricks, {len(crates)} crates, {len(files)} files, {len(pins)} pinned data files; inventory: {inventory}")

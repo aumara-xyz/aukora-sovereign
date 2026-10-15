@@ -1,9 +1,5 @@
-# immune
-
-**Owns:** The antibody ratchet on every release, the boot self-attack, later thymus, MHC and hypermutation.
-
-**Never owns:** Granting authority: evidence only.
-
-**May depend on:** canon, aura, launcher.
-
-**Bricks:** #28, #29, #66, #67, #68 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/immune
+- **Owns:** the antibody ratchet with held-out cases, the thymus, the MHC loop and the organ map, hypermutation, posture rows, herd immunity.
+- **Never owns:** authority: it is evidence only.
+- **May depend on:** canon, aura, launcher, pentora.
+- **Bricks:** 28, 29, 56, 66, 67, 68, 115, 116, 136, 138 (NORTH-STAR.md).

@@ -1,9 +1,5 @@
-# launcher
-
-**Owns:** The cage: user namespaces, mounts, Landlock, seccomp, cgroups, FD 3 and FD 4, and its boot probe.
-
-**Never owns:** Any business authority.
-
-**May depend on:** nothing.
-
-**Bricks:** #25, #26, #27 in [NORTH-STAR.md](../../NORTH-STAR.md).
+# crates/launcher
+- **Owns:** the cage (namespaces, Landlock, seccomp, cgroups, no network), cage profiles including the sub-cage that stays off, the boot record.
+- **Never owns:** policy, or what runs inside.
+- **May depend on:** canon.
+- **Bricks:** 25, 26, 27, 28, 39 (NORTH-STAR.md).

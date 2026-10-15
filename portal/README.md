@@ -1,6 +1,4 @@
-# portal: co-presence, screen to screen
+# portal/
+The co-presence Point-and-Bloom page: two screens face each other; each shows a signed QR code that rotates every second and reads the other's: face, seen you, handshake, bloom. Evidence, never authority.
 
-Peter's Point-and-Bloom page: two screens show each other signed light and both sign the moment. It is evidence of
-being in the same place and grants nothing. Imported from aukora-contact `copresence-portal-v0` (bricks #44, #76, #78
-in [NORTH-STAR.md](../NORTH-STAR.md)), including the sound, motion and intent-ack layers. Receipts verify in
-`crates/copresence`.
+**Bricks:** 76, 78, 118, 132 (NORTH-STAR.md).
