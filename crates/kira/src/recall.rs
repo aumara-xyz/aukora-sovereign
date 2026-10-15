@@ -14,14 +14,16 @@ use canon::{
 use crate::{
     anchor::{AuraAnchors, MemoryHead},
     embed::LocalEmbedder,
-    notes::{refuse, MemoryOrigin},
+    notes::MemoryOrigin,
     openviking::{OpenViking, SemanticError},
     permissions::{MemoryPermissions, PermissionContext},
 };
 
 pub const MAX_RECALL_ITEMS: usize = 100;
 
-/// These fields describe the verified read, never authorize a later disclosure.
+/// These fields describe the read, never authorize a later disclosure.
+/// An undetermined reply with permission_sequence zero has no verified disclosure;
+/// its EMPTY head is an unavailable sentinel, not a claim of empty memory history.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecallReceipt {
     pub request_id: FrameId,
@@ -48,7 +50,7 @@ impl CitedMemory {
             || cite_seq == 0
             || cite_seq > canon::json::MAX_SAFE_INTEGER as u64
         {
-            return Err(refuse("citation-invalid"));
+            return Err(canon::codes::KIRA_INVALID_FIELD);
         }
         Ok(Self {
             item: RecallItem {
@@ -112,12 +114,12 @@ pub struct CitedRecall {
 impl CitedRecall {
     pub fn found(items: Vec<CitedMemory>) -> Result<Self> {
         if items.is_empty() || items.len() > MAX_RECALL_ITEMS {
-            return Err(refuse("recall-bounds"));
+            return Err(canon::codes::KIRA_INVALID_FIELD);
         }
         let ids: std::collections::BTreeSet<_> =
             items.iter().map(|item| &item.item.note_id).collect();
         if ids.len() != items.len() {
-            return Err(refuse("citation-invalid"));
+            return Err(canon::codes::KIRA_INVALID_FIELD);
         }
         Ok(Self {
             result: RecallResult::Found,
@@ -194,4 +196,420 @@ pub trait MemoryRecallService {
         context: &PermissionContext,
         request: &MemoryList,
     ) -> Result<MemoryListReply>;
+}
+
+use crate::{
+    anchor::{MemoryLedger, RetainedNote, SqliteMemory},
+    embed::{EmbedInput, EmbedPurpose},
+    notes::{sha256, SaveCommitment},
+    openviking::recall_candidates,
+    permissions::{
+        Permission, PermissionAction, PermissionReceipt, PermissionRequest, PermissionScope,
+    },
+};
+use canon::{
+    codes,
+    fd3_payloads::{MemoryListItem, MemoryTier},
+    json::{SafeInteger, Value, MAX_SAFE_INTEGER},
+};
+use std::collections::BTreeSet;
+
+impl<L: MemoryLedger> MemoryRecallService for SqliteMemory<'_, L> {
+    fn recall<T: AuthorityTxn + ?Sized, P: MemoryPermissions, A: AuraAnchors>(
+        &mut self,
+        transaction: &mut T,
+        permissions: &mut P,
+        anchors: &A,
+        context: &PermissionContext,
+        request_id: &FrameId,
+        request: &MemoryRecall,
+        index: &mut dyn OpenViking,
+        embedder: &mut dyn LocalEmbedder,
+    ) -> Result<(CitedRecall, RecallReceipt)> {
+        context.validate()?;
+        if request.limit == 0 || usize::from(request.limit) > MAX_RECALL_ITEMS {
+            return Err(codes::KIRA_INVALID_FIELD);
+        }
+        EmbedInput::new(EmbedPurpose::Query, &request.query)
+            .map_err(|_| codes::KIRA_INVALID_FIELD)?;
+        let unavailable = |gap| {
+            finish_recall(
+                request_id,
+                MemoryHead::EMPTY,
+                None,
+                CitedRecall::undetermined(gap),
+            )
+        };
+        if crate::permissions::verify_context(transaction, context).is_err() {
+            return unavailable(RecallGap::Permission);
+        }
+        let snapshot = match self.snapshot(transaction, context) {
+            Ok(snapshot) => snapshot,
+            Err(error) => return unavailable(read_gap(error)),
+        };
+        if anchors.verify(transaction, &snapshot.anchor).is_err() {
+            return unavailable(RecallGap::Ledger);
+        }
+        let grant = match disclosure(permissions, transaction, context) {
+            Ok(grant) => grant,
+            Err(_) => return unavailable(RecallGap::Permission),
+        };
+        if grant.record.authority.sequence > snapshot.anchor.aura_sequence {
+            return unavailable(RecallGap::Permission);
+        }
+        let finish = |result| finish_recall(request_id, snapshot.anchor.head, Some(&grant), result);
+        let active: BTreeSet<_> = snapshot
+            .notes
+            .iter()
+            .filter(|(_, note)| note.demotion.is_none() && !note.quarantined)
+            .map(|(id, _)| id.clone())
+            .collect();
+        if active.is_empty() {
+            return finish(CitedRecall::empty());
+        }
+        let candidates = match recall_candidates(
+            index,
+            embedder,
+            snapshot.anchor.head,
+            &request.query,
+            usize::from(request.limit).min(crate::openviking::MAX_CANDIDATES),
+        ) {
+            Ok(reply) => reply,
+            Err(error) => return finish(CitedRecall::undetermined(error.into())),
+        };
+        if candidates.state.eligible_notes != active.len() as u64
+            || candidates.state.indexed_notes != active.len() as u64
+        {
+            return finish(CitedRecall::undetermined(RecallGap::IncompleteIndex));
+        }
+        if candidates.candidates().is_empty() {
+            return finish(CitedRecall::undetermined(RecallGap::SemanticMiss));
+        }
+        let mut seen = BTreeSet::new();
+        let mut items = Vec::new();
+        for candidate in candidates.candidates() {
+            let id = candidate.note_id();
+            if !seen.insert(id) || !active.contains(id) {
+                return finish(CitedRecall::undetermined(RecallGap::Integrity));
+            }
+            let Some(note) = snapshot.notes.get(id) else {
+                return finish(CitedRecall::undetermined(RecallGap::Integrity));
+            };
+            if verify_note(id, note, context).is_err() {
+                return finish(CitedRecall::undetermined(RecallGap::Integrity));
+            }
+            let payload = match self.decrypt(note) {
+                Ok(payload) => payload,
+                Err(error) => return finish(CitedRecall::undetermined(read_gap(error))),
+            };
+            if payload.content.category() != note.category
+                || payload.at_ms != note.at_ms
+                || payload.root_epoch != note.encrypted.root_epoch
+            {
+                return finish(CitedRecall::undetermined(RecallGap::Integrity));
+            }
+            items.push(CitedMemory::new(
+                id.clone(),
+                payload.content.statement().to_owned(),
+                note.receipt.cite_seq,
+                payload.origin,
+            )?);
+        }
+        // Every ranked hit is authenticated before frame-size truncation.
+        loop {
+            let result = CitedRecall::found(items.clone())?;
+            if recall_frame(request_id, &result)?.len() <= canon::frame::MAX_FRAME_BYTES {
+                return finish(result);
+            }
+            items.pop();
+            if items.is_empty() {
+                return finish(CitedRecall::undetermined(RecallGap::Integrity));
+            }
+        }
+    }
+
+    fn list<T: AuthorityTxn + ?Sized, P: MemoryPermissions, A: AuraAnchors>(
+        &mut self,
+        transaction: &mut T,
+        permissions: &mut P,
+        anchors: &A,
+        context: &PermissionContext,
+        request: &MemoryList,
+    ) -> Result<MemoryListReply> {
+        crate::permissions::verify_context(transaction, context)?;
+        let snapshot = self.snapshot(transaction, context)?;
+        anchors.verify(transaction, &snapshot.anchor)?;
+        if request.tier == MemoryTier::Remembered {
+            let grant = disclosure(permissions, transaction, context)?;
+            if grant.record.authority.sequence > snapshot.anchor.aura_sequence {
+                return Err(codes::KIRA_LEDGER_UNVERIFIED);
+            }
+        }
+        let mut notes: Vec<_> = snapshot
+            .notes
+            .iter()
+            .filter(|(_, note)| match request.tier {
+                MemoryTier::Remembered => note.demotion.is_none() && !note.quarantined,
+                MemoryTier::Forgotten => note.demotion.is_some(),
+            })
+            .collect();
+        notes.sort_by(|(left_id, left), (right_id, right)| {
+            right
+                .receipt
+                .cite_seq
+                .cmp(&left.receipt.cite_seq)
+                .then_with(|| left_id.cmp(right_id))
+        });
+        let start = match &request.before {
+            Some(before) => {
+                notes
+                    .iter()
+                    .position(|(id, _)| *id == before)
+                    .ok_or(codes::KIRA_INVALID_FIELD)?
+                    + 1
+            }
+            None => 0,
+        };
+        let remaining = &notes[start..];
+        let mut reply = MemoryListReply {
+            tier: request.tier,
+            items: Vec::new(),
+            next: None,
+        };
+        for (id, note) in remaining.iter().take(MAX_RECALL_ITEMS) {
+            verify_note(id, note, context)?;
+            let (text, demoted_seq, demoted_at) = match request.tier {
+                MemoryTier::Remembered => {
+                    let payload = self.decrypt(note)?;
+                    if payload.content.category() != note.category
+                        || payload.at_ms != note.at_ms
+                        || payload.root_epoch != note.encrypted.root_epoch
+                    {
+                        return Err(codes::KIRA_STORE_CORRUPT);
+                    }
+                    (Some(payload.content.statement().to_owned()), None, None)
+                }
+                MemoryTier::Forgotten => {
+                    let demotion = note.demotion.as_ref().ok_or(codes::KIRA_STORE_CORRUPT)?;
+                    if demotion.note_id != **id
+                        || demotion.save_sequence != note.receipt.cite_seq
+                        || demotion.demoted_sequence <= note.receipt.cite_seq
+                        || demotion.demoted_sequence > MAX_SAFE_INTEGER as u64
+                        || demotion.demoted_at_ms > MAX_SAFE_INTEGER as u64
+                    {
+                        return Err(codes::KIRA_STORE_CORRUPT);
+                    }
+                    (
+                        None,
+                        Some(demotion.demoted_sequence),
+                        Some(demotion.demoted_at_ms),
+                    )
+                }
+            };
+            reply.items.push(MemoryListItem {
+                note_id: (*id).clone(),
+                category: note.category.clone(),
+                at: note.at_ms,
+                cite_seq: note.receipt.cite_seq,
+                text,
+                demoted_seq,
+                demoted_at,
+            });
+            reply.next = (reply.items.len() < remaining.len()).then(|| (*id).clone());
+            if list_frame(&reply)?.len() > canon::frame::MAX_FRAME_BYTES {
+                reply.items.pop();
+                reply.next = Some(
+                    reply
+                        .items
+                        .last()
+                        .ok_or(codes::KIRA_INVALID_FIELD)?
+                        .note_id
+                        .clone(),
+                );
+                break;
+            }
+        }
+        Ok(reply)
+    }
+}
+
+fn disclosure<T: AuthorityTxn + ?Sized, P: MemoryPermissions>(
+    permissions: &P,
+    transaction: &mut T,
+    context: &PermissionContext,
+) -> Result<PermissionReceipt> {
+    let request = PermissionRequest {
+        permission: Permission::Disclose,
+        scope: PermissionScope::hosted_model_context(),
+    };
+    let receipt = permissions.require(transaction, context, &request)?;
+    if receipt.change.context != *context
+        || receipt.change.request != request
+        || receipt.change.action != PermissionAction::Grant
+        || receipt.record.authority.sequence == 0
+        || receipt.record.authority.sequence > MAX_SAFE_INTEGER as u64
+        || receipt.record.authority.epoch != context.owner_epoch
+    {
+        return Err(codes::KIRA_DISCLOSURE_NOT_PERMITTED);
+    }
+    Ok(receipt)
+}
+
+fn verify_note(id: &NoteId, note: &RetainedNote, context: &PermissionContext) -> Result<()> {
+    if note.encrypted.note_id != *id
+        || note.encrypted.owner != context.owner_subject
+        || note.receipt.commitment != SaveCommitment::from_encrypted(&note.encrypted)?
+        || note.receipt.cite_seq == 0
+        || note.receipt.cite_seq > MAX_SAFE_INTEGER as u64
+        || note.at_ms > MAX_SAFE_INTEGER as u64
+        || note.category.is_empty()
+        || note.category.len() > crate::notes::MAX_CATEGORY_BYTES
+        || !note
+            .category
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
+        return Err(codes::KIRA_STORE_CORRUPT);
+    }
+    Ok(())
+}
+
+fn read_gap(error: canon::Refusal) -> RecallGap {
+    if error == codes::KIRA_LEDGER_UNVERIFIED {
+        RecallGap::Ledger
+    } else if error == codes::KIRA_STORE_UNAVAILABLE {
+        RecallGap::Unavailable
+    } else if error == codes::KIRA_AUTHENTICATION_FAILED {
+        RecallGap::Locked
+    } else {
+        RecallGap::Integrity
+    }
+}
+
+fn finish_recall(
+    id: &FrameId,
+    head: MemoryHead,
+    permission: Option<&PermissionReceipt>,
+    recall: CitedRecall,
+) -> Result<(CitedRecall, RecallReceipt)> {
+    let bytes = recall_frame(id, &recall)?;
+    if bytes.len() > canon::frame::MAX_FRAME_BYTES {
+        return Err(codes::KIRA_INVALID_FIELD);
+    }
+    let receipt = RecallReceipt {
+        request_id: id.clone(),
+        head,
+        permission_sequence: permission.map_or(0, |p| p.record.authority.sequence),
+        permission_epoch: permission.map_or(0, |p| p.change.context.owner_epoch),
+        cited_save_sequences: recall.items.iter().map(|item| item.item.cite_seq).collect(),
+        reply_sha256: sha256(&bytes),
+    };
+    Ok((recall, receipt))
+}
+
+fn number(value: u64) -> Result<Value> {
+    Ok(Value::integer(SafeInteger::new(
+        i64::try_from(value).map_err(|_| codes::KIRA_INVALID_FIELD)?,
+    )?))
+}
+
+fn text(value: &str) -> Result<Value> {
+    Value::checked_text(value.to_owned())
+}
+
+fn envelope(id: &str, kind: &str, body: Value) -> Result<Vec<u8>> {
+    Ok(Value::checked_object(vec![
+        ("v".into(), number(1)?),
+        ("id".into(), text(id)?),
+        ("kind".into(), text(kind)?),
+        ("body".into(), body),
+    ])?
+    .canonical_bytes())
+}
+
+/// Exact frozen C4 envelope bytes, without the transport length prefix.
+pub(crate) fn recall_frame(id: &FrameId, recall: &CitedRecall) -> Result<Vec<u8>> {
+    let items = recall
+        .items
+        .iter()
+        .map(|item| {
+            Value::checked_object(vec![
+                ("note_id".into(), text(&item.item.note_id)?),
+                ("text".into(), text(&item.item.text)?),
+                ("cite_seq".into(), number(item.item.cite_seq)?),
+            ])
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let result = match recall.result {
+        RecallResult::Found => "found",
+        RecallResult::Empty => "empty",
+        RecallResult::Undetermined => "undetermined",
+    };
+    envelope(
+        id.as_str(),
+        "recall",
+        Value::checked_object(vec![
+            ("result".into(), text(result)?),
+            ("items".into(), Value::checked_array(items)?),
+        ])?,
+    )
+}
+
+/// The list signature has no request id; reserve its maximum frozen C4 length.
+pub(crate) fn list_frame(reply: &MemoryListReply) -> Result<Vec<u8>> {
+    let items = reply
+        .items
+        .iter()
+        .map(|item| {
+            Value::checked_object(vec![
+                ("note_id".into(), text(item.note_id.as_str())?),
+                ("category".into(), text(&item.category)?),
+                ("at".into(), number(item.at)?),
+                ("cite_seq".into(), number(item.cite_seq)?),
+                (
+                    "text".into(),
+                    item.text
+                        .as_deref()
+                        .map(text)
+                        .transpose()?
+                        .unwrap_or_else(Value::null),
+                ),
+                (
+                    "demoted_seq".into(),
+                    item.demoted_seq
+                        .map(number)
+                        .transpose()?
+                        .unwrap_or_else(Value::null),
+                ),
+                (
+                    "demoted_at".into(),
+                    item.demoted_at
+                        .map(number)
+                        .transpose()?
+                        .unwrap_or_else(Value::null),
+                ),
+            ])
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let tier = match reply.tier {
+        MemoryTier::Remembered => "remembered",
+        MemoryTier::Forgotten => "forgotten",
+    };
+    envelope(
+        &"r".repeat(64),
+        "memory.list.reply",
+        Value::checked_object(vec![
+            ("tier".into(), text(tier)?),
+            ("items".into(), Value::checked_array(items)?),
+            (
+                "next".into(),
+                reply
+                    .next
+                    .as_ref()
+                    .map(|id| text(id.as_str()))
+                    .transpose()?
+                    .unwrap_or_else(Value::null),
+            ),
+        ])?,
+    )
 }

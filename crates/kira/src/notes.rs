@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Encrypted note storage contracts. No disk store or alternate Aura writer is provided.
+//! Encrypted payloads and operations scoped to one Aura-owned storage transaction.
 
 use canon::{
     alg::AlgorithmId,
     authority::{AuthorityTxn, CellCommitment, VerifiedProof},
+    codes,
     digest::Digest32,
     fd3_payloads::MemoryPut,
     ids::{NoteId, SubjectId},
     provenance::{Provenance, Source},
-    Refusal, Result,
+    Result,
 };
 use zeroize::Zeroizing;
 
@@ -24,13 +25,6 @@ pub const MAX_NOTE_BYTES: usize = 65_536;
 pub const MAX_SUMMARY_SOURCES: usize = 100;
 pub const GUEST_WINDOW_MS: u64 = 60_000;
 pub const GUEST_WINDOW_SAVES: u32 = 32;
-
-pub(crate) const fn refuse(reason: &'static str) -> Refusal {
-    Refusal {
-        organ: "kira",
-        reason,
-    }
-}
 
 /// Bounded immutable content; this type has no usage-driven confidence update.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,16 +42,16 @@ impl NoteContent {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
         {
-            return Err(refuse("category-invalid"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         if statement.trim().is_empty() || statement.len() > MAX_STATEMENT_BYTES {
-            return Err(refuse("statement-invalid"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         if quote
             .as_ref()
             .is_some_and(|text| text.len() > MAX_QUOTE_BYTES)
         {
-            return Err(refuse("quote-too-large"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         Ok(Self {
             category,
@@ -78,15 +72,21 @@ impl NoteContent {
 
     /// C4's exact cell value, with absent quote distinct from an empty quote.
     pub fn canonical_value(&self) -> Result<Vec<u8>> {
-        use canon::json::{to_canonical, Value};
+        use canon::json::Value;
         let mut fields = vec![
-            ("category".into(), Value::text(self.category.clone())?),
-            ("statement".into(), Value::text(self.statement.clone())?),
+            (
+                "category".into(),
+                Value::checked_text(self.category.clone())?,
+            ),
+            (
+                "statement".into(),
+                Value::checked_text(self.statement.clone())?,
+            ),
         ];
         if let Some(quote) = &self.quote {
-            fields.push(("quote".into(), Value::text(quote.clone())?));
+            fields.push(("quote".into(), Value::checked_text(quote.clone())?));
         }
-        Ok(to_canonical(&Value::object(fields)?))
+        Ok(Value::checked_object(fields)?.canonical_bytes())
     }
 }
 
@@ -98,7 +98,7 @@ pub struct MemoryOrigin(Provenance);
 impl MemoryOrigin {
     pub fn from_ingress(provenance: Provenance) -> Result<Self> {
         if matches!(provenance.source, Source::Stranger) {
-            return Err(refuse("unapproved-source"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         Ok(Self(provenance))
     }
@@ -123,7 +123,7 @@ pub struct ReviewBy(u64);
 impl ReviewBy {
     pub fn new(at_ms: u64) -> Result<Self> {
         if at_ms > canon::json::MAX_SAFE_INTEGER as u64 {
-            return Err(refuse("invalid-time"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         Ok(Self(at_ms))
     }
@@ -165,7 +165,7 @@ impl NoteForm {
                 || originals.len() > MAX_SUMMARY_SOURCES
                 || distinct.len() != originals.len()
             {
-                return Err(refuse("summary-sources"));
+                return Err(codes::KIRA_INVALID_FIELD);
             }
         }
         Ok(())
@@ -199,13 +199,13 @@ pub struct WrappedMemoryKey {
 impl WrappedMemoryKey {
     pub fn validate(&self) -> Result<()> {
         if self.version != 1 || self.algorithm != AlgorithmId::XChaCha20Poly1305 {
-            return Err(refuse("unsupported-format"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         if self.root_epoch == 0
             || self.root_epoch > canon::json::MAX_SAFE_INTEGER as u64
             || self.ciphertext.len() != 48
         {
-            return Err(refuse("key-envelope-invalid"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         Ok(())
     }
@@ -218,7 +218,7 @@ pub fn associated_data(owner: &SubjectId, note: &NoteId, key: &NoteId) -> Result
     bytes.push(0);
     let subject = owner.to_string();
     for field in [subject.as_str(), note.as_str(), key.as_str()] {
-        let len = u32::try_from(field.len()).map_err(|_| refuse("invalid-field"))?;
+        let len = u32::try_from(field.len()).map_err(|_| codes::KIRA_INVALID_FIELD)?;
         bytes.extend_from_slice(&len.to_be_bytes());
         bytes.extend_from_slice(field.as_bytes());
     }
@@ -242,13 +242,13 @@ pub struct EncryptedNote {
 impl EncryptedNote {
     pub fn validate(&self) -> Result<()> {
         if self.version != 1 || self.algorithm != AlgorithmId::XChaCha20Poly1305 {
-            return Err(refuse("unsupported-format"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         if self.root_epoch == 0
             || self.root_epoch > canon::json::MAX_SAFE_INTEGER as u64
             || !(16..=MAX_NOTE_BYTES + 16).contains(&self.ciphertext.len())
         {
-            return Err(refuse("ciphertext-invalid"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
         Ok(())
     }
@@ -256,7 +256,7 @@ impl EncryptedNote {
     /// Exactly this new versioned storage wrapper is committed by SaveCommitment.
     /// Binary fields use lowercase hex; no plaintext or unwrapped key is included.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        use canon::json::{to_canonical, SafeInteger, Value};
+        use canon::json::{SafeInteger, Value};
         self.validate()?;
         let hex = |bytes: &[u8]| -> String {
             const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -267,25 +267,38 @@ impl EncryptedNote {
             }
             out
         };
-        let body = Value::object(vec![
+        let body = Value::checked_object(vec![
             (
                 "algorithm".into(),
-                Value::text(self.algorithm.wire_name().into())?,
+                Value::checked_text(self.algorithm.wire_name().into())?,
             ),
-            ("owner".into(), Value::text(self.owner.to_string())?),
-            ("note_id".into(), Value::text(self.note_id.to_string())?),
-            ("key_id".into(), Value::text(self.key_id.to_string())?),
+            ("owner".into(), Value::checked_text(self.owner.to_string())?),
+            (
+                "note_id".into(),
+                Value::checked_text(self.note_id.to_string())?,
+            ),
+            (
+                "key_id".into(),
+                Value::checked_text(self.key_id.to_string())?,
+            ),
             (
                 "root_epoch".into(),
                 Value::integer(SafeInteger::new(self.root_epoch as i64)?),
             ),
-            ("nonce".into(), Value::text(hex(&self.nonce))?),
-            ("ciphertext".into(), Value::text(hex(&self.ciphertext))?),
+            ("nonce".into(), Value::checked_text(hex(&self.nonce))?),
+            (
+                "ciphertext".into(),
+                Value::checked_text(hex(&self.ciphertext))?,
+            ),
         ])?;
-        Ok(to_canonical(&Value::object(vec![
-            ("schema".into(), Value::text("aukora-kira-note-v1".into())?),
+        Ok(Value::checked_object(vec![
+            (
+                "schema".into(),
+                Value::checked_text("aukora-kira-note-v1".into())?,
+            ),
             ("body".into(), body),
-        ])?))
+        ])?
+        .canonical_bytes())
     }
 }
 
@@ -330,21 +343,27 @@ impl SaveCommitment {
     pub fn canonical_body(&self) -> Result<canon::json::Value> {
         use canon::json::Value;
         if self.version != 1 || self.algorithm != AlgorithmId::Sha256 {
-            return Err(refuse("unsupported-format"));
+            return Err(codes::KIRA_INVALID_FIELD);
         }
-        Value::object(vec![
-            ("schema".into(), Value::text("aukora-kira-save-v1".into())?),
+        Value::checked_object(vec![
+            (
+                "schema".into(),
+                Value::checked_text("aukora-kira-save-v1".into())?,
+            ),
             (
                 "body".into(),
-                Value::object(vec![
+                Value::checked_object(vec![
                     (
                         "algorithm".into(),
-                        Value::text(self.algorithm.wire_name().into())?,
+                        Value::checked_text(self.algorithm.wire_name().into())?,
                     ),
-                    ("note_id".into(), Value::text(self.note_id.to_string())?),
+                    (
+                        "note_id".into(),
+                        Value::checked_text(self.note_id.to_string())?,
+                    ),
                     (
                         "encrypted_sha256".into(),
-                        Value::text(self.encrypted_sha256.to_string())?,
+                        Value::checked_text(self.encrypted_sha256.to_string())?,
                     ),
                 ])?,
             ),
@@ -377,7 +396,10 @@ pub struct SaveRequest {
     pub review_by: Option<ReviewBy>,
 }
 
-/// Independent cell execution over memory:sha256(canon(value)), not guest digests.
+/// Independent execution of the pinned module, ignoring guest digests.
+/// key = "memory:" || sha256(canon({category,statement,quote?})).
+/// input_sha256 = sha256(canon({key,value})); effect_sha256 hashes the canonical
+/// effect body followed by one LF; module_sha256 hashes the pinned module bytes.
 pub trait SaveCell {
     /// Returns recomputed commitments over the canonical effect body plus one LF.
     fn replay(&self, content: &NoteContent) -> Result<CellCommitment>;
@@ -388,7 +410,7 @@ pub trait SaveCell {
 /// It replays the cell, compares all commitments, checks the per-principal budget,
 /// preserves summary originals and commits ciphertext and content-free Aura anchor
 /// atomically. An unavailable Aura append route refuses without a partial save.
-/// This interface supplies no second ledger and no implementation of that route.
+/// The transaction adapter supplies that route; this interface owns no signer.
 pub trait MemoryStore {
     fn save<T: AuthorityTxn + ?Sized, P: MemoryPermissions, C: SaveCell>(
         &mut self,
@@ -411,4 +433,333 @@ pub trait MemoryStore {
         expected_head: MemoryHead,
         at_ms: u64,
     ) -> Result<Demotion>;
+}
+
+pub(crate) fn sha256(bytes: &[u8]) -> Digest32 {
+    use sha2::{Digest, Sha256};
+    Digest32::from_bytes(Sha256::digest(bytes).into())
+}
+
+pub(crate) fn text(value: impl Into<String>) -> Result<canon::json::Value> {
+    canon::json::Value::checked_text(value.into())
+}
+
+pub(crate) fn integer(n: u64) -> Result<canon::json::Value> {
+    use canon::json::{SafeInteger, Value, MAX_SAFE_INTEGER};
+    if n > MAX_SAFE_INTEGER as u64 {
+        return Err(codes::KIRA_INVALID_FIELD);
+    }
+    Ok(Value::integer(SafeInteger::new(n as i64)?))
+}
+
+/// Storage decoding accepts only the byte-exact canonical representation.
+pub(crate) fn parse_canonical(bytes: &[u8]) -> Result<canon::json::Value> {
+    fn convert(value: serde_json::Value) -> Result<canon::json::Value> {
+        use canon::json::{SafeInteger, Value};
+        Ok(match value {
+            serde_json::Value::Null => Value::null(),
+            serde_json::Value::Bool(b) => Value::boolean(b),
+            serde_json::Value::Number(n) => Value::integer(SafeInteger::new(
+                n.as_i64().ok_or(codes::KIRA_STORE_CORRUPT)?,
+            )?),
+            serde_json::Value::String(s) => Value::checked_text(s)?,
+            serde_json::Value::Array(a) => {
+                Value::checked_array(a.into_iter().map(convert).collect::<Result<_>>()?)?
+            }
+            serde_json::Value::Object(o) => Value::checked_object(
+                o.into_iter()
+                    .map(|(k, v)| Ok((k, convert(v)?)))
+                    .collect::<Result<_>>()?,
+            )?,
+        })
+    }
+    let parsed = convert(serde_json::from_slice(bytes).map_err(|_| codes::KIRA_STORE_CORRUPT)?)?;
+    if parsed.canonical_bytes() != bytes {
+        return Err(codes::KIRA_STORE_CORRUPT);
+    }
+    Ok(parsed)
+}
+
+pub(crate) fn field<'a>(
+    value: &'a canon::json::Value,
+    key: &str,
+) -> Result<&'a canon::json::Value> {
+    value.get(key).ok_or(codes::KIRA_STORE_CORRUPT)
+}
+pub(crate) fn string(value: &canon::json::Value) -> Result<&str> {
+    match value.view() {
+        canon::json::ValueView::Text(s) => Ok(s),
+        _ => Err(codes::KIRA_STORE_CORRUPT),
+    }
+}
+pub(crate) fn number(value: &canon::json::Value) -> Result<u64> {
+    match value.view() {
+        canon::json::ValueView::Integer(n) if n.get() >= 0 => Ok(n.get() as u64),
+        _ => Err(codes::KIRA_STORE_CORRUPT),
+    }
+}
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+pub(crate) fn unhex(s: &str) -> Result<Vec<u8>> {
+    if !s.len().is_multiple_of(2)
+        || !s
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(codes::KIRA_STORE_CORRUPT);
+    }
+    s.as_bytes()
+        .chunks_exact(2)
+        .map(|p| {
+            let part = std::str::from_utf8(p).map_err(|_| codes::KIRA_STORE_CORRUPT)?;
+            u8::from_str_radix(part, 16).map_err(|_| codes::KIRA_STORE_CORRUPT)
+        })
+        .collect()
+}
+
+/// The clear payload exists only while sealing or after authenticated decryption.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotePayload {
+    pub content: NoteContent,
+    pub origin: MemoryOrigin,
+    pub form: NoteForm,
+    pub at_ms: u64,
+    pub review_by: Option<ReviewBy>,
+    pub root_epoch: u64,
+}
+
+impl NotePayload {
+    pub fn canonical_bytes(&self) -> Result<Zeroizing<Vec<u8>>> {
+        use canon::json::Value;
+        self.form.validate()?;
+        if self.root_epoch == 0 {
+            return Err(codes::KIRA_INVALID_FIELD);
+        }
+        let source = match &self.origin.recorded_source().source {
+            Source::Owner => text("owner")?,
+            Source::Auma => text("auma")?,
+            Source::Document => text("document")?,
+            Source::Memory => text("memory")?,
+            Source::App(id) => Value::checked_object(vec![("app".into(), text(id.to_string())?)])?,
+            Source::Contact(id) => {
+                Value::checked_object(vec![("contact".into(), text(id.as_str())?)])?
+            }
+            Source::Stranger => return Err(codes::KIRA_INVALID_FIELD),
+        };
+        let originals = match &self.form {
+            NoteForm::Original => Value::null(),
+            NoteForm::Summary { originals } => Value::checked_array(
+                originals
+                    .iter()
+                    .map(|id| text(id.to_string()))
+                    .collect::<Result<_>>()?,
+            )?,
+        };
+        let value = Value::checked_object(vec![
+            ("schema".into(), text("aukora-kira-payload-v1")?),
+            (
+                "content".into(),
+                parse_canonical(&self.content.canonical_value()?)?,
+            ),
+            ("origin".into(), source),
+            ("originals".into(), originals),
+            ("at".into(), integer(self.at_ms)?),
+            ("epoch".into(), integer(self.root_epoch)?),
+            (
+                "review_by".into(),
+                self.review_by
+                    .map(|r| integer(r.at_ms()))
+                    .transpose()?
+                    .unwrap_or_else(Value::null),
+            ),
+        ])?;
+        let bytes = Zeroizing::new(value.canonical_bytes());
+        if bytes.len() > MAX_NOTE_BYTES {
+            return Err(codes::KIRA_INVALID_FIELD);
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        use canon::json::ValueView;
+        if bytes.len() > MAX_NOTE_BYTES {
+            return Err(codes::KIRA_STORE_CORRUPT);
+        }
+        let value = parse_canonical(bytes)?;
+        if string(field(&value, "schema")?)? != "aukora-kira-payload-v1" {
+            return Err(codes::KIRA_STORE_CORRUPT);
+        }
+        let c = field(&value, "content")?;
+        let content = NoteContent::new(
+            string(field(c, "category")?)?.into(),
+            string(field(c, "statement")?)?.into(),
+            c.get("quote").map(string).transpose()?.map(str::to_owned),
+        )?;
+        let source = field(&value, "origin")?;
+        let source = match source.view() {
+            ValueView::Text("owner") => Source::Owner,
+            ValueView::Text("auma") => Source::Auma,
+            ValueView::Text("document") => Source::Document,
+            ValueView::Text("memory") => Source::Memory,
+            ValueView::Object(m) if m.len() == 1 && m[0].0 == "app" => {
+                Source::App(canon::ids::AppId::from_hex(string(&m[0].1)?)?)
+            }
+            ValueView::Object(m) if m.len() == 1 && m[0].0 == "contact" => Source::Contact(
+                canon::provenance::Npub::from_memory_address(string(&m[0].1)?)?,
+            ),
+            _ => return Err(codes::KIRA_STORE_CORRUPT),
+        };
+        let form = match field(&value, "originals")?.view() {
+            ValueView::Null => NoteForm::Original,
+            ValueView::Array(a) => NoteForm::Summary {
+                originals: a
+                    .iter()
+                    .map(|v| NoteId::new(string(v)?.into()))
+                    .collect::<Result<_>>()?,
+            },
+            _ => return Err(codes::KIRA_STORE_CORRUPT),
+        };
+        let review_by = match field(&value, "review_by")?.view() {
+            ValueView::Null => None,
+            _ => Some(ReviewBy::new(number(field(&value, "review_by")?)?)?),
+        };
+        let payload = Self {
+            content,
+            origin: MemoryOrigin::from_ingress(Provenance { source })?,
+            form,
+            at_ms: number(field(&value, "at")?)?,
+            review_by,
+            root_epoch: number(field(&value, "epoch")?)?,
+        };
+        if payload.canonical_bytes()?.as_slice() != bytes {
+            return Err(codes::KIRA_STORE_CORRUPT);
+        }
+        Ok(payload)
+    }
+}
+
+#[derive(Default)]
+pub struct XChaChaCipher;
+
+impl NoteCipher for XChaChaCipher {
+    fn seal(
+        &self,
+        key: &MemoryKey,
+        owner: &SubjectId,
+        note: &NoteId,
+        key_id: &NoteId,
+        root_epoch: u64,
+        canonical_payload: &[u8],
+    ) -> Result<EncryptedNote> {
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit, Payload},
+            XChaCha20Poly1305, XNonce,
+        };
+        if canonical_payload.len() > MAX_NOTE_BYTES
+            || root_epoch == 0
+            || root_epoch > canon::json::MAX_SAFE_INTEGER as u64
+        {
+            return Err(codes::KIRA_INVALID_FIELD);
+        }
+        parse_canonical(canonical_payload)?;
+        let mut nonce = [0; 24];
+        getrandom::fill(&mut nonce).map_err(|_| codes::KIRA_RANDOM_UNAVAILABLE)?;
+        let aad = associated_data(owner, note, key_id)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(key.bytes())
+            .map_err(|_| codes::KIRA_INVALID_FIELD)?;
+        let ciphertext = cipher
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: canonical_payload,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| codes::KIRA_AUTHENTICATION_FAILED)?;
+        Ok(EncryptedNote {
+            version: 1,
+            algorithm: AlgorithmId::XChaCha20Poly1305,
+            owner: *owner,
+            note_id: note.clone(),
+            key_id: key_id.clone(),
+            root_epoch,
+            nonce,
+            ciphertext,
+        })
+    }
+    fn open(&self, key: &MemoryKey, encrypted: &EncryptedNote) -> Result<Zeroizing<Vec<u8>>> {
+        use chacha20poly1305::{
+            aead::{Aead, KeyInit, Payload},
+            XChaCha20Poly1305, XNonce,
+        };
+        encrypted.validate()?;
+        let aad = associated_data(&encrypted.owner, &encrypted.note_id, &encrypted.key_id)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(key.bytes())
+            .map_err(|_| codes::KIRA_INVALID_FIELD)?;
+        let clear = Zeroizing::new(
+            cipher
+                .decrypt(
+                    &XNonce::from(encrypted.nonce),
+                    Payload {
+                        msg: &encrypted.ciphertext,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| codes::KIRA_AUTHENTICATION_FAILED)?,
+        );
+        parse_canonical(&clear)?;
+        Ok(clear)
+    }
+}
+
+impl SaveReceipt {
+    pub fn validate(&self) -> Result<()> {
+        self.anchor.validate()?;
+        self.commitment.canonical_body()?;
+        if self.cite_seq == 0 || self.cite_seq > self.anchor.head.sequence {
+            return Err(codes::KIRA_LEDGER_UNVERIFIED);
+        }
+        Ok(())
+    }
+}
+impl Demotion {
+    pub fn validate(&self) -> Result<()> {
+        self.head.validate()?;
+        if self.save_sequence == 0
+            || self.demoted_sequence <= self.save_sequence
+            || self.demoted_sequence > self.head.sequence
+            || self.demoted_at_ms > canon::json::MAX_SAFE_INTEGER as u64
+        {
+            return Err(codes::KIRA_INVALID_FIELD);
+        }
+        Ok(())
+    }
+    /// Exact target bytes for the owner card; reasons and plaintext are excluded.
+    pub fn target_bytes(note: &NoteId, saved: u64, head: MemoryHead) -> Result<Vec<u8>> {
+        use canon::json::Value;
+        head.validate()?;
+        if saved == 0 || saved > head.sequence {
+            return Err(codes::KIRA_INVALID_FIELD);
+        }
+        Ok(Value::checked_object(vec![
+            ("schema".into(), text("aukora-kira-demote-v1")?),
+            (
+                "body".into(),
+                Value::checked_object(vec![
+                    ("note_id".into(), text(note.to_string())?),
+                    ("save_sequence".into(), integer(saved)?),
+                    ("head_sequence".into(), integer(head.sequence)?),
+                    (
+                        "head_hash".into(),
+                        head.hash
+                            .map(|h| text(h.to_string()))
+                            .transpose()?
+                            .unwrap_or_else(Value::null),
+                    ),
+                ])?,
+            ),
+        ])?
+        .canonical_bytes())
+    }
 }

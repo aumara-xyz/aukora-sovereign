@@ -268,3 +268,537 @@ pub fn health(
         })
         .collect()
 }
+
+/// Completed native probes over one verified memory snapshot. The measured
+/// context comes from the snapshot; a caller's requested context is never copied.
+/// This type retains verdicts, not decrypted note text or key material.
+pub struct MemoryChecks {
+    context: HealthContext,
+    private: [Probe; 18],
+    corners: [Probe; 8],
+}
+
+#[derive(Clone, Copy)]
+enum Probe {
+    Unwritten,
+    NotChecked,
+    Unreachable,
+    Measured(ObservationVerdict),
+}
+
+impl Probe {
+    fn from_invariant(satisfied: bool) -> Self {
+        Self::Measured(if satisfied {
+            ObservationVerdict::Satisfied
+        } else {
+            ObservationVerdict::InvariantFailed
+        })
+    }
+
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Measured(ObservationVerdict::InvariantFailed), _)
+            | (_, Self::Measured(ObservationVerdict::InvariantFailed)) => {
+                Self::Measured(ObservationVerdict::InvariantFailed)
+            }
+            (Self::Unreachable, _) | (_, Self::Unreachable) => Self::Unreachable,
+            (_, next) => next,
+        }
+    }
+}
+
+impl HealthObserver for MemoryChecks {
+    fn observe(&mut self, spec: CheckSpec, _requested: HealthContext) -> CheckObservation {
+        let probe = PRIVATE_CHECKS
+            .iter()
+            .position(|registered| *registered == spec)
+            .map(|index| self.private[index])
+            .or_else(|| {
+                CORNER_CHECKS
+                    .iter()
+                    .position(|registered| *registered == spec)
+                    .map(|index| self.corners[index])
+            });
+        match probe.unwrap_or(Probe::Unwritten) {
+            Probe::Unwritten => CheckObservation::Unwritten,
+            Probe::NotChecked => CheckObservation::NotChecked,
+            Probe::Unreachable => CheckObservation::Unreachable,
+            Probe::Measured(verdict) => CheckObservation::Measured(ObservedCheck {
+                check: spec.check,
+                context: self.context,
+                expires_at_ms: self
+                    .context
+                    .observed_at_ms
+                    .saturating_add(spec.freshness_ms),
+                verdict,
+            }),
+        }
+    }
+}
+
+impl MemoryChecks {
+    /// Return the epoch and Aura coordinates actually read by these probes.
+    pub const fn context(&self) -> HealthContext {
+        self.context
+    }
+
+    /// Read the authority-bound snapshot before measuring records. The ledger
+    /// adapter must verify its complete signed Aura history in this transaction.
+    /// A refused anchor returns no observations. A corrupt local snapshot fails
+    /// the chain and anchor probes; remaining inspections stay undetermined.
+    pub fn inspect<T, L, C>(
+        store: &crate::anchor::SqliteMemory<'_, L>,
+        transaction: &mut T,
+        principal: &crate::permissions::PermissionContext,
+        cell: &C,
+        observed_at_ms: u64,
+    ) -> canon::Result<Self>
+    where
+        T: canon::authority::AuthorityTxn + ?Sized,
+        L: crate::anchor::MemoryLedger,
+        C: crate::notes::SaveCell + ?Sized,
+    {
+        if observed_at_ms > canon::json::MAX_SAFE_INTEGER as u64 {
+            return Err(canon::codes::KIRA_INVALID_FIELD);
+        }
+        let anchor = store.verified_anchor(transaction, principal)?;
+        let mut observed = Self {
+            context: HealthContext {
+                epoch: principal.owner_epoch,
+                sequence: anchor.aura_sequence,
+                observed_at_ms,
+                commitment: anchor.aura_hash,
+            },
+            private: [Probe::Unwritten; 18],
+            corners: [Probe::Unwritten; 8],
+        };
+        for index in [0, 1, 2, 3, 4, 8, 12, 13, 17] {
+            observed.private[index] = Probe::NotChecked;
+        }
+        for index in [0, 2, 3] {
+            observed.corners[index] = Probe::NotChecked;
+        }
+        let snapshot = match store.snapshot(transaction, principal) {
+            Ok(snapshot) => snapshot,
+            Err(error) if error == canon::codes::KIRA_STORE_UNAVAILABLE => {
+                for index in [0, 1, 2, 3, 4, 8, 12, 13, 17] {
+                    observed.private[index] = Probe::Unreachable;
+                }
+                for index in [0, 2, 3] {
+                    observed.corners[index] = Probe::Unreachable;
+                }
+                return Ok(observed);
+            }
+            Err(_) => {
+                observed.private[3] = Probe::from_invariant(false);
+                observed.private[4] = Probe::from_invariant(false);
+                observed.corners[2] = Probe::from_invariant(false);
+                return Ok(observed);
+            }
+        };
+        if snapshot.anchor != anchor {
+            let mismatch = Probe::Measured(ObservationVerdict::Disagreement);
+            observed.private[3] = mismatch;
+            observed.private[4] = mismatch;
+            observed.corners[2] = mismatch;
+            observed.corners[3] = mismatch;
+            return Ok(observed);
+        }
+        for index in [0, 2, 3, 4, 8, 12, 13, 17] {
+            observed.private[index] = Probe::from_invariant(true);
+        }
+        observed.corners[2] = Probe::from_invariant(true);
+        let mut demoted = 0_u64;
+        let mut quarantined = 0_u64;
+        for (id, retained) in &snapshot.notes {
+            let encrypted = &retained.encrypted;
+            let wrapped = &retained.wrapped_key;
+            let formats = encrypted.validate().is_ok()
+                && wrapped.validate().is_ok()
+                && retained.receipt.commitment.version == 1
+                && retained.receipt.commitment.algorithm == AlgorithmId::Sha256;
+            observed.private[17] = observed.private[17].merge(Probe::from_invariant(formats));
+            let commitment = crate::notes::SaveCommitment::from_encrypted(encrypted)
+                .is_ok_and(|value| value == retained.receipt.commitment);
+            let citation = retained.receipt.cite_seq > 0
+                && retained.receipt.cite_seq <= snapshot.anchor.aura_sequence
+                && retained.receipt.anchor.owner == snapshot.anchor.owner
+                && id == &encrypted.note_id;
+            observed.private[2] =
+                observed.private[2].merge(Probe::from_invariant(commitment && citation));
+            if let Some(demotion) = &retained.demotion {
+                demoted += 1;
+                let valid = demotion.note_id == *id
+                    && demotion.save_sequence == retained.receipt.cite_seq
+                    && demotion.demoted_sequence > demotion.save_sequence
+                    && demotion.demoted_sequence <= snapshot.anchor.aura_sequence
+                    && demotion.demoted_at_ms <= canon::json::MAX_SAFE_INTEGER as u64
+                    && demotion.head.validate().is_ok();
+                observed.private[8] = observed.private[8].merge(Probe::from_invariant(valid));
+            }
+            quarantined += u64::from(retained.quarantined);
+            let active = retained.demotion.is_none() && !retained.quarantined;
+            if active {
+                let bound = formats
+                    && wrapped.root_epoch == principal.owner_epoch
+                    && wrapped.key_id == encrypted.key_id;
+                observed.private[1] = observed.private[1].merge(Probe::from_invariant(bound));
+            }
+            match store.decrypt(retained) {
+                Ok(payload) => {
+                    let preserved = match &payload.form {
+                        crate::notes::NoteForm::Original => true,
+                        crate::notes::NoteForm::Summary { originals } => {
+                            originals.iter().all(|original| {
+                                original != id && snapshot.notes.contains_key(original)
+                            })
+                        }
+                    };
+                    let attributed = !payload.origin.grants_authority()
+                        && payload.origin.delivery_source().source
+                            == canon::provenance::Source::Memory
+                        && payload.origin.recorded_source().source
+                            != canon::provenance::Source::Stranger;
+                    observed.private[13] =
+                        observed.private[13].merge(Probe::from_invariant(attributed && preserved));
+                    observed.private[2] = observed.private[2].merge(Probe::from_invariant(
+                        payload.content.category() == retained.category
+                            && payload.at_ms == retained.at_ms
+                            && payload.root_epoch == encrypted.root_epoch,
+                    ));
+                    let replay = match cell.replay(&payload.content) {
+                        Ok(replayed) => Probe::from_invariant(replayed == retained.cell),
+                        Err(error) if error == canon::codes::KIRA_STORE_UNAVAILABLE => {
+                            Probe::Unreachable
+                        }
+                        Err(_) => Probe::from_invariant(false),
+                    };
+                    observed.private[12] = observed.private[12].merge(replay);
+                }
+                Err(error) => {
+                    let failure = if error == canon::codes::KIRA_STORE_UNAVAILABLE {
+                        Probe::Unreachable
+                    } else {
+                        Probe::from_invariant(false)
+                    };
+                    for index in [0, 2, 12, 13] {
+                        observed.private[index] = observed.private[index].merge(failure);
+                    }
+                    if active {
+                        observed.private[1] = observed.private[1].merge(failure);
+                    }
+                }
+            }
+        }
+        observed.corners[0] = observed.private[1];
+        observed.corners[3] = Probe::from_invariant(
+            snapshot.anchor.counts.saved == snapshot.notes.len() as u64
+                && snapshot.anchor.counts.demoted == demoted
+                && snapshot.anchor.counts.quarantined == quarantined,
+        );
+        Ok(observed)
+    }
+}
+
+/// Native permission and listing probes. Provided scopes can expose a bad epoch,
+/// but do not establish completeness of the permission history.
+pub struct PermissionChecks {
+    checks: MemoryChecks,
+}
+
+impl HealthObserver for PermissionChecks {
+    fn observe(&mut self, spec: CheckSpec, requested: HealthContext) -> CheckObservation {
+        self.checks.observe(spec, requested)
+    }
+}
+
+impl MemoryChecks {
+    /// Combine measurements only when they inspected the same Aura context.
+    pub fn with_permissions(mut self, permissions: PermissionChecks) -> canon::Result<Self> {
+        if self.context != permissions.checks.context {
+            return Err(canon::codes::KIRA_LEDGER_UNVERIFIED);
+        }
+        for index in [5, 7, 9, 14, 15] {
+            self.private[index] = permissions.checks.private[index];
+        }
+        Ok(self)
+    }
+}
+
+impl PermissionChecks {
+    /// Invoke the native permission reader and both listing tiers in the locked
+    /// snapshot. This does not authorize, append, or change any permission.
+    pub fn inspect<T, L>(
+        store: &mut crate::anchor::SqliteMemory<'_, L>,
+        transaction: &mut T,
+        principal: &crate::permissions::PermissionContext,
+        scopes: &[crate::permissions::PermissionRequest],
+        observed_at_ms: u64,
+    ) -> canon::Result<Self>
+    where
+        T: canon::authority::AuthorityTxn + ?Sized,
+        L: crate::anchor::MemoryLedger,
+    {
+        use crate::permissions::{
+            LedgerPermissions, MemoryPermissions, Permission, PermissionRequest, PermissionScope,
+        };
+        use canon::fd3_payloads::MemoryTier;
+        if observed_at_ms > canon::json::MAX_SAFE_INTEGER as u64 || scopes.len() > 100 {
+            return Err(canon::codes::KIRA_INVALID_FIELD);
+        }
+        let snapshot = store.snapshot(transaction, principal)?;
+        let mut checks = MemoryChecks {
+            context: HealthContext {
+                epoch: principal.owner_epoch,
+                sequence: snapshot.anchor.aura_sequence,
+                observed_at_ms,
+                commitment: snapshot.anchor.aura_hash,
+            },
+            private: [Probe::Unwritten; 18],
+            corners: [Probe::Unwritten; 8],
+        };
+        for index in [5, 7, 14, 15] {
+            checks.private[index] = Probe::NotChecked;
+        }
+        let disclosure = PermissionRequest {
+            permission: Permission::Disclose,
+            scope: PermissionScope::hosted_model_context(),
+        };
+        let permissions = LedgerPermissions;
+        let mut may_disclose = None;
+        for request in std::iter::once(&disclosure).chain(scopes.iter()) {
+            match permissions.require(transaction, principal, request) {
+                Ok(receipt) => {
+                    let current = receipt.change.context == *principal
+                        && receipt.change.request == *request
+                        && receipt.change.action == crate::permissions::PermissionAction::Grant
+                        && receipt.record.authority.epoch == principal.owner_epoch
+                        && receipt.record.authority.sequence <= snapshot.anchor.aura_sequence;
+                    if !current {
+                        checks.private[5] = Probe::from_invariant(false);
+                        checks.private[14] = Probe::from_invariant(false);
+                    }
+                    if request == &disclosure {
+                        may_disclose = Some(current);
+                    }
+                }
+                Err(error)
+                    if error == canon::codes::KIRA_DISCLOSURE_NOT_PERMITTED
+                        || error == canon::codes::KIRA_INVALID_FIELD =>
+                {
+                    if request == &disclosure {
+                        may_disclose = Some(false);
+                    }
+                }
+                Err(error) if error == canon::codes::KIRA_STORE_UNAVAILABLE => {
+                    checks.private[5] = checks.private[5].merge(Probe::Unreachable);
+                }
+                Err(_) => {
+                    checks.private[5] = Probe::from_invariant(false);
+                    checks.private[9] = Probe::from_invariant(false);
+                }
+            }
+        }
+        let remembered = if may_disclose == Some(false) {
+            use crate::recall::MemoryRecallService;
+            let anchors = crate::anchor::SqliteMemory::new(store.sql, store.ledger, store.keys);
+            match store.list(
+                transaction,
+                &mut LedgerPermissions,
+                &anchors,
+                principal,
+                &canon::fd3_payloads::MemoryList {
+                    tier: MemoryTier::Remembered,
+                    before: None,
+                },
+            ) {
+                Ok(_) => PageObservation::Violation,
+                Err(error) => PageObservation::Refused(error),
+            }
+        } else {
+            inspect_pages(
+                store,
+                transaction,
+                principal,
+                &snapshot,
+                MemoryTier::Remembered,
+            )
+        };
+        let permission_probe = match (may_disclose, remembered) {
+            (Some(true), PageObservation::Checked) => Probe::from_invariant(true),
+            (Some(false), PageObservation::Refused(error))
+                if error == canon::codes::KIRA_DISCLOSURE_NOT_PERMITTED =>
+            {
+                Probe::from_invariant(true)
+            }
+            (Some(false), PageObservation::Checked | PageObservation::Violation) => {
+                Probe::from_invariant(false)
+            }
+            (Some(true), PageObservation::Refused(error))
+                if error == canon::codes::KIRA_DISCLOSURE_NOT_PERMITTED =>
+            {
+                Probe::Measured(ObservationVerdict::Disagreement)
+            }
+            (_, PageObservation::Refused(error))
+                if error == canon::codes::KIRA_STORE_UNAVAILABLE =>
+            {
+                Probe::Unreachable
+            }
+            _ => Probe::NotChecked,
+        };
+        checks.private[5] = checks.private[5].merge(permission_probe);
+        let forgotten = inspect_pages(
+            store,
+            transaction,
+            principal,
+            &snapshot,
+            MemoryTier::Forgotten,
+        );
+        checks.private[7] = page_probe(forgotten);
+        checks.private[15] = match (remembered, forgotten) {
+            (PageObservation::Refused(error), right)
+                if error == canon::codes::KIRA_DISCLOSURE_NOT_PERMITTED =>
+            {
+                page_probe(right)
+            }
+            (PageObservation::Checked, PageObservation::Checked) => Probe::from_invariant(true),
+            (PageObservation::Violation, _) | (_, PageObservation::Violation) => {
+                Probe::from_invariant(false)
+            }
+            (PageObservation::Refused(error), _) | (_, PageObservation::Refused(error))
+                if error == canon::codes::KIRA_STORE_UNAVAILABLE =>
+            {
+                Probe::Unreachable
+            }
+            _ => Probe::NotChecked,
+        };
+        if store.verified_anchor(transaction, principal)? != snapshot.anchor {
+            for index in [5, 7, 14, 15] {
+                checks.private[index] = Probe::Measured(ObservationVerdict::Disagreement);
+            }
+        }
+        Ok(Self { checks })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PageObservation {
+    Checked,
+    Refused(canon::Refusal),
+    Violation,
+}
+
+fn page_probe(observed: PageObservation) -> Probe {
+    match observed {
+        PageObservation::Checked => Probe::from_invariant(true),
+        PageObservation::Refused(error) if error == canon::codes::KIRA_STORE_UNAVAILABLE => {
+            Probe::Unreachable
+        }
+        PageObservation::Refused(_) => Probe::NotChecked,
+        PageObservation::Violation => Probe::from_invariant(false),
+    }
+}
+
+fn inspect_pages<T, L>(
+    store: &mut crate::anchor::SqliteMemory<'_, L>,
+    transaction: &mut T,
+    principal: &crate::permissions::PermissionContext,
+    snapshot: &crate::anchor::MemorySnapshot,
+    tier: canon::fd3_payloads::MemoryTier,
+) -> PageObservation
+where
+    T: canon::authority::AuthorityTxn + ?Sized,
+    L: crate::anchor::MemoryLedger,
+{
+    use crate::recall::MemoryRecallService;
+    use canon::fd3_payloads::{MemoryList, MemoryTier};
+    let mut permissions = crate::permissions::LedgerPermissions;
+    let anchors = crate::anchor::SqliteMemory::new(store.sql, store.ledger, store.keys);
+    let expected: std::collections::BTreeSet<_> = snapshot
+        .notes
+        .iter()
+        .filter(|(_, note)| match tier {
+            MemoryTier::Remembered => note.demotion.is_none() && !note.quarantined,
+            MemoryTier::Forgotten => note.demotion.is_some(),
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut before = None;
+    let mut previous_sequence = u64::MAX;
+    loop {
+        let reply = match store.list(
+            transaction,
+            &mut permissions,
+            &anchors,
+            principal,
+            &MemoryList {
+                tier,
+                before: before.clone(),
+            },
+        ) {
+            Ok(reply) => reply,
+            Err(error) => return PageObservation::Refused(error),
+        };
+        if reply.tier != tier
+            || reply.items.len() > crate::recall::MAX_RECALL_ITEMS
+            || crate::recall::list_frame(&reply)
+                .map_or(true, |bytes| bytes.len() > canon::frame::MAX_FRAME_BYTES)
+        {
+            return PageObservation::Violation;
+        }
+        for item in &reply.items {
+            let Some(note) = snapshot.notes.get(&item.note_id) else {
+                return PageObservation::Violation;
+            };
+            if !expected.contains(&item.note_id)
+                || !seen.insert(item.note_id.clone())
+                || item.cite_seq != note.receipt.cite_seq
+                || item.cite_seq >= previous_sequence
+                || item.at != note.at_ms
+                || item.category != note.category
+            {
+                return PageObservation::Violation;
+            }
+            previous_sequence = item.cite_seq;
+            let valid = match tier {
+                MemoryTier::Remembered => {
+                    let payload = match store.decrypt(note) {
+                        Ok(payload) => payload,
+                        Err(error) => return PageObservation::Refused(error),
+                    };
+                    item.text.as_deref() == Some(payload.content.statement())
+                        && item.demoted_seq.is_none()
+                        && item.demoted_at.is_none()
+                }
+                MemoryTier::Forgotten => note.demotion.as_ref().is_some_and(|demotion| {
+                    item.text.is_none()
+                        && item.demoted_seq == Some(demotion.demoted_sequence)
+                        && item.demoted_at == Some(demotion.demoted_at_ms)
+                        && demotion.demoted_sequence > item.cite_seq
+                }),
+            };
+            if !valid {
+                return PageObservation::Violation;
+            }
+        }
+        match reply.next {
+            None => {
+                return if seen == expected {
+                    PageObservation::Checked
+                } else {
+                    PageObservation::Violation
+                }
+            }
+            Some(next) => {
+                if reply.items.last().map(|item| &item.note_id) != Some(&next)
+                    || before.as_ref() == Some(&next)
+                    || seen.len() >= expected.len()
+                {
+                    return PageObservation::Violation;
+                }
+                before = Some(next);
+            }
+        }
+    }
+}

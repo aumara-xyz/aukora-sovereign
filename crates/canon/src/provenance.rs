@@ -150,3 +150,66 @@ pub struct Provenance {
     /// The source established by ingress, rather than asserted by frame content.
     pub source: Source,
 }
+
+impl Npub {
+    /// Decode one lowercase Bech32 `npub` with a 32-byte payload, checksum 1,
+    /// and zero unused padding bits. The address alone does not approve a contact.
+    pub fn from_memory_address(encoded: &str) -> Result<Self> {
+        const SYMBOLS: &[u8; 32] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+        const GENERATORS: [u32; 5] = [
+            0x3b6a_57b2,
+            0x2650_8e6d,
+            0x1ea1_19fa,
+            0x3d42_33dd,
+            0x2a14_62b3,
+        ];
+        let invalid = crate::codes::ID_INVALID;
+        if encoded.len() != 63 || !encoded.starts_with("npub1") {
+            return Err(invalid);
+        }
+        let mut symbols = [0u8; 58];
+        for (slot, character) in symbols.iter_mut().zip(encoded.as_bytes()[5..].iter()) {
+            *slot = SYMBOLS
+                .iter()
+                .position(|candidate| candidate == character)
+                .ok_or(invalid)? as u8;
+        }
+        let expanded_hrp = b"npub"
+            .iter()
+            .map(|byte| byte >> 5)
+            .chain(core::iter::once(0))
+            .chain(b"npub".iter().map(|byte| byte & 31));
+        let mut checksum = 1u32;
+        for symbol in expanded_hrp.chain(symbols.iter().copied()) {
+            let high = checksum >> 25;
+            checksum = ((checksum & 0x01ff_ffff) << 5) ^ u32::from(symbol);
+            for (bit, generator) in GENERATORS.iter().enumerate() {
+                if high & (1 << bit) != 0 {
+                    checksum ^= generator;
+                }
+            }
+        }
+        if checksum != 1 {
+            return Err(invalid);
+        }
+        let mut raw = [0u8; 32];
+        let (mut buffered, mut bits, mut written) = (0u32, 0u32, 0usize);
+        for symbol in &symbols[..52] {
+            buffered = (buffered << 5) | u32::from(*symbol);
+            bits += 5;
+            if bits >= 8 {
+                bits -= 8;
+                *raw.get_mut(written).ok_or(invalid)? = (buffered >> bits) as u8;
+                written += 1;
+            }
+            buffered &= (1 << bits) - 1;
+        }
+        if written != raw.len() || bits != 4 || buffered != 0 {
+            return Err(invalid);
+        }
+        Ok(Self {
+            algorithm: AlgorithmId::Secp256k1Schnorr,
+            encoded: encoded.to_owned(),
+        })
+    }
+}
