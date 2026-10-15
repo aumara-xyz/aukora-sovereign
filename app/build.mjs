@@ -305,10 +305,12 @@ async function verifyCaptures(captures, manifests) {
     for (const entry of await readdir(folder)) if (!listed.has(`captures/${entry}`)) throw new Error(`app:design-captures unpinned ${entry}`);
   }
   const missing = required.map(captureKey).filter(key => !covered.has(key));
+  if (captures.status === 'unavailable' && listed.size === 0) return 'pending';
   if (captures.status !== 'complete' || missing.length) {
     throw new Error(`app:design-captures-incomplete build ${captures.referenceBuild}: ${captures.status}; `
       + `missing ${missing.length}/${required.length}${missing.length ? `\n  ${missing.join('\n  ')}` : ''}`);
   }
+  return 'complete';
 }
 
 async function verifyDesign(manifests, captureCandidate) {
@@ -341,8 +343,8 @@ async function verifyDesign(manifests, captureCandidate) {
     for (const match of text.matchAll(/\bCOPY\.([A-Za-z]+)/g)) if (!(match[1] in design.copy)) missing.push(match[1]);
   }
   if (design.copy.schema !== 'aukora-design-copy-v1' || missing.length) throw new Error(`app:design-copy ${missing.join(',')}`);
-  await verifyCaptures(captureCandidate ?? design.captures, manifests);
-  return { css: tokensCss(design.tokens, design.fonts), captures: captureCandidate ?? design.captures };
+  const captures = await verifyCaptures(captureCandidate ?? design.captures, manifests);
+  return { css: tokensCss(design.tokens, design.fonts), captures };
 }
 
 // The operator supplies the build attribution; image bytes alone cannot prove it.
@@ -446,6 +448,9 @@ async function build() {
   const manifests = await readManifests();
   await verifyAppLock(manifests);
   const design = await verifyDesign(manifests);
+  if (design.captures === 'pending') {
+    process.stderr.write('Warning: design captures are pending; this release is not design-complete.\n');
+  }
   const catalog = await verifiedCatalog(manifests);
   for (const path of [staging, destination]) {
     const info = await present(path);
@@ -498,12 +503,12 @@ async function build() {
       await writeFile(target, file.bytes, { flag: 'wx' });
       assets.push({ path: file.path, bytes: file.bytes.length, sha256: sha256(file.bytes) });
     }
-    const manifest = { schema: 'aukora-browser-release-v1', entries, assets: assets.sort(byPath) };
+    const manifest = { schema: 'aukora-browser-release-v2', captures: design.captures, entries, assets: assets.sort(byPath) };
     const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2) + '\n');
     await writeFile(join(staging, 'release-manifest.json'), manifestBytes, { flag: 'wx' });
     await rm(destination, { recursive: true, force: true });
     await rename(staging, destination);
-    process.stdout.write(`app:compiled ${assets.length} assets; release-manifest sha256 ${sha256(manifestBytes)}; design captures ${design.captures.status}\n`);
+    process.stdout.write(`app:compiled ${assets.length} assets; release-manifest sha256 ${sha256(manifestBytes)}; design captures ${design.captures}\n`);
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
     throw error;

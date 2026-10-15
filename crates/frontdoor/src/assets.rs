@@ -255,6 +255,12 @@ struct ManifestAsset {
 
 fn decode_manifest(bytes: &[u8]) -> Result<Manifest> {
     let value = json::parse_strict(bytes).map_err(|_| refusal("manifest-invalid"))?;
+    if matches!(
+        value.get("schema").map(Value::view),
+        Some(ValueView::Text("aukora-browser-release-v2"))
+    ) {
+        return decode_manifest_v2(&value);
+    }
     require_object_fields(&value, &["schema", "entries", "assets"])?;
     let entries = value.get("entries").ok_or(refusal("manifest-invalid"))?;
     require_object_fields(entries, &["shell", "owner"])?;
@@ -266,6 +272,28 @@ fn decode_manifest(bytes: &[u8]) -> Result<Manifest> {
         require_object_fields(asset, &["path", "bytes", "sha256"])?;
     }
     serde_json::from_slice(&value.canonical_bytes()).map_err(|_| refusal("manifest-invalid"))
+}
+
+// The original manifest bytes remain the approval commitment; v2 metadata grants no authority.
+fn decode_manifest_v2(value: &Value) -> Result<Manifest> {
+    require_object_fields(value, &["schema", "captures", "entries", "assets"])?;
+    if !matches!(
+        value.get("captures").map(Value::view),
+        Some(ValueView::Text("pending" | "complete"))
+    ) {
+        return Err(refusal("manifest-invalid"));
+    }
+    let assets = value.get("assets").ok_or(refusal("manifest-invalid"))?;
+    let entries = value.get("entries").ok_or(refusal("manifest-invalid"))?;
+    let contents = Value::checked_object(vec![
+        (
+            "schema".to_owned(),
+            Value::checked_text("aukora-browser-release-v1".to_owned())?,
+        ),
+        ("entries".to_owned(), entries.clone()),
+        ("assets".to_owned(), assets.clone()),
+    ])?;
+    decode_manifest(&contents.canonical_bytes())
 }
 
 fn require_object_fields(value: &Value, fields: &[&str]) -> Result<()> {
