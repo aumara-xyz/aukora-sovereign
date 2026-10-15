@@ -28,7 +28,11 @@ def fail(rule, detail):
 
 def tracked():
     out = subprocess.run(["git", "ls-files", "-co", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True, check=True)
-    return [p for p in out.stdout.split("\n") if p and (ROOT / p).is_file()]
+    paths = [p for p in out.stdout.split("\n") if p]
+    for p in paths:
+        if (ROOT / p).is_symlink():
+            fail("symlink", p)
+    return [p for p in paths if (ROOT / p).is_file() and not (ROOT / p).is_symlink()]
 
 
 files = tracked()
@@ -102,16 +106,30 @@ for pkg in meta["packages"]:
     allowed = {x.strip() for x in said.split(",")}
     for dep in pkg["dependencies"]:
         if dep.get("path"):
-            if said != "every organ crate" and dep["name"] not in allowed:
+            if not (said == "every organ crate" and pkg["name"] == "supervisor") and dep["name"] not in allowed:
                 fail("crate-deps", f"{pkg['name']} depends on {dep['name']}, not in its README")
             continue
         if dep["name"] not in allowed_deps:
             fail("deps-allowlist", f"{pkg['name']} uses {dep['name']}, not in checks/deps.json")
         for rule, detail in walls.dep_findings(pkg["name"], dep):
             fail(rule, detail)
+    for t in pkg["targets"]:
+        if not pathlib.Path(t["src_path"]).resolve().is_relative_to(home.resolve()):
+            fail("target-path", f"{pkg['name']}: target {t['name']} reads source outside its crate")
+        if set(t["kind"]) & {"test", "bench"}:
+            fail("no-test-suites", f"{pkg['name']}: {t['name']} is a {'/'.join(t['kind'])} target")
     kinds = {k for t in pkg["targets"] for k in t["kind"]}
     if (home / "build.rs").exists() or kinds & {"custom-build", "proc-macro"} or pkg.get("links"):
         fail("build-time-code", f"{pkg['name']}: no build scripts, links or proc-macro crates of our own")
+
+pinned_deps = {(d["name"], d["version"]) for d in json.loads((ROOT / "checks/deps.json").read_text())}
+lock_text = (ROOT / "Cargo.lock").read_text() if (ROOT / "Cargo.lock").is_file() else ""
+for name, version, source in re.findall(r'\[\[package\]\]\nname = "([^"]+)"\nversion = "([^"]+)"(?:\nsource = "([^"]+)")?', lock_text):
+    if source and (source != walls.CRATES_IO or (name, version) not in pinned_deps):
+        fail("lock-pin", f"Cargo.lock: {name} {version} from {source} is not pinned in checks/deps.json")
+for p in files:
+    if p.endswith("Cargo.toml") and re.search(r"^\s*\[(patch|replace)\b", (ROOT / p).read_text(), re.M):
+        fail("lock-pin", f"{p}: no [patch] or [replace]")
 
 # 7. The scaffold lock: every planned piece exists, and nothing unplanned appears at the top or among the crates.
 top = sorted({p.split("/", 1)[0] for p in files if "/" in p})

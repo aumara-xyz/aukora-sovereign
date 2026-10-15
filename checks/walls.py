@@ -14,9 +14,11 @@ ALLOW = {"net": {"frontdoor", "relay", "broker", "kira", "supervisor", "launcher
 # External crates that are themselves network or system access.
 NET_CRATES = {"reqwest", "tokio", "hyper", "hyper-util", "hyper-rustls", "h2", "quinn", "quinn-proto", "quinn-udp", "socket2",
               "mio", "axum", "tungstenite", "tokio-tungstenite", "async-tungstenite", "rustls", "tokio-rustls", "tower",
-              "tower-http", "ureq"}
+              "tower-http", "ureq", "instant-acme"}
 SYS_CRATES = {"libc", "nix", "rustix", "landlock", "seccompiler", "memfd", "caps", "procfs"}
 NO_SYS = {"guest", "canon"}
+# Crates that run programs or build tools at run time: only for the units allowed to spawn processes.
+PROC_CRATES = {"rustc_version", "cc", "cmake", "pkg-config", "jobserver", "signal-hook-registry", "duct", "subprocess"}
 CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
 
 NET = (r"\b(ToSocketAddrs|to_socket_addrs|lookup_host)\b|std::net::(?!(IpAddr|Ipv[46]Addr|SocketAddr(V[46])?|AddrParseError)\b)|std::os::unix::(net|\*)|\bUnix(Stream|Listener|Datagram)\b|TcpStream|TcpListener|UdpSocket|"
@@ -140,6 +142,8 @@ def dep_findings(unit, dep):
         found.append(("deps-source", f"{unit} uses {name} from {dep.get('source')}, not crates.io"))
     if name in NET_CRATES and unit not in ALLOW["net"]:
         found.append(("wall-network", f"{unit} depends on {name}"))
+    if name in PROC_CRATES and unit not in ALLOW["proc"]:
+        found.append(("wall-exec", f"{unit} depends on {name}"))
     if name in SYS_CRATES and unit in NO_SYS:
         found.append(("wall-sys", f"{unit} depends on {name}"))
     return found
