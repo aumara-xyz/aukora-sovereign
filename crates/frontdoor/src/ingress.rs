@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Bounded HTTP ingress; no guest-controlled response headers or redirect destination.
 
-use crate::tls::{Origin, SecureRequest};
-use canon::{json::Value, Refusal, Result};
+use crate::{
+    owner_origin::OwnerRoute,
+    session::{OWNER_COOKIE, SHELL_COOKIE},
+    tls::{Origin, SecureRequest},
+};
+use canon::{
+    codes,
+    json::{self, Value, ValueView},
+    Refusal, Result,
+};
 
 pub const MAX_BODY_BYTES: usize = 65_536;
 pub const MAX_HEADER_BYTES: usize = 16_384;
@@ -34,12 +42,25 @@ pub struct RequestInput {
     pub body: Vec<u8>,
 }
 
-#[derive(Debug)]
 pub struct AdmittedRequest {
     pub(crate) method: Method,
     pub(crate) path: String,
     pub(crate) origin: Origin,
     pub(crate) body: Value,
+    role: HostRole,
+    cookie: Option<zeroize::Zeroizing<Vec<u8>>>,
+}
+
+impl std::fmt::Debug for AdmittedRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AdmittedRequest")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("origin", &self.origin)
+            .field("role", &self.role)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AdmittedRequest {
@@ -55,12 +76,180 @@ impl AdmittedRequest {
     pub fn body(&self) -> &Value {
         &self.body
     }
+    pub fn role(&self) -> HostRole {
+        self.role
+    }
+    /// The selected host's bearer; authentication still requires the durable store.
+    pub fn cookie(&self) -> Option<&[u8]> {
+        self.cookie.as_ref().map(|cookie| cookie.as_slice())
+    }
 }
 
 /// Contract: exact paths, same-origin mutation requests, strict JSON and bounded reads.
 /// Pinned failures retain body-invalid, origin-refused, fetch-site-refused and path-refused.
-pub fn admit(_input: RequestInput) -> Result<AdmittedRequest> {
-    todo!("rows 18, 24")
+pub fn admit(input: RequestInput) -> Result<AdmittedRequest> {
+    let cookie = request_metadata(&input)?;
+    let body = if input.method == Method::Post {
+        if input.body.is_empty() || input.body.len() > MAX_BODY_BYTES {
+            return Err(codes::FRONTDOOR_BODY_INVALID);
+        }
+        let body = json::parse_strict(&input.body).map_err(|_| codes::FRONTDOOR_BODY_INVALID)?;
+        if !matches!(body.view(), ValueView::Object(_)) {
+            return Err(codes::FRONTDOOR_BODY_INVALID);
+        }
+        body
+    } else {
+        if !input.body.is_empty() {
+            return Err(codes::FRONTDOOR_BODY_INVALID);
+        }
+        Value::checked_object(Vec::new())?
+    };
+    Ok(AdmittedRequest {
+        method: input.method,
+        path: input.path,
+        origin: input.transport.origin().clone(),
+        body,
+        role: input.transport.role(),
+        cookie,
+    })
+}
+
+fn request_metadata(input: &RequestInput) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+    validate_path(&input.path)?;
+    let role = input.transport.role();
+    let origin = input.transport.origin();
+    check_header_budget(input)?;
+    if input.origins.len() > 1
+        || input
+            .origins
+            .first()
+            .is_some_and(|value| value != origin.as_str())
+        || (input.method == Method::Post && input.origins.len() != 1)
+    {
+        return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
+    }
+    if input.fetch_sites.len() > 1
+        || input.fetch_sites.first().is_some_and(|value| {
+            if input.method == Method::Post {
+                value != "same-origin"
+            } else {
+                !(matches!(value.as_str(), "same-origin" | "same-site" | "none")
+                    || (role == HostRole::Shell
+                        && !input.path.starts_with("/api/")
+                        && value == "cross-site"))
+            }
+        })
+        || (input.method == Method::Post && input.fetch_sites.len() != 1)
+    {
+        return Err(codes::FRONTDOOR_FETCH_SITE_REFUSED);
+    }
+    let cookie = cookie_for(role, &input.cookies)?;
+    require_route(role, input.method, &input.path)?;
+    if input.method == Method::Post {
+        if input.content_types.len() != 1 || !json_content_type(&input.content_types[0]) {
+            return Err(codes::FRONTDOOR_BODY_INVALID);
+        }
+    } else if !input.content_types.is_empty() {
+        return Err(codes::FRONTDOOR_BODY_INVALID);
+    }
+    Ok(cookie)
+}
+
+fn check_header_budget(input: &RequestInput) -> Result<()> {
+    let mut bytes = 0usize;
+    for (name, values) in [
+        ("origin", &input.origins),
+        ("sec-fetch-site", &input.fetch_sites),
+        ("content-type", &input.content_types),
+        ("cookie", &input.cookies),
+    ] {
+        for value in values {
+            if value.bytes().any(|byte| byte.is_ascii_control()) {
+                return Err(codes::FRONTDOOR_BODY_INVALID);
+            }
+            bytes = bytes
+                .checked_add(name.len() + value.len() + 4)
+                .ok_or(codes::FRONTDOOR_BODY_INVALID)?;
+            if bytes > MAX_HEADER_BYTES {
+                return Err(codes::FRONTDOOR_BODY_INVALID);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn json_content_type(text: &str) -> bool {
+    let mut parts = text.split(';');
+    if !parts
+        .next()
+        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
+    {
+        return false;
+    }
+    match (parts.next(), parts.next()) {
+        (None, None) => true,
+        (Some(parameter), None) => parameter.trim().eq_ignore_ascii_case("charset=utf-8"),
+        _ => false,
+    }
+}
+
+fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+    if headers.len() > 1 {
+        return Err(codes::FRONTDOOR_SESSION_REQUIRED);
+    }
+    let mut selected = None;
+    let mut names = std::collections::BTreeSet::new();
+    for header in headers {
+        for part in header.split(';') {
+            let (name, value) = part
+                .trim()
+                .split_once('=')
+                .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+            if name.is_empty()
+                || !names.insert(name)
+                || name
+                    .bytes()
+                    .any(|b| !(b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)))
+                || value
+                    .bytes()
+                    .any(|b| b <= b' ' || b >= 0x7f || b"\";,\\".contains(&b))
+            {
+                return Err(codes::FRONTDOOR_SESSION_REQUIRED);
+            }
+            let expected = match role {
+                HostRole::Owner => OWNER_COOKIE,
+                HostRole::Shell => SHELL_COOKIE,
+            };
+            if name == OWNER_COOKIE || name == SHELL_COOKIE {
+                if name != expected {
+                    return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+                }
+                crate::session::session_digest(value.as_bytes())?;
+                selected = Some(zeroize::Zeroizing::new(value.as_bytes().to_vec()));
+            }
+        }
+    }
+    Ok(selected)
+}
+
+/// Only the owner host resolves ceremonies; shell HTTP serves assets and documents.
+fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
+    if role == HostRole::Owner {
+        if path.starts_with("/api/") {
+            OwnerRoute::resolve(role, method, path).map(|_| ())
+        } else if matches!(method, Method::Get | Method::Head) && !path.ends_with(".html") {
+            Ok(())
+        } else {
+            Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
+        }
+    } else if (method == Method::Post
+        && matches!(path, "/api/documents/list" | "/api/documents/read"))
+        || (matches!(method, Method::Get | Method::Head) && !path.starts_with("/api/"))
+    {
+        Ok(())
+    } else {
+        Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
+    }
 }
 
 pub fn validate_path(path: &str) -> Result<()> {
@@ -85,4 +274,281 @@ pub struct IngressFacts {
     pub refused_host_count: u64,
     pub refused_origin_count: u64,
     pub refused_frame_count: u64,
+}
+
+/// The permit remains held while the host dispatches this request and builds its response.
+pub struct HttpAdmission {
+    request: AdmittedRequest,
+    owner_navigation: Option<crate::owner_origin::FrameNavigation>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl HttpAdmission {
+    pub fn request(&self) -> &AdmittedRequest {
+        &self.request
+    }
+    pub fn owner_navigation(&self) -> Option<&crate::owner_origin::FrameNavigation> {
+        self.owner_navigation.as_ref()
+    }
+}
+
+/// Bounded HTTP decoding behind the deployment's fixed private Caddy boundary.
+pub struct HttpIngress {
+    boundary: crate::tls::CaddyBoundary,
+    permits: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+impl HttpIngress {
+    pub fn new(boundary: crate::tls::CaddyBoundary) -> Result<Self> {
+        boundary.validate()?;
+        Ok(Self {
+            boundary,
+            permits: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
+        })
+    }
+
+    /// `peer` comes from the accepted connection, never a request header.
+    /// The limit covers active admission/dispatch; the HTTP server owns idle connection limits.
+    pub async fn admit_http(
+        &self,
+        peer: std::net::IpAddr,
+        request: http::Request<axum::body::Body>,
+    ) -> Result<HttpAdmission> {
+        let permit = self
+            .permits
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| codes::FRONTDOOR_BODY_INVALID)?;
+        let (request, owner_navigation) = tokio::time::timeout(
+            std::time::Duration::from_millis(REQUEST_DEADLINE_MS),
+            self.decode_http(peer, request),
+        )
+        .await
+        .map_err(|_| codes::FRONTDOOR_BODY_INVALID)??;
+        Ok(HttpAdmission {
+            request,
+            owner_navigation,
+            _permit: permit,
+        })
+    }
+
+    async fn decode_http(
+        &self,
+        peer: std::net::IpAddr,
+        request: http::Request<axum::body::Body>,
+    ) -> Result<(
+        AdmittedRequest,
+        Option<crate::owner_origin::FrameNavigation>,
+    )> {
+        use http_body_util::BodyExt;
+        let (parts, mut body) = request.into_parts();
+        let transport = self.boundary.admit(crate::tls::ProxyObservation {
+            peer,
+            forwarded_proto: header_values(&parts.headers, "x-forwarded-proto")?,
+            host: header_values(&parts.headers, "host")?,
+        })?;
+        if parts
+            .uri
+            .authority()
+            .is_some_and(|host| host.as_str() != transport.origin().host())
+            || parts
+                .uri
+                .scheme_str()
+                .is_some_and(|scheme| scheme != "https")
+        {
+            return Err(codes::FRONTDOOR_HOST_REFUSED);
+        }
+        let mut size = 0usize;
+        for (name, value) in &parts.headers {
+            size = size
+                .checked_add(name.as_str().len() + value.as_bytes().len() + 4)
+                .ok_or(codes::FRONTDOOR_BODY_INVALID)?;
+            if size > MAX_HEADER_BYTES {
+                return Err(codes::FRONTDOOR_BODY_INVALID);
+            }
+        }
+        let method = match parts.method {
+            http::Method::GET => Method::Get,
+            http::Method::HEAD => Method::Head,
+            http::Method::POST => Method::Post,
+            _ => return Err(codes::FRONTDOOR_UNKNOWN_ROUTE),
+        };
+        let path = parts
+            .uri
+            .path_and_query()
+            .map_or("/", |path| path.as_str())
+            .to_owned();
+        validate_path(&path)?;
+        let owner_navigation = if transport.role() == HostRole::Owner
+            && path == "/"
+            && matches!(method, Method::Get | Method::Head)
+        {
+            let context = crate::owner_origin::CeremonyContext::from_boundary(&self.boundary)?;
+            let destinations = header_values(&parts.headers, "sec-fetch-dest")?;
+            let referrers = header_values(&parts.headers, "referer")?;
+            let ([destination], [referrer]) = (destinations.as_slice(), referrers.as_slice())
+            else {
+                return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
+            };
+            let parent = referrer
+                .parse::<http::Uri>()
+                .map_err(|_| codes::FRONTDOOR_ORIGIN_REFUSED)?;
+            if parent.scheme_str() != Some("https")
+                || parent.authority().map(|value| value.as_str())
+                    != Some(context.expected_top_origin.host())
+            {
+                return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
+            }
+            Some(crate::owner_origin::admit_frame_navigation(
+                &context,
+                destination,
+                context.expected_top_origin.as_str(),
+            )?)
+        } else {
+            None
+        };
+        let lengths = header_values(&parts.headers, "content-length")?;
+        let encodings = header_values(&parts.headers, "transfer-encoding")?;
+        if lengths.len() > 1
+            || encodings.len() > 1
+            || encodings
+                .first()
+                .is_some_and(|value| !value.eq_ignore_ascii_case("chunked"))
+            || (!lengths.is_empty() && !encodings.is_empty())
+        {
+            return Err(codes::FRONTDOOR_BODY_INVALID);
+        }
+        let expected_length = lengths
+            .first()
+            .map(|length| {
+                if length.is_empty() || !length.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(codes::FRONTDOOR_BODY_INVALID);
+                }
+                let length = length
+                    .parse::<usize>()
+                    .map_err(|_| codes::FRONTDOOR_BODY_INVALID)?;
+                if length > MAX_BODY_BYTES {
+                    return Err(codes::FRONTDOOR_BODY_INVALID);
+                }
+                Ok(length)
+            })
+            .transpose()?;
+        let mut input = RequestInput {
+            transport,
+            method,
+            path,
+            origins: header_values(&parts.headers, "origin")?,
+            fetch_sites: header_values(&parts.headers, "sec-fetch-site")?,
+            content_types: header_values(&parts.headers, "content-type")?,
+            cookies: header_values(&parts.headers, "cookie")?,
+            body: Vec::new(),
+        };
+        request_metadata(&input)?;
+        if method != Method::Post
+            && (expected_length.is_some_and(|length| length > 0) || !encodings.is_empty())
+        {
+            return Err(codes::FRONTDOOR_BODY_INVALID);
+        }
+        let mut bytes = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|_| codes::FRONTDOOR_BODY_INVALID)?;
+            let data = frame
+                .into_data()
+                .map_err(|_| codes::FRONTDOOR_BODY_INVALID)?;
+            if data.len() > MAX_BODY_BYTES.saturating_sub(bytes.len()) {
+                return Err(codes::FRONTDOOR_BODY_INVALID);
+            }
+            bytes.extend_from_slice(&data);
+        }
+        if expected_length.is_some_and(|length| length != bytes.len()) {
+            return Err(codes::FRONTDOOR_BODY_INVALID);
+        }
+        input.body = bytes;
+        let request = admit(input)?;
+        Ok((request, owner_navigation))
+    }
+}
+
+fn header_values(headers: &http::HeaderMap, name: &str) -> Result<Vec<String>> {
+    headers
+        .get_all(name)
+        .iter()
+        .map(|value| {
+            value
+                .to_str()
+                .map(str::to_owned)
+                .map_err(|_| codes::FRONTDOOR_BODY_INVALID)
+        })
+        .collect()
+}
+
+/// Native handoff capability from a bound owner callback; no browser field constructs it.
+pub struct ShellSessionGrant {
+    parent: canon::digest::Digest32,
+    node: canon::ids::NodeId,
+    subject: canon::ids::SubjectId,
+    epoch: u64,
+    expires_at_ms: u64,
+    shell: Origin,
+}
+
+impl ShellSessionGrant {
+    pub fn from_owner(
+        parent: &crate::session::BoundSession<'_>,
+        boundary: &crate::tls::CaddyBoundary,
+    ) -> Result<Self> {
+        boundary.validate()?;
+        let record = parent.record();
+        if record.scope != crate::session::SessionScope::OwnerFrame
+            || record.origin != boundary.owner
+        {
+            return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+        }
+        Ok(Self {
+            parent: record.token_digest,
+            node: record.node,
+            subject: record.subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
+            epoch: record.owner_epoch,
+            expires_at_ms: record.expires_at_ms,
+            shell: boundary.shell.clone(),
+        })
+    }
+
+    /// Derive only for the admitted shell origin, rechecking the durable parent.
+    pub fn issue_cookie(
+        self,
+        store: &mut impl crate::session::SessionStore,
+        request: &AdmittedRequest,
+        now_ms: u64,
+        lifetime_ms: u64,
+    ) -> Result<String> {
+        use crate::session::{SessionBearer, SessionRecord, SessionScope, MAX_LIFETIME_MS};
+        if request.role() != HostRole::Shell || request.origin() != &self.shell {
+            return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+        }
+        if !(1000..=MAX_LIFETIME_MS).contains(&lifetime_ms) {
+            return Err(codes::FRONTDOOR_SESSION_REQUIRED);
+        }
+        let expires_at_ms = now_ms
+            .checked_add(lifetime_ms)
+            .map(|time| time.min(self.expires_at_ms))
+            .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+        let bearer = SessionBearer::generate()?;
+        let cookie = bearer.cookie_header(SessionScope::Shell, expires_at_ms, now_ms)?;
+        store.derive_shell(
+            self.parent,
+            SessionRecord {
+                token_digest: bearer.digest(),
+                node: self.node,
+                origin: self.shell,
+                subject: Some(self.subject),
+                owner_epoch: self.epoch,
+                scope: SessionScope::Shell,
+                expires_at_ms,
+                revoked: false,
+            },
+            now_ms,
+        )?;
+        Ok(cookie)
+    }
 }

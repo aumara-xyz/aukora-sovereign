@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Listener facts and the private TLS-termination boundary; no public plaintext mode.
 
+use crate::ingress::HostRole;
 use canon::{Refusal, Result};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 /// An exact HTTPS DNS origin without a path, port, userinfo or trailing dot.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,20 +66,90 @@ pub struct ProxyObservation {
 #[derive(Debug)]
 pub struct SecureRequest {
     pub(crate) origin: Origin,
+    role: HostRole,
 }
 
 impl SecureRequest {
     pub fn origin(&self) -> &Origin {
         &self.origin
     }
+
+    pub fn role(&self) -> HostRole {
+        self.role
+    }
 }
 
 impl CaddyBoundary {
-    /// Wave-1 implementation must validate the peer before exact host and HTTPS fields.
-    /// Pins: frontdoor:https-required, frontdoor:host-refused. Startup rejects equal origins
-    /// and different schemeful sites; SameSite=Strict cookies require the configured shared site.
-    pub fn admit(&self, _observation: ProxyObservation) -> Result<SecureRequest> {
-        todo!("row 24")
+    /// Deployment supplies the registered site; request headers cannot widen it.
+    pub fn validate(&self) -> Result<()> {
+        let site = self.registered_site.host();
+        if self.shell == self.owner
+            || site.split('.').count() < 2
+            || site.parse::<IpAddr>().is_ok()
+            || !under_site(self.shell.host(), site)
+            || !under_site(self.owner.host(), site)
+            || self.allowed_proxy_peers.is_empty()
+            || self
+                .allowed_proxy_peers
+                .iter()
+                .any(|peer| peer.is_unspecified() || peer.is_multicast())
+        {
+            return Err(configuration_refused());
+        }
+        Ok(())
+    }
+
+    /// Only a configured peer may assert HTTPS. Both fields must occur exactly once.
+    pub fn admit(&self, observation: ProxyObservation) -> Result<SecureRequest> {
+        if !self.allowed_proxy_peers.contains(&observation.peer) {
+            return Err(canon::codes::FRONTDOOR_HTTPS_REQUIRED);
+        }
+        self.validate()?;
+        if observation.forwarded_proto.len() != 1 || observation.forwarded_proto[0] != "https" {
+            return Err(canon::codes::FRONTDOOR_HTTPS_REQUIRED);
+        }
+        let [host] = observation.host.as_slice() else {
+            return Err(canon::codes::FRONTDOOR_HOST_REFUSED);
+        };
+        let (origin, role) = if host == self.shell.host() {
+            (self.shell.clone(), HostRole::Shell)
+        } else if host == self.owner.host() {
+            (self.owner.clone(), HostRole::Owner)
+        } else {
+            return Err(canon::codes::FRONTDOOR_HOST_REFUSED);
+        };
+        Ok(SecureRequest { origin, role })
+    }
+
+    /// One TLS site block serves both configured hosts through a loopback listener.
+    /// Caddy preserves the incoming Host and replaces the HTTPS forwarding field.
+    pub fn caddy_block(&self, upstream: SocketAddr) -> Result<String> {
+        self.validate()?;
+        if !upstream.ip().is_loopback()
+            || upstream.port() == 0
+            || !self.allowed_proxy_peers.contains(&upstream.ip())
+        {
+            return Err(configuration_refused());
+        }
+        Ok(format!(
+            "{shell}, {owner} {{\n    reverse_proxy {upstream} {{\n        header_up X-Forwarded-Proto https\n    }}\n}}\n",
+            shell = self.shell.as_str(),
+            owner = self.owner.as_str(),
+        ))
+    }
+}
+
+fn under_site(host: &str, site: &str) -> bool {
+    host == site
+        || host
+            .strip_suffix(site)
+            .is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+fn configuration_refused() -> Refusal {
+    Refusal {
+        organ: "frontdoor",
+        reason: "config-invalid",
     }
 }
 
