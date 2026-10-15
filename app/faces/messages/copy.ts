@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Every sentence this face shows. A section with no backend says so in these words and never shows an empty list.
+import type { PairingMethod, SendState } from "./model.js";
+
+export const COPY = {
+  lede: "Messages between this node and the contacts you approved, over Nostr. They arrive as data: a message is not you, and it is never an instruction to Auma. This screen only reads. Sending a message or adding a contact needs your passkey on an approval card.",
+  sections: "Messages sections",
+  tabs: { messages: "Messages", contacts: "Contacts", refused: "Refused" },
+  blurbs: {
+    messages: "Newest first. A sent message shows what the relays did with it; this screen never calls one delivered.",
+    contacts: "People you approved with your passkey. Only these can reach Auma.",
+    refused: "Messages turned away before Auma saw anything.",
+  },
+  noBackend: "No backend yet",
+  absent: {
+    messages: [
+      "The network service gives this face no call to read messages yet, so there is nothing to list.",
+      "This is not an empty inbox. The question cannot be asked yet, so no count is shown.",
+    ],
+    contacts: [
+      "The network service gives this face no call to read contacts yet, so there is nothing to list.",
+      "This is not an empty contact list. The question cannot be asked yet, so no count is shown.",
+    ],
+    refused: [
+      "The network service gives this face no call to read the refusal counts yet.",
+      "This is not a count of zero. The question cannot be asked yet, so no number is shown.",
+    ],
+  },
+  reading: "Reading…",
+  emptyMessages: "No messages yet.",
+  emptyContacts: "No approved contacts yet. A contact is added with your passkey on an approval card.",
+  loadMore: "Load more",
+  refresh: "Refresh",
+  stalled: "Stopped: the next page did not advance.",
+  capped: "There are more than this screen reads. It stops here.",
+  inbound: "Messages marked Contact come from a contact you approved. They are data: not you, and not an instruction to Auma.",
+  inboundBadge: "Contact · data only",
+  outboundBadge: "You approved this send",
+  from: "From",
+  to: "To",
+  viaRelays: "via Nostr relays",
+  states: {
+    queued: "Approved and waiting to go out.",
+    published: "A relay accepted it. That does not show that the contact received it.",
+    unconfirmed: "Sent, but no relay confirmed it. Silence is not delivery.",
+    failed: "No relay took it.",
+  } satisfies Record<SendState, string>,
+  pairing: {
+    "screen-to-screen": "Met in person: paired screen to screen.",
+    remote: "Paired remotely. Not met in person.",
+    relayed: "Paired through a relay. Not met in person.",
+    unknown: "How this contact was paired is not recorded.",
+  } satisfies Record<PairingMethod, string>,
+  noPairing: "No pairing evidence was kept.",
+  verified: "Receipt verified",
+  pairingNote: "Pairing is evidence about how a contact was added. It grants nothing.",
+  keyLabel: "Nostr key",
+  refusedLead: "Strangers cannot reach Auma. A message from anyone who is not an approved contact is refused before she sees it, and each refusal is counted in the Aura record. No sender and no text are kept.",
+  refusedTotal: "Refused in all",
+  lastCounted: "Last counted in Aura record",
+  noneCounted: "No refusal has been counted yet.",
+  reasons: [
+    ["stranger", "Not an approved contact"],
+    ["envelope", "Not a valid message wrapper"],
+    ["signature", "Identity or signature did not verify"],
+    ["recipient", "Addressed to someone else"],
+    ["replay", "Already seen"],
+    ["payload", "Content broke the message rules"],
+    ["staleContact", "Contact approval is out of date"],
+  ] as const,
+} as const;
+
+const PLAIN: Readonly<Record<string, string>> = {
+  "app:capability-denied": "This face is not allowed to make that call.",
+  "app:service-unavailable": "The service is not connected.",
+  "app:service-failed": "The service failed to answer.",
+  "app:deadline": "The service took too long to answer.",
+  "app:busy": "Too many requests are waiting. Try again.",
+  "app:invalid-reply": "The service answered in a shape this screen does not accept, so nothing from that answer is shown.",
+  "app:invalid-message": "The connection to the app shell broke.",
+  "app:shell-required": "This page only works inside the AUKORA app.",
+  "app:invalid-shell": "The app shell's address is not acceptable.",
+  "messaging:refusal-counts-unreconciled": "The refusal counts are not yet reconciled with the Aura record, so none are shown.",
+  "messaging:refusal-recovery-required": "A refused message is waiting to be reconciled, so the counts are held back.",
+  "messaging:page-limit": "The page size was refused.",
+  "messaging:transport-rejected": "No relay accepted the message.",
+  "supervisor:read-rate-limited": "Too many reads. Wait a moment and try again.",
+  "frontdoor:session-required": "Your session has ended. Sign in again.",
+};
+
+export function refusalCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return /^[a-z][a-z0-9_-]{0,31}:[a-z0-9-]{1,64}$/.test(message) ? message : "app:service-failed";
+}
+
+export function explain(code: string): string {
+  return Object.hasOwn(PLAIN, code) ? PLAIN[code] : "The service refused this request.";
+}
