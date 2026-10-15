@@ -5,7 +5,9 @@ use crate::tls::{CaddyBoundary, Origin, ProxyObservation};
 use canon::{digest::Digest32, ids::ProposalId, Refusal, Result};
 use gate::target::sites::PublishedSite;
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 /// An opaque document cannot use cookies, WebAuthn, workers or authenticated APIs.
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; worker-src 'none'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
@@ -252,42 +254,78 @@ impl SiteHost {
         })
     }
 
-    /// Body check 9 observes this configured boundary and the actual serving policy.
-    /// An unpublished host has no positive publication observation.
-    pub fn isolation_probe(&self) -> Result<IsolationObservation> {
+    /// Observe the mounted HTTPS host through the supervisor's external transport.
+    /// Every asset and the root alias must match; no local handler response is sampled.
+    pub async fn isolation_probe<F, Fut>(&self, mut fetch: F) -> Result<IsolationObservation>
+    where
+        F: FnMut(SiteProbeRequest) -> Fut,
+        Fut: Future<Output = Result<SiteProbeResponse>>,
+    {
         let site = self
             .publication
             .as_ref()
             .ok_or(refuse("site-unpublished"))?;
-        let connection = ProxyObservation {
-            peer: *self
-                .boundary
-                .node
-                .allowed_proxy_peers
-                .first()
-                .ok_or(refuse("site-transport"))?,
-            forwarded_proto: vec!["https".into()],
-            host: vec![self.boundary.origin.host().into()],
-        };
-        let uri = http::Uri::from_static("/");
-        let response = self.serve(&connection, &Method::GET, &uri, &HeaderMap::new())?;
-        let mut credentials = HeaderMap::new();
-        credentials.insert(http::header::COOKIE, HeaderValue::from_static("probe=1"));
-        if self
-            .serve(&connection, &Method::GET, &uri, &credentials)
-            .is_ok()
-            || response.headers.get("content-security-policy")
-                != Some(&HeaderValue::from_static(CONTENT_SECURITY_POLICY))
-            || response.headers.get("permissions-policy")
-                != Some(&HeaderValue::from_static(PERMISSIONS_POLICY))
-            || response.headers.contains_key("set-cookie")
-        {
-            return Err(refuse("site-isolation"));
-        }
-        Ok(IsolationObservation {
-            host: self.boundary.origin.host().to_owned(),
-            bundle_sha256: site.bundle().digest(),
+        let index = site
+            .bundle()
+            .files()
+            .iter()
+            .find(|file| file.path == "index.html")
+            .ok_or(refuse("site-isolation"))?;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let paths = std::iter::once(("", index)).chain(
+                site.bundle()
+                    .files()
+                    .iter()
+                    .map(|file| (file.path.as_str(), file)),
+            );
+            for (path, file) in paths {
+                let response = fetch(SiteProbeRequest {
+                    url: format!("{}/{path}", self.boundary.origin.as_str()),
+                    headers: HeaderMap::new(),
+                    max_body_bytes: file.bytes.len(),
+                })
+                .await?;
+                response.check_policy()?;
+                if response.status != StatusCode::OK
+                    || response.body != file.bytes
+                    || !single_header(&response.headers, "content-type", &file.media_type)
+                    || !single_header(
+                        &response.headers,
+                        "content-length",
+                        &file.bytes.len().to_string(),
+                    )
+                    || !single_header(&response.headers, "access-control-allow-origin", "*")
+                {
+                    return Err(refuse("site-isolation"));
+                }
+            }
+            for (name, value) in [
+                ("cookie", "probe=1"),
+                ("authorization", "Bearer site-isolation-probe"),
+            ] {
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    http::header::HeaderName::from_static(name),
+                    HeaderValue::from_static(value),
+                );
+                let response = fetch(SiteProbeRequest {
+                    url: format!("{}/", self.boundary.origin.as_str()),
+                    headers,
+                    max_body_bytes: 0,
+                })
+                .await?;
+                response.check_policy()?;
+                if response.status != StatusCode::NOT_FOUND || !response.body.is_empty() {
+                    return Err(refuse("site-isolation"));
+                }
+            }
+            Ok(IsolationObservation {
+                host: self.boundary.origin.host().to_owned(),
+                bundle_sha256: site.bundle().digest(),
+            })
         })
+        .await
+        .map_err(|_| refuse("site-transport"))?
     }
 
     /// An HTTP adapter for the separate TLS proxy listener, with a bounded read deadline.
@@ -342,6 +380,85 @@ impl SiteHost {
 pub struct IsolationObservation {
     pub host: String,
     pub bundle_sha256: Digest32,
+}
+
+/// One GET selected by the mounted bundle, never by an incoming request.
+pub struct SiteProbeRequest {
+    url: String,
+    headers: HeaderMap,
+    max_body_bytes: usize,
+}
+
+impl SiteProbeRequest {
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+
+    pub fn max_body_bytes(&self) -> usize {
+        self.max_body_bytes
+    }
+}
+
+/// Bounded response bytes and headers supplied by the supervisor transport.
+pub struct SiteProbeResponse {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Vec<u8>,
+}
+
+impl SiteProbeResponse {
+    pub fn new(status: StatusCode, headers: HeaderMap, body: Vec<u8>) -> Result<Self> {
+        let size = headers.iter().try_fold(0usize, |sum, (key, value)| {
+            sum.checked_add(key.as_str().len() + value.as_bytes().len() + 4)
+        });
+        if size.is_none_or(|size| size > MAX_HEADERS)
+            || body.len() > canon::fd3_payloads::sites::MAX_BUNDLE_BYTES
+        {
+            return Err(refuse("site-isolation"));
+        }
+        Ok(Self {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    fn check_policy(&self) -> Result<()> {
+        for (name, expected) in &policy_headers() {
+            if self.headers.get_all(name).iter().count() != 1
+                || self.headers.get(name) != Some(expected)
+            {
+                return Err(refuse("site-isolation"));
+            }
+        }
+        if [
+            "set-cookie",
+            "set-cookie2",
+            "www-authenticate",
+            "proxy-authenticate",
+            "access-control-allow-credentials",
+            "content-encoding",
+            "location",
+            "refresh",
+        ]
+        .iter()
+        .any(|name| self.headers.contains_key(*name))
+        {
+            return Err(refuse("site-isolation"));
+        }
+        Ok(())
+    }
+}
+
+fn single_header(headers: &HeaderMap, name: &str, expected: &str) -> bool {
+    headers.get_all(name).iter().count() == 1
+        && headers
+            .get(name)
+            .is_some_and(|value| value.as_bytes() == expected.as_bytes())
 }
 
 pub struct SiteResponse {

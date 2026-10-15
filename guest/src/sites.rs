@@ -37,6 +37,12 @@ pub(crate) fn decode_suggestion(arguments: &str) -> Result<Request> {
     }
     let value = json::parse_strict(arguments.as_bytes())?;
     exact_fields(&value, &["host", "files", "base_sha256", "note"])?;
+    let base_text = text(field(&value, "base_sha256")?)?;
+    let base = if base_text == "absent" {
+        BaseDigest::Absent
+    } else {
+        BaseDigest::Present(Digest32::from_hex(base_text).map_err(|_| codes::FRAME_INVALID_FIELD)?)
+    };
     let ValueView::Array(files) = field(&value, "files")?.view() else {
         return Err(codes::FRAME_INVALID_FIELD);
     };
@@ -46,6 +52,7 @@ pub(crate) fn decode_suggestion(arguments: &str) -> Result<Request> {
     let mut generated = Vec::with_capacity(files.len());
     for file in files {
         exact_fields(file, &["path", "content"])?;
+        let content = text(field(file, "content")?)?;
         let path = text(field(file, "path")?)?;
         let media_type = canon::fd3_payloads::sites::media_type(path)?;
         if !matches!(
@@ -57,20 +64,15 @@ pub(crate) fn decode_suggestion(arguments: &str) -> Result<Request> {
         generated.push(SiteFile {
             path: path.to_owned(),
             media_type: media_type.to_owned(),
-            bytes: text(field(file, "content")?)?.as_bytes().to_vec(),
+            bytes: content.as_bytes().to_vec(),
         });
     }
-    let base_text = text(field(&value, "base_sha256")?)?;
+    let host = text(field(&value, "host")?)?;
+    let note = text(field(&value, "note")?)?.to_owned();
     let request = Request::SitePropose(SiteProposal {
-        bundle: SiteBundle::build(text(field(&value, "host")?)?, &generated)?,
-        base: if base_text == "absent" {
-            BaseDigest::Absent
-        } else {
-            BaseDigest::Present(
-                Digest32::from_hex(base_text).map_err(|_| codes::CANON_SITE_BUNDLE_INVALID)?,
-            )
-        },
-        note: text(field(&value, "note")?)?.to_owned(),
+        bundle: SiteBundle::build(host, &generated)?,
+        base,
+        note,
     });
     fd3::encode_request(&crate::fd3::request(
         FrameId::new("site-suggestion".into())?,
@@ -147,12 +149,14 @@ fn exact_fields(value: &Value, expected: &[&str]) -> Result<()> {
     let ValueView::Object(fields) = value.view() else {
         return Err(codes::FRAME_NOT_OBJECT);
     };
-    if fields.len() != expected.len()
-        || fields
-            .iter()
-            .any(|(key, _)| !expected.contains(&key.as_str()))
+    if fields
+        .iter()
+        .any(|(key, _)| !expected.contains(&key.as_str()))
     {
-        return Err(codes::FRAME_INVALID_FIELD);
+        return Err(codes::FRAME_UNKNOWN_FIELD);
+    }
+    if expected.iter().any(|key| value.get(key).is_none()) {
+        return Err(codes::FRAME_MISSING_FIELD);
     }
     Ok(())
 }

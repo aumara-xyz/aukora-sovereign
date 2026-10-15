@@ -173,3 +173,55 @@ fn valid_reports(
             && batch.insert(report.check)
     })
 }
+
+/// Fetch the mounted host over HTTPS; frontdoor compares the observed bytes and policy.
+pub async fn probe_site_isolation(
+    site: &frontdoor::sites::SiteHost,
+) -> Result<frontdoor::sites::IsolationObservation> {
+    let client = broker::provider::client().map_err(|_| codes::FRONTDOOR_SITE_TRANSPORT)?;
+    site.isolation_probe(|request| {
+        let client = client.clone();
+        async move {
+            let mut response = client
+                .get(request.url())
+                .headers(request.headers().clone())
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+                .map_err(|_| codes::FRONTDOOR_SITE_TRANSPORT)?;
+            if response.url().as_str() != request.url() {
+                return Err(codes::FRONTDOOR_SITE_TRANSPORT);
+            }
+            let header_bytes = response
+                .headers()
+                .iter()
+                .try_fold(2usize, |size, (name, value)| {
+                    size.checked_add(name.as_str().len())?
+                        .checked_add(value.as_bytes().len())?
+                        .checked_add(4)
+                });
+            if !header_bytes.is_some_and(|size| size <= 16_384)
+                || response
+                    .content_length()
+                    .is_some_and(|size| size > request.max_body_bytes() as u64)
+            {
+                return Err(codes::FRONTDOOR_SITE_ISOLATION);
+            }
+            let status = response.status();
+            let headers = response.headers().clone();
+            let mut body = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| codes::FRONTDOOR_SITE_TRANSPORT)?
+            {
+                if chunk.len() > request.max_body_bytes().saturating_sub(body.len()) {
+                    return Err(codes::FRONTDOOR_SITE_ISOLATION);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            frontdoor::sites::SiteProbeResponse::new(status, headers, body)
+        }
+    })
+    .await
+}

@@ -581,9 +581,40 @@ pub mod sites {
     }
 
     impl SiteProposal {
+        fn validate_fd3_contract(value: &Value) -> Result<()> {
+            use crate::fd3::wire::{self, Object};
+
+            let fields = Object::new(
+                value,
+                &["base_sha256", "new_bytes_b64", "note", "target"],
+                &[],
+            )?;
+            if wire::text(fields.get("base_sha256")?)? != "absent" {
+                fields.digest("base_sha256")?;
+            }
+            let encoded = wire::text(fields.get("new_bytes_b64")?)?;
+            if encoded.len() > 65_536usize.div_ceil(3) * 4 {
+                return Err(codes::FRAME_INVALID_FIELD);
+            }
+            let bytes = STANDARD
+                .decode(encoded)
+                .map_err(|_| codes::FRAME_INVALID_FIELD)?;
+            if bytes.len() > 65_536 || STANDARD.encode(&bytes) != encoded {
+                return Err(codes::FRAME_INVALID_FIELD);
+            }
+            wire::text(fields.get("note")?)?;
+            let target = wire::text(fields.get("target")?)?;
+            let bundle = SiteBundle::decode(&bytes)?;
+            if target != bundle.target() {
+                return Err(codes::FRAME_INVALID_FIELD);
+            }
+            Ok(())
+        }
+
         pub(crate) fn from_fd3_body(value: &Value) -> Result<Self> {
             use crate::authority::BaseDigest;
 
+            Self::validate_fd3_contract(value)?;
             exact_fields(value, &["base_sha256", "new_bytes_b64", "note", "target"])?;
             let encoded = string(field(value, "new_bytes_b64")?)?;
             if encoded.len() > MAX_BUNDLE_BYTES.div_ceil(3) * 4 {
