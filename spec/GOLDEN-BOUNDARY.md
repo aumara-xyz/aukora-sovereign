@@ -97,7 +97,7 @@ person's identity, keys, memory or node. The owner root is never under anyone el
 key, not a unique human. A body is never the key: a biometric only unlocks a passkey, and a path without it exists.
 - **Sovereign:** NOW. AUMLOK: constitution 1; the key hierarchy with scopes and epochs (113); passkeys (43); the phrase
   seals a random root (44); a stranger cannot lock the owner out (49). LATER: guardian modes (125).
-- **Light:** NOW for keys: derived on the person's device from the person's phrase (brick 2; rule 2); an inviter never
+- **Light:** NOW for keys: derived on the person's device from a random root the phrase seals (brick 2; rule 2); an inviter never
   owns or destroys the invitee's identity (rule 1). Not yet in the plan: relay and admission sit under the founder's
   Cloudflare login (rule 9), so access to Light is not yet unownable (L1).
 
@@ -160,7 +160,8 @@ operational key; replacing the owner root is a separate mode only the owner can 
   (61). LATER: guardians with 2q - n > f and rollback-protected vote locks (125); watchtowers, veto and notice (126);
   clone guard (111); decisions 1 to 3. Not yet in the plan: a lose-everything drill (G3).
 - **Light:** NOW. One recovery phrase restores the same person in both products (rule 2; brick 2). LATER: guardian
-  recovery. Not yet in the plan: restoring Light's own store after a lost phone (L4).
+  recovery. NOW in part: the recovery file and the seven words restore the identity, and the relay returns the last
+  30 days of gift wraps, the person's own copies included. Not yet: anything older than 30 days (L4).
 
 ### 16. A mirror that holds only ciphertext. (NOW)
 A mirror (a relay, an object store, a second node, a friend's box) may keep the person's encrypted memory, record heads
@@ -231,5 +232,6 @@ Every gap is LATER until Peter schedules it. None is a row; each goes to the IDE
   move to another relay or host, and contacts and history that keep working without the admission service.
 - **L2. Web integrity:** a pinned, reproducible bundle the browser checks, so a host cannot swap the vault's code.
 - **L3. A key per device,** revocation, and a device-list epoch.
-- **L4. Restore after a lost phone,** and an export in an open format that needs no Sovereign node.
+- **L4. Full restore after a lost phone** (today the relay returns the last 30 days), and an export in an open format
+  that needs no Sovereign node.
 - **L5. Co-presence:** a by-eye picture match is never the security check; use the signed exchange or exact codes.
