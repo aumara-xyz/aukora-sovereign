@@ -268,6 +268,7 @@ pub mod owner {
         XChaCha20Poly1305, XNonce,
     };
     use sha2::{Digest, Sha256};
+    use subtle::ConstantTimeEq;
     use zeroize::Zeroizing;
 
     /// Unconfirmed local replacement; no node or app receives its phrase.
@@ -286,6 +287,10 @@ pub mod owner {
         /// Borrow the ciphertext-only components for the node submission.
         pub fn ciphertexts(&self) -> (&EnvelopeV1, &ProtectedRefreshPhrase) {
             (&self.envelope, &self.protected_phrase)
+        }
+
+        pub(crate) fn into_phrase(self) -> OwnerPhrase {
+            self.phrase
         }
     }
 
@@ -348,5 +353,25 @@ pub mod owner {
         let text =
             core::str::from_utf8(plaintext.as_ref()).map_err(|_| refused("refresh-corrupt"))?;
         OwnerPhrase::parse(browser, text).map_err(|_| refused("refresh-corrupt"))
+    }
+
+    /// Resume only when the protected phrase opens the replacement to this same root.
+    pub fn resume_draft(
+        browser: &OwnerBrowser,
+        root: &IdentityRoot,
+        ceremony: &CeremonyId,
+        protected_phrase: ProtectedRefreshPhrase,
+        envelope: EnvelopeV1,
+    ) -> Result<RefreshDraft> {
+        let phrase = resume(browser, root, ceremony, &protected_phrase)?;
+        let opened = crate::envelope::owner::open(browser, &envelope, &phrase)?;
+        if !bool::from(root.bytes(browser).ct_eq(opened.bytes(browser))) {
+            return Err(refused("refresh-corrupt"));
+        }
+        Ok(RefreshDraft {
+            phrase,
+            envelope,
+            protected_phrase,
+        })
     }
 }

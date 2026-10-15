@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+.phrase-pane { display: grid; gap: 1rem; max-width: 48rem; margin: auto; }
+.phrase-pane p { margin: 0; }
+.phrase-pane label { display: block; }
+.phrase-pane input[type="password"] { display: block; width: 100%; box-sizing: border-box; margin-top: .5rem; }
+.phrase-pane [hidden] { display: none; }
+.phrase-words { padding: 1rem; border: 1px solid currentColor; font-size: 1.2rem; overflow-wrap: anywhere; }
+.phrase-controls { display: flex; flex-wrap: wrap; gap: .75rem; }
+.phrase-pane pre { white-space: pre-wrap; overflow-wrap: anywhere; }

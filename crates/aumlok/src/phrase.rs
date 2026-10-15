@@ -17,6 +17,273 @@ pub enum PhraseTheme {
     Rise,
 }
 
+/// Owner-pane JavaScript bindings; root and wrapping-key bytes have no export.
+#[cfg(target_arch = "wasm32")]
+pub mod browser {
+    use super::owner::{OwnerBrowser, OwnerPhrase};
+    use crate::{
+        backup::{
+            owner::OwnerPrf, BackupDownload, BackupRequest, PrfBinding, PrfEvaluationRequest,
+        },
+        ceremony::CeremonyId,
+        envelope::{owner::IdentityRoot, EnvelopeV1, KdfParameters},
+        refresh::{owner::RefreshDraft, ProtectedRefreshPhrase},
+    };
+    use canon::{ids::CredentialId, Refusal};
+    use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
+
+    fn js_refusal(value: Refusal) -> JsValue {
+        JsValue::from_str(&value.to_string())
+    }
+
+    fn missing(reason: &'static str) -> JsValue {
+        js_refusal(Refusal {
+            organ: "aumlok",
+            reason,
+        })
+    }
+
+    /// One owner-frame session, disposed by the pane after pending prompts settle.
+    #[wasm_bindgen]
+    pub struct OwnerPhraseSession {
+        browser: OwnerBrowser,
+        root: Option<IdentityRoot>,
+        current_phrase: Option<OwnerPhrase>,
+        draft: Option<RefreshDraft>,
+        assertion: Option<String>,
+    }
+
+    impl OwnerPhraseSession {
+        fn check_frame(&self) -> core::result::Result<(), JsValue> {
+            OwnerBrowser::verify(self.browser.owner_origin(), self.browser.shell_origin())
+                .map(|_| ())
+                .map_err(js_refusal)
+        }
+
+        fn root(&self) -> core::result::Result<&IdentityRoot, JsValue> {
+            self.root.as_ref().ok_or_else(|| missing("phrase-locked"))
+        }
+
+        fn current_phrase(&self) -> core::result::Result<&OwnerPhrase, JsValue> {
+            self.current_phrase
+                .as_ref()
+                .ok_or_else(|| missing("phrase-locked"))
+        }
+
+        fn draft(&self) -> core::result::Result<&RefreshDraft, JsValue> {
+            self.draft.as_ref().ok_or_else(|| missing("refresh-input"))
+        }
+    }
+
+    #[wasm_bindgen]
+    impl OwnerPhraseSession {
+        /// Verify browser location, direct framing and the sole configured ancestor.
+        pub fn verify(
+            owner_origin: &str,
+            shell_origin: &str,
+        ) -> core::result::Result<Self, JsValue> {
+            let browser = OwnerBrowser::verify(owner_origin, shell_origin).map_err(js_refusal)?;
+            Ok(Self {
+                browser,
+                root: None,
+                current_phrase: None,
+                draft: None,
+                assertion: None,
+            })
+        }
+
+        /// Parse locally and authenticate the supplied ciphertext; returns public correspondence only.
+        pub fn unlock(
+            &mut self,
+            envelope: &[u8],
+            entered: &str,
+        ) -> core::result::Result<String, JsValue> {
+            self.check_frame()?;
+            self.root = None;
+            self.current_phrase = None;
+            self.draft = None;
+            self.assertion = None;
+            let envelope = EnvelopeV1::from_canonical_bytes(envelope).map_err(js_refusal)?;
+            let phrase = OwnerPhrase::parse(&self.browser, entered).map_err(js_refusal)?;
+            let root = crate::envelope::owner::open(&self.browser, &envelope, &phrase)
+                .map_err(js_refusal)?;
+            let identity = root.public_identity(&self.browser).map_err(js_refusal)?;
+            self.root = Some(root);
+            self.current_phrase = Some(phrase);
+            Ok(identity.subject.to_string())
+        }
+
+        /// Draw and seal a replacement locally using production KDF costs.
+        pub fn prepare(&mut self, ceremony: &str) -> core::result::Result<(), JsValue> {
+            self.check_frame()?;
+            self.draft = None;
+            let ceremony = CeremonyId::from_hex(ceremony).map_err(js_refusal)?;
+            self.draft = Some(
+                crate::refresh::owner::prepare(
+                    &self.browser,
+                    self.root()?,
+                    &ceremony,
+                    KdfParameters::PRODUCTION,
+                )
+                .map_err(js_refusal)?,
+            );
+            Ok(())
+        }
+
+        /// Authenticate both the resume capsule and the same-root replacement.
+        pub fn resume(
+            &mut self,
+            ceremony: &str,
+            nonce: &[u8],
+            ciphertext: &[u8],
+            replacement: &[u8],
+        ) -> core::result::Result<(), JsValue> {
+            self.check_frame()?;
+            self.draft = None;
+            let ceremony = CeremonyId::from_hex(ceremony).map_err(js_refusal)?;
+            let nonce = nonce.try_into().map_err(|_| missing("refresh-input"))?;
+            let protected = ProtectedRefreshPhrase::from_parts(nonce, ciphertext.to_vec())
+                .map_err(js_refusal)?;
+            let envelope = EnvelopeV1::from_canonical_bytes(replacement).map_err(js_refusal)?;
+            self.draft = Some(
+                crate::refresh::owner::resume_draft(
+                    &self.browser,
+                    self.root()?,
+                    &ceremony,
+                    protected,
+                    envelope,
+                )
+                .map_err(js_refusal)?,
+            );
+            Ok(())
+        }
+
+        /// Explicit owner-only display of the draft phrase, or the unlocked current phrase.
+        pub fn phrase(&self) -> core::result::Result<String, JsValue> {
+            self.check_frame()?;
+            let phrase = match &self.draft {
+                Some(draft) => draft.phrase(),
+                None => self.current_phrase()?,
+            };
+            Ok(phrase.expose(&self.browser).to_owned())
+        }
+
+        /// Encrypted replacement bytes for the authenticated owner transport.
+        pub fn replacement_envelope(&self) -> core::result::Result<Vec<u8>, JsValue> {
+            self.check_frame()?;
+            Ok(self.draft()?.ciphertexts().0.canonical_bytes().to_vec())
+        }
+
+        /// Public capsule nonce; this exposes no phrase bytes.
+        pub fn protected_nonce(&self) -> core::result::Result<Vec<u8>, JsValue> {
+            self.check_frame()?;
+            Ok(self.draft()?.ciphertexts().1.parts().0.to_vec())
+        }
+
+        /// Authenticated capsule ciphertext; the key stays inside this session.
+        pub fn protected_ciphertext(&self) -> core::result::Result<Vec<u8>, JsValue> {
+            self.check_frame()?;
+            Ok(self.draft()?.ciphertexts().1.parts().1.to_vec())
+        }
+
+        /// Adopt a byte-identical replacement locally; this is not node-commit evidence.
+        pub fn adopt_replacement(&mut self, envelope: &[u8]) -> core::result::Result<(), JsValue> {
+            self.check_frame()?;
+            if self.draft()?.ciphertexts().0.canonical_bytes() != envelope {
+                return Err(missing("refresh-stale"));
+            }
+            let draft = self.draft.take().ok_or_else(|| missing("refresh-input"))?;
+            self.current_phrase = Some(draft.into_phrase());
+            self.assertion = None;
+            Ok(())
+        }
+
+        /// Drop an uncommitted local draft while retaining the unlocked current root.
+        pub fn discard_draft(&mut self) -> core::result::Result<(), JsValue> {
+            self.check_frame()?;
+            self.draft = None;
+            Ok(())
+        }
+
+        /// Default download requires the same credential's PRF under the original RP.
+        #[allow(clippy::too_many_arguments)]
+        pub async fn backup_v2(
+            &mut self,
+            credential_id: Vec<u8>,
+            original_rp_id: String,
+            ceremony: String,
+            challenge: Vec<u8>,
+            expected_epoch: u64,
+            expires_at_ms: i64,
+            signal: JsValue,
+        ) -> core::result::Result<Vec<u8>, JsValue> {
+            self.assertion = None;
+            self.check_frame()?;
+            self.root()?;
+            self.current_phrase()?;
+            if self.draft.is_some() {
+                return Err(missing("refresh-pending"));
+            }
+            let request = PrfEvaluationRequest {
+                binding: PrfBinding {
+                    credential_id: CredentialId::new(credential_id).map_err(js_refusal)?,
+                    original_rp_id,
+                },
+                ceremony: CeremonyId::from_hex(&ceremony).map_err(js_refusal)?,
+                challenge: challenge
+                    .try_into()
+                    .map_err(|_| missing("backup-prf-metadata"))?,
+                expected_epoch,
+                expires_at_ms,
+            };
+            let prf = OwnerPrf::evaluate_with_signal(&self.browser, &request, Some(&signal))
+                .await
+                .map_err(js_refusal)?;
+            self.check_frame()?;
+            let downloaded = crate::backup::owner::download(
+                &self.browser,
+                self.root()?,
+                self.current_phrase()?,
+                BackupRequest::PasskeyBoundV2,
+                Some(&prf),
+                KdfParameters::PRODUCTION,
+            )
+            .map_err(js_refusal)?;
+            let BackupDownload::PasskeyBound(envelope) = downloaded else {
+                return Err(missing("backup-prf-required"));
+            };
+            self.assertion = Some(
+                serde_json::to_string(prf.assertion()).map_err(|_| missing("assertion-refused"))?,
+            );
+            Ok(envelope.canonical_bytes().to_vec())
+        }
+
+        /// Public assertion from the latest completed backup attempt, without PRF output.
+        pub fn backup_assertion(&self) -> core::result::Result<String, JsValue> {
+            self.check_frame()?;
+            self.assertion
+                .clone()
+                .ok_or_else(|| missing("backup-prf-required"))
+        }
+
+        /// Phrase-only recovery copy; no fallback from a refused v2 request calls this.
+        pub fn backup_v1(&self) -> core::result::Result<Vec<u8>, JsValue> {
+            self.check_frame()?;
+            if self.draft.is_some() {
+                return Err(missing("refresh-pending"));
+            }
+            let envelope = crate::envelope::owner::seal(
+                &self.browser,
+                self.root()?,
+                self.current_phrase()?,
+                KdfParameters::PRODUCTION,
+            )
+            .map_err(js_refusal)?;
+            Ok(envelope.canonical_bytes().to_vec())
+        }
+    }
+}
+
 /// The six acrostic positions after the anchor.
 pub const SLOT_THEMES: [PhraseTheme; 6] = [
     PhraseTheme::Root,

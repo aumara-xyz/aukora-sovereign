@@ -351,6 +351,16 @@ pub mod owner {
             browser: &OwnerBrowser,
             request: &PrfEvaluationRequest,
         ) -> Result<Self> {
+            Self::evaluate_with_signal(browser, request, None).await
+        }
+
+        /// Bind the browser prompt to the pane's abort signal when one is supplied.
+        pub async fn evaluate_with_signal(
+            browser: &OwnerBrowser,
+            request: &PrfEvaluationRequest,
+            signal: Option<&JsValue>,
+        ) -> Result<Self> {
+            OwnerBrowser::verify(browser.owner_origin(), browser.shell_origin())?;
             validate_binding(&request.binding)?;
             let window = web_sys::window().ok_or_else(|| refuse("owner-origin"))?;
             let actual = window
@@ -396,6 +406,9 @@ pub mod owner {
             options.set_extensions(&extensions);
             let outer = CredentialRequestOptions::new();
             outer.set_public_key(&options);
+            if let Some(signal) = signal {
+                put(outer.as_ref(), "signal", signal)?;
+            }
             let promise = window
                 .navigator()
                 .credentials()
@@ -406,6 +419,7 @@ pub mod owner {
                 .map_err(|_| refuse("backup-prf-unavailable"))?
                 .dyn_into()
                 .map_err(|_| refuse("backup-prf-unavailable"))?;
+            OwnerBrowser::verify(browser.owner_origin(), browser.shell_origin())?;
             let raw_id = Uint8Array::new(&credential.raw_id()).to_vec();
             if credential.type_() != "public-key"
                 || raw_id.as_slice() != request.binding.credential_id.as_bytes()
