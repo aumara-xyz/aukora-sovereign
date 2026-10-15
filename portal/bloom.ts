@@ -1,17 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import geometry from "../crates/pentora/vectors/geometry_index_table_v1.json" with { type: "json" };
 import { hex, refuse } from "./bytes.ts";
+import { pairingDigest } from "./bloom/derive.ts";
+import type { PersonNostrKeys } from "./contracts.ts";
 
 export interface PentoraExpansion {
-  // The Rust WASM adapter hashes the raw input with pentora.display.v1 and returns 110 trits.
+  // The Rust WASM adapter returns the 32-byte display digest followed by 110 trits.
   pentora_expand(root32: Uint8Array): Uint8Array;
 }
 
-export function drawRelationshipBloom(canvas: HTMLCanvasElement, digest: Uint8Array, pentora: PentoraExpansion): void {
-  if (!(digest instanceof Uint8Array) || digest.length !== 32) refuse("bloom-digest");
+export async function drawRelationshipBloom(canvas: HTMLCanvasElement, keys: PersonNostrKeys | null, pentora: PentoraExpansion, signal?: AbortSignal): Promise<Uint8Array | null> {
+  canvas.hidden = true;
+  canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+  canvas.setAttribute("aria-label", "Relationship bloom. Nothing shown.");
+  if (signal?.aborted || keys === null) return null;
+  if (typeof keys !== "object" || !("local" in keys) || !("peer" in keys)) refuse("bloom-person-keys");
+  if (keys.local === null || keys.peer === null) return null;
+  if (!(keys.local instanceof Uint8Array) || keys.local.length !== 32 ||
+      !(keys.peer instanceof Uint8Array) || keys.peer.length !== 32) refuse("bloom-person-keys");
   if (!pentora || typeof pentora.pentora_expand !== "function") refuse("bloom-expansion-unavailable");
-  const digits = pentora.pentora_expand(digest.slice());
-  if (!(digits instanceof Uint8Array) || digits.length !== 110 || digits.some(trit => trit > 2)) refuse("bloom-expansion");
+  const root = await pairingDigest(keys.local.slice(), keys.peer.slice());
+  if (signal?.aborted) return null;
+  const expansion = pentora.pentora_expand(root.slice());
+  if (!(expansion instanceof Uint8Array) || expansion.length !== 142) refuse("bloom-expansion");
+  const digest = expansion.slice(0, 32);
+  const digits = expansion.slice(32);
+  if (digits.some(trit => trit > 2)) refuse("bloom-expansion");
   const trits = new Map(geometry.mutable_indices.map((index, digit) => [index, digits[digit]]));
   const context = canvas.getContext("2d");
   if (!context) refuse("canvas");
@@ -38,4 +52,5 @@ export function drawRelationshipBloom(canvas: HTMLCanvasElement, digest: Uint8Ar
     context.beginPath(); context.arc(point.x, point.y, point.index === geometry.centre_index ? 3 : 5.5, 0, Math.PI * 2); context.fill();
   }
   canvas.setAttribute("aria-label", `Relationship bloom ${hex(digest)}`);
+  return digest;
 }

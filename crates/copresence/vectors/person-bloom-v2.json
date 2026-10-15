@@ -1,0 +1,85 @@
+{
+  "schema": "copresence-person-bloom-v2-vectors",
+  "derivation": {
+    "source": "Two row-113 person-nostr x-only public keys, each 32 raw bytes, resolved by the host for this exchange.",
+    "root": "sha256(UTF-8(pentora.bloom.v1) || 0x00 || bytewise-low-person-key || bytewise-high-person-key)",
+    "display_digest": "sha256(UTF-8(pentora.display.v1) || 0x00 || root)",
+    "trits": "From pinned pentora_expand: big-endian N of display_digest; trit i = floor(N / 3^i) mod 3, i = 0..109.",
+    "expansion": "Exactly 142 bytes: display_digest32 followed by 110 trit bytes; only bytes 32..141 must be at most 2.",
+    "geometry": "crates/pentora/vectors/geometry_index_table_v1.json: mutable_indices in order; centre 55 has no trit.",
+    "legacy": "The pinned pentora-bloom-v1 direct-commitment expansion is unchanged; this is the portal person display v2 composition."
+  },
+  "pairs": [
+    {
+      "name": "person-pair",
+      "local": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "peer": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "root_hex": "92bc429bb27abc2541e5b7a416b48da8ff909239d42e54b4e58124fbf958ce8c",
+      "display_digest_hex": "626802c6de8eb8218fc47f536ba252689dccbc32928f9c81a88aa1996dc4a84c",
+      "trits": "02011000011021200020201121022121211122122211220112211010122020002101222200000222201112002111022011012002001102",
+      "expansion_hex": "626802c6de8eb8218fc47f536ba252689dccbc32928f9c81a88aa1996dc4a84c0002000101000000000101000201020000000200020001010201000202010201020101010202010202020101020200010102020101000100010202000200000002010001020202020000000000020202020001010102000002010101000202000101000102000002000001010002"
+    },
+    {
+      "name": "person-pair-reversed",
+      "local": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "peer": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "root_hex": "92bc429bb27abc2541e5b7a416b48da8ff909239d42e54b4e58124fbf958ce8c",
+      "display_digest_hex": "626802c6de8eb8218fc47f536ba252689dccbc32928f9c81a88aa1996dc4a84c",
+      "trits": "02011000011021200020201121022121211122122211220112211010122020002101222200000222201112002111022011012002001102",
+      "expansion_hex": "626802c6de8eb8218fc47f536ba252689dccbc32928f9c81a88aa1996dc4a84c0002000101000000000101000201020000000200020001010201000202010201020101010202010202020101020200010102020101000100010202000200000002010001020202020000000000020202020001010102000002010101000202000101000102000002000001010002"
+    }
+  ],
+  "absent": [
+    {
+      "name": "no-person-binding",
+      "keys": null,
+      "display": null
+    },
+    {
+      "name": "peer-unknown",
+      "keys": {
+        "local": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "peer": null
+      },
+      "display": null
+    },
+    {
+      "name": "local-unknown",
+      "keys": {
+        "local": null,
+        "peer": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+      },
+      "display": null
+    }
+  ],
+  "refusals": [
+    {
+      "name": "same-person-key",
+      "local": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "peer": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "code": "pentora:identities-equal"
+    },
+    {
+      "name": "node-id-is-not-person-key",
+      "local": "01010101010101010101010101010101",
+      "peer": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "code": "copresence:bloom-person-keys"
+    },
+    {
+      "name": "device-key-is-not-person-key",
+      "local": "0401010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101",
+      "peer": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "code": "copresence:bloom-person-keys"
+    },
+    {
+      "name": "old-trits-only-result",
+      "expansion_hex": "0002000101000000000101000201020000000200020001010201000202010201020101010202010202020101020200010102020101000100010202000200000002010001020202020000000000020202020001010102000002010101000202000101000102000002000001010002",
+      "code": "copresence:bloom-expansion"
+    },
+    {
+      "name": "trit-above-two",
+      "expansion_hex": "626802c6de8eb8218fc47f536ba252689dccbc32928f9c81a88aa1996dc4a84c0302000101000000000101000201020000000200020001010201000202010201020101010202010202020101020200010102020101000100010202000200000002010001020202020000000000020202020001010102000002010101000202000101000102000002000001010002",
+      "code": "copresence:bloom-expansion"
+    }
+  ]
+}

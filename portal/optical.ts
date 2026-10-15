@@ -16,15 +16,21 @@ export function nativeQrDecoder(): FrameDecoder {
 export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement, pentora: PentoraExpansion, decode?: FrameDecoder, bloomCanvas?: HTMLCanvasElement): OpticalSurface {
   if (!pentora || typeof pentora.pentora_expand !== "function") refuse("bloom-expansion-unavailable");
   let release = (): void => {};
+  let bloomRequest: AbortController | null = null;
   const relationship = bloomCanvas ?? canvas.ownerDocument.createElement("canvas");
   if (!bloomCanvas) canvas.after(relationship);
   relationship.hidden = true;
   return {
     showFrame(bytes) { drawQr(canvas, bytes); },
-    showBloom(digest) {
+    async showBloom(keys) {
+      bloomRequest?.abort();
+      const request = new AbortController();
+      bloomRequest = request;
       relationship.hidden = true;
-      drawRelationshipBloom(relationship, digest, pentora);
-      relationship.hidden = false;
+      const digest = await drawRelationshipBloom(relationship, keys, pentora, request.signal);
+      if (request.signal.aborted) return null;
+      relationship.hidden = digest === null;
+      return digest;
     },
     async scan(consume, signal) {
       checkAbort(signal);
@@ -59,10 +65,13 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
       return stop;
     },
     clear() {
+      bloomRequest?.abort(); bloomRequest = null;
       release();
       const context = canvas.getContext("2d");
       context?.clearRect(0, 0, canvas.width, canvas.height);
       relationship.hidden = true;
+      relationship.getContext("2d")?.clearRect(0, 0, relationship.width, relationship.height);
+      relationship.setAttribute("aria-label", "Relationship bloom. Nothing shown.");
     },
   };
 }

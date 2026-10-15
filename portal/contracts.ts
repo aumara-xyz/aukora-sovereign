@@ -28,10 +28,18 @@ export type PortalObservation = {
   readonly attemptId: string;
   readonly method: ExchangeMethod;
   readonly frameBytes: Uint8Array | null;
+  // Legacy observation name: this is the receipt core digest, never relationship input.
   readonly bloomDigest: Uint8Array | null;
   readonly verdict: ReceiptVerdict | null;
   readonly receiptBytes: Uint8Array | null;
 };
+
+export type PersonNostrKeys = {
+  readonly local: Uint8Array | null;
+  readonly peer: Uint8Array | null;
+};
+
+export type PersonNostrKeysForReceipt = (receiptBytes: Uint8Array) => PersonNostrKeys | null;
 
 export type ContextExchange = {
   readonly domain: typeof CONTEXT_CORE_DOMAIN;
@@ -61,7 +69,7 @@ export interface CopresenceEngine {
 export interface OpticalSurface {
   showFrame(bytes: Uint8Array): void;
   scan(consume: (bytes: Uint8Array) => void, signal: AbortSignal): Promise<() => void>;
-  showBloom(digest: Uint8Array): void;
+  showBloom(keys: PersonNostrKeys | null): Promise<Uint8Array | null>;
   clear(): void;
 }
 
@@ -69,6 +77,7 @@ export type PortalServices = {
   readonly engine: CopresenceEngine;
   readonly attempts: AttemptStore;
   readonly optical: OpticalSurface;
+  readonly personNostrKeys?: PersonNostrKeysForReceipt;
 };
 
 export type PortalPage = {

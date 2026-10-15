@@ -61,6 +61,7 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
         if (active || disposed) return;
         const session: Active = { controller: new AbortController(), attempt: null, terminal: false, publishing: false, exchange: null, unsubscribe: null, scanStop: null };
         active = session;
+        services.optical.clear();
         method.disabled = context.disabled = intent.disabled = true; start.disabled = true; stop.disabled = false;
         download.hidden = true; digest.textContent = ""; phase.value = "FACE";
         if (receiptUrl) { URL.revokeObjectURL(receiptUrl); receiptUrl = null; }
@@ -82,19 +83,24 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
               phase.value = observation.phase;
               if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
             }
-            if (observation.phase === "BLOOM" && observation.receiptBytes && observation.bloomDigest) {
+            if (observation.phase === "BLOOM" && observation.receiptBytes) {
+              if (receiptUrl) {
+                if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
+                return;
+              }
               if (session.publishing) return;
               session.publishing = true;
-              void finish(session, "bloom").then(persisted => {
-                session.publishing = false;
+              void finish(session, "bloom").then(async persisted => {
                 if (active !== session || disposed) return;
                 if (!persisted) {
                   active = null; release(session); services.optical.clear(); download.hidden = true; resetControls(); return;
                 }
                 phase.value = "BLOOM";
                 if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
-                services.optical.showBloom(observation.bloomDigest!);
-                digest.textContent = `${PORTAL_LABELS.bloom}: ${hex(observation.bloomDigest!)}`;
+                const keys = services.personNostrKeys?.(observation.receiptBytes!.slice()) ?? null;
+                const displayDigest = await services.optical.showBloom(keys);
+                if (active !== session || disposed) return;
+                digest.textContent = displayDigest ? `${PORTAL_LABELS.bloom}: ${hex(displayDigest)}` : `${PORTAL_LABELS.bloom}: nothing shown; both person keys are required.`;
                 if (!receiptUrl) {
                   receiptUrl = URL.createObjectURL(new Blob([observation.receiptBytes!], { type: "application/json" }));
                   download.href = receiptUrl; download.hidden = false;
@@ -103,7 +109,11 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                     if (active === session) { active = null; release(session); resetControls(); }
                   }, 10000);
                 }
-              });
+              }).catch(error => {
+                if (active !== session || disposed) return;
+                phase.value = error instanceof Error && /^(copresence|pentora):[a-z0-9-]+$/.test(error.message) ? error.message : "copresence:bloom-expansion";
+                active = null; release(session); services.optical.clear(); download.hidden = true; resetControls();
+              }).finally(() => { session.publishing = false; });
             } else if (observation.phase === "REFUSED") {
               phase.value = observation.verdict && "code" in observation.verdict ? observation.verdict.code : "copresence:refused";
               void finish(session, "refused"); active = null; release(session); services.optical.clear(); resetControls();

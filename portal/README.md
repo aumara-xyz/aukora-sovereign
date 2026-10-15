@@ -29,10 +29,27 @@ the browser has no default approval for an unpinned context format. `node` and
 `deviceEpoch` come from the host. `legacyVerifier` adapts the Rust receipt reader;
 the browser never parses decimal legacy receipts with the canonical frame codec.
 Native camera decoding uses `BarcodeDetector`; hosts without it supply `decode`.
-The host supplies `pentora`, an adapter to the pinned Rust WASM `pentora_expand`:
-32 raw receipt-digest bytes in, 110 trits out. Rust applies `pentora.display.v1`;
-the page places the trits using the pinned geometry's `mutable_indices`. A missing
-adapter or malformed expansion refuses; there is no JavaScript derivation fallback.
+The optional host callback `personNostrKeys(receiptBytes)` resolves the completed
+exchange to `{ local, peer }`: the two people's row-113 person-nostr x-only public
+keys, each 32 raw bytes. The host supplies keys from its person bindings; a receipt
+alone supplies neither. The callback may return null, or null for either key. In
+that case the relationship canvas stays empty and receipt export still works.
+Node ids, device keys and receipt hashes are never substituted for person keys.
+
+The portal's person display v2 sorts those keys bytewise and uses the existing
+`pentora.bloom.v1` pairing digest as the root of the pinned Rust WASM
+`pentora_expand`. The host supplies that export through `pentora`: 32 raw root
+bytes in, 142 bytes out (32 display-digest bytes, then 110 trits). Rust applies
+`pentora.display.v1`; the page places bytes 32..141 using the pinned geometry's
+`mutable_indices`, in order. Any other length or trit above 2 refuses. Missing
+adapters and malformed expansions leave the canvas hidden; clearing or replacing
+an exchange cancels pending drawing. There is no JavaScript trit fallback.
+
+`crates/copresence/vectors/person-bloom-v2.json` records this display composition
+for conductor pinning. The legacy `crates/pentora/vectors/bloom-v1.json` and its
+direct-commitment renderer remain unchanged. This composition follows Light's
+documented two-person, separate-domain, Sovereign-display design; the available
+Light reference has no executable bloom implementation to compare against.
 The host's TypeScript pipeline serves these modules and `style.css`; geometry is
 the already-pinned Pentora JSON imported as data before an exchange.
 
