@@ -1,0 +1,710 @@
+{
+  "schema": "aukora-immune-historical-corpora-v1",
+  "hash_algorithm": "sha256",
+  "files": [
+    {
+      "path": "crates/immune/corpus/rt3-attacks.json",
+      "bytes": 582693,
+      "sha256": "6d0c66ff3fda1a3e66ff8a9af1862885647aafb47398e914310cad64c6674a90",
+      "records": 815,
+      "source": {
+        "repository_id": 1420432858,
+        "commit": "0abbf0fb5edfe27085696ca29402b4c426af244e",
+        "path": "crates/immune/corpus/rt3-attacks.json",
+        "git_blob": "adbde50cd2bb26942bf35faad13cf1430451dedd"
+      }
+    },
+    {
+      "path": "crates/immune/corpus/aumlok-id-issues-v1.hex",
+      "bytes": 1595920,
+      "sha256": "4b67d465cf41c8329d38113c6f1848ef442d69208f3dcf554cdb6ba839c233c5",
+      "records": 81,
+      "source": {
+        "repository_id": 1418448527,
+        "commit": "bb95d2cf30492390b8b820c4f4cf55fd0861042c",
+        "path": "reference/recovered/aumlok-id-issues.md"
+      },
+      "encoding": "hex-lower-lf-sections-v1",
+      "decoded": {
+        "bytes": 797919,
+        "sha256": "97fd71d7a7647a91deac76d048d7a3752014789404cfdf40d5b397412236b46d",
+        "preamble_bytes": 134,
+        "sections": 81,
+        "open": 67,
+        "closed": 14
+      }
+    },
+    {
+      "path": "crates/pentora/vectors/expansion_vectors_1006.json",
+      "bytes": 1469317,
+      "sha256": "02f5c5b9dee82b6eb36fbf02b430af50958165a6c07d7e652524183773e24529",
+      "records": 1006,
+      "source": {
+        "repository_id": 1418448527,
+        "commit": "917703aef6ad939f737571a257dedde88fef3607",
+        "path": "crates/pentora/vectors/expansion_vectors_1006.json"
+      }
+    },
+    {
+      "path": "crates/pentora/vectors/expansion_vectors_4354.json",
+      "bytes": 1706769,
+      "sha256": "930bfbb5d8088de1c8aa94b99cdbc868505c79acde504c26b813b714c846e044",
+      "records": 4354,
+      "source": {
+        "repository_id": 1418448527,
+        "commit": "917703aef6ad939f737571a257dedde88fef3607",
+        "path": "crates/pentora/vectors/expansion_vectors_4354.json"
+      }
+    }
+  ],
+  "issue_sections": [
+    {
+      "number": 1,
+      "state": "open",
+      "title": "STATUS: Aumlok-ID build queue and verified main",
+      "offset": 134,
+      "bytes": 172630,
+      "sha256": "849d4e511cbae67f603faeb3efa55277b3d65f1bcf6fa9e622f73556edba3614"
+    },
+    {
+      "number": 2,
+      "state": "open",
+      "title": "red-team: host control channel has no peer authentication (F4)",
+      "offset": 172764,
+      "bytes": 4961,
+      "sha256": "bfde4c2f5ffa1c982411174d5f9f8d587b9d6c7a1f6f5df9d3af06d7b1c61ff7"
+    },
+    {
+      "number": 3,
+      "state": "open",
+      "title": "red-team: stale-but-consistent control snapshot re-registers a revoked agent card (F5)",
+      "offset": 177725,
+      "bytes": 2519,
+      "sha256": "523d4b98a72a6d22d81bc36e16e577881b4f911aa7cc994dd357dbee6a558d50"
+    },
+    {
+      "number": 4,
+      "state": "open",
+      "title": "red-team: event-id digest mismatch mislabeled BAD_SIGNATURE (F6)",
+      "offset": 180244,
+      "bytes": 832,
+      "sha256": "36e0deb6c6b65ad995ea254aa8d7ae675c1a3c246204f0b8c5aadd4a1cc0abad"
+    },
+    {
+      "number": 5,
+      "state": "closed",
+      "title": "red-team: signRecord signs a multi-role signer_plan with one key (F7)",
+      "offset": 181076,
+      "bytes": 3609,
+      "sha256": "b8b643555e1b79912fe343e82d79b6b8ba73f7b7d397b1b70a0eaa6f09e43721"
+    },
+    {
+      "number": 6,
+      "state": "closed",
+      "title": "red-team: bytes parser accepts SharedArrayBuffer input; pentora refuses it (F8)",
+      "offset": 184685,
+      "bytes": 2121,
+      "sha256": "81bb26525eae45076ed7b93597ea33b7356241a4f282a80b1adef888ffc509c8"
+    },
+    {
+      "number": 7,
+      "state": "open",
+      "title": "red-team: residual suspected items (power-loss WAL window, trustedBytes shadow cap, FIFO response pairing)",
+      "offset": 186806,
+      "bytes": 1372,
+      "sha256": "21ff8c77e5e2d10a339ddbf689d242c2b5d573b51cf84e877911a41d6656f8e6"
+    },
+    {
+      "number": 8,
+      "state": "closed",
+      "title": "Publish and verify a deterministic vendor pack for latest green main",
+      "offset": 188178,
+      "bytes": 3438,
+      "sha256": "cbcc2428582fc3c0de0215eb9b5d6f31c1f6ba6a27c91ff24940145b4876e1b4"
+    },
+    {
+      "number": 9,
+      "state": "closed",
+      "title": "Run 10,000-event standalone verification on current main",
+      "offset": 191616,
+      "bytes": 3030,
+      "sha256": "8d9b7b7fddadec50a696288a251edb1abdea75c636ad0ad105c4cb26550f8618"
+    },
+    {
+      "number": 10,
+      "state": "closed",
+      "title": "Prove local approval-to-receipt-to-standalone flow twice from clean main",
+      "offset": 194646,
+      "bytes": 3700,
+      "sha256": "a4a80fda845fd47d538d2cf2c60fc5f9b3b9f0801dc209e09fa767da268c5711"
+    },
+    {
+      "number": 11,
+      "state": "open",
+      "title": "Implement a thin MCP approval-request and receipt adapter",
+      "offset": 198346,
+      "bytes": 17358,
+      "sha256": "f06cf42e9811555c163e66498fb6d54d686397df094da2a958fa29c538035b2a"
+    },
+    {
+      "number": 12,
+      "state": "open",
+      "title": "Establish an enforced untrusted-plugin confinement backend",
+      "offset": 215704,
+      "bytes": 929,
+      "sha256": "043e76d0856a1568b3763dc036a8ef82c921af9a0c7d1efb8bd2e6814d0b34aa"
+    },
+    {
+      "number": 13,
+      "state": "open",
+      "title": "Remove remaining developer-home references without rewriting preserved evidence",
+      "offset": 216633,
+      "bytes": 3220,
+      "sha256": "0fe46b9b9961ec01546b5e44273d2e97940bd167cd4c42549faab568c0222441"
+    },
+    {
+      "number": 14,
+      "state": "open",
+      "title": "Remove only clean, fully landed, idle auxiliary worktrees",
+      "offset": 219853,
+      "bytes": 5880,
+      "sha256": "b7edea6a91ab692a6c194e2754b5cea2fb4f38c1bddfd0cab1f74e831fd3417c"
+    },
+    {
+      "number": 15,
+      "state": "open",
+      "title": "Connect child authority restrictions to trusted current verification",
+      "offset": 225733,
+      "bytes": 2699,
+      "sha256": "a1810326fb901194ac75d832d358ac778c49e1782e79dd769b2bcdf0a350bc42"
+    },
+    {
+      "number": 16,
+      "state": "open",
+      "title": "Supply independently anchored invitee evidence for live vouch admission",
+      "offset": 228432,
+      "bytes": 874,
+      "sha256": "6a7da1e0a9a0861753a4d6ecb74811467e35caa094848a41648a369814f20132"
+    },
+    {
+      "number": 17,
+      "state": "open",
+      "title": "Vendor the pinned ID pack into the Prime lab and route relay.post through its aperture",
+      "offset": 229306,
+      "bytes": 4538,
+      "sha256": "a9adb45ba1dfa28ef362be9b5a7f07bf8eb74e75a1bdc2799217540860b3dfbd"
+    },
+    {
+      "number": 18,
+      "state": "open",
+      "title": "Independently re-run the existing grader and expansion vectors on published main",
+      "offset": 233844,
+      "bytes": 776,
+      "sha256": "a15c74b228bd4b4475a4e2d2b49eefc0c55751714d89a25f01ce2539d87b3db4"
+    },
+    {
+      "number": 19,
+      "state": "closed",
+      "title": "Revalidate unresolved historical red-team findings against current main",
+      "offset": 234620,
+      "bytes": 2602,
+      "sha256": "a30b9c0db57709ba09712745557b1d692a23047d6bea509716e6ed10b8907161"
+    },
+    {
+      "number": 20,
+      "state": "closed",
+      "title": "Attach current-main evidence for signed-junk rejection and 100 verified approvals",
+      "offset": 237222,
+      "bytes": 3176,
+      "sha256": "2cc547ba2fb7248b2dee565f5e1cb6f6f4a8819f8399b5b7c33d46713243ccaf"
+    },
+    {
+      "number": 21,
+      "state": "closed",
+      "title": "Locate authoritative Pentora vector data and verify the reproducible rerun inputs",
+      "offset": 240398,
+      "bytes": 2568,
+      "sha256": "5e8a7d0e20c30a09ad5f1562adab4adab483d64eafee96c305840331d98fbfdb"
+    },
+    {
+      "number": 22,
+      "state": "closed",
+      "title": "CLI filesystem-alias invocation can skip verification and exit successfully",
+      "offset": 242966,
+      "bytes": 3240,
+      "sha256": "fc435ddcdb52b784d8be10b6c5e9eaf563a117159d182a035b8db28d631f6283"
+    },
+    {
+      "number": 23,
+      "state": "closed",
+      "title": "red-team: NODE_OPTIONS=--require executes attacker code in the key-holding host service child",
+      "offset": 246206,
+      "bytes": 6793,
+      "sha256": "43be1d6ce62492425121f10ec36c6ee5e524964709fd4fd3e8416a7e99207b62"
+    },
+    {
+      "number": 24,
+      "state": "closed",
+      "title": "red-team: single-file verifier accepts a truncated export; no expected_head anchor (MEDIUM)",
+      "offset": 252999,
+      "bytes": 6261,
+      "sha256": "bc6428267b059dcb8c730cb73b2486dd86248421bb17dc47c8479452245e0c33"
+    },
+    {
+      "number": 25,
+      "state": "open",
+      "title": "red-team: owner-equivocation fork verifies valid and is returned as authentic history (MEDIUM)",
+      "offset": 259260,
+      "bytes": 9355,
+      "sha256": "0c87aa0d956bb13748680cee74a647934f5060b08b26a63238b5e7057be19031"
+    },
+    {
+      "number": 26,
+      "state": "open",
+      "title": "red-team: authorization ceiling at ~13k operations — control state outgrows the 4MiB evidence cap (MEDIUM)",
+      "offset": 268615,
+      "bytes": 2478,
+      "sha256": "7b2868bf1178f6abce8e0e1b56807e692deb1f9d096b4365be280a271a4c682b"
+    },
+    {
+      "number": 27,
+      "state": "open",
+      "title": "red-team: journal lows — silent whole-directory rollback, no open-time consistency check, permanent junk-event retention, fork-append evidence drop",
+      "offset": 271093,
+      "bytes": 7166,
+      "sha256": "4506a40082356ff920a3598e9c441bf38eb0be41b2dd046b3891825241f648ca"
+    },
+    {
+      "number": 28,
+      "state": "open",
+      "title": "red-team: approval-path lows — appendVerified throws REPLAY instead of verdict; expired approval enters journal via historical path; draft unwrap is schema-only",
+      "offset": 278259,
+      "bytes": 1679,
+      "sha256": "723a5db93481fcbcf0e522bd96d72b8ce59812f1beb0818ecd4ab2e345eb7a37"
+    },
+    {
+      "number": 29,
+      "state": "open",
+      "title": "red-team: PrefixMap 'immutable nodes' claim is false — unfrozen nodes, public writable root (defense in depth)",
+      "offset": 279938,
+      "bytes": 1264,
+      "sha256": "3cfb5c75deadd7b6466ba966f6338e69718d579cc8d8fd4dc121421af388e3d0"
+    },
+    {
+      "number": 30,
+      "state": "open",
+      "title": "red-team: process-separation lows — undrained pipes wedge startup 10s; one peer kills a transport pair with 129 cheap frames",
+      "offset": 281202,
+      "bytes": 1149,
+      "sha256": "55068a7ff5ef9785a486cce0c796436a0d494dfcf292f3f7e1023ae510420b2d"
+    },
+    {
+      "number": 31,
+      "state": "open",
+      "title": "red-team: standalone verifier artifact carries buildInputs hashes it never checks (LOW)",
+      "offset": 282351,
+      "bytes": 535,
+      "sha256": "19a24bdccf2710243b9c6935db5583fa77853f38fec4a105d9130cffe4c7c440"
+    },
+    {
+      "number": 32,
+      "state": "closed",
+      "title": "red-team P0: one junk validly-signed event in evidence flips a valid approval to REJECT CLOSED_SCHEMA",
+      "offset": 282886,
+      "bytes": 10346,
+      "sha256": "70a2469442275666278bb186a90fd445c51160865ef03695b44f23a6c5a249ee"
+    },
+    {
+      "number": 33,
+      "state": "closed",
+      "title": "red-team P0: prefix verifier session stays open after a fork; re-appended genesis returns VERIFIED",
+      "offset": 293232,
+      "bytes": 8114,
+      "sha256": "1ef097801cdbb9e3a07140cc541d5d29659449184b329161b569a4e0e5c3bc1f"
+    },
+    {
+      "number": 34,
+      "state": "open",
+      "title": "red-team P0: only 6 of 100 sequential owner approvals verify; 7th onward fails LIMIT_EXCEEDED/MISSING_EVIDENCE/STALE_CONTROL",
+      "offset": 301346,
+      "bytes": 12438,
+      "sha256": "5254c69b1eaa760687c2b1d705bed53ccc6df7fa293e940a3a254019738e5d20"
+    },
+    {
+      "number": 35,
+      "state": "open",
+      "title": "red-team P1: host schema v1 dispatches with no owner approval; only v2 requires it",
+      "offset": 313784,
+      "bytes": 1944,
+      "sha256": "2ba232526f3fed9809cd9955016bbc8fbabe5e0d9fde4acc9d53868b57e407cd"
+    },
+    {
+      "number": 36,
+      "state": "open",
+      "title": "red-team P2: symlinked node_modules poisons the standalone verifier bundle; build checks versions not lock integrity hashes",
+      "offset": 315728,
+      "bytes": 1795,
+      "sha256": "d86a7cf55c798cd2014fe8a707e6dd60e85e499f23e77dd28aea046709afb545"
+    },
+    {
+      "number": 37,
+      "state": "open",
+      "title": "red-team P1: crash between reserveIntent and markDispatchStarted wedges the operation at reserved_not_dispatched with no reconcile path",
+      "offset": 317523,
+      "bytes": 9663,
+      "sha256": "752ed470ce457448f08a0e80eac5de4415e5f82eeb73a5f17ebc3631c41d3194"
+    },
+    {
+      "number": 38,
+      "state": "open",
+      "title": "red-team P2: npm run check leaves ~102 /tmp/aukora-* dirs behind",
+      "offset": 327186,
+      "bytes": 10848,
+      "sha256": "e00dd65da670464513b0c3d993f1dae127f92794303e33fb7aef2907ce9f8c06"
+    },
+    {
+      "number": 39,
+      "state": "open",
+      "title": "D12: freeze and implement a versioned variable-payload relay-post adapter profile",
+      "offset": 338034,
+      "bytes": 11320,
+      "sha256": "c2e6988c51f35e21d267c382ee764e8e682cbf8f86f6a88c1ac3cce2386a482c"
+    },
+    {
+      "number": 40,
+      "state": "open",
+      "title": "Dual-assessor advisory lane: measure 200 labeled delegated requests (>=50 scope-widened) on CPU, report precision/recall, latency, UNAVAILABLE rate and the false-positive rate; park if REVIEW_REQUIRED catches under 70% of the widened set.",
+      "offset": 349354,
+      "bytes": 8065,
+      "sha256": "3d487e452cc2bff6f833a666a6a304517df035de0afa0a30afda0edfa900becc"
+    },
+    {
+      "number": 41,
+      "state": "open",
+      "title": "Verifier: resource-limit exhaustion must return UNKNOWN, never REJECT",
+      "offset": 357419,
+      "bytes": 17697,
+      "sha256": "e0fa54418c6741a87c6ad59fb1f4094aa184e472562cfecb8cf099ade77ce443"
+    },
+    {
+      "number": 42,
+      "state": "open",
+      "title": "Product callers must pass an independently retained expected head",
+      "offset": 375116,
+      "bytes": 19926,
+      "sha256": "64494c4e23f7215e7804d1f33181982de564aa5cc7d3371f50395308f11881a5"
+    },
+    {
+      "number": 43,
+      "state": "open",
+      "title": "Effect contract: approval -> reservation -> durable consumption -> dispatch -> uncertain outcome -> reconcile",
+      "offset": 395042,
+      "bytes": 10360,
+      "sha256": "0517422f97c42327242a106bb7cf413ccb54a72ce2df0fb9fe7d89d5775b722b"
+    },
+    {
+      "number": 44,
+      "state": "open",
+      "title": "Delegation grants: cardless execution inside an owner-signed bounded grant",
+      "offset": 405402,
+      "bytes": 8230,
+      "sha256": "2c24d2bafe7b796ed09e485f44126299bcef0439ef692855fa969f4901711015"
+    },
+    {
+      "number": 45,
+      "state": "open",
+      "title": "Head anchoring spec with vectors (no 'witness network' claims yet)",
+      "offset": 413632,
+      "bytes": 9523,
+      "sha256": "cbf4fe81888fe4994d0a4d301cf38a639aacbfd554c97b02913e452df14ca4c8"
+    },
+    {
+      "number": 46,
+      "state": "open",
+      "title": "Conformance runner: vectors + adversarial authorization rows in one command",
+      "offset": 423155,
+      "bytes": 480,
+      "sha256": "4bfaf3ace8fcd0d1c8eaec03b7260a9a298c15b3c9315ff0ed20fc58192ef4ae"
+    },
+    {
+      "number": 47,
+      "state": "open",
+      "title": "Buzz seam M1: one genuinely mediated agent action on Linux",
+      "offset": 423635,
+      "bytes": 10670,
+      "sha256": "5d1990ac0e4ab9dfea1f41d338ad700b24166553cf7f2b9603f98fbe30ccaf1a"
+    },
+    {
+      "number": 48,
+      "state": "open",
+      "title": "Buzz effect-path inventory (every route marked mediated / blocked / unmediated)",
+      "offset": 434305,
+      "bytes": 30006,
+      "sha256": "3e50743e07e10c0ab706c7d9e09ae865d02921dbe32c19460ae01ccc4eef94bf"
+    },
+    {
+      "number": 49,
+      "state": "open",
+      "title": "Bypass acceptance: remove Aumlok and the agent cannot post, message or git-write as its Buzz identity",
+      "offset": 464311,
+      "bytes": 364,
+      "sha256": "91b7d4dad32bce08fb486660bf136d17389bb10a352ddf085d6780674de9cd8a"
+    },
+    {
+      "number": 50,
+      "state": "open",
+      "title": "Buzz kind admission: relay rejects unknown kinds",
+      "offset": 464675,
+      "bytes": 523,
+      "sha256": "3d55834db630b826dcc59a09b3cda182142750175fde85d322a06b47b87753b6"
+    },
+    {
+      "number": 51,
+      "state": "open",
+      "title": "Rust verifier, clean-room from the spec, then WASM stranger page",
+      "offset": 465198,
+      "bytes": 521,
+      "sha256": "b3d15393cb310665ef45ed6c20c403b1989d3c4aa22f7ece40819a031d04050a"
+    },
+    {
+      "number": 52,
+      "state": "open",
+      "title": "Sidecar custody threat model and Linux topology",
+      "offset": 465719,
+      "bytes": 1174,
+      "sha256": "d1b8212f71e71a49b77c648f2218e048151d74ce8bb5b516557344ed41ce0a29"
+    },
+    {
+      "number": 53,
+      "state": "open",
+      "title": "Refusal records: counters and digests only, outside the authority chain",
+      "offset": 466893,
+      "bytes": 370,
+      "sha256": "4f1d366c5e451f75fbf55d802bd7398d2eb9adf6a6fdb24707f8c612ca0a99a8"
+    },
+    {
+      "number": 54,
+      "state": "open",
+      "title": "Revocation beat: owner revokes mid-run, agent's next call refuses, latency measured",
+      "offset": 467263,
+      "bytes": 4037,
+      "sha256": "6578e88bbecd1b5c7e07e1e74b53a89dafc8faeb87b5b561a125c2ec0b79e6c8"
+    },
+    {
+      "number": 55,
+      "state": "closed",
+      "title": "Sidecar: Buzz admission framing smuggle (fixed and independently rerun at 818a8a1); live hops tracked in #47 and organism.mjs",
+      "offset": 471300,
+      "bytes": 74983,
+      "sha256": "a2789f99dd2b829510c2bd52c4351204a01735335cc52ab55b69549073a9fb02"
+    },
+    {
+      "number": 56,
+      "state": "open",
+      "title": "Mediated dispatch refuses MISSING_EVIDENCE after request + approval admitted (ordering hazard?)",
+      "offset": 546283,
+      "bytes": 7223,
+      "sha256": "ca0b13a96936fbe39cab09ced6dbb9057aba997eec0e3e72fbb0c685db6abe21"
+    },
+    {
+      "number": 57,
+      "state": "open",
+      "title": "Aura view: beautiful living Pentora in the Buzz desktop (owner view only)",
+      "offset": 553506,
+      "bytes": 3902,
+      "sha256": "ebcc7526acd9e6f35780ace4575ee8bfa4cb042553891d103743f1d3dd6f81b1"
+    },
+    {
+      "number": 58,
+      "state": "open",
+      "title": "VISION (parked, not Monday): Aukora incubator - one-click sovereign node, invite-only, anti-sybil, Aumlok-ID as the free layer",
+      "offset": 557408,
+      "bytes": 1352,
+      "sha256": "e06cb58ea9a54acbf99c8aa3ddcf491a1bdb8a6d74d163f76f8f5418c4e6a487"
+    },
+    {
+      "number": 59,
+      "state": "open",
+      "title": "Foundation: owner key SET with rotation events, algorithm field in every event, real recovery design",
+      "offset": 558760,
+      "bytes": 1364,
+      "sha256": "62a9b730ff0f6435a27c46b5c7736007da33c9cb9e3822bf0dcf34481cf5b323"
+    },
+    {
+      "number": 60,
+      "state": "open",
+      "title": "Anchoring v1: align checkpoint format with C2SP tlog-checkpoint (signed note); OpenTimestamps for long-term",
+      "offset": 560124,
+      "bytes": 1280,
+      "sha256": "218a2ac29aee6bd425dded739f83e9883ad067d8e032a9eb9e6376d373402a50"
+    },
+    {
+      "number": 61,
+      "state": "open",
+      "title": "Approval card: sidecar-computed plain impact summary (paths, endpoints, amounts), never model text, never raw JSON",
+      "offset": 561404,
+      "bytes": 7472,
+      "sha256": "c9d56481b5e57ad2190328dff79bac9a9c834d7555afe1c79444fdcfae87f3c0"
+    },
+    {
+      "number": 62,
+      "state": "open",
+      "title": "Zero-install verify: one-line command and offline browser page that prints the anchor",
+      "offset": 568876,
+      "bytes": 489,
+      "sha256": "8aba46dafcdd60c4a1f52707b006c23a09c0a134b3c8cb0ae8a04b98aad29406"
+    },
+    {
+      "number": 63,
+      "state": "open",
+      "title": "Evaluate Biscuit (delegation) and Cedar (hard floor) against our grant format and code-rule floor; decide, do not swap before Monday",
+      "offset": 569365,
+      "bytes": 654,
+      "sha256": "73c7fa6f50f08663352037049c2bc95c9e6314040caf4fd8c9366a60019d5172"
+    },
+    {
+      "number": 64,
+      "state": "open",
+      "title": "Kira encryption: AES-GCM vs NIP-44 v2 - decide and document why",
+      "offset": 570019,
+      "bytes": 444,
+      "sha256": "4d873478b30ace389dd94255c3a163c676bf73601ba4b5f10b8dcd7fb1f82508"
+    },
+    {
+      "number": 65,
+      "state": "open",
+      "title": "VISION (parked): unlinkable scoped identities so one chain is not a surveillance record",
+      "offset": 570463,
+      "bytes": 499,
+      "sha256": "7152d7baa0c6452a293ee3d5f17bf47469adb925a3d73f8854c8b84b00bf245c"
+    },
+    {
+      "number": 66,
+      "state": "open",
+      "title": "red-team P1: MCP verify_export uses the raw importer; genuine export REJECTs INCONSISTENT_HEAD while the CLI says valid",
+      "offset": 570962,
+      "bytes": 2261,
+      "sha256": "86529691bb223458be84fd5b1397bd58af6511b307eafb13a74cd91a0639d37c"
+    },
+    {
+      "number": 67,
+      "state": "open",
+      "title": "red-team P1: anchored_prefix verdict exits 0; a forked tail passes any script that only checks the exit code",
+      "offset": 573223,
+      "bytes": 17482,
+      "sha256": "8e768f429a106b096199e3d4fae652a7f1e9e89e0cfc8d4d6cc57e326895e62a"
+    },
+    {
+      "number": 68,
+      "state": "open",
+      "title": "red-team P1: MCP propose re-verifies the whole journal and fails LIMIT_EXCEEDED past 4 MiB (~1,550 events, ~500 operations)",
+      "offset": 590705,
+      "bytes": 4363,
+      "sha256": "947031feb41d05a1aebe253951ed4096a913d9119e95a25d96a243a1efc0aef0"
+    },
+    {
+      "number": 69,
+      "state": "open",
+      "title": "red-team P2: grant administration - revoking any grant blocks append-key rotation; committing grant policy blocks every request (SOURCE)",
+      "offset": 595068,
+      "bytes": 562,
+      "sha256": "16652a2b3ea4f1fad039ca63b5c970c9f9e522983824fd332d4887977b35d3e2"
+    },
+    {
+      "number": 70,
+      "state": "open",
+      "title": "Laya model updates: signed, versioned, user-approved downloads; an update can never widen authority",
+      "offset": 595630,
+      "bytes": 2948,
+      "sha256": "f6b544c06f56da19072660d00e672439fd5bf9464500233663d3bde7f40cb402"
+    },
+    {
+      "number": 71,
+      "state": "open",
+      "title": "App: safety-threshold slider under the Pentora (Laya score, 5% steps) - design only until Laya is measured",
+      "offset": 598578,
+      "bytes": 980,
+      "sha256": "18a2563c05c2d58643dbecccf57116aca7d5486ae87e16edbda8880238ae45e9"
+    },
+    {
+      "number": 72,
+      "state": "open",
+      "title": "App: unlock portal (7-word Aumlok phrase bind/reset) and Kira as the app's memory",
+      "offset": 599558,
+      "bytes": 872,
+      "sha256": "6d9e3bbe6ed000b7f9ac8aab103116595cc072147567fe26b9d0e5dad674b8ca"
+    },
+    {
+      "number": 73,
+      "state": "open",
+      "title": "VISION (parked): Aukora messaging at the speed of thought - voice agent, ranked summaries, originals always visible",
+      "offset": 600430,
+      "bytes": 1039,
+      "sha256": "8d4ebcd0d8bb7fb2772f34ef487d1db7ae3e20953691e2d94031f5faa59c2740"
+    },
+    {
+      "number": 74,
+      "state": "open",
+      "title": "Key-state binding (research, depends on the ML-DSA hybrid port): record the one-time key index with the reservation",
+      "offset": 601469,
+      "bytes": 3570,
+      "sha256": "74d3f6335025c174b8a9976edd1d4de6274a3ae7d642b6fd34c161310981a294"
+    },
+    {
+      "number": 75,
+      "state": "open",
+      "title": "W1 negative tests pass vacuously and the bootstrap checks are not in the gate",
+      "offset": 605039,
+      "bytes": 1116,
+      "sha256": "6b62e51eb0ecf4a2f12c6643950f23e8d52798966c3d64d2610e699b37dfc6dd"
+    },
+    {
+      "number": 76,
+      "state": "open",
+      "title": "Signer exchange under transport failure: timeout, cancel, stall mid-ceremony untested",
+      "offset": 606155,
+      "bytes": 618,
+      "sha256": "b0068275d13a71bcfbc6d02a8c753d622bd83a6dea8781595306649578497bc7"
+    },
+    {
+      "number": 77,
+      "state": "open",
+      "title": "THE GAME: rules, roles and Round 1 orders (relay here)",
+      "offset": 606773,
+      "bytes": 104512,
+      "sha256": "cfad944c3c6750a345efa9ad74143b7799e098d2b0dbf2a7358fa308ec653970"
+    },
+    {
+      "number": 78,
+      "state": "open",
+      "title": "AURA RIG (parked lane, Fable kickoff 2026-10-09): portable offline witness, router + Pi, QR captive portal, co-present vouches",
+      "offset": 711285,
+      "bytes": 39812,
+      "sha256": "cf4f2f9fd725a97ac419f1c6a61a513eda9701c88bfeb80bd2f8a0410eec7567"
+    },
+    {
+      "number": 79,
+      "state": "open",
+      "title": "RESEARCH (parked): Pentora v2 orientation channel, Gaussian-memory 2D-to-3D, MiroFish swarm, Shear Engine fit",
+      "offset": 751097,
+      "bytes": 32647,
+      "sha256": "c6927bffd0d93433b581bd248119d4a070f912363594471a1c1ec9697d4f6e35"
+    },
+    {
+      "number": 80,
+      "state": "open",
+      "title": "RESEARCH (parked): Open Weave Economy — Aura-as-topology essay, GHP appendix, and AUMA micro-economy spec for wave-by-wave review",
+      "offset": 783744,
+      "bytes": 8321,
+      "sha256": "ddf1adb868240779c5bc8aa37a67cd9d4966c98f977f574390d372c2f5f47818"
+    },
+    {
+      "number": 81,
+      "state": "open",
+      "title": "PRESENCE LAYER v1 (PROPOSED build spec): phone-computer pairing, continuous presence, and vouch onboarding — second evidence type for owner_presence",
+      "offset": 792065,
+      "bytes": 5854,
+      "sha256": "14b0866ea86326ce16e856541671714a86eb654899cb10fee97934e8ce334114"
+    }
+  ]
+}

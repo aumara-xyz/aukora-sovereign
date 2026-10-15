@@ -312,3 +312,54 @@ fn refuse(reason: &'static str) -> Refusal {
         reason,
     }
 }
+
+/// SHA-256 of the encoded issue export bundled for row 68.
+pub const ISSUE_EXPORT_HEX_SHA256: &str =
+    "4b67d465cf41c8329d38113c6f1848ef442d69208f3dcf554cdb6ba839c233c5";
+
+/// SHA-256 of the row-68 file inventory, provenance and per-issue boundaries.
+pub const HISTORICAL_MANIFEST_SHA256: &str =
+    "82ac561202edaae4797b23de0c0fe29e8fd27b81095d70c2f8c30869e6511254";
+
+/// Recover the exact pinned export as inert bytes for `HistoricalCorpora::pinned`.
+/// The first hex line is the preamble; the next 81 lines are complete issue sections.
+pub fn bundled_issue_export() -> Result<Vec<u8>> {
+    const ENCODED: &[u8] = include_bytes!("../corpus/aumlok-id-issues-v1.hex");
+    const CHUNKS: usize = AUMLOK_ISSUE_COUNT + 1;
+    pin(
+        include_bytes!("../corpus/pins-v1.json"),
+        HISTORICAL_MANIFEST_SHA256,
+    )?;
+    if ENCODED.len() != ISSUE_EXPORT_BYTES * 2 + CHUNKS {
+        return Err(refuse("issue-corpus-encoding-size"));
+    }
+    pin(ENCODED, ISSUE_EXPORT_HEX_SHA256)?;
+    let text = std::str::from_utf8(ENCODED).map_err(|_| refuse("issue-corpus-encoding"))?;
+    let mut decoded = Vec::with_capacity(ISSUE_EXPORT_BYTES);
+    let mut chunks = 0;
+    for line in text.split_terminator('\n') {
+        chunks += 1;
+        if chunks > CHUNKS
+            || line.is_empty()
+            || !line.len().is_multiple_of(2)
+            || !line
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(refuse("issue-corpus-encoding"));
+        }
+        for pair in line.as_bytes().chunks_exact(2) {
+            if decoded.len() == ISSUE_EXPORT_BYTES {
+                return Err(refuse("issue-corpus-encoding-size"));
+            }
+            let pair = std::str::from_utf8(pair).map_err(|_| refuse("issue-corpus-encoding"))?;
+            decoded
+                .push(u8::from_str_radix(pair, 16).map_err(|_| refuse("issue-corpus-encoding"))?);
+        }
+    }
+    if chunks != CHUNKS {
+        return Err(refuse("issue-corpus-encoding"));
+    }
+    read_issues(&decoded)?;
+    Ok(decoded)
+}
