@@ -1,0 +1,24 @@
+{
+  "schema": "aukora-aumlok-face-v1",
+  "service": "aumlok.status",
+  "reply": {
+    "required": {
+      "bound": "boolean: the identity root is sealed under a seven-word phrase",
+      "passkeys": "integer 0..1000: enrolled passkeys",
+      "refresh_due": "boolean: a phrase refresh is owed; true only when bound"
+    },
+    "optional": {
+      "owner_origin": "string or null: the owner origin the trusted panes are served from, https (or loopback http), origin form only"
+    },
+    "source": "the aumlok object of the pinned organs reply, plus the optional owner origin; any other key or type refuses"
+  },
+  "screen": {
+    "layout": "one anchor card (word zero, six letters) above six tiles in the bands ROOT, UNITE and RISE; the state changes only what fills them",
+    "bound": "tiles filled with dots; the words are never shown",
+    "unbound": "tiles empty",
+    "unavailable": "an unavailable badge and no bound claim; a failed read removes the last good status"
+  },
+  "panes": "Passkey and Phrase open from the shell's own buttons; this face has no method to open them and no input that takes a word",
+  "phrase_strength": "41.5 bits minimum, 43.1 average, the shipped lists; never more",
+  "authority": "none"
+}

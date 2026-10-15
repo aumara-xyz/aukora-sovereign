@@ -1,27 +1,33 @@
 {
   "schema": "aukora-coherence-face-v1",
   "health": {
-    "input": "FD 4 health.snapshot snapshot_b64 decoded to opaque bytes",
-    "decoder": "HealthDecoder.decode_snapshot; canon health decoder adapter required",
+    "input": "body health.snapshot: {snapshot_b64}, standard padded base64, 1..65536 bytes once decoded",
+    "decoder": "health.ts reads the supervisor's canonical JSON snapshot: v 1, private_cells (90) and corner_cells (20), each exactly verified, undetermined or failed; optional epoch, sequence and observed_at_ms as integers. Any other shape refuses; it never reduces evidence",
     "bounds": "1..65536 bytes; 90 private cells and 20 corner cells",
-    "order": "canon CHECKS then CORNERS mapped to the pinned geometry",
+    "order": "canon CHECKS (18 per organ, organ order) then CORNERS (two per organ pair, pair order) mapped to the pinned geometry",
     "states": {
-      "verified": "solid blue",
-      "undetermined": "dim grey; never healthy",
-      "failed": "solid red"
+      "verified": "solid blue disc",
+      "undetermined": "dim hollow dashed disc, never drawn as healthy; the legend names it as verification unavailable",
+      "failed": "solid red disc crossed out"
     },
-    "repairing": "separate presentation set adds a shimmering ring; never changes the evidence cell or v1 snapshot keys",
+    "corners": "drawn as diamonds; a corner is verified only when both of its organs confirmed",
+    "repairing": "separate presentation set adds a shimmering ring; never changes the evidence cell or v1 snapshot keys; static ring under reduced motion",
+    "text_equivalent": "a table of cell counts per organ and a list of every cell that is not verified",
     "unavailable": "cleared canvas with an explicit unavailable label"
   },
   "fingerprint": {
-    "source": "gate-aura head service returns the current Aura display head as 64 lowercase hex characters",
-    "digest": "sha256(UTF8(pentora.display.v1) || 0x00 || 32 raw head bytes)",
-    "expansion": "PentoraExpansion.pentora_expand takes exactly the 32-byte display digest and returns 110 trits",
+    "source": "gate-aura head service returns {head} or {head, sources}; head is the Aura display head as 64 lowercase hex characters, the commitment over the ordered sources gate-ledger, kira-chain, code-chain",
+    "sources": "when present, exactly three in that order; a source with a head has entries >= 1 and no absence, a source without a head has entries 0 and its own absence reason (gate-ledger-empty, kira-ledger-empty, code-record-missing)",
+    "derivation": "the pentora_expand(root32) export of crates/pentora compiled to WASM takes the 32 raw head bytes and returns digest32 followed by 110 trits; digest = sha256(UTF8(pentora.display.v1) || 0x00 || head); there is no JavaScript derivation",
+    "module": "app/core/pentora.wasm, fetched by the face from its own release, compiled with no imports, and checked against pinned vector 0 of crates/pentora/vectors before first use",
     "digit_order": "least significant base-3 digit first; increasing global cell index excluding 55",
     "geometry": "crates/pentora/vectors/geometry_index_table_v1.json",
     "geometry_digest": "GEOMETRY_SHA256 in geometry.ts",
-    "unavailable": "cleared canvas; no JavaScript expansion fallback"
+    "motion": "follows crates/pentora motion.rs: a pending read draws and names nothing; a head that differs from the last sweeps in over 400 ms with changed digits ringed, and the digest, the head and the source head text stay hidden until 1200 ms; the first head, a repeated head and reduced motion settle at once; a failure forgets the last head",
+    "race_guard": "only the latest read may draw or fail the canvas; a result for an older head is dropped",
+    "unavailable": "cleared canvas with the reason"
   },
-  "canvases": ["Health · organ evidence", "Fingerprint · display digest"],
+  "page_policy": "script-src adds 'wasm-unsafe-eval' and connect-src is 'self' only so that the face can fetch and compile the pinned module; no other face has either",
+  "canvases": ["Organ health", "Aura fingerprint"],
   "authority": "none"
 }

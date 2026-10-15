@@ -1,0 +1,20 @@
+{
+  "schema": "aukora-identity-face-v1",
+  "service": "aumlok.identity",
+  "reply": {
+    "keys": "exactly agent_npub, contact_code, label, node_npub, safety, subject; any other key or type refuses the card",
+    "label": "string, 1..64 characters, no control, bidirectional or zero-width characters, no leading or trailing space",
+    "subject": "null, or aukora:1: followed by 64 lowercase hex digits",
+    "node_npub": "null, or an npub of at most 128 bytes",
+    "agent_npub": "null, or an npub of at most 128 bytes",
+    "contact_code": "null, or {text, expires_at}: text is 1..1000 printable ASCII characters that the node issued, expires_at is unix seconds or null; null whenever subject is null",
+    "safety": "at most 101 entries {kind, label, digits}: at most one own entry with 35 digits, contact entries with 70 digits; a contact's label that fails the label rules is shown as an unreadable name"
+  },
+  "contact_code": {
+    "drawing": "the text is encoded as a QR picture on a canvas by qr.ts (UTF-8 byte mode, level M, versions 1 to 40); no data image is used",
+    "expiry": "a lapsed code is removed from the page and a fresh one is requested, at most every five seconds"
+  },
+  "safety_numbers": "digits in groups of five to read aloud and compare; evidence of matching keys, never of who holds them, and never authority",
+  "face_holds": "public keys and digits only; it never creates, signs or verifies a card, and has no camera, storage or clipboard access",
+  "authority": "none"
+}

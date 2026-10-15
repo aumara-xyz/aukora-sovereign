@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mountFace } from "../runtime.js";
+import { openFace } from "../aumlok/link.js";
+import { mountIdentity } from "./face.js";
 
-mountFace("identity");
+openFace("identity", "Identity", host => mountIdentity(host));

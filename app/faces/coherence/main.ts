@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mountFace } from "../runtime.js";
+import { openFace } from "../aumlok/link.js";
+import { mountCoherence } from "./face.js";
+import { loadPentora } from "./pentora.js";
 
-mountFace("coherence");
+// The release carries the pinned Pentora module beside the shared core; a missing or altered module fails closed.
+const PENTORA_MODULE = new URL("../../core/pentora.wasm", import.meta.url);
+
+openFace("coherence", "Aura Coherence", host => mountCoherence(host, signal => loadPentora(PENTORA_MODULE, signal)));
