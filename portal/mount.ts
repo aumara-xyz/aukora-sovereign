@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BrowserCopresenceEngine, browserStorage, type BrowserEngineOptions } from "./engine.ts";
-import { cameraSurface, type FrameDecoder } from "./optical.ts";
-import { createPortalPage } from "./page.ts";
-import { BrowserChannelProbe } from "./senses.ts";
-import type { PentoraExpansion } from "./bloom.ts";
-import type { PersonNostrKeysForReceipt } from "./contracts.ts";
+import { BrowserCopresenceEngine, browserStorage, type BrowserEngineOptions } from "./engine.js";
+import { cameraSurface, type FrameDecoder } from "./optical.js";
+import { createPortalPage } from "./page.js";
+import { BrowserChannelProbe } from "./senses.js";
+import type { PentoraExpansion } from "./bloom/index.js";
+import type { PentoraPairingDigest } from "./bloom/derive.js";
+import type { PersonNostrKeysForReceipt } from "./contracts.js";
 
 export type PortalMountOptions = Pick<BrowserEngineOptions, "node" | "deviceEpoch" | "contextFormatPinned" | "legacyVerifier"> & {
-  readonly pentora: PentoraExpansion;
+  readonly pentora: PentoraExpansion & PentoraPairingDigest;
   readonly personNostrKeys?: PersonNostrKeysForReceipt;
   readonly decode?: FrameDecoder;
 };
@@ -25,6 +26,6 @@ export function mountPortal(host: HTMLElement, options: PortalMountOptions): () 
   const storage = browserStorage(), channels = new BrowserChannelProbe();
   const optical = cameraSurface(frame, video, options.pentora, options.decode, bloom);
   const engine = new BrowserCopresenceEngine({ ...options, ...storage, channels });
-  const unmount = createPortalPage({ prepare: method => channels.prepare(method), release: () => channels.close() }).mount(controls, { engine, attempts: storage.attempts, optical, personNostrKeys: options.personNostrKeys });
+  const unmount = createPortalPage({ prepare: method => channels.prepare(method), release: () => channels.close() }).mount(controls, { engine, attempts: storage.attempts, optical });
   return () => { unmount(); optical.clear(); channels.close(); visuals.remove(); controls.remove(); };
 }

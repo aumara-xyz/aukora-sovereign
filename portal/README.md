@@ -36,22 +36,33 @@ alone supplies neither. The callback may return null, or null for either key. In
 that case the relationship canvas stays empty and receipt export still works.
 Node ids, device keys and receipt hashes are never substituted for person keys.
 
-The portal's person display v2 sorts those keys bytewise and uses the existing
-`pentora.bloom.v1` pairing digest as the root of the pinned Rust WASM
-`pentora_expand`. The host supplies that export through `pentora`: 32 raw root
-bytes in, 142 bytes out (32 display-digest bytes, then 110 trits). Rust applies
-`pentora.display.v1`; the page places bytes 32..141 using the pinned geometry's
-`mutable_indices`, in order. Any other length or trit above 2 refuses. Missing
-adapters and malformed expansions leave the canvas hidden; clearing or replacing
-an exchange cancels pending drawing. There is no JavaScript trit fallback.
+The engine resolves and copies the two person keys after verifying the receipt.
+Its `bloomDigest` observation is the `pentora.bloom.v1` pairing root, never the
+receipt core hash; `personNostrKeys` carries the same copied inputs to the page.
+Both remain null when either key is unknown. The digest stays null if its adapter
+is unavailable; display resolution never delays receipt publication. These are
+local session values; no receipt or optical frame gains a field.
 
-`crates/copresence/vectors/person-bloom-v2.json` records this display composition
-for conductor pinning. The legacy `crates/pentora/vectors/bloom-v1.json` and its
-direct-commitment renderer remain unchanged. This composition follows Light's
+The host supplies `pentora` through `bindPairingPentora` from `bloom/index.ts`.
+That adapter binds Rust's `pentora_pairing_digest` and `pentora_pairing_expand`
+exports. Rust sorts the raw keys bytewise and computes the pairing root, then
+applies the shared `pentora_expand` display derivation. The digest export returns
+32 bytes; the expansion returns 142 bytes (32 display-digest bytes and 110 trits).
+Both use the existing WASM result descriptor and release functions. Invalid
+lengths and trits above 2 refuse. There is no JavaScript hash or trit fallback.
+
+`bloom/geometry-data.ts` packages the exact coordinates, mutable indices and edges
+from the pinned geometry table as a static browser module. The renderer places
+each trit using `mutable_indices`, leaving the centre unassigned. Missing adapters
+and malformed expansions leave the canvas hidden; clearing or replacing an
+exchange cancels pending drawing. Display failure does not prevent receipt export.
+
+`bloom/person-bloom-v2.json` records this display composition for conductor pinning.
+The legacy `crates/pentora/vectors/bloom-v1.json` stays unchanged. This composition follows Light's
 documented two-person, separate-domain, Sovereign-display design; the available
 Light reference has no executable bloom implementation to compare against.
-The host's TypeScript pipeline serves these modules and `style.css`; geometry is
-the already-pinned Pentora JSON imported as data before an exchange.
+The host's TypeScript pipeline serves these modules and `style.css`, including
+the packaged geometry data.
 
 The method and exact shared context are fixed before the first optical frame.
 Every exchange and received frame reserves a durable attempt before decode.

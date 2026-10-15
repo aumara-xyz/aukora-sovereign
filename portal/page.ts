@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { CONTEXT_CORE_DOMAIN, PORTAL_LABELS, type ExchangeMethod, type PortalExchange, type PortalPage, type PortalServices } from "./contracts.ts";
-import { checkAbort, hex, utf8 } from "./bytes.ts";
+import { CONTEXT_CORE_DOMAIN, PORTAL_LABELS, type ExchangeMethod, type PortalExchange, type PortalPage, type PortalServices } from "./contracts.js";
+import { checkAbort, hex, utf8 } from "./bytes.js";
 
 // The pinned fixture text has exactly one trailing LF removed.
 export const APPROVED_TEXT = "buzz-grant:abababababababababababababababababababababababababababababababab:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
@@ -97,10 +97,6 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                 }
                 phase.value = "BLOOM";
                 if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
-                const keys = services.personNostrKeys?.(observation.receiptBytes!.slice()) ?? null;
-                const displayDigest = await services.optical.showBloom(keys);
-                if (active !== session || disposed) return;
-                digest.textContent = displayDigest ? `${PORTAL_LABELS.bloom}: ${hex(displayDigest)}` : `${PORTAL_LABELS.bloom}: nothing shown; both person keys are required.`;
                 if (!receiptUrl) {
                   receiptUrl = URL.createObjectURL(new Blob([observation.receiptBytes!], { type: "application/json" }));
                   download.href = receiptUrl; download.hidden = false;
@@ -109,6 +105,14 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                     if (active === session) { active = null; release(session); resetControls(); }
                   }, 10000);
                 }
+                let displayDigest: Uint8Array | null = null;
+                let displayUnavailable = false;
+                try { displayDigest = await services.optical.showBloom(observation.personNostrKeys, session.controller.signal); }
+                catch { displayUnavailable = true; }
+                if (active !== session || disposed) return;
+                digest.textContent = displayDigest ? `${PORTAL_LABELS.bloom}: ${hex(displayDigest)}`
+                  : displayUnavailable ? `${PORTAL_LABELS.bloom}: unavailable.`
+                  : `${PORTAL_LABELS.bloom}: nothing shown; both person keys are required.`;
               }).catch(error => {
                 if (active !== session || disposed) return;
                 phase.value = error instanceof Error && /^(copresence|pentora):[a-z0-9-]+$/.test(error.message) ? error.message : "copresence:bloom-expansion";

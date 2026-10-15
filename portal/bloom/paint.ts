@@ -2,8 +2,8 @@
 // Draws a bloom's trits on the pinned geometry. It takes a canvas context and the trits and reads
 // nothing else: no health state, no fingerprint. The three trits differ in shape as well as colour:
 // a hollow ring, a filled disc, and a larger disc with a halo.
-import { CENTRE_CELL, TRIT_COUNT, refuse } from "./derive.ts";
-import { bloomGeometry } from "./geometry.ts";
+import { CENTRE_CELL, TRIT_COUNT, refuse } from "./derive.js";
+import { bloomGeometry } from "./geometry.js";
 
 export const BLOOM_SIZE = 640;
 /** The bloom opens from the centre outward over this long, or at once under reduced motion. */

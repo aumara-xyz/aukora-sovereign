@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { OpticalSurface } from "./contracts.ts";
-import { checkAbort, refuse, utf8 } from "./bytes.ts";
-import { drawQr } from "./qr.ts";
-import { drawRelationshipBloom, type PentoraExpansion } from "./bloom.ts";
+import type { OpticalSurface } from "./contracts.js";
+import { checkAbort, refuse, utf8 } from "./bytes.js";
+import { drawQr } from "./qr.js";
+import { drawRelationshipBloom, type PentoraExpansion } from "./bloom/index.js";
 
 export type FrameDecoder = (source: HTMLVideoElement) => Promise<readonly string[]>;
 type Detector = { detect(source: HTMLVideoElement): Promise<readonly { rawValue: string }[]> };
@@ -14,7 +14,6 @@ export function nativeQrDecoder(): FrameDecoder {
   return async source => (await detector.detect(source)).map(found => found.rawValue);
 }
 export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement, pentora: PentoraExpansion, decode?: FrameDecoder, bloomCanvas?: HTMLCanvasElement): OpticalSurface {
-  if (!pentora || typeof pentora.pentora_expand !== "function") refuse("bloom-expansion-unavailable");
   let release = (): void => {};
   let bloomRequest: AbortController | null = null;
   const relationship = bloomCanvas ?? canvas.ownerDocument.createElement("canvas");
@@ -22,15 +21,23 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
   relationship.hidden = true;
   return {
     showFrame(bytes) { drawQr(canvas, bytes); },
-    async showBloom(keys) {
+    async showBloom(keys, signal) {
       bloomRequest?.abort();
       const request = new AbortController();
       bloomRequest = request;
+      const abort = (): void => request.abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) request.abort();
       relationship.hidden = true;
-      const digest = await drawRelationshipBloom(relationship, keys, pentora, request.signal);
-      if (request.signal.aborted) return null;
-      relationship.hidden = digest === null;
-      return digest;
+      try {
+        const digest = await drawRelationshipBloom(relationship, keys, pentora, request.signal);
+        if (request.signal.aborted) return null;
+        relationship.hidden = digest === null;
+        return digest;
+      } finally {
+        signal?.removeEventListener("abort", abort);
+        if (bloomRequest === request) bloomRequest = null;
+      }
     },
     async scan(consume, signal) {
       checkAbort(signal);

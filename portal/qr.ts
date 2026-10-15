@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { refuse } from "./bytes.ts";
+import { refuse } from "./bytes.js";
 
 // QR Model 2, version 40, error correction L, byte mode, mask 0.
 export function qrModules(bytes: Uint8Array): boolean[][] {

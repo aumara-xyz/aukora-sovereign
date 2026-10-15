@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AttemptStore, ExchangeMethod } from "./contracts.ts";
-import { checkAbort, hex, refuse } from "./bytes.ts";
+import type { AttemptStore, ExchangeMethod } from "./contracts.js";
+import { checkAbort, hex, refuse } from "./bytes.js";
 
 type Entry = { id: string; sequence: number; method: ExchangeMethod; outcome: "pending" | "bloom" | "refused" | "cancelled" };
 export class IndexedAttempts implements AttemptStore {

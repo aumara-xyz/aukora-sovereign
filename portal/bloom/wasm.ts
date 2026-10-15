@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Binds an already instantiated Rust module. No receipt digest or JavaScript derivation is accepted.
-import { DIGEST_BYTES, IDENTITY_BYTES, TRIT_COUNT, refuse } from "./derive.ts";
-import type { PairingExpansion, PentoraPairingExpansion } from "./derive.ts";
+import { DIGEST_BYTES, IDENTITY_BYTES, TRIT_COUNT, refuse } from "./derive.js";
+import type { PairingExpansion, PentoraPairingDigest, PentoraPairingExpansion } from "./derive.js";
 
 type WasmCall = (...args: number[]) => number;
 
@@ -16,11 +16,12 @@ function offset(value: number): number {
 }
 
 /** The host supplies exports of the Rust Pentora WASM module. Every output is copied before release. */
-export function bindPairingPentora(exports: WebAssembly.Exports): PentoraPairingExpansion {
+export function bindPairingPentora(exports: WebAssembly.Exports): PentoraPairingExpansion & PentoraPairingDigest {
   const memory = exports.memory;
   if (!(memory instanceof WebAssembly.Memory)) refuse("pairing-expansion-unavailable");
   const reserve = callable(exports.pentora_allocate_root32, 0);
   const expand = callable(exports.pentora_pairing_expand, 2);
+  const digest = callable(exports.pentora_pairing_digest, 2);
   const freeKey = callable(exports.pentora_release_root32, 1);
   const freeResult = callable(exports.pentora_release_result, 1);
 
@@ -31,49 +32,55 @@ export function bindPairingPentora(exports: WebAssembly.Exports): PentoraPairing
     return new Uint8Array(buffer, start, count);
   };
 
-  return Object.freeze({
-    pairing_expansion(firstPersonKey: Uint8Array, secondPersonKey: Uint8Array): PairingExpansion {
-      if (!(firstPersonKey instanceof Uint8Array) || firstPersonKey.length !== IDENTITY_BYTES
-        || !(secondPersonKey instanceof Uint8Array) || secondPersonKey.length !== IDENTITY_BYTES) refuse("identity-invalid");
-      const first = firstPersonKey.slice(), second = secondPersonKey.slice();
-      if (first.every((byte, at) => byte === second[at])) refuse("identities-equal");
-      let firstSlot = 0, secondSlot = 0, resultSlot = 0;
-      try {
-        firstSlot = offset(reserve());
-        range(firstSlot, IDENTITY_BYTES).set(first);
-        secondSlot = offset(reserve());
-        if (Math.abs(firstSlot - secondSlot) < IDENTITY_BYTES) refuse("pairing-expansion-invalid");
-        range(secondSlot, IDENTITY_BYTES).set(second);
-        resultSlot = offset(expand(firstSlot, secondSlot));
-        if (resultSlot % 4 !== 0) refuse("pairing-expansion-invalid");
-        const descriptor = range(resultSlot, 16);
-        const words = new DataView(descriptor.buffer, descriptor.byteOffset, descriptor.byteLength);
-        const version = words.getUint32(0, true), status = words.getUint32(4, true);
-        const payloadSlot = words.getUint32(8, true), length = words.getUint32(12, true);
-        if (version !== 1 || (status !== 0 && status !== 1)) refuse("pairing-expansion-invalid");
-        if (status === 1) {
-          if (length > 96) refuse("pairing-expansion-invalid");
-          const bytes = range(payloadSlot, length).slice();
-          let reason: string;
-          try { reason = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-          catch { refuse("pairing-expansion-invalid"); }
-          if (!/^pentora:[a-z0-9-]{1,64}$/.test(reason)) refuse("pairing-expansion-invalid");
-          throw new Error(reason);
-        }
-        if (length !== DIGEST_BYTES + TRIT_COUNT) refuse("pairing-expansion-invalid");
-        const payload = range(payloadSlot, length).slice();
-        const trits = payload.slice(DIGEST_BYTES);
-        if (trits.some(trit => trit > 2)) refuse("pairing-expansion-invalid");
-        return { digest: payload.slice(0, DIGEST_BYTES), trits };
-      } finally {
-        let released = true;
-        for (const [release, slot] of [[freeResult, resultSlot], [freeKey, secondSlot], [freeKey, firstSlot]] as const) {
-          if (slot === 0) continue;
-          try { if (release(slot) !== 0) released = false; }
-          catch { released = false; }
-        }
-        if (!released) refuse("pairing-expansion-invalid");
+  const call = (firstPersonKey: Uint8Array, secondPersonKey: Uint8Array, run: WasmCall, outputBytes: number): Uint8Array => {
+    if (!(firstPersonKey instanceof Uint8Array) || firstPersonKey.length !== IDENTITY_BYTES
+      || !(secondPersonKey instanceof Uint8Array) || secondPersonKey.length !== IDENTITY_BYTES) refuse("identity-invalid");
+    const first = firstPersonKey.slice(), second = secondPersonKey.slice();
+    if (first.every((byte, at) => byte === second[at])) refuse("identities-equal");
+    let firstSlot = 0, secondSlot = 0, resultSlot = 0;
+    try {
+      firstSlot = offset(reserve());
+      range(firstSlot, IDENTITY_BYTES).set(first);
+      secondSlot = offset(reserve());
+      if (Math.abs(firstSlot - secondSlot) < IDENTITY_BYTES) refuse("pairing-expansion-invalid");
+      range(secondSlot, IDENTITY_BYTES).set(second);
+      resultSlot = offset(run(firstSlot, secondSlot));
+      if (resultSlot % 4 !== 0) refuse("pairing-expansion-invalid");
+      const descriptor = range(resultSlot, 16);
+      const words = new DataView(descriptor.buffer, descriptor.byteOffset, descriptor.byteLength);
+      const version = words.getUint32(0, true), status = words.getUint32(4, true);
+      const payloadSlot = words.getUint32(8, true), length = words.getUint32(12, true);
+      if (version !== 1 || (status !== 0 && status !== 1)) refuse("pairing-expansion-invalid");
+      if (status === 1) {
+        if (length > 96) refuse("pairing-expansion-invalid");
+        const bytes = range(payloadSlot, length).slice();
+        let reason: string;
+        try { reason = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+        catch { refuse("pairing-expansion-invalid"); }
+        if (!/^pentora:[a-z0-9-]{1,64}$/.test(reason)) refuse("pairing-expansion-invalid");
+        throw new Error(reason);
       }
+      if (length !== outputBytes) refuse("pairing-expansion-invalid");
+      return range(payloadSlot, length).slice();
+    } finally {
+      let released = true;
+      for (const [release, slot] of [[freeResult, resultSlot], [freeKey, secondSlot], [freeKey, firstSlot]] as const) {
+        if (slot === 0) continue;
+        try { if (release(slot) !== 0) released = false; }
+        catch { released = false; }
+      }
+      if (!released) refuse("pairing-expansion-invalid");
+    }
+  };
+  return Object.freeze({
+    pairing_digest(firstPersonKey: Uint8Array, secondPersonKey: Uint8Array): Uint8Array {
+      return call(firstPersonKey, secondPersonKey, digest, DIGEST_BYTES);
+    },
+    pairing_expansion(firstPersonKey: Uint8Array, secondPersonKey: Uint8Array): PairingExpansion {
+      const payload = call(firstPersonKey, secondPersonKey, expand, DIGEST_BYTES + TRIT_COUNT);
+      const trits = payload.slice(DIGEST_BYTES);
+      if (trits.some(trit => trit > 2)) refuse("pairing-expansion-invalid");
+      return { digest: payload.slice(0, DIGEST_BYTES), trits };
     },
   });
 }

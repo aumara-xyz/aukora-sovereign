@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ExchangeMethod } from "./contracts.ts";
-import type { ChannelProbe, ChannelRequest } from "./engine.ts";
-import { checkAbort, domain, hex, refuse, unhex } from "./bytes.ts";
-import { contextDigest, type Channels } from "./wire.ts";
+import type { ExchangeMethod } from "./contracts.js";
+import type { ChannelProbe, ChannelRequest } from "./engine.js";
+import { checkAbort, domain, hex, refuse, unhex } from "./bytes.js";
+import { contextDigest, type Channels } from "./wire.js";
 
 type MotionPermission = typeof DeviceMotionEvent & { requestPermission?: () => Promise<string> };
 export class BrowserChannelProbe implements ChannelProbe {

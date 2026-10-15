@@ -22,7 +22,11 @@ function errorCode(error: unknown): string {
 }
 
 export class ApprovalCards implements ApprovalPaneService {
-  constructor(private readonly actions: SupervisorApprovalActions) {}
+  private readonly actions: SupervisorApprovalActions;
+
+  constructor(actions: SupervisorApprovalActions) {
+    this.actions = actions;
+  }
 
   mount(context: OwnerPaneContext, supervisor: SupervisorCards, passkey: PasskeyPaneService): OwnerDisposer {
     if (context.route.pane !== "approval" || !/^[0-9a-f]{32}$/.test(context.route.proposalId)) refuse("route");

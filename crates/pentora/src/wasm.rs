@@ -153,3 +153,38 @@ pub extern "C" fn pentora_pairing_expand(first32: u32, second32: u32) -> u32 {
         handle
     })
 }
+
+/// Hash two allocated person Nostr public keys and return 32 raw commitment bytes.
+/// The existing result descriptor owns either those bytes or a status-one refusal.
+/// Unknown input allocations or a full result buffer return zero.
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "C" fn pentora_pairing_digest(first32: u32, second32: u32) -> u32 {
+    BUFFERS.with(|storage| {
+        let mut storage = storage.borrow_mut();
+        if storage.results.len() >= MAX_LIVE_BUFFERS {
+            return 0;
+        }
+        let Some(first) = storage.roots.get(&first32) else {
+            return 0;
+        };
+        let Some(second) = storage.roots.get(&second32) else {
+            return 0;
+        };
+        let (status, bytes) = match crate::bloom::pairing_digest(first.as_slice(), second.as_slice()) {
+            Ok(commitment) => (0, commitment.as_bytes().to_vec().into_boxed_slice()),
+            Err(error) => (1, error.to_string().into_bytes().into_boxed_slice()),
+        };
+        let descriptor = Box::new(ExpansionResult {
+            v: ABI_VERSION,
+            status,
+            data_ptr: bytes.as_ptr() as u32,
+            data_len: bytes.len() as u32,
+        });
+        let handle = std::ptr::from_ref(descriptor.as_ref()) as u32;
+        storage
+            .results
+            .insert(handle, OwnedResult { descriptor, bytes });
+        handle
+    })
+}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { be, concat, domain, encode, hex, integer, object, optional, refuse, string, unhex, utf8, verify, type Json } from "./bytes.ts";
+import { be, concat, domain, encode, hex, integer, object, optional, refuse, string, unhex, utf8, verify, type Json } from "./bytes.js";
 
 export type Participant = { node: string; device_key: string; device_epoch: number; session_id: string; attempt_sequence: number };
 export type Layers = { sound: boolean; motion: boolean; intent_ack: boolean };

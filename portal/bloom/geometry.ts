@@ -2,8 +2,8 @@
 // The pinned Pentora geometry, imported as data and checked before anything is drawn. The table's
 // bytes are pinned by hash in checks/pins.json; a browser holds only the parsed table, so this
 // module checks its shape and refuses a table that does not fit it.
-import table from "../../crates/pentora/vectors/geometry_index_table_v1.json" with { type: "json" };
-import { CENTRE_CELL, TRIT_COUNT, refuse } from "./derive.ts";
+import table from "./geometry-data.js";
+import { CENTRE_CELL, TRIT_COUNT, refuse } from "./derive.js";
 
 export const POINT_COUNT = 111;
 const CUBE_COUNT = 5;

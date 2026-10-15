@@ -16,6 +16,10 @@ export interface PentoraPairingExpansion {
   pairing_expansion(firstPersonKey: Uint8Array, secondPersonKey: Uint8Array): PairingExpansion | Promise<PairingExpansion>;
 }
 
+export interface PentoraPairingDigest {
+  pairing_digest(firstPersonKey: Uint8Array, secondPersonKey: Uint8Array): Uint8Array | Promise<Uint8Array>;
+}
+
 export function refuse(reason: string): never {
   throw new Error(`pentora:${reason}`);
 }
@@ -27,6 +31,20 @@ export function hexOf(bytes: Uint8Array): string {
 function personKey(value: Uint8Array): Uint8Array {
   if (!(value instanceof Uint8Array) || value.length !== IDENTITY_BYTES) refuse("identity-invalid");
   return value.slice();
+}
+
+/** The sorted person-key root is computed by Rust, independently of receipt bytes. */
+export async function pairingDigest(
+  first: Uint8Array,
+  second: Uint8Array,
+  pentora: PentoraPairingDigest | undefined,
+): Promise<Uint8Array> {
+  const a = personKey(first), b = personKey(second);
+  if (a.every((byte, at) => byte === b[at])) refuse("identities-equal");
+  if (!pentora || typeof pentora.pairing_digest !== "function") refuse("pairing-expansion-unavailable");
+  const digest = await pentora.pairing_digest(a, b);
+  if (!(digest instanceof Uint8Array) || digest.length !== DIGEST_BYTES) refuse("pairing-expansion-invalid");
+  return digest.slice();
 }
 
 /** Two person-nostr x-only public keys are required; node or receipt identifiers are not inputs. */

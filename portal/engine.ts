@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AttemptStore, ContextExchange, CopresenceEngine, ExchangeMethod, PortalExchange, PortalObservation, ReceiptVerdict } from "./contracts.ts";
-import { checkAbort, digest, domain, encode, hex, integer, object, parse, refuse, sign, string, text, unhex, verify, type Json } from "./bytes.ts";
-import { IndexedAttempts, ticket } from "./attempts.ts";
-import { context, contextDigest, core, coreDigest, frameDigest, FRAME_SCHEMA, intentAckDigest, nonceCommitment, participant, RECEIPT_SCHEMA, same, transcript, validateFrame, type Channels, type Context, type Core, type Frame, type Layers, type Packet, type Participant } from "./wire.ts";
+import type { AttemptStore, ContextExchange, CopresenceEngine, ExchangeMethod, PersonNostrKeys, PersonNostrKeysForReceipt, PortalExchange, PortalObservation, ReceiptVerdict } from "./contracts.js";
+import { checkAbort, digest, domain, encode, hex, integer, object, parse, refuse, sign, string, text, unhex, verify, type Json } from "./bytes.js";
+import { IndexedAttempts, ticket } from "./attempts.js";
+import { pairingDigest, type PentoraPairingDigest } from "./bloom/derive.js";
+import { context, contextDigest, core, coreDigest, frameDigest, FRAME_SCHEMA, intentAckDigest, nonceCommitment, participant, RECEIPT_SCHEMA, same, transcript, validateFrame, type Channels, type Context, type Core, type Frame, type Layers, type Packet, type Participant } from "./wire.js";
 
 export type ChannelRequest = { readonly context: Context; readonly side: "A" | "B"; readonly nonceA: string; readonly nonceB: string };
 export interface ChannelProbe { collect(request: ChannelRequest, signal: AbortSignal): Promise<Channels> }
@@ -13,6 +14,8 @@ export type BrowserEngineOptions = {
   readonly consumeReceipt: (digest: string, signal: AbortSignal) => Promise<void>;
   readonly contextFormatPinned: () => boolean;
   readonly channels?: ChannelProbe;
+  readonly personNostrKeys?: PersonNostrKeysForReceipt;
+  readonly pentora?: PentoraPairingDigest;
   readonly legacyVerifier: (receipt: Uint8Array, approved: Uint8Array | null, signal: AbortSignal) => Promise<ReceiptVerdict>;
 };
 const cleanupSignal = (): AbortSignal => new AbortController().signal;
@@ -24,7 +27,9 @@ function code(error: unknown): `copresence:${string}` {
 
 export class BrowserCopresenceEngine implements CopresenceEngine {
   private expected: Context | null = null;
-  constructor(private readonly options: BrowserEngineOptions) {
+  private readonly options: BrowserEngineOptions;
+  constructor(options: BrowserEngineOptions) {
+    this.options = options;
     unhex(options.node, 16); integer(options.deviceEpoch);
   }
   async begin(exchange: ContextExchange, signal: AbortSignal): Promise<PortalExchange> {
@@ -117,6 +122,7 @@ class BrowserExchange implements PortalExchange {
   private input: Core | null = null;
   private receipt: Uint8Array | null = null;
   private bloom: Uint8Array | null = null;
+  private personKeys: PersonNostrKeys | null = null;
   private phase: PortalObservation["phase"] = "FACE";
   private verdict: ReceiptVerdict | null = null;
   private current: Uint8Array | null = null;
@@ -132,10 +138,24 @@ class BrowserExchange implements PortalExchange {
   private pendingEmission = false;
   private peerProgress: { index: number; time: number } | null = null;
   private outerAbort: () => void;
+  private readonly exchange: ContextExchange;
+  private readonly who: Participant;
+  private readonly key: CryptoKey;
+  private readonly purpose: string;
+  private readonly intent: string | null;
+  private readonly options: BrowserEngineOptions;
+  private readonly onContext: (context: Context) => void;
 
-  constructor(private readonly exchange: ContextExchange, private readonly who: Participant, private readonly key: CryptoKey,
-    private readonly purpose: string, private readonly intent: string | null, private readonly options: BrowserEngineOptions,
-    signal: AbortSignal, private readonly onContext: (context: Context) => void) {
+  constructor(exchange: ContextExchange, who: Participant, key: CryptoKey,
+    purpose: string, intent: string | null, options: BrowserEngineOptions,
+    signal: AbortSignal, onContext: (context: Context) => void) {
+    this.exchange = exchange;
+    this.who = who;
+    this.key = key;
+    this.purpose = purpose;
+    this.intent = intent;
+    this.options = options;
+    this.onContext = onContext;
     this.layers = { sound: exchange.method !== "optical", motion: exchange.method === "optical-audio-motion", intent_ack: intent !== null };
     this.outerAbort = () => this.stop();
     signal.addEventListener("abort", this.outerAbort, { once: true });
@@ -220,7 +240,26 @@ class BrowserExchange implements PortalExchange {
   private observation(): PortalObservation {
     return { phase: this.phase, attemptId: this.exchange.attemptId, method: this.exchange.method,
       frameBytes: this.current?.slice() ?? null, bloomDigest: this.bloom?.slice() ?? null,
+      personNostrKeys: this.personKeys ? { local: this.personKeys.local?.slice() ?? null, peer: this.personKeys.peer?.slice() ?? null } : null,
       verdict: this.verdict, receiptBytes: this.receipt?.slice() ?? null };
+  }
+  private async resolveBloom(receipt: Uint8Array): Promise<void> {
+    this.bloom = null;
+    this.personKeys = null;
+    try {
+      const keys = this.options.personNostrKeys?.(receipt.slice());
+      if (!keys || keys.local === null || keys.peer === null) return;
+      if (!(keys.local instanceof Uint8Array) || keys.local.length !== 32
+        || !(keys.peer instanceof Uint8Array) || keys.peer.length !== 32) return;
+      const local = keys.local.slice(), peer = keys.peer.slice();
+      this.personKeys = { local, peer };
+      const bloom = await pairingDigest(local, peer, this.options.pentora);
+      if (this.stopped) return;
+      this.bloom = bloom;
+      this.emit();
+    } catch {
+      // An unavailable person binding or display adapter does not invalidate a receipt.
+    }
   }
   private emit(): void {
     if (this.emissionBlocked && this.phase === "BLOOM") { this.pendingEmission = true; return; }
@@ -229,6 +268,7 @@ class BrowserExchange implements PortalExchange {
   private fail(error: unknown): void {
     if (this.stopped) return;
     this.phase = "REFUSED"; this.current = null;
+    this.bloom = null; this.personKeys = null;
     this.verdict = { verdict: "SUSPICIOUS", code: code(error) }; this.emit(); this.stop();
   }
   private async packet(fields: { [key: string]: Json }, at = now()): Promise<Uint8Array> {
@@ -249,8 +289,10 @@ class BrowserExchange implements PortalExchange {
     if (object(value).schema === RECEIPT_SCHEMA) {
       if (this.receipt && same(parse(this.receipt), value)) return;
       if (!this.bound || this.side !== "B" || !this.input) refuse("unexpected-receipt");
-      const verified = await verifyReceipt(bytes, this.bound, this.exchange.approvedText, this.controller.signal, this.options.consumeReceipt, this.input);
-      this.receipt = bytes; this.bloom = verified.hash; this.phase = "BLOOM"; this.verdict = result; this.primary = bytes; this.current = bytes; this.emit(); return;
+      await verifyReceipt(bytes, this.bound, this.exchange.approvedText, this.controller.signal, this.options.consumeReceipt, this.input);
+      this.receipt = bytes; this.phase = "BLOOM"; this.verdict = result; this.primary = bytes; this.current = bytes;
+      void this.resolveBloom(bytes);
+      this.emit(); return;
     }
     const { packet, key } = await validateFrame(value, now());
     const frame = packet.body.body;
@@ -380,7 +422,9 @@ class BrowserExchange implements PortalExchange {
     this.current = await this.packet({ type: "BLOOM", context: hex(boundHash), core: hex(hash), sig_a: sigA });
     this.primary = this.current;
     this.current = this.receipt;
-    this.bloom = hash; this.phase = "BLOOM"; this.verdict = result; this.emit();
+    this.phase = "BLOOM"; this.verdict = result;
+    void this.resolveBloom(this.receipt);
+    this.emit();
   }
 }
 
