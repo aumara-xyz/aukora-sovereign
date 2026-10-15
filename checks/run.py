@@ -235,7 +235,15 @@ youtube yt yun za zappos zara zero zip zm zone zuerich zw
 WIRE_SYMBOLS = frozenset({"documents.read", "kira.save"})
 ATTRIBUTION = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 PRIVATE_SUFFIXES = {"local", "lan", "internal", "intranet", "corp", "home", "private", "localdomain", "localhost", "test"}
-ADDRESS_DNS = re.compile(r"(?:^|[.-])\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\.(?:sslip|nip|xip)\.io$")
+ADDRESS_DNS = re.compile(r"(?:^|[.-])(\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3})\.(?:sslip|nip|xip)\.io$")
+# Placeholders used in documentation are not anyone's machine: the RFC 5737 and RFC 3849 documentation ranges, the
+# unspecified address and the conventional 1.2.3.4 example.
+DOCUMENTATION_NETS = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
+                                                         "2001:db8::/32", "0.0.0.0/32", "::/128", "1.2.3.4/32")]
+
+
+def documentation_address(address):
+    return any(address in net for net in DOCUMENTATION_NETS if net.version == address.version)
 MAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+@(?:[\w-]+\.)*[\w-]+", re.ASCII)
 GITHUB_MAIL = re.compile(r"[A-Za-z0-9+_.-]+@users\.noreply\.github\.com", re.I)
 HOST_TOKEN = re.compile(r"(?<![\w.-])(?:[^\W_](?:[^\W_]|-){0,62}\.)+"
@@ -276,7 +284,8 @@ def privacy_findings(message, file_names):
                                             text[:address_match.start()], re.I):
             continue
         try:
-            ipaddress.ip_address(token)
+            if documentation_address(ipaddress.ip_address(token)):
+                continue
         except ValueError:
             continue
         findings.add("host-address")
@@ -296,8 +305,11 @@ def privacy_findings(message, file_names):
         # (1-2-3-4.sslip.io), or any name written as a network target (ssh host, host=, scheme://).
         prefix = text[:match.start()]
         network_context = bool(re.search(r"://(?:[^\s/]*@)?$|\b(?:host|hostname|ssh)\s*[=:]?\s*$", prefix, re.I))
+        carried = ADDRESS_DNS.search(host_name)
+        carried_real = bool(carried) and not documentation_address(
+            ipaddress.ip_address(".".join(re.split(r"[-.]", carried.group(1)))))
         private_name = (host_name.rsplit(".", 1)[1] in PRIVATE_SUFFIXES or host_name.endswith(".home.arpa")
-                        or bool(ADDRESS_DNS.search(host_name)))
+                        or carried_real)
         if not private_name and not network_context:
             continue
         if not network_context and (match.group() in file_names or host_name in WIRE_SYMBOLS):
