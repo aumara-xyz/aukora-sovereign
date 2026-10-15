@@ -187,6 +187,29 @@ impl Event {
 }
 
 impl Rumor {
+    /// Construct the six-key rumor with its NIP-01 content id; no signature or
+    /// owner authorization is implied. Wire fields remain unchanged.
+    pub fn new(
+        pubkey: PublicKey,
+        created_at: u64,
+        kind: u16,
+        tags: Vec<Vec<String>>,
+        content: String,
+    ) -> Result<Self> {
+        validate_parts(created_at, &tags, &content)?;
+        let id = content_id(&pubkey, created_at, kind, &tags, &content)?;
+        let rumor = Self {
+            id,
+            pubkey,
+            created_at,
+            kind,
+            tags,
+            content,
+        };
+        rumor.encode()?;
+        Ok(rumor)
+    }
+
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         check_object(bytes)?;
         let input: RumorInput =

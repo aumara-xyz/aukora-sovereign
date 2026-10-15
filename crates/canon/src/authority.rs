@@ -754,6 +754,55 @@ pub struct FactRecord {
 /// transaction and may not be reused after rollback or commit. Aura implements this
 /// interface; cryptographic primitives come only from allowlisted crates.
 pub trait AuthorityTxn {
+    /// Read materialized state from verified, committed owner-consumed rows.
+    /// Pending transaction writes, facts and caller-supplied snapshots are excluded.
+    /// A missing value is None; unavailable storage or verification refuses.
+    /// Returned data never replaces a fresh owner proof for an authority change.
+    fn committed_authority_state(&mut self, _namespace: &str, _key: &str) -> Result<Option<Value>> {
+        Err(crate::Refusal::new(
+            "canon",
+            "committed-authority-state-unavailable",
+        ))
+    }
+
+    /// Read locked fact-append coordinates and the trusted supervisor clock.
+    /// This read provides no owner proof and permits no authority mutation.
+    /// An adapter without an observation transaction refuses before mutation.
+    fn observation_context(&mut self) -> Result<ObservationContext> {
+        Err(crate::Refusal::new(
+            "canon",
+            "observation-context-unavailable",
+        ))
+    }
+
+    /// Read state derived only from verified, committed nonauthorizing facts.
+    /// A missing value is None; unavailable storage or verification refuses.
+    /// Uncommitted appends and caller-supplied snapshots never satisfy this read.
+    /// After commit_observations this remains a read of committed state only.
+    fn committed_observation_state(
+        &mut self,
+        _namespace: &str,
+        _key: &str,
+    ) -> Result<Option<Value>> {
+        Err(crate::Refusal::new(
+            "canon",
+            "observation-state-unavailable",
+        ))
+    }
+
+    /// Commit a transaction containing only nonauthorizing fact observations.
+    /// Refuse if any authority mutation, proof consumption, passkey counter,
+    /// lifecycle transition or effect has been staged in this transaction.
+    /// Failure commits no partial observation. Success ends this write transaction;
+    /// its identity is spent and cannot authorize or append further records.
+    /// The adapter remains usable for committed_observation_state reads.
+    fn commit_observations(&mut self) -> Result<()> {
+        Err(crate::Refusal::new(
+            "canon",
+            "observation-commit-unavailable",
+        ))
+    }
+
     /// Consume an already persisted and consumed owner proof while advancing its
     /// epoch exactly once. Validate the old/new membership in the approved body,
     /// exact target and operation, next sequence and predecessor. Atomically append
@@ -921,4 +970,13 @@ pub struct AuthorityAppendContext {
     pub at: i64,
     /// Random C7 operation id loaded from the locked gate proposal.
     pub operation_id: OperationId,
+}
+
+/// Locked coordinates for nonauthorizing observations; never an owner proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObservationContext {
+    /// Current epoch and the expected next Aura sequence and predecessor.
+    pub authority: AuthorityVersion,
+    /// Trusted supervisor time in milliseconds; informational, never authority.
+    pub at: i64,
 }

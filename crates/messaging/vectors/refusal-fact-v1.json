@@ -1,0 +1,607 @@
+{
+  "schema": "aukora:messaging-refusal-fact-vectors:v1",
+  "empty_counts": {
+    "value": {
+      "schema": "aukora:messaging-refusal-counts:v1",
+      "envelope": 0,
+      "signature": 0,
+      "recipient": 0,
+      "stranger": 0,
+      "replay": 0,
+      "payload": 0,
+      "stale_contact": 0,
+      "total": 0,
+      "last_aura_sequence": 0
+    },
+    "canonical_utf8": "{\"envelope\":0,\"last_aura_sequence\":0,\"payload\":0,\"recipient\":0,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":0,\"stale_contact\":0,\"stranger\":0,\"total\":0}",
+    "sha256": "586112ab22b35c82958dd168a16609be41ec54ea823f963dbe9d784c42e34a64"
+  },
+  "append": [
+    {
+      "name": "envelope",
+      "aura_actor": "messaging",
+      "aura_kind": "boot.facts",
+      "aura_phase": "fact",
+      "aura_operation": null,
+      "aura_sequence": 101,
+      "fact": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "4e1d818eea76cf96d87baf249c986404876f049968dbce1796a042308b94f63d",
+          "envelope_id": null,
+          "transport": "bluetooth-mesh",
+          "code": "messaging:envelope",
+          "observed_at_ms": 1700000000001,
+          "count": 1,
+          "attempt": "00000000000000000000000000000001"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000001\",\"code\":\"messaging:envelope\",\"count\":1,\"envelope_id\":null,\"ingress_sha256\":\"4e1d818eea76cf96d87baf249c986404876f049968dbce1796a042308b94f63d\",\"observed_at_ms\":1700000000001,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"bluetooth-mesh\"}",
+        "sha256": "927c954723e5d9c2afa64a0e7353c41af632f4c61492d0f15b5ca4a8c5a402cf"
+      },
+      "before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 0,
+          "signature": 0,
+          "recipient": 0,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 0,
+          "last_aura_sequence": 0
+        },
+        "canonical_utf8": "{\"envelope\":0,\"last_aura_sequence\":0,\"payload\":0,\"recipient\":0,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":0,\"stale_contact\":0,\"stranger\":0,\"total\":0}",
+        "sha256": "586112ab22b35c82958dd168a16609be41ec54ea823f963dbe9d784c42e34a64"
+      },
+      "after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 0,
+          "recipient": 0,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 1,
+          "last_aura_sequence": 101
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":101,\"payload\":0,\"recipient\":0,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":0,\"stale_contact\":0,\"stranger\":0,\"total\":1}",
+        "sha256": "3dad039a5b4837834177ccf011d43d01004893d3f3b3ab7f3026ca8bf9121b1f"
+      }
+    },
+    {
+      "name": "signature",
+      "aura_actor": "messaging",
+      "aura_kind": "boot.facts",
+      "aura_phase": "fact",
+      "aura_operation": null,
+      "aura_sequence": 102,
+      "fact": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "42fd289e75fc78a80605ecae41b1df2efd6aa2330b2640bc4f77530ac88583a3",
+          "envelope_id": "6cf3a9e2f3a97906da9630a57b3d74a5b8f20bd2c2d532ff1935150537f9b275",
+          "transport": "nostr-relays",
+          "code": "messaging:signature",
+          "observed_at_ms": 1700000000002,
+          "count": 1,
+          "attempt": "00000000000000000000000000000002"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000002\",\"code\":\"messaging:signature\",\"count\":1,\"envelope_id\":\"6cf3a9e2f3a97906da9630a57b3d74a5b8f20bd2c2d532ff1935150537f9b275\",\"ingress_sha256\":\"42fd289e75fc78a80605ecae41b1df2efd6aa2330b2640bc4f77530ac88583a3\",\"observed_at_ms\":1700000000002,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "cd900faacf0f5617353bc99fab50489fd51fc2815f092178aa0473a157ee9979"
+      },
+      "before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 0,
+          "recipient": 0,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 1,
+          "last_aura_sequence": 101
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":101,\"payload\":0,\"recipient\":0,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":0,\"stale_contact\":0,\"stranger\":0,\"total\":1}",
+        "sha256": "3dad039a5b4837834177ccf011d43d01004893d3f3b3ab7f3026ca8bf9121b1f"
+      },
+      "after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 0,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 2,
+          "last_aura_sequence": 102
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":102,\"payload\":0,\"recipient\":0,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":0,\"total\":2}",
+        "sha256": "7bc902ba5f0c4bdfa327dc29ab19ffdf9620d4cfdff932d4b73939a9d8016258"
+      }
+    },
+    {
+      "name": "recipient",
+      "aura_actor": "messaging",
+      "aura_kind": "boot.facts",
+      "aura_phase": "fact",
+      "aura_operation": null,
+      "aura_sequence": 103,
+      "fact": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "27e211cfa2e02b439dff41aacaad83517cf16334739b0d68e884822b640b2195",
+          "envelope_id": "84859db9e90bc0d6b80ce0bbe86c63fd38c16e79800b850ae529af338a9f4941",
+          "transport": "nostr-relays",
+          "code": "messaging:recipient",
+          "observed_at_ms": 1700000000003,
+          "count": 1,
+          "attempt": "00000000000000000000000000000003"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000003\",\"code\":\"messaging:recipient\",\"count\":1,\"envelope_id\":\"84859db9e90bc0d6b80ce0bbe86c63fd38c16e79800b850ae529af338a9f4941\",\"ingress_sha256\":\"27e211cfa2e02b439dff41aacaad83517cf16334739b0d68e884822b640b2195\",\"observed_at_ms\":1700000000003,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "dcf9086c9a4b52a960715115433432dc2056168ae6aea12832ca46ebffa8c5fb"
+      },
+      "before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 0,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 2,
+          "last_aura_sequence": 102
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":102,\"payload\":0,\"recipient\":0,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":0,\"total\":2}",
+        "sha256": "7bc902ba5f0c4bdfa327dc29ab19ffdf9620d4cfdff932d4b73939a9d8016258"
+      },
+      "after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 3,
+          "last_aura_sequence": 103
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":103,\"payload\":0,\"recipient\":1,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":0,\"total\":3}",
+        "sha256": "8845150187575fddc603b7cb9b3acb144bd798bfd8bc180d478c1a8c68203945"
+      }
+    },
+    {
+      "name": "stranger",
+      "aura_actor": "messaging",
+      "aura_kind": "boot.facts",
+      "aura_phase": "fact",
+      "aura_operation": null,
+      "aura_sequence": 104,
+      "fact": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "2f5ae8fef9428218f95bcbe18eb2252ecf351fb471877577de27b1c45cf2e3ce",
+          "envelope_id": "71a8c1354acdec935dcfdeb441d61d18625e7edece8eed8c15faf092e6642c8d",
+          "transport": "nostr-relays",
+          "code": "messaging:stranger",
+          "observed_at_ms": 1700000000004,
+          "count": 1,
+          "attempt": "00000000000000000000000000000004"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000004\",\"code\":\"messaging:stranger\",\"count\":1,\"envelope_id\":\"71a8c1354acdec935dcfdeb441d61d18625e7edece8eed8c15faf092e6642c8d\",\"ingress_sha256\":\"2f5ae8fef9428218f95bcbe18eb2252ecf351fb471877577de27b1c45cf2e3ce\",\"observed_at_ms\":1700000000004,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "c064ae7646a911d955364a4663d8be9f8287d33eb89dcdd4b98ddacf24173c2b"
+      },
+      "before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 3,
+          "last_aura_sequence": 103
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":103,\"payload\":0,\"recipient\":1,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":0,\"total\":3}",
+        "sha256": "8845150187575fddc603b7cb9b3acb144bd798bfd8bc180d478c1a8c68203945"
+      },
+      "after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 4,
+          "last_aura_sequence": 104
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":104,\"payload\":0,\"recipient\":1,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":4}",
+        "sha256": "921b4b720f56598ed67429c5fe1eb50843c81d812e350a050b95ed87c74c625e"
+      }
+    },
+    {
+      "name": "replay",
+      "aura_actor": "messaging",
+      "aura_kind": "boot.facts",
+      "aura_phase": "fact",
+      "aura_operation": null,
+      "aura_sequence": 105,
+      "fact": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb",
+          "envelope_id": "b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7",
+          "transport": "nostr-relays",
+          "code": "messaging:replay",
+          "observed_at_ms": 1700000000005,
+          "count": 1,
+          "attempt": "00000000000000000000000000000005"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000005\",\"code\":\"messaging:replay\",\"count\":1,\"envelope_id\":\"b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7\",\"ingress_sha256\":\"a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb\",\"observed_at_ms\":1700000000005,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "9ef975437b9d1ec4905b454c8d6165336c27028ec6949a76e77cc7a09054cc4e"
+      },
+      "before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 4,
+          "last_aura_sequence": 104
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":104,\"payload\":0,\"recipient\":1,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":4}",
+        "sha256": "921b4b720f56598ed67429c5fe1eb50843c81d812e350a050b95ed87c74c625e"
+      },
+      "after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 5,
+          "last_aura_sequence": 105
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":105,\"payload\":0,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":5}",
+        "sha256": "5a25e0a1a34f0d647e13be561dab32f0915cfbaa542bb7144967ba8131dcdf64"
+      }
+    },
+    {
+      "name": "payload",
+      "aura_actor": "messaging",
+      "aura_kind": "boot.facts",
+      "aura_phase": "fact",
+      "aura_operation": null,
+      "aura_sequence": 106,
+      "fact": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "22c500b5ae80e7761a043ff8d53c33ae0381e203363e1b2231906a0564ea6d6f",
+          "envelope_id": "45475db4579e78bb60194643526b15a909974f9dcd522da684c554ee47d93995",
+          "transport": "nostr-relays",
+          "code": "messaging:payload",
+          "observed_at_ms": 1700000000006,
+          "count": 1,
+          "attempt": "00000000000000000000000000000006"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000006\",\"code\":\"messaging:payload\",\"count\":1,\"envelope_id\":\"45475db4579e78bb60194643526b15a909974f9dcd522da684c554ee47d93995\",\"ingress_sha256\":\"22c500b5ae80e7761a043ff8d53c33ae0381e203363e1b2231906a0564ea6d6f\",\"observed_at_ms\":1700000000006,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "b24f1f7d285bb76f0f3424a0f56761d712d575f8d49293f2f7c090f2c5c012b4"
+      },
+      "before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 5,
+          "last_aura_sequence": 105
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":105,\"payload\":0,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":5}",
+        "sha256": "5a25e0a1a34f0d647e13be561dab32f0915cfbaa542bb7144967ba8131dcdf64"
+      },
+      "after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 1,
+          "stale_contact": 0,
+          "total": 6,
+          "last_aura_sequence": 106
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":106,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":6}",
+        "sha256": "2a50a23b6262f61ae464cabae2fa924d525ddc1333072aa29e533def1b2c13f0"
+      }
+    },
+    {
+      "name": "stale-contact",
+      "aura_actor": "messaging",
+      "aura_kind": "boot.facts",
+      "aura_phase": "fact",
+      "aura_operation": null,
+      "aura_sequence": 107,
+      "fact": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "ef21c949b91aa607ddd35820a2de8b0477f6edeec8a8ee75ef67eee0dde9bdae",
+          "envelope_id": "98587fc2bcbc2a3e2e0302b9bad18c227e0d2acc21fa339a65735fcdf0b05d95",
+          "transport": "nostr-relays",
+          "code": "messaging:stale-contact",
+          "observed_at_ms": 1700000000007,
+          "count": 1,
+          "attempt": "00000000000000000000000000000007"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000007\",\"code\":\"messaging:stale-contact\",\"count\":1,\"envelope_id\":\"98587fc2bcbc2a3e2e0302b9bad18c227e0d2acc21fa339a65735fcdf0b05d95\",\"ingress_sha256\":\"ef21c949b91aa607ddd35820a2de8b0477f6edeec8a8ee75ef67eee0dde9bdae\",\"observed_at_ms\":1700000000007,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "28f082b63b0f792832d75c2ba459b6aa9272725b5e43194df1d8010e4c9740c1"
+      },
+      "before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 1,
+          "stale_contact": 0,
+          "total": 6,
+          "last_aura_sequence": 106
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":106,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":6}",
+        "sha256": "2a50a23b6262f61ae464cabae2fa924d525ddc1333072aa29e533def1b2c13f0"
+      },
+      "after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 1,
+          "stale_contact": 1,
+          "total": 7,
+          "last_aura_sequence": 107
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":107,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":1,\"stranger\":1,\"total\":7}",
+        "sha256": "a520d0b908bfe5901ad17dda4e115af846df5473af06633e93adb8078c0d3d58"
+      }
+    }
+  ],
+  "aggregate_counts": {
+    "value": {
+      "schema": "aukora:messaging-refusal-counts:v1",
+      "envelope": 1,
+      "signature": 1,
+      "recipient": 1,
+      "stranger": 1,
+      "replay": 1,
+      "payload": 1,
+      "stale_contact": 1,
+      "total": 7,
+      "last_aura_sequence": 107
+    },
+    "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":107,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":1,\"stranger\":1,\"total\":7}",
+    "sha256": "a520d0b908bfe5901ad17dda4e115af846df5473af06633e93adb8078c0d3d58"
+  },
+  "refuse": [
+    {
+      "name": "total-disagrees",
+      "counts": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 1,
+          "stale_contact": 1,
+          "total": 8,
+          "last_aura_sequence": 107
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":107,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":1,\"stranger\":1,\"total\":8}",
+        "sha256": "5b1f2bdce74d9fc5215a85f78ecae0eac976d44d398313efb78e1fcc28542713"
+      },
+      "code": "messaging:refusal-count-mismatch"
+    },
+    {
+      "name": "nonzero-total-without-sequence",
+      "counts": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 1,
+          "stale_contact": 1,
+          "total": 7,
+          "last_aura_sequence": 0
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":0,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":1,\"stranger\":1,\"total\":7}",
+        "sha256": "26d3c8ea60d1ce352dfc65435b1acbe610ba02a611049d84062129dff3a85e81"
+      },
+      "code": "messaging:refusal-count-mismatch"
+    },
+    {
+      "name": "empty-with-sequence",
+      "counts": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 0,
+          "signature": 0,
+          "recipient": 0,
+          "stranger": 0,
+          "replay": 0,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 0,
+          "last_aura_sequence": 1
+        },
+        "canonical_utf8": "{\"envelope\":0,\"last_aura_sequence\":1,\"payload\":0,\"recipient\":0,\"replay\":0,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":0,\"stale_contact\":0,\"stranger\":0,\"total\":0}",
+        "sha256": "55221e150e2ecc77903bfaff130df8779ccc470d89f9ae75437283f4e2255bac"
+      },
+      "code": "messaging:refusal-count-mismatch"
+    },
+    {
+      "name": "unknown-counter-schema",
+      "counts": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v9",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 1,
+          "stale_contact": 1,
+          "total": 7,
+          "last_aura_sequence": 107
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":107,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v9\",\"signature\":1,\"stale_contact\":1,\"stranger\":1,\"total\":7}",
+        "sha256": "9cebb42f86f8473f89e39120972ac0e184061d52c1fa121e6be6a31dfe750ee2"
+      },
+      "code": "messaging:refusal-count-schema"
+    },
+    {
+      "name": "unbounded-new-bucket",
+      "counts": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 1,
+          "stale_contact": 1,
+          "total": 7,
+          "last_aura_sequence": 107,
+          "sender_42": 1
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":107,\"payload\":1,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"sender_42\":1,\"signature\":1,\"stale_contact\":1,\"stranger\":1,\"total\":7}",
+        "sha256": "60b16ae2e4a37877ae84066280664bc5ea67ecc87cb7540bc56f95b4bccd89c3"
+      },
+      "code": "messaging:refusal-count-schema"
+    }
+  ],
+  "recovery": [
+    {
+      "name": "same-attempt-after-aura-commit",
+      "namespace": "messaging.refusals.attempt",
+      "key": "00000000000000000000000000000005",
+      "committed_attempt": {
+        "value": {
+          "body": {
+            "schema": "aukora:messaging-refusal:v1",
+            "ingress_sha256": "a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb",
+            "envelope_id": "b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7",
+            "transport": "nostr-relays",
+            "code": "messaging:replay",
+            "observed_at_ms": 1700000000005,
+            "count": 1,
+            "attempt": "00000000000000000000000000000005"
+          },
+          "sequence": 105
+        },
+        "canonical_utf8": "{\"body\":{\"attempt\":\"00000000000000000000000000000005\",\"code\":\"messaging:replay\",\"count\":1,\"envelope_id\":\"b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7\",\"ingress_sha256\":\"a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb\",\"observed_at_ms\":1700000000005,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"},\"sequence\":105}",
+        "sha256": "c2e0f6939005fab7e7d815e0988f19426eb18e7bcde3c6b4d8228c837a35c18e"
+      },
+      "retained_pending_observation": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb",
+          "envelope_id": "b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7",
+          "transport": "nostr-relays",
+          "code": "messaging:replay",
+          "observed_at_ms": 1700000000005,
+          "count": 1,
+          "attempt": "00000000000000000000000000000005"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000005\",\"code\":\"messaging:replay\",\"count\":1,\"envelope_id\":\"b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7\",\"ingress_sha256\":\"a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb\",\"observed_at_ms\":1700000000005,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "9ef975437b9d1ec4905b454c8d6165336c27028ec6949a76e77cc7a09054cc4e"
+      },
+      "counts_before": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 5,
+          "last_aura_sequence": 105
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":105,\"payload\":0,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":5}",
+        "sha256": "5a25e0a1a34f0d647e13be561dab32f0915cfbaa542bb7144967ba8131dcdf64"
+      },
+      "counts_after": {
+        "value": {
+          "schema": "aukora:messaging-refusal-counts:v1",
+          "envelope": 1,
+          "signature": 1,
+          "recipient": 1,
+          "stranger": 1,
+          "replay": 1,
+          "payload": 0,
+          "stale_contact": 0,
+          "total": 5,
+          "last_aura_sequence": 105
+        },
+        "canonical_utf8": "{\"envelope\":1,\"last_aura_sequence\":105,\"payload\":0,\"recipient\":1,\"replay\":1,\"schema\":\"aukora:messaging-refusal-counts:v1\",\"signature\":1,\"stale_contact\":0,\"stranger\":1,\"total\":5}",
+        "sha256": "5a25e0a1a34f0d647e13be561dab32f0915cfbaa542bb7144967ba8131dcdf64"
+      },
+      "additional_fact_rows": 0
+    },
+    {
+      "name": "pending-attempt-blocks-admission",
+      "retained_pending_observation": {
+        "value": {
+          "schema": "aukora:messaging-refusal:v1",
+          "ingress_sha256": "a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb",
+          "envelope_id": "b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7",
+          "transport": "nostr-relays",
+          "code": "messaging:replay",
+          "observed_at_ms": 1700000000005,
+          "count": 1,
+          "attempt": "00000000000000000000000000000005"
+        },
+        "canonical_utf8": "{\"attempt\":\"00000000000000000000000000000005\",\"code\":\"messaging:replay\",\"count\":1,\"envelope_id\":\"b46da70987c6757616bcbc2ad3a1ccce86a91d1f992b18e42c84dcc11ae2baf7\",\"ingress_sha256\":\"a5162dd86a440492658ba19265b6ffc81b2153ce012ef76c4cbbe0782f7aefcb\",\"observed_at_ms\":1700000000005,\"schema\":\"aukora:messaging-refusal:v1\",\"transport\":\"nostr-relays\"}",
+        "sha256": "9ef975437b9d1ec4905b454c8d6165336c27028ec6949a76e77cc7a09054cc4e"
+      },
+      "code": "messaging:refusal-recovery-required"
+    }
+  ]
+}

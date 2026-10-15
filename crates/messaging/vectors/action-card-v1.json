@@ -1,0 +1,278 @@
+{
+  "schema": "aukora:messaging-action-card-vectors:v1",
+  "accept": [
+    {
+      "name": "add-unpaired",
+      "action": {
+        "schema": "aukora:messaging-action:v1",
+        "op": "contact.add",
+        "key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "label": "Mira",
+        "pairing": null
+      },
+      "action_utf8": "{\"key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"label\":\"Mira\",\"op\":\"contact.add\",\"pairing\":null,\"schema\":\"aukora:messaging-action:v1\"}",
+      "action_sha256": "081a7c11b3d0ab7e2dc7b6c3587cfdbec706fd68600172cacbb3fd968d68445b",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Add an approved contact",
+        "facts": [
+          [
+            "key",
+            "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          ],
+          [
+            "label",
+            "Mira"
+          ],
+          [
+            "op",
+            "contact.add"
+          ],
+          [
+            "pairing",
+            null
+          ],
+          [
+            "schema",
+            "aukora:messaging-action:v1"
+          ]
+        ],
+        "from_to": {
+          "contact": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        },
+        "model_note": ""
+      },
+      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"label\",\"Mira\"],[\"op\",\"contact.add\"],[\"pairing\",null],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Add an approved contact\",\"v\":1}",
+      "display_sha256": "28ccadd48a4fa9d69ad77e0fe706d1c17c1096b9620abc86e28e2aa41d6458ca"
+    },
+    {
+      "name": "add-paired",
+      "action": {
+        "schema": "aukora:messaging-action:v1",
+        "op": "contact.add",
+        "key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "label": "Mira 雪",
+        "pairing": {
+          "receipt_digest": "0101010101010101010101010101010101010101010101010101010101010101",
+          "local_key": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+          "remote_key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+          "method": "screen-to-screen",
+          "verified_at_ms": 1700000000000
+        }
+      },
+      "action_utf8": "{\"key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"label\":\"Mira 雪\",\"op\":\"contact.add\",\"pairing\":{\"local_key\":\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\",\"method\":\"screen-to-screen\",\"receipt_digest\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"remote_key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"verified_at_ms\":1700000000000},\"schema\":\"aukora:messaging-action:v1\"}",
+      "action_sha256": "4fb5c33a0ddf582bd8014ec95c9d42c8aa6602c9debeb4b278529b413ac2af36",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Add an approved contact",
+        "facts": [
+          [
+            "key",
+            "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          ],
+          [
+            "label",
+            "Mira 雪"
+          ],
+          [
+            "op",
+            "contact.add"
+          ],
+          [
+            "pairing",
+            {
+              "receipt_digest": "0101010101010101010101010101010101010101010101010101010101010101",
+              "local_key": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+              "remote_key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+              "method": "screen-to-screen",
+              "verified_at_ms": 1700000000000
+            }
+          ],
+          [
+            "schema",
+            "aukora:messaging-action:v1"
+          ]
+        ],
+        "from_to": {
+          "contact": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        },
+        "model_note": ""
+      },
+      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"label\",\"Mira 雪\"],[\"op\",\"contact.add\"],[\"pairing\",{\"local_key\":\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\",\"method\":\"screen-to-screen\",\"receipt_digest\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"remote_key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"verified_at_ms\":1700000000000}],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Add an approved contact\",\"v\":1}",
+      "display_sha256": "a59c8542d2cc216bf54e5a13437e4b375f61696ffa81e2eee337428fc0205cee"
+    },
+    {
+      "name": "remove",
+      "action": {
+        "schema": "aukora:messaging-action:v1",
+        "op": "contact.remove",
+        "key": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+      },
+      "action_utf8": "{\"key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"op\":\"contact.remove\",\"schema\":\"aukora:messaging-action:v1\"}",
+      "action_sha256": "0c4089b6346902bcfc59e565b125faeb19ec183e4a806bb38b83f017eec98acb",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Remove an approved contact",
+        "facts": [
+          [
+            "key",
+            "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          ],
+          [
+            "op",
+            "contact.remove"
+          ],
+          [
+            "schema",
+            "aukora:messaging-action:v1"
+          ]
+        ],
+        "from_to": {
+          "contact": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        },
+        "model_note": ""
+      },
+      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"op\",\"contact.remove\"],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Remove an approved contact\",\"v\":1}",
+      "display_sha256": "4e9ed1035dfffc4793a50818403ee9497e26b8ccefd677a6344581bbcfbb220f"
+    },
+    {
+      "name": "send-escaped-data",
+      "action": {
+        "schema": "aukora:messaging-action:v1",
+        "op": "send",
+        "recipient": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "text": "Hello \"Mira\"\\\n雪  \u0000",
+        "disclosures": []
+      },
+      "action_utf8": "{\"disclosures\":[],\"op\":\"send\",\"recipient\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"schema\":\"aukora:messaging-action:v1\",\"text\":\"Hello \\\"Mira\\\"\\\\\\n雪  \\u0000\"}",
+      "action_sha256": "e3d8bbf6ddf660f1856311ef27c742ee96e773bb0d8353c362d92c3283c2dcc2",
+      "card": {
+        "v": 1,
+        "risk": "routine",
+        "says": "Send a message to an approved contact",
+        "facts": [
+          [
+            "disclosures",
+            []
+          ],
+          [
+            "op",
+            "send"
+          ],
+          [
+            "recipient",
+            "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          ],
+          [
+            "schema",
+            "aukora:messaging-action:v1"
+          ],
+          [
+            "text",
+            "Hello \"Mira\"\\\n雪  \u0000"
+          ]
+        ],
+        "from_to": {
+          "recipient": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        },
+        "model_note": ""
+      },
+      "card_utf8": "{\"facts\":[[\"disclosures\",[]],[\"op\",\"send\"],[\"recipient\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"schema\",\"aukora:messaging-action:v1\"],[\"text\",\"Hello \\\"Mira\\\"\\\\\\n雪  \\u0000\"]],\"from_to\":{\"recipient\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"routine\",\"says\":\"Send a message to an approved contact\",\"v\":1}",
+      "display_sha256": "525450049cee9e4de8155a4460ca8d4781ba4789949ac9ca28bd772f6aa52ab0"
+    },
+    {
+      "name": "send-disclosure",
+      "action": {
+        "schema": "aukora:messaging-action:v1",
+        "op": "send",
+        "recipient": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "text": "The approved memory excerpt.",
+        "disclosures": [
+          {
+            "note": "note-1",
+            "permission_receipt": "0202020202020202020202020202020202020202020202020202020202020202",
+            "permission_epoch": 7,
+            "disclosed_bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+          }
+        ]
+      },
+      "action_utf8": "{\"disclosures\":[{\"disclosed_bytes\":\"0303030303030303030303030303030303030303030303030303030303030303\",\"note\":\"note-1\",\"permission_epoch\":7,\"permission_receipt\":\"0202020202020202020202020202020202020202020202020202020202020202\"}],\"op\":\"send\",\"recipient\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"schema\":\"aukora:messaging-action:v1\",\"text\":\"The approved memory excerpt.\"}",
+      "action_sha256": "aafa00ffb9f015e32e4bfdba0469cc97a2a450d3770e9257565c72e5c9af9db6",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Send a message to an approved contact",
+        "facts": [
+          [
+            "disclosures",
+            [
+              {
+                "note": "note-1",
+                "permission_receipt": "0202020202020202020202020202020202020202020202020202020202020202",
+                "permission_epoch": 7,
+                "disclosed_bytes": "0303030303030303030303030303030303030303030303030303030303030303"
+              }
+            ]
+          ],
+          [
+            "op",
+            "send"
+          ],
+          [
+            "recipient",
+            "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+          ],
+          [
+            "schema",
+            "aukora:messaging-action:v1"
+          ],
+          [
+            "text",
+            "The approved memory excerpt."
+          ]
+        ],
+        "from_to": {
+          "recipient": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        },
+        "model_note": ""
+      },
+      "card_utf8": "{\"facts\":[[\"disclosures\",[{\"disclosed_bytes\":\"0303030303030303030303030303030303030303030303030303030303030303\",\"note\":\"note-1\",\"permission_epoch\":7,\"permission_receipt\":\"0202020202020202020202020202020202020202020202020202020202020202\"}]],[\"op\",\"send\"],[\"recipient\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"schema\",\"aukora:messaging-action:v1\"],[\"text\",\"The approved memory excerpt.\"]],\"from_to\":{\"recipient\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Send a message to an approved contact\",\"v\":1}",
+      "display_sha256": "c2cdc49db961ede6cc149ab090dc2584070537527a12a7237f5f3ffeb000bf84"
+    }
+  ],
+  "refuse": [
+    {
+      "name": "unknown-operation",
+      "action_utf8": "{\"op\":\"execute\",\"schema\":\"aukora:messaging-action:v1\"}",
+      "code": "messaging:action-invalid"
+    },
+    {
+      "name": "extra-authority-key",
+      "action_utf8": "{\"key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"op\":\"contact.remove\",\"owner\":true,\"schema\":\"aukora:messaging-action:v1\"}",
+      "code": "messaging:action-invalid"
+    },
+    {
+      "name": "noncanonical-whitespace",
+      "action_utf8": " {\"key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"op\":\"contact.remove\",\"schema\":\"aukora:messaging-action:v1\"}",
+      "code": "messaging:action-not-canonical"
+    },
+    {
+      "name": "missing-pairing-null",
+      "action_utf8": "{\"key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"label\":\"Mira\",\"op\":\"contact.add\",\"schema\":\"aukora:messaging-action:v1\"}",
+      "code": "messaging:action-not-canonical"
+    },
+    {
+      "name": "empty-message",
+      "action_utf8": "{\"disclosures\":[],\"op\":\"send\",\"recipient\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"schema\":\"aukora:messaging-action:v1\",\"text\":\"\"}",
+      "code": "messaging:message-size"
+    },
+    {
+      "name": "duplicate-decoded-label",
+      "action_utf8": "{\"key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"label\":\"Mira\",\"la\\u0062el\":\"Mira\",\"op\":\"contact.add\",\"pairing\":null,\"schema\":\"aukora:messaging-action:v1\"}",
+      "code": "messaging:action-invalid"
+    }
+  ]
+}
