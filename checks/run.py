@@ -55,14 +55,12 @@ if sorted(rows) != list(range(1, len(rows) + 1)):
 # 3. No clutter: no logs, no stray text files, no mutation or evidence output.
 allowed_txt = tuple(scaffold["allowed_txt_prefixes"])
 for p in files:
-    if p in pins:
-        continue  # pinned data is vetted by the conductor and fixed by hash
     low = p.lower()
     if low.endswith(".log"):
         fail("clutter", p)
     elif low.endswith(".txt") and not low.startswith(allowed_txt):
         fail("clutter", p)
-    elif re.search(r"(^|[-_])(mutations?|mutate)([-_.]|$)", pathlib.Path(low).name):
+    elif re.search(r"(^|[-_])(mutations?|mutate)([-_.]|$)", pathlib.Path(low).name) and p not in pins:
         fail("clutter", p)
     elif re.search(r"(^|[-_])results?\.(txt|json|log|md)$", pathlib.Path(low).name) or "/evidence/" in f"/{low}":
         fail("clutter", p)
