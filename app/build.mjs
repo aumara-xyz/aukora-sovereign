@@ -2,13 +2,15 @@
 // The app build: erasable TypeScript turned into ES modules, the design data checked against its pins, the face
 // catalog checked against the face manifests, the two WebAssembly modules built from crates/pentora and crates/canon,
 // and a release manifest listing every byte. `node app/build.mjs --pin-design` rewrites design-lock.json instead.
+// `--pin-captures 3673b98` indexes a supplied complete capture directory and updates only its two pins.
 import { execFileSync } from 'node:child_process';
 import { stripTypeScriptTypes } from 'node:module';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { crc32 } from 'node:zlib';
 
 const app = dirname(fileURLToPath(import.meta.url));
 const repository = dirname(app);
@@ -182,7 +184,7 @@ async function pinDesign() {
   process.stdout.write(`app:design-pinned ${assets.length} files\n`);
 }
 
-async function verifyCaptures(captures, manifests) {
+function captureRequirements(captures, manifests) {
   const states = captures?.requiredStates;
   const faces = captures?.requiredFaces;
   const weights = captures?.requiredLaneWeights;
@@ -198,9 +200,88 @@ async function verifyCaptures(captures, manifests) {
     || new Set(weights.map(value => value.join('-'))).size !== 10) {
     throw new Error('app:design-captures');
   }
-  if (captures.status !== 'complete') {
-    throw new Error(`app:design-captures-incomplete build ${captures.referenceBuild}: ${captures.status}`);
+  return [...faces.flatMap(subject => states.map(state => ({ subject, state }))),
+    ...weights.map(weights => ({ subject: 'shell', state: 'ready', weights }))];
+}
+
+const captureKey = file => `${file.subject}/${file.state}/${file.weights ? file.weights.join('-') : ''}`;
+const captureName = file => `${file.subject}-${file.state}${file.weights ? `-${file.weights.join('-')}` : ''}`;
+
+// Check container boundaries and image headers. These checks do not establish which application was captured.
+function verifyCaptureImage(bytes, path) {
+  const refuse = () => { throw new Error(`app:design-captures image ${path}`); };
+  if (path.endsWith('.png')) {
+    if (bytes.length < 57 || !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
+      || bytes.readUInt32BE(8) !== 13 || bytes.toString('latin1', 12, 16) !== 'IHDR') refuse();
+    const width = bytes.readUInt32BE(16), height = bytes.readUInt32BE(20);
+    const depths = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+    if (!width || !height || width > 0x7fffffff || height > 0x7fffffff
+      || !depths[bytes[25]]?.includes(bytes[24]) || bytes[26] !== 0 || bytes[27] !== 0 || bytes[28] > 1) refuse();
+    let imageBytes = 0;
+    for (let offset = 8; offset < bytes.length;) {
+      if (offset + 12 > bytes.length) refuse();
+      const length = bytes.readUInt32BE(offset), end = offset + 12 + length;
+      if (length > 0x7fffffff || end > bytes.length) refuse();
+      const kind = bytes.toString('latin1', offset + 4, offset + 8);
+      if (!/^[A-Za-z]{4}$/.test(kind) || (kind === 'IHDR' && offset !== 8)
+        || crc32(bytes.subarray(offset + 4, end - 4)) !== bytes.readUInt32BE(end - 4)) refuse();
+      if (kind === 'IDAT') imageBytes += length;
+      if (kind === 'IEND') {
+        if (length !== 0 || end !== bytes.length || imageBytes === 0) refuse();
+        return;
+      }
+      offset = end;
+    }
+    refuse();
   }
+  if (!path.endsWith('.webp') || bytes.length < 26 || bytes.toString('latin1', 0, 4) !== 'RIFF'
+    || bytes.toString('latin1', 8, 12) !== 'WEBP' || bytes.readUInt32LE(4) + 8 !== bytes.length) refuse();
+  let image = false;
+  let canvas = null;
+  for (let offset = 12; offset < bytes.length;) {
+    if (offset + 8 > bytes.length) refuse();
+    const length = bytes.readUInt32LE(offset + 4), data = offset + 8, end = data + length;
+    const next = end + (length % 2);
+    if (next > bytes.length || (length % 2 && bytes[end] !== 0)) refuse();
+    const kind = bytes.toString('latin1', offset, offset + 4);
+    if (kind === 'VP8X') {
+      if (offset !== 12 || length !== 10 || (bytes[data] & 0xc3) !== 0
+        || bytes.readUIntBE(data + 1, 3) !== 0) refuse();
+      canvas = [bytes.readUIntLE(data + 4, 3) + 1, bytes.readUIntLE(data + 7, 3) + 1];
+    } else if (kind === 'ANIM' || kind === 'ANMF') refuse();
+    else if (kind === 'VP8 ' || kind === 'VP8L') {
+      if (image) refuse();
+      let dimensions;
+      if (kind === 'VP8 ') {
+        if (length <= 10 || (bytes[data] & 1) !== 0 || bytes.toString('hex', data + 3, data + 6) !== '9d012a') refuse();
+        dimensions = [bytes.readUInt16LE(data + 6) & 0x3fff, bytes.readUInt16LE(data + 8) & 0x3fff];
+      } else {
+        if (length <= 5 || bytes[data] !== 0x2f || (bytes[data + 4] & 0xe0) !== 0) refuse();
+        const bits = bytes.readUInt32LE(data + 1);
+        dimensions = [(bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1];
+      }
+      if (dimensions.some(value => value === 0) || (canvas && !isDeepStrictEqual(canvas, dimensions))) refuse();
+      image = true;
+    }
+    offset = next;
+  }
+  if (!image) refuse();
+}
+
+async function captureBytes(path) {
+  const file = join(app, 'design', path);
+  const info = await present(file);
+  if (!info || !info.isFile() || info.isSymbolicLink()) throw new Error(`app:design-captures file ${path}`);
+  if (info.size === 0 || info.size > 64 * 1024 * 1024) throw new Error(`app:design-captures size ${path}`);
+  const bytes = await readFile(file);
+  if (bytes.length !== info.size) throw new Error(`app:design-captures changed ${path}`);
+  verifyCaptureImage(bytes, path);
+  return bytes;
+}
+
+async function verifyCaptures(captures, manifests) {
+  const required = captureRequirements(captures, manifests);
+  const { requiredFaces: faces, requiredStates: states, requiredLaneWeights: weights } = captures;
   const folder = join(app, 'design', 'captures');
   const directory = await present(folder);
   if (directory && (!directory.isDirectory() || directory.isSymbolicLink())) throw new Error('app:design-captures directory');
@@ -213,25 +294,24 @@ async function verifyCaptures(captures, manifests) {
     if (!subject || !states.includes(file.state) || (subject === 'shell') !== (file.weights !== undefined)
       || (subject === 'shell' && !shellWeights) || !/^captures\/[a-z0-9][a-z0-9-]*\.(png|webp)$/.test(file.path)
       || !/^[0-9a-f]{64}$/.test(file.sha256) || listed.has(file.path)) throw new Error(`app:design-captures ${file.path}`);
-    const key = `${subject}/${file.state}/${file.weights ? file.weights.join('-') : ''}`;
+    const key = captureKey(file);
     if (covered.has(key)) throw new Error(`app:design-captures duplicate ${key}`);
     listed.add(file.path);
     covered.add(key);
-    const path = join(app, 'design', file.path);
-    const info = await present(path);
-    if (!info || !info.isFile() || info.isSymbolicLink()) throw new Error(`app:design-captures file ${file.path}`);
-    const bytes = await readFile(path);
-    if (!bytes.length || sha256(bytes) !== file.sha256) throw new Error(`app:design-captures digest ${file.path}`);
+    const bytes = await captureBytes(file.path);
+    if (sha256(bytes) !== file.sha256) throw new Error(`app:design-captures digest ${file.path}`);
   }
   if (directory) {
     for (const entry of await readdir(folder)) if (!listed.has(`captures/${entry}`)) throw new Error(`app:design-captures unpinned ${entry}`);
   }
-  const missing = [...faces.flatMap(face => states.map(state => `${face}/${state}/`)),
-    ...weights.map(value => `shell/ready/${value.join('-')}`)].filter(key => !covered.has(key));
-  if (missing.length) throw new Error(`app:design-captures incomplete ${missing[0]}`);
+  const missing = required.map(captureKey).filter(key => !covered.has(key));
+  if (captures.status !== 'complete' || missing.length) {
+    throw new Error(`app:design-captures-incomplete build ${captures.referenceBuild}: ${captures.status}; `
+      + `missing ${missing.length}/${required.length}${missing.length ? `\n  ${missing.join('\n  ')}` : ''}`);
+  }
 }
 
-async function verifyDesign(manifests) {
+async function verifyDesign(manifests, captureCandidate) {
   const lock = await readJson(join(app, 'design', 'design-lock.json'));
   if (lock.schema !== 'aukora-design-lock-v1' || !Array.isArray(lock.assets)) throw new Error('app:design-lock');
   const seen = new Set();
@@ -261,8 +341,69 @@ async function verifyDesign(manifests) {
     for (const match of text.matchAll(/\bCOPY\.([A-Za-z]+)/g)) if (!(match[1] in design.copy)) missing.push(match[1]);
   }
   if (design.copy.schema !== 'aukora-design-copy-v1' || missing.length) throw new Error(`app:design-copy ${missing.join(',')}`);
-  await verifyCaptures(design.captures, manifests);
-  return { css: tokensCss(design.tokens, design.fonts), captures: design.captures };
+  await verifyCaptures(captureCandidate ?? design.captures, manifests);
+  return { css: tokensCss(design.tokens, design.fonts), captures: captureCandidate ?? design.captures };
+}
+
+// The operator supplies the build attribution; image bytes alone cannot prove it.
+async function pinCaptures(referenceBuild) {
+  if (referenceBuild !== '3673b98') throw new Error('app:design-captures reference-build');
+  const directory = join(app, 'design');
+  const rootInfo = await present(directory);
+  if (!rootInfo || !rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('app:design-captures directory');
+  for (const name of ['captures.json', 'design-lock.json']) {
+    const info = await present(join(directory, name));
+    if (!info || !info.isFile() || info.isSymbolicLink()) throw new Error('app:design-captures pin');
+  }
+  const manifests = await readManifests();
+  await verifyAppLock(manifests);
+  const captures = await readJson(join(directory, 'captures.json'));
+  const required = captureRequirements(captures, manifests);
+  // Existing capture hashes cannot be replaced by rescanning changed image bytes.
+  if (captures.files.length !== 0) throw new Error('app:design-captures already-pinned');
+  const expected = new Map(required.flatMap(file => ['png', 'webp'].map(type => [`${captureName(file)}.${type}`, file])));
+  const found = new Map();
+  const files = [];
+  const folder = join(directory, 'captures');
+  const info = await present(folder);
+  if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error('app:design-captures directory');
+  const entries = info ? await readdir(folder, { withFileTypes: true }) : [];
+  for (const entry of entries.sort((a, b) => a.name < b.name ? -1 : 1)) {
+    const file = expected.get(entry.name);
+    if (!file || !entry.isFile() || entry.isSymbolicLink()) throw new Error(`app:design-captures unpinned ${entry.name}`);
+    const key = captureKey(file);
+    if (found.has(key)) throw new Error(`app:design-captures duplicate ${key}`);
+    found.set(key, entry.name);
+  }
+  const missing = required.filter(file => !found.has(captureKey(file))).map(captureName);
+  if (missing.length) {
+    throw new Error(`app:design-captures-incomplete build ${referenceBuild}: missing ${missing.length}/${required.length}`
+      + `\n  ${missing.join('\n  ')}`);
+  }
+  for (const file of required) {
+    const path = `captures/${found.get(captureKey(file))}`;
+    files.push({ ...file, path, sha256: sha256(await captureBytes(path)) });
+  }
+  const candidate = { ...captures, status: 'complete', files };
+  // Verify the current design pins and the complete candidate before changing either pin.
+  await verifyDesign(manifests, candidate);
+  const bytes = JSON.stringify(candidate, null, 2) + '\n';
+  const lock = await readJson(join(directory, 'design-lock.json'));
+  lock.assets = lock.assets.map(asset => asset.path === 'captures.json' ? { ...asset, sha256: sha256(bytes) } : asset);
+  const pending = [];
+  try {
+    for (const [name, text] of [['captures.json', bytes], ['design-lock.json', JSON.stringify(lock, null, 2) + '\n']]) {
+      const path = join(directory, `${name}.pinning`);
+      const handle = await open(path, 'wx');
+      pending.push([path, join(directory, name)]);
+      try { await handle.writeFile(text); }
+      finally { await handle.close(); }
+    }
+    for (const [source, target] of pending) await rename(source, target);
+  } finally {
+    for (const [source] of pending) await rm(source, { force: true });
+  }
+  process.stdout.write(`app:design-captures-pinned build ${referenceBuild}: ${files.length} files\n`);
 }
 
 // Requires the wasm32-unknown-unknown Rust target installed before this offline build; modules must import nothing.
@@ -299,6 +440,7 @@ async function wasmModules() {
 
 async function build() {
   const args = process.argv.slice(2);
+  if (args.length === 2 && args[0] === '--pin-captures') return pinCaptures(args[1]);
   if (args.length > 1 || (args.length === 1 && args[0] !== '--pin-design')) throw new Error('app:build-arguments');
   if (args[0] === '--pin-design') return pinDesign();
   const manifests = await readManifests();
