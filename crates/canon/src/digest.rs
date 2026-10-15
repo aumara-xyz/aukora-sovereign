@@ -37,8 +37,17 @@ impl Digest32 {
     }
 
     /// Refuse anything other than exactly 64 lowercase hexadecimal digits.
-    pub fn from_hex(_text: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn from_hex(text: &str) -> Result<Self> {
+        if text.len() != 64 {
+            return Err(crate::codes::ID_INVALID);
+        }
+        let mut bytes = [0; 32];
+        for (output, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+            let high = hex_digit(pair[0]).ok_or(crate::codes::ID_INVALID)?;
+            let low = hex_digit(pair[1]).ok_or(crate::codes::ID_INVALID)?;
+            *output = high * 16 + low;
+        }
+        Ok(Self(bytes))
     }
 
     /// Hash an RFC 6962 leaf as SHA-256 of `0x00 || entry_hash_bytes`.
@@ -49,6 +58,14 @@ impl Digest32 {
     /// Hash an RFC 6962 node as SHA-256 of `0x01 || left || right`.
     pub fn rfc6962_node(_left: Self, _right: Self) -> Self {
         todo!("row 32")
+    }
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
     }
 }
 

@@ -29,8 +29,8 @@ macro_rules! random_id {
             }
 
             /// Parse exactly 32 lowercase hexadecimal digits; other spellings refuse.
-            pub fn from_hex(_text: &str) -> Result<Self> {
-                todo!("row 32")
+            pub fn from_hex(text: &str) -> Result<Self> {
+                parse_random_id(text).map(Self)
             }
         }
 
@@ -100,8 +100,29 @@ impl OperationDigest {
     }
 
     /// Parse exactly 64 lowercase hexadecimal digits; other spellings refuse.
-    pub fn from_hex(_text: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn from_hex(text: &str) -> Result<Self> {
+        Digest32::from_hex(text).map(Self)
+    }
+}
+
+fn parse_random_id(text: &str) -> Result<[u8; RANDOM_ID_BYTES]> {
+    if text.len() != RANDOM_ID_BYTES * 2 {
+        return Err(crate::codes::ID_INVALID);
+    }
+    let mut bytes = [0; RANDOM_ID_BYTES];
+    for (output, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        let high = hex_digit(pair[0]).ok_or(crate::codes::ID_INVALID)?;
+        let low = hex_digit(pair[1]).ok_or(crate::codes::ID_INVALID)?;
+        *output = high * 16 + low;
+    }
+    Ok(bytes)
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
     }
 }
 

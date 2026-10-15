@@ -40,8 +40,18 @@ impl AlgorithmId {
     }
 
     /// Parse only the eight frozen spellings; an unknown algorithm is a refusal.
-    pub fn from_wire(_name: &str) -> Result<Self> {
-        todo!("row 32")
+    pub fn from_wire(name: &str) -> Result<Self> {
+        match name {
+            "ed25519" => Ok(Self::Ed25519),
+            "ecdsa-p256-sha256" => Ok(Self::EcdsaP256Sha256),
+            "secp256k1-schnorr" => Ok(Self::Secp256k1Schnorr),
+            "x25519" => Ok(Self::X25519),
+            "ml-dsa-65" => Ok(Self::MlDsa65),
+            "sha256" => Ok(Self::Sha256),
+            "argon2id" => Ok(Self::Argon2id),
+            "xchacha20-poly1305" => Ok(Self::XChaCha20Poly1305),
+            _ => Err(crate::codes::ALG_UNSUPPORTED),
+        }
     }
 }
 
