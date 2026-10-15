@@ -12,7 +12,9 @@
   "surface": "./faces/humangraph/index.html",
   "capabilities": {
     "network": {
-      "methods": [],
+      "methods": [
+        "contacts.list"
+      ],
       "topics": []
     }
   }

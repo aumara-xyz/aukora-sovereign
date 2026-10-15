@@ -12,7 +12,10 @@
   "surface": "./faces/documents/index.html",
   "capabilities": {
     "kira": {
-      "methods": [],
+      "methods": [
+        "documents.list",
+        "documents.read"
+      ],
       "topics": []
     }
   }

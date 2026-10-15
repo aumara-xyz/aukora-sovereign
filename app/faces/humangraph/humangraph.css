@@ -1,0 +1,51 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+:root {
+  --text: #e8eaed;
+  --secondary: #b8bcc4;
+  --muted: #8b9099;
+  --line: #ffffff1a;
+  --glass: #ffffff0b;
+  --blue: #96b4ff;
+  --failed: #f2555a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+[hidden] { display: none !important; }
+[role="status"]:empty { display: none; }
+
+.graph-note { margin: 0 0 12px; color: var(--secondary); }
+.graph-status { margin: 0 0 12px; color: var(--secondary); font-size: 13px; }
+.graph-problem { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--failed); border-radius: 10px; color: #ffb4b8; overflow-wrap: anywhere; }
+.graph-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.graph-board, .graph-side, .graph-media { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass); }
+.graph-media { margin-top: 16px; }
+.graph-heading { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.graph-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.graph-side-head .graph-heading { margin: 0; }
+.graph-canvas { width: 100%; max-width: none; aspect-ratio: 4 / 3; height: auto; border-radius: 10px; background: #0b0d18; }
+.graph-legend { display: grid; gap: 6px; margin: 12px 0 0; color: var(--secondary); font-size: 12px; }
+.graph-legend li { display: flex; align-items: center; gap: 10px; }
+.graph-swatch { flex: none; width: 28px; height: 0; border-top: 2px solid var(--mark, var(--muted)); }
+.graph-swatch-remote { border-top-style: dashed; }
+.graph-swatch-relayed { border-top-style: dotted; }
+.graph-swatch-none { border-top-style: dotted; opacity: .6; }
+
+.graph-people { margin: 0 0 10px; max-height: 340px; overflow-y: auto; }
+.graph-person { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; background: transparent; border-color: var(--line); }
+.graph-person[aria-pressed="true"] { border-color: var(--blue); background: #96b4ff14; }
+.graph-person-name { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.graph-person-mark { flex: none; color: var(--muted); font-size: 12px; }
+.graph-more { margin-bottom: 10px; }
+.graph-detail { margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.graph-detail:empty { display: none; }
+.graph-name { margin: 0 0 8px; font-size: 16px; overflow-wrap: anywhere; }
+.graph-facts { display: grid; gap: 6px; margin: 0; font-size: 13px; }
+.graph-facts div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 10px; }
+.graph-facts dt { color: var(--muted); }
+.graph-facts dd { margin: 0; overflow-wrap: anywhere; }
+.graph-key { font-family: var(--mono); font-size: 12px; user-select: all; }
+.graph-empty { margin: 0; color: var(--muted); }
+
+@media (max-width: 700px) {
+  main { padding: 16px; }
+  .graph-layout { grid-template-columns: minmax(0, 1fr); }
+}
