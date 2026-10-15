@@ -2,9 +2,9 @@
 #![forbid(unsafe_code)]
 
 pub mod boot_attack;
+pub mod coverage;
 pub mod health;
 pub mod heldout;
-pub mod herd;
 pub mod hostile;
 pub mod hypermutation;
 pub mod mhc;

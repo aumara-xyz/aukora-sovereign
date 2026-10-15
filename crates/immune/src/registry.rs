@@ -192,25 +192,6 @@ impl Registry {
         Ok(self.retirement_value(name, disposition)?.canonical_bytes())
     }
 
-    pub(crate) fn add(&mut self, antibody: Antibody) -> Result<()> {
-        validate_antibody(&antibody)?;
-        if antibody.status != Status::Active || antibody.source.starts_with("retired:") {
-            return Err(refusal("antibody-format"));
-        }
-        if let Some(existing) = self.get(&antibody.name) {
-            return if existing == &antibody {
-                Ok(())
-            } else {
-                Err(refusal("antibody-conflict"))
-            };
-        }
-        if self.len() >= MAX_REGISTERED {
-            return Err(refusal("registry-limit"));
-        }
-        self.entries.insert(antibody.name.clone(), antibody);
-        Ok(())
-    }
-
     /// Retire only the exact active antibody and disposition approved by the owner.
     /// The local snapshot changes only after the adapter durably commits the authority row.
     pub fn retire(

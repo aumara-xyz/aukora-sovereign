@@ -19,9 +19,7 @@ use std::{
 pub const MAX_CASE_BYTES: usize = 65_536;
 pub const MAX_CASES: usize = 16_384;
 pub const MAX_CORPUS_BYTES: usize = 16 * 1024 * 1024;
-pub const ARCHIVE_ATTACK_COUNT: usize = 815;
-pub const AUMLOK_ISSUE_COUNT: usize = 81;
-pub const PENTORA_VECTOR_COUNT: usize = 5_360;
+pub use crate::coverage::{ARCHIVE_ATTACK_COUNT, AUMLOK_ISSUE_COUNT, PENTORA_VECTOR_COUNT};
 pub const RELEASE_FACT_SCHEMA: &str = "aukora-immune-release-facts-v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
