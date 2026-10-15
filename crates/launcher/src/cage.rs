@@ -47,8 +47,20 @@ impl StaticImage {
     /// Row 25: check a sealed, regular executable image against the supervisor's
     /// approved release digest and reject dynamic interpreters. This check does
     /// not itself approve a release; its expected digest comes from the supervisor.
-    pub fn pin(_image: std::os::fd::OwnedFd, _expected_sha256: Digest32) -> Result<Self> {
-        todo!("row 25")
+    pub fn pin(image: std::os::fd::OwnedFd, expected_sha256: Digest32) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            linux::pin(&image, expected_sha256)?;
+            Ok(Self {
+                _image: image,
+                digest: expected_sha256,
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (image, expected_sha256);
+            Err(refusal("unsupported-platform"))
+        }
     }
 
     /// Commitment verified over the pinned executable bytes.
@@ -82,6 +94,8 @@ pub struct RunningCage {
     pid: u32,
     facts: BootFacts,
     boot_receipt: BootReceipt,
+    #[cfg(target_os = "linux")]
+    runtime: linux::Runtime,
 }
 
 impl RunningCage {
@@ -102,17 +116,40 @@ impl RunningCage {
 
     /// Row 26: read present kernel state rather than repeat launch configuration.
     pub fn sample(&self) -> Result<CageSample> {
-        todo!("row 26")
+        #[cfg(target_os = "linux")]
+        {
+            self.runtime.sample(self.pid)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(refusal("unsupported-platform"))
+        }
     }
 
     /// Row 26: stop this child's cgroup, then reap every descendant within deadline.
-    pub fn terminate(self, _deadline: Duration) -> Result<ExitStatus> {
-        todo!("row 26")
+    pub fn terminate(self, deadline: Duration) -> Result<ExitStatus> {
+        #[cfg(target_os = "linux")]
+        {
+            self.runtime.finish(deadline, true)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = deadline;
+            Err(refusal("unsupported-platform"))
+        }
     }
 
     /// Row 26: observe and reap exit; waiting does not manufacture successful exit.
-    pub fn wait(self, _deadline: Duration) -> Result<ExitStatus> {
-        todo!("row 26")
+    pub fn wait(self, deadline: Duration) -> Result<ExitStatus> {
+        #[cfg(target_os = "linux")]
+        {
+            self.runtime.finish(deadline, false)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = deadline;
+            Err(refusal("unsupported-platform"))
+        }
     }
 }
 
@@ -133,15 +170,28 @@ pub enum ExitStatus {
 /// durable acknowledgement. Failure kills and reaps the child, with no weaker mode.
 #[cfg(unix)]
 pub fn launch<R: BootRecorder + ?Sized>(
-    _request: LaunchRequest,
-    _recorder: &mut R,
+    request: LaunchRequest,
+    recorder: &mut R,
 ) -> Result<RunningCage> {
     #[cfg(target_os = "linux")]
     {
-        todo!("row 26")
+        let args = vec![std::ffi::OsString::from("auma")];
+        linux::start(
+            request.executable,
+            request.profile.kind(),
+            *request.profile.limits(),
+            request.identity,
+            request.cgroup,
+            request.channels,
+            None,
+            args,
+            request.setup_timeout,
+            recorder,
+        )
     }
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = (request, recorder);
         Err(refusal("unsupported-platform"))
     }
 }
@@ -181,12 +231,76 @@ pub struct DisposableRequest {
 #[cfg(unix)]
 pub fn run_disposable<A: DisposableAuthority + ?Sized, R: BootRecorder + ?Sized>(
     switch: &mut DisposableSwitch,
-    _request: DisposableRequest,
-    _authority: &mut A,
-    _recorder: &mut R,
+    request: DisposableRequest,
+    authority: &mut A,
+    recorder: &mut R,
 ) -> Result<Vec<ExitStatus>> {
     if !switch.enabled() {
         return Err(refusal("disposable-disabled"));
     }
-    todo!("row 39")
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let policy = switch.policy()?.clone();
+        if request.deadline.is_zero() || !request.directory.matches_mapping(request.identity) {
+            return Err(refusal("disposable-request"));
+        }
+        let descriptors = request
+            .commands
+            .iter()
+            .map(|command| {
+                crate::profiles::CommandDescriptor::new(
+                    command.executable.digest(),
+                    command
+                        .arguments
+                        .iter()
+                        .map(|arg| arg.as_bytes().to_vec())
+                        .collect(),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let directory = request.directory.commitment();
+        let limits = policy.limits();
+        policy.admit(directory, &descriptors, limits)?;
+        let run = crate::profiles::DisposableRun::new(directory, &descriptors, limits)?;
+        let started = std::time::Instant::now();
+        authority.with_authorized_run(&policy, &run, || {
+            let mut statuses = Vec::with_capacity(request.commands.len());
+            for command in request.commands {
+                let remaining = request
+                    .deadline
+                    .checked_sub(started.elapsed())
+                    .ok_or(refusal("deadline"))?;
+                let child = linux::start(
+                    command.executable,
+                    crate::profiles::ProfileKind::Disposable,
+                    limits,
+                    request.identity,
+                    request.cgroup.duplicate()?,
+                    linux::null_channels()?,
+                    Some(&request.directory),
+                    command.arguments,
+                    remaining,
+                    recorder,
+                )?;
+                let remaining = request
+                    .deadline
+                    .checked_sub(started.elapsed())
+                    .ok_or(refusal("deadline"))?;
+                statuses.push(child.wait(remaining)?);
+            }
+            Ok(statuses)
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (request, authority, recorder);
+        Err(refusal("unsupported-platform"))
+    }
 }
+
+#[cfg(target_os = "linux")]
+mod image;
+
+#[cfg(target_os = "linux")]
+mod linux;
