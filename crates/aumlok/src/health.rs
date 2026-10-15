@@ -4,12 +4,13 @@
 use crate::delegation::{DelegationLevel, DelegationReadTxn, DelegationRecord};
 use crate::devices::DeviceBinding;
 use crate::keys::{KeyBinding, KeyId, KeyRole};
-use canon::alg::AlgorithmId;
+use canon::alg::{AlgorithmId, PublicKey};
 use canon::authority::{AuthorityRecord, AuthorityVersion, Kind, Phase};
 use canon::digest::Digest32;
 use canon::health::{
     Cell, CheckSpec, HealthEvidence, HealthReason, OrganId, CHECKS, CORNERS, HEALTH_FORMAT_VERSION,
 };
+use canon::json::Value;
 use canon::Result;
 use std::collections::BTreeSet;
 
@@ -139,6 +140,12 @@ pub trait HealthReadTxn: DelegationReadTxn {
     fn health_record(&mut self, sequence: u64) -> Result<AuthorityRecord>;
     /// Read the Aura record establishing the current recorded owner epoch.
     fn health_owner_epoch_record(&mut self) -> Result<AuthorityRecord>;
+    /// Read every required Aura signer key at this sequence from the locked,
+    /// trusted key history, never from the record being checked. Each algorithm
+    /// has one key; a missing reader leaves the observation undetermined.
+    fn health_record_keys(&mut self, _sequence: u64) -> Result<Vec<PublicKey>> {
+        Err(crate::keys::refuse("health-signers-unavailable"))
+    }
     /// Read the independently stored current node and agent Nostr key identifiers.
     fn health_network_nostr_keys(&mut self) -> Result<Vec<KeyId>>;
 }
@@ -326,6 +333,7 @@ fn read_state<T: HealthReadTxn + ?Sized>(
         let record = txn
             .health_record(binding.version.sequence)
             .map_err(|_| HealthReason::Unreachable)?;
+        verify_aura_record(txn, &record)?;
         state.keys.push((binding, record, revoked));
     }
     for id in inventory.delegations {
@@ -338,6 +346,7 @@ fn read_state<T: HealthReadTxn + ?Sized>(
         let record = txn
             .health_record(edge.version.sequence)
             .map_err(|_| HealthReason::Unreachable)?;
+        verify_aura_record(txn, &record)?;
         state.edges.push((edge, record));
     }
     for id in inventory.devices {
@@ -350,6 +359,7 @@ fn read_state<T: HealthReadTxn + ?Sized>(
         let record = txn
             .health_record(device.version.sequence)
             .map_err(|_| HealthReason::Unreachable)?;
+        verify_aura_record(txn, &record)?;
         state.devices.push((device, record));
     }
     Ok(state)
@@ -470,11 +480,10 @@ fn observe_algorithms<T: HealthReadTxn + ?Sized>(
     {
         return Err(HealthReason::InvariantFailed);
     }
-    for (key, record, _) in &state.keys {
+    for (key, _, _) in &state.keys {
         crate::keys::validate_request(&key.request).map_err(|_| HealthReason::InvariantFailed)?;
-        check_record_algorithms(record)?;
     }
-    for (edge, record) in &state.edges {
+    for (edge, _) in &state.edges {
         crate::delegation::validate_record(edge).map_err(|_| HealthReason::InvariantFailed)?;
         let issuer = state
             .keys
@@ -491,12 +500,10 @@ fn observe_algorithms<T: HealthReadTxn + ?Sized>(
             &edge.signatures,
         )
         .map_err(|_| HealthReason::InvariantFailed)?;
-        check_record_algorithms(record)?;
     }
-    for (device, record) in &state.devices {
+    for (device, _) in &state.devices {
         crate::devices::verify_pairing(txn, &device.request)
             .map_err(|_| HealthReason::InvariantFailed)?;
-        check_record_algorithms(record)?;
     }
     Ok(())
 }
@@ -535,7 +542,7 @@ fn observe_owner_epoch<T: HealthReadTxn + ?Sized>(
     let record = txn
         .health_owner_epoch_record()
         .map_err(|_| HealthReason::Unreachable)?;
-    check_record_algorithms(&record)?;
+    verify_aura_record(txn, &record)?;
     if record.authority.epoch != head.epoch
         || !valid_version(record.authority, context)
         || !matches!(record.kind, Kind::AumlokEnrol | Kind::AumlokBind)
@@ -543,6 +550,11 @@ fn observe_owner_epoch<T: HealthReadTxn + ?Sized>(
         || record.operation.is_none()
     {
         return Err(HealthReason::Disagreement);
+    }
+    match signed_owner_epoch(&record).map_err(|_| HealthReason::InvariantFailed)? {
+        Some(epoch) if epoch == record.authority.epoch => {}
+        Some(_) => return Err(HealthReason::Disagreement),
+        None => return Err(HealthReason::NotChecked),
     }
     let anchored = txn
         .health_record(record.authority.sequence)
@@ -583,10 +595,27 @@ fn observe_nostr<T: HealthReadTxn + ?Sized>(
     Ok(())
 }
 
-fn check_record_algorithms(record: &AuthorityRecord) -> Observation {
-    if record.v != 1 || record.algorithm != AlgorithmId::Sha256 || record.signatures.version() != 1
-    {
+fn verify_aura_record<T: HealthReadTxn + ?Sized>(
+    txn: &mut T,
+    record: &AuthorityRecord,
+) -> Observation {
+    record
+        .c3_v1_export()
+        .map_err(|_| HealthReason::InvariantFailed)?;
+    let keys = txn
+        .health_record_keys(record.authority.sequence)
+        .map_err(|_| HealthReason::Unreachable)?;
+    if keys.len() != record.signatures.components().len() {
         return Err(HealthReason::InvariantFailed);
+    }
+    let mut expected = BTreeSet::new();
+    for key in &keys {
+        if key.v != 1
+            || !expected.insert(key.algorithm)
+            || !matches!(key.algorithm, AlgorithmId::Ed25519 | AlgorithmId::MlDsa65)
+        {
+            return Err(HealthReason::InvariantFailed);
+        }
     }
     let mut seen = BTreeSet::new();
     for signature in record.signatures.components() {
@@ -600,11 +629,76 @@ fn check_record_algorithms(record: &AuthorityRecord) -> Observation {
         {
             return Err(HealthReason::InvariantFailed);
         }
+        let key = keys
+            .iter()
+            .find(|key| key.algorithm == signature.algorithm)
+            .ok_or(HealthReason::InvariantFailed)?;
+        crate::keys::verify_signature_component(txn, key, record.hash.as_bytes(), signature)
+            .map_err(|_| HealthReason::InvariantFailed)?;
     }
-    if !seen.contains(&AlgorithmId::Ed25519) {
+    if seen != expected || !seen.contains(&AlgorithmId::Ed25519) {
         return Err(HealthReason::InvariantFailed);
     }
     Ok(())
+}
+
+fn signed_owner_epoch(record: &AuthorityRecord) -> Result<Option<u64>> {
+    use crate::keys::{exact_fields, field, value_text, value_u64};
+    let body = &record.body;
+    if record.kind != Kind::AumlokBind || body.get("v").map(value_u64).transpose()? != Some(1) {
+        return Ok(None);
+    }
+    let (signed, epoch) = if body.get("role").is_some() {
+        exact_fields(body, &[
+            "v", "algorithm", "key_id", "role", "material", "scope", "epoch", "operation_id",
+        ])?;
+        (body, value_u64(field(body, "epoch")?)?)
+    } else if let Some(pairing) = body.get("body") {
+        exact_fields(body, &["v", "body", "possession"])?;
+        exact_fields(pairing, &[
+            "v", "algorithm", "subject", "node", "epoch", "membership", "device_key",
+            "scope", "copresence", "operation_id",
+        ])?;
+        if value_u64(field(pairing, "v")?)? != 1
+            || value_text(field(pairing, "algorithm")?)? != "sha256"
+        {
+            return Err(crate::keys::refuse("health-record-format"));
+        }
+        let epoch = membership_epoch(field(pairing, "membership")?)?;
+        if value_u64(field(pairing, "epoch")?)? != epoch
+            || value_u64(field(field(pairing, "device_key")?, "epoch")?)? != epoch
+        {
+            return Err(crate::keys::refuse("health-record-epoch"));
+        }
+        (pairing, epoch)
+    } else if body.get("device").is_some() {
+        exact_fields(body, &[
+            "v", "algorithm", "subject", "node", "device", "membership", "operation_id",
+        ])?;
+        if value_text(field(body, "algorithm")?)? != "sha256" {
+            return Err(crate::keys::refuse("health-record-format"));
+        }
+        (body, membership_epoch(field(body, "membership")?)?)
+    } else {
+        return Ok(None);
+    };
+    if record.operation.map(|op| op.to_string()).as_deref()
+        != Some(value_text(field(signed, "operation_id")?)?)
+    {
+        return Err(crate::keys::refuse("health-record-operation"));
+    }
+    Ok(Some(epoch))
+}
+
+fn membership_epoch(membership: &Value) -> Result<u64> {
+    use crate::keys::{exact_fields, field, parse_version, value_u64};
+    exact_fields(membership, &["previous", "next", "expected", "next_epoch"])?;
+    let previous = parse_version(field(membership, "expected")?)?;
+    let next = value_u64(field(membership, "next_epoch")?)?;
+    if previous.epoch.checked_add(1) != Some(next) {
+        return Err(crate::keys::refuse("health-record-epoch"));
+    }
+    Ok(next)
 }
 
 fn binding_record(record: &AuthorityRecord) -> bool {
