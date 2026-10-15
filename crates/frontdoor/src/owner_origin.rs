@@ -338,6 +338,7 @@ pub trait SigninSessionService {
 
 /// Cookie issuance follows the verifier's durable transaction; a JSON success value
 /// from the generic identity interface is insufficient to create a browser session.
+/// Sign-in issues only an owner-frame session carrying the verified subject.
 pub fn finish_signin(
     service: &mut impl SigninSessionService,
     context: &CeremonyContext,
@@ -376,8 +377,8 @@ pub fn finish_signin(
         || record.origin != context.owner_origin
         || record.expires_at_ms != expires_at_ms
         || record.revoked
-        || record.scope == crate::session::SessionScope::Shell
-        || (record.scope == crate::session::SessionScope::OwnerFrame && record.subject.is_none())
+        || record.scope != crate::session::SessionScope::OwnerFrame
+        || record.subject.is_none()
     {
         return Err(canon::codes::FRONTDOOR_SESSION_REQUIRED);
     }

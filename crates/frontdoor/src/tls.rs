@@ -132,7 +132,7 @@ impl CaddyBoundary {
             return Err(configuration_refused());
         }
         Ok(format!(
-            "{shell}, {owner} {{\n    reverse_proxy {upstream} {{\n        header_up X-Forwarded-Proto https\n    }}\n}}\n",
+            "{shell}, {owner} {{\n    reverse_proxy {upstream} {{\n        header_up -Forwarded\n        header_up X-Forwarded-Proto https\n    }}\n}}\n",
             shell = self.shell.as_str(),
             owner = self.owner.as_str(),
         ))

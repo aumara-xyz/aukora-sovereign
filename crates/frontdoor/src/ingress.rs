@@ -232,7 +232,7 @@ fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zero
     Ok(selected)
 }
 
-/// Only the owner host resolves ceremonies; shell HTTP serves assets and documents.
+/// Only the owner host resolves API routes; shell HTTP admits static asset reads.
 fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
     if role == HostRole::Owner {
         if path.starts_with("/api/") {
@@ -242,10 +242,7 @@ fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
         } else {
             Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
         }
-    } else if (method == Method::Post
-        && matches!(path, "/api/documents/list" | "/api/documents/read"))
-        || (matches!(method, Method::Get | Method::Head) && !path.starts_with("/api/"))
-    {
+    } else if matches!(method, Method::Get | Method::Head) && !path.starts_with("/api/") {
         Ok(())
     } else {
         Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
@@ -318,13 +315,13 @@ impl HttpIngress {
             .permits
             .clone()
             .try_acquire_owned()
-            .map_err(|_| codes::FRONTDOOR_BODY_INVALID)?;
+            .map_err(|_| codes::FRONTDOOR_OVERLOADED)?;
         let (request, owner_navigation) = tokio::time::timeout(
             std::time::Duration::from_millis(REQUEST_DEADLINE_MS),
             self.decode_http(peer, request),
         )
         .await
-        .map_err(|_| codes::FRONTDOOR_BODY_INVALID)??;
+        .map_err(|_| codes::FRONTDOOR_REQUEST_TIMEOUT)??;
         Ok(HttpAdmission {
             request,
             owner_navigation,
@@ -391,18 +388,13 @@ impl HttpIngress {
                 return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
             };
             let parent = referrer
-                .parse::<http::Uri>()
-                .map_err(|_| codes::FRONTDOOR_ORIGIN_REFUSED)?;
-            if parent.scheme_str() != Some("https")
-                || parent.authority().map(|value| value.as_str())
-                    != Some(context.expected_top_origin.host())
-            {
-                return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
-            }
+                .strip_suffix('/')
+                .filter(|origin| *origin == context.expected_top_origin.as_str())
+                .ok_or(codes::FRONTDOOR_ORIGIN_REFUSED)?;
             Some(crate::owner_origin::admit_frame_navigation(
                 &context,
                 destination,
-                context.expected_top_origin.as_str(),
+                parent,
             )?)
         } else {
             None

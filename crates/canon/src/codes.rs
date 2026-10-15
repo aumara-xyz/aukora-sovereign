@@ -126,6 +126,8 @@ registry! {
     FRONTDOOR_HOST_REFUSED => ("frontdoor", "host-refused", "Pinned corpus refusal `frontdoor:host-refused`."),
     FRONTDOOR_HTTPS_REQUIRED => ("frontdoor", "https-required", "Pinned corpus refusal `frontdoor:https-required`."),
     FRONTDOOR_ORIGIN_REFUSED => ("frontdoor", "origin-refused", "Pinned corpus refusal `frontdoor:origin-refused`."),
+    FRONTDOOR_OVERLOADED => ("frontdoor", "overloaded", "All bounded HTTP admission permits are occupied."),
+    FRONTDOOR_REQUEST_TIMEOUT => ("frontdoor", "request-timeout", "HTTP request decoding exceeded its deadline."),
     FRONTDOOR_PATH_REFUSED => ("frontdoor", "path-refused", "Pinned corpus refusal `frontdoor:path-refused`."),
     FRONTDOOR_SESSION_REQUIRED => ("frontdoor", "session-required", "Pinned corpus refusal `frontdoor:session-required`."),
     FRONTDOOR_UNKNOWN_ROUTE => ("frontdoor", "unknown-route", "Pinned corpus refusal `frontdoor:unknown-route`."),
