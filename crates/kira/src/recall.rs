@@ -613,3 +613,216 @@ pub(crate) fn list_frame(reply: &MemoryListReply) -> Result<Vec<u8>> {
         ])?,
     )
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecallProbe {
+    Checked,
+    NotChecked,
+    Unreachable,
+    Violation,
+    Disagreement,
+}
+
+pub(crate) struct RecallObservation {
+    pub permissions: RecallProbe,
+    pub citations: RecallProbe,
+    pub provenance: RecallProbe,
+    pub receipt: RecallProbe,
+}
+
+impl RecallObservation {
+    fn unavailable(probe: RecallProbe) -> Self {
+        Self {
+            permissions: probe,
+            citations: probe,
+            provenance: probe,
+            receipt: probe,
+        }
+    }
+}
+
+/// Measure the actual recall path using the caller's index and embedder. The
+/// expected grant comes from an independent read in the same Aura transaction.
+pub(crate) fn inspect_recall<T, L>(
+    store: &mut SqliteMemory<'_, L>,
+    transaction: &mut T,
+    principal: &PermissionContext,
+    snapshot: &crate::anchor::MemorySnapshot,
+    expected_grant: Option<&PermissionReceipt>,
+    disclosure_expected: Option<bool>,
+    request_id: &FrameId,
+    request: &MemoryRecall,
+    index: &mut dyn OpenViking,
+    embedder: &mut dyn LocalEmbedder,
+) -> RecallObservation
+where
+    T: AuthorityTxn + ?Sized,
+    L: MemoryLedger,
+{
+    use RecallProbe::{Checked, Disagreement, NotChecked, Violation};
+    if principal.validate().is_err()
+        || request.limit == 0
+        || usize::from(request.limit) > MAX_RECALL_ITEMS
+        || EmbedInput::new(EmbedPurpose::Query, &request.query).is_err()
+    {
+        return RecallObservation::unavailable(NotChecked);
+    }
+    let anchors = SqliteMemory::new(store.sql, store.ledger, store.keys);
+    let (reply, receipt) = match store.recall(
+        transaction,
+        &mut crate::permissions::LedgerPermissions,
+        &anchors,
+        principal,
+        request_id,
+        request,
+        index,
+        embedder,
+    ) {
+        Ok(observed) => observed,
+        Err(error) => return RecallObservation::unavailable(observation_error(error)),
+    };
+    let mut measured = RecallObservation::unavailable(NotChecked);
+    let frame = match recall_frame(request_id, &reply) {
+        Ok(frame) => frame,
+        Err(_) => return RecallObservation::unavailable(Violation),
+    };
+    if receipt.request_id != *request_id
+        || receipt.reply_sha256 != sha256(&frame)
+        || frame.len() > canon::frame::MAX_FRAME_BYTES
+        || receipt.cited_save_sequences
+            != reply
+                .items
+                .iter()
+                .map(|item| item.item.cite_seq)
+                .collect::<Vec<_>>()
+    {
+        return RecallObservation::unavailable(Violation);
+    }
+    let sentinel = receipt.permission_sequence == 0
+        && receipt.permission_epoch == 0
+        && receipt.head == MemoryHead::EMPTY;
+    let bound = expected_grant.is_some_and(|grant| {
+        grant.change.context == *principal
+            && grant.change.request.permission == Permission::Disclose
+            && grant.change.request.scope == PermissionScope::hosted_model_context()
+            && grant.change.action == PermissionAction::Grant
+            && grant.record.authority.epoch == principal.owner_epoch
+            && grant.record.authority.sequence > 0
+            && grant.record.authority.sequence <= snapshot.anchor.aura_sequence
+            && receipt.head == snapshot.anchor.head
+            && receipt.permission_sequence == grant.record.authority.sequence
+            && receipt.permission_epoch == principal.owner_epoch
+    });
+    if !sentinel && !bound {
+        measured.receipt = if expected_grant.is_some() {
+            Disagreement
+        } else {
+            NotChecked
+        };
+        if disclosure_expected.is_some() {
+            measured.permissions = Disagreement;
+        }
+    } else if bound {
+        measured.receipt = Checked;
+    }
+    let active = snapshot
+        .notes
+        .values()
+        .filter(|note| note.demotion.is_none() && !note.quarantined)
+        .count();
+    match reply.result {
+        RecallResult::Found => {
+            if reply.items.is_empty()
+                || reply.items.len() > usize::from(request.limit)
+                || reply.gap.is_some()
+                || sentinel
+            {
+                return RecallObservation::unavailable(Violation);
+            }
+            let mut seen = BTreeSet::new();
+            for item in &reply.items {
+                let id = match NoteId::new(item.item.note_id.clone()) {
+                    Ok(id) => id,
+                    Err(_) => return RecallObservation::unavailable(Violation),
+                };
+                let Some(note) = snapshot.notes.get(&id) else {
+                    return RecallObservation::unavailable(Violation);
+                };
+                if !seen.insert(id.clone())
+                    || note.demotion.is_some()
+                    || note.quarantined
+                    || item.item.cite_seq != note.receipt.cite_seq
+                    || verify_note(&id, note, principal).is_err()
+                {
+                    return RecallObservation::unavailable(Violation);
+                }
+                let payload = match store.decrypt(note) {
+                    Ok(payload) => payload,
+                    Err(error) => return RecallObservation::unavailable(observation_error(error)),
+                };
+                if item.item.text != payload.content.statement() {
+                    return RecallObservation::unavailable(Violation);
+                }
+                if item.origin != payload.origin
+                    || item.delivery_source().source != Source::Memory
+                    || item.grants_authority()
+                    || reply.delivery_source().source != Source::Memory
+                {
+                    measured.provenance = Violation;
+                }
+            }
+            if measured.provenance != Violation {
+                measured.provenance = Checked;
+            }
+            measured.permissions = match disclosure_expected {
+                Some(false) => Violation,
+                Some(true) if bound => Checked,
+                Some(true) => Disagreement,
+                None => NotChecked,
+            };
+            measured.citations = measured.permissions;
+        }
+        RecallResult::Empty => {
+            if active != 0 || !reply.items.is_empty() || reply.gap.is_some() || sentinel {
+                return RecallObservation::unavailable(Violation);
+            }
+            if bound && disclosure_expected == Some(true) {
+                measured.permissions = Checked;
+                measured.citations = Checked;
+            } else if disclosure_expected == Some(false) {
+                measured.permissions = Violation;
+            }
+        }
+        RecallResult::Undetermined => {
+            if !reply.items.is_empty() || reply.gap.is_none() {
+                return RecallObservation::unavailable(Violation);
+            }
+            if reply.gap == Some(RecallGap::Permission) {
+                if !sentinel {
+                    return RecallObservation::unavailable(Violation);
+                }
+                measured.permissions = match disclosure_expected {
+                    Some(false) => Checked,
+                    Some(true) => Disagreement,
+                    None => NotChecked,
+                };
+                if disclosure_expected == Some(false) {
+                    measured.citations = Checked;
+                }
+            } else if disclosure_expected == Some(true) && (sentinel || bound) {
+                measured.citations = Checked;
+            }
+        }
+    }
+    measured
+}
+
+fn observation_error(error: canon::Refusal) -> RecallProbe {
+    if error == codes::KIRA_STORE_UNAVAILABLE {
+        RecallProbe::Unreachable
+    } else if error == codes::KIRA_LEDGER_UNVERIFIED || error == codes::KIRA_AUTHENTICATION_FAILED {
+        RecallProbe::NotChecked
+    } else {
+        RecallProbe::Violation
+    }
+}

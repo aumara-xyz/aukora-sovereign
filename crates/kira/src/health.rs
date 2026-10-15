@@ -274,8 +274,11 @@ pub fn health(
 /// This type retains verdicts, not decrypted note text or key material.
 pub struct MemoryChecks {
     context: HealthContext,
+    principal: crate::permissions::PermissionContext,
+    transaction: Digest32,
     private: [Probe; 18],
     corners: [Probe; 8],
+    summary_originals: Probe,
 }
 
 #[derive(Clone, Copy)]
@@ -287,6 +290,19 @@ enum Probe {
 }
 
 impl Probe {
+    fn both(self, other: Self) -> Self {
+        match (self, other) {
+            (
+                Self::Measured(ObservationVerdict::Satisfied),
+                Self::Measured(ObservationVerdict::Satisfied),
+            ) => self,
+            _ => match self.merge(other) {
+                Self::Measured(ObservationVerdict::Satisfied) => Self::NotChecked,
+                combined => combined,
+            },
+        }
+    }
+
     fn from_invariant(satisfied: bool) -> Self {
         Self::Measured(if satisfied {
             ObservationVerdict::Satisfied
@@ -301,8 +317,25 @@ impl Probe {
             | (_, Self::Measured(ObservationVerdict::InvariantFailed)) => {
                 Self::Measured(ObservationVerdict::InvariantFailed)
             }
+            (Self::Measured(ObservationVerdict::Disagreement), _)
+            | (_, Self::Measured(ObservationVerdict::Disagreement)) => {
+                Self::Measured(ObservationVerdict::Disagreement)
+            }
             (Self::Unreachable, _) | (_, Self::Unreachable) => Self::Unreachable,
             (_, next) => next,
+        }
+    }
+}
+
+impl From<crate::recall::RecallProbe> for Probe {
+    fn from(value: crate::recall::RecallProbe) -> Self {
+        use crate::recall::RecallProbe;
+        match value {
+            RecallProbe::Checked => Self::from_invariant(true),
+            RecallProbe::NotChecked => Self::NotChecked,
+            RecallProbe::Unreachable => Self::Unreachable,
+            RecallProbe::Violation => Self::from_invariant(false),
+            RecallProbe::Disagreement => Self::Measured(ObservationVerdict::Disagreement),
         }
     }
 }
@@ -342,6 +375,17 @@ impl MemoryChecks {
         self.context
     }
 
+    /// Whether every decrypted summary retains its original notes. None means no
+    /// summary was inspected or required plaintext was unavailable. This doctrine
+    /// is separate from the registered delivered-provenance observation.
+    pub fn summary_originals_preserved(&self) -> Option<bool> {
+        match self.summary_originals {
+            Probe::Measured(ObservationVerdict::Satisfied) => Some(true),
+            Probe::Measured(_) => Some(false),
+            _ => None,
+        }
+    }
+
     /// Read the authority-bound snapshot before measuring records. The ledger
     /// adapter must verify its complete signed Aura history in this transaction.
     /// A refused anchor returns no observations. A corrupt local snapshot fails
@@ -369,8 +413,11 @@ impl MemoryChecks {
                 observed_at_ms,
                 commitment: anchor.aura_hash,
             },
+            principal: *principal,
+            transaction: transaction.transaction_id(),
             private: [Probe::Unwritten; 18],
             corners: [Probe::Unwritten; 8],
+            summary_originals: Probe::NotChecked,
         };
         for index in [0, 1, 2, 3, 4, 8, 12, 13, 17] {
             observed.private[index] = Probe::NotChecked;
@@ -404,7 +451,7 @@ impl MemoryChecks {
             observed.corners[3] = mismatch;
             return Ok(observed);
         }
-        for index in [0, 2, 3, 4, 8, 12, 13, 17] {
+        for index in [0, 2, 4, 8, 12, 17] {
             observed.private[index] = Probe::from_invariant(true);
         }
         observed.corners[2] = Probe::from_invariant(true);
@@ -442,25 +489,32 @@ impl MemoryChecks {
                 let bound = formats
                     && wrapped.root_epoch == principal.owner_epoch
                     && wrapped.key_id == encrypted.key_id;
-                observed.private[1] = observed.private[1].merge(Probe::from_invariant(bound));
+                // The transaction exposes no AUMLOK root epoch to confirm a match.
+                if !bound {
+                    observed.private[1] = Probe::from_invariant(false);
+                }
             }
             match store.decrypt(retained) {
                 Ok(payload) => {
-                    let preserved = match &payload.form {
-                        crate::notes::NoteForm::Original => true,
-                        crate::notes::NoteForm::Summary { originals } => {
-                            originals.iter().all(|original| {
-                                original != id && snapshot.notes.contains_key(original)
-                            })
+                    if let crate::notes::NoteForm::Summary { originals } = &payload.form {
+                        for original in originals {
+                            let preserved = match snapshot.notes.get(original) {
+                                Some(note) if original != id => match store.decrypt(note) {
+                                    Ok(original) => Probe::from_invariant(matches!(
+                                        original.form,
+                                        crate::notes::NoteForm::Original
+                                    )),
+                                    Err(error) if error == canon::codes::KIRA_STORE_UNAVAILABLE => {
+                                        Probe::Unreachable
+                                    }
+                                    Err(_) => Probe::from_invariant(false),
+                                },
+                                _ => Probe::from_invariant(false),
+                            };
+                            observed.summary_originals =
+                                observed.summary_originals.merge(preserved);
                         }
-                    };
-                    let attributed = !payload.origin.grants_authority()
-                        && payload.origin.delivery_source().source
-                            == canon::provenance::Source::Memory
-                        && payload.origin.recorded_source().source
-                            != canon::provenance::Source::Stranger;
-                    observed.private[13] =
-                        observed.private[13].merge(Probe::from_invariant(attributed && preserved));
+                    }
                     observed.private[2] = observed.private[2].merge(Probe::from_invariant(
                         payload.content.category() == retained.category
                             && payload.at_ms == retained.at_ms
@@ -481,16 +535,16 @@ impl MemoryChecks {
                     } else {
                         Probe::from_invariant(false)
                     };
-                    for index in [0, 2, 12, 13] {
+                    for index in [0, 2, 12] {
                         observed.private[index] = observed.private[index].merge(failure);
                     }
+                    observed.summary_originals = observed.summary_originals.merge(failure);
                     if active {
                         observed.private[1] = observed.private[1].merge(failure);
                     }
                 }
             }
         }
-        observed.corners[0] = observed.private[1];
         observed.corners[3] = Probe::from_invariant(
             snapshot.anchor.counts.saved == snapshot.notes.len() as u64
                 && snapshot.anchor.counts.demoted == demoted
@@ -500,10 +554,13 @@ impl MemoryChecks {
     }
 }
 
-/// Native permission and listing probes. Provided scopes can expose a bad epoch,
-/// but do not establish completeness of the permission history.
+/// Native permission, listing and recall probes over the supplied scopes.
+/// These scopes do not establish completeness of the permission history.
 pub struct PermissionChecks {
     checks: MemoryChecks,
+    listing: Probe,
+    disclosure: Option<crate::permissions::PermissionReceipt>,
+    may_disclose: Option<bool>,
 }
 
 impl HealthObserver for PermissionChecks {
@@ -513,21 +570,81 @@ impl HealthObserver for PermissionChecks {
 }
 
 impl MemoryChecks {
-    /// Combine measurements only when they inspected the same Aura context.
+    /// Combine measurements only for the same principal, transaction and Aura context.
     pub fn with_permissions(mut self, permissions: PermissionChecks) -> canon::Result<Self> {
-        if self.context != permissions.checks.context {
+        if self.context != permissions.checks.context
+            || self.principal != permissions.checks.principal
+            || self.transaction != permissions.checks.transaction
+        {
             return Err(canon::codes::KIRA_LEDGER_UNVERIFIED);
         }
-        for index in [5, 7, 9, 14, 15] {
+        for index in [5, 6, 7, 9, 13, 14, 15, 16] {
             self.private[index] = permissions.checks.private[index];
         }
+        self.corners[1] = permissions.checks.corners[1];
         Ok(self)
     }
 }
 
 impl PermissionChecks {
+    /// Complete the read probes with the actual recall service and its index and
+    /// embedder. Plaintext, provenance and receipts are compared with this same
+    /// locked snapshot; no receipt or health verdict authorizes a later read.
+    pub fn with_recall<T, L>(
+        mut self,
+        store: &mut crate::anchor::SqliteMemory<'_, L>,
+        transaction: &mut T,
+        principal: &crate::permissions::PermissionContext,
+        request_id: &canon::frame::FrameId,
+        request: &canon::fd3_payloads::MemoryRecall,
+        index: &mut dyn crate::openviking::OpenViking,
+        embedder: &mut dyn crate::embed::LocalEmbedder,
+    ) -> canon::Result<Self>
+    where
+        T: canon::authority::AuthorityTxn + ?Sized,
+        L: crate::anchor::MemoryLedger,
+    {
+        if self.checks.principal != *principal
+            || self.checks.transaction != transaction.transaction_id()
+        {
+            return Err(canon::codes::KIRA_LEDGER_UNVERIFIED);
+        }
+        let snapshot = store.snapshot(transaction, principal)?;
+        if self.checks.context.epoch != principal.owner_epoch
+            || self.checks.context.sequence != snapshot.anchor.aura_sequence
+            || self.checks.context.commitment != snapshot.anchor.aura_hash
+        {
+            return Err(canon::codes::KIRA_LEDGER_UNVERIFIED);
+        }
+        let recalled = crate::recall::inspect_recall(
+            store,
+            transaction,
+            principal,
+            &snapshot,
+            self.disclosure.as_ref(),
+            self.may_disclose,
+            request_id,
+            request,
+            index,
+            embedder,
+        );
+        let permission = Probe::from(recalled.permissions);
+        let citations = Probe::from(recalled.citations).both(permission);
+        self.checks.private[5] = self.checks.private[5].merge(self.listing.both(citations));
+        self.checks.private[6] = self.checks.private[6].merge(citations);
+        self.checks.private[13] = self.checks.private[13].merge(recalled.provenance.into());
+        self.checks.private[16] = self.checks.private[16].merge(recalled.receipt.into());
+        if store.verified_anchor(transaction, principal)? != snapshot.anchor {
+            for position in [5, 6, 13, 16] {
+                self.checks.private[position] = Probe::Measured(ObservationVerdict::Disagreement);
+            }
+        }
+        Ok(self)
+    }
+
     /// Invoke the native permission reader and both listing tiers in the locked
-    /// snapshot. This does not authorize, append, or change any permission.
+    /// snapshot. Recall-dependent checks remain NotChecked until `with_recall`.
+    /// This does not authorize, append, or change any permission.
     pub fn inspect<T, L>(
         store: &mut crate::anchor::SqliteMemory<'_, L>,
         transaction: &mut T,
@@ -540,7 +657,7 @@ impl PermissionChecks {
         L: crate::anchor::MemoryLedger,
     {
         use crate::permissions::{
-            LedgerPermissions, MemoryPermissions, Permission, PermissionRequest, PermissionScope,
+            LedgerPermissions, Permission, PermissionAction, PermissionRequest, PermissionScope,
         };
         use canon::fd3_payloads::MemoryTier;
         if observed_at_ms > canon::json::MAX_SAFE_INTEGER as u64 || scopes.len() > 100 {
@@ -554,48 +671,71 @@ impl PermissionChecks {
                 observed_at_ms,
                 commitment: snapshot.anchor.aura_hash,
             },
+            principal: *principal,
+            transaction: transaction.transaction_id(),
             private: [Probe::Unwritten; 18],
             corners: [Probe::Unwritten; 8],
+            summary_originals: Probe::NotChecked,
         };
-        for index in [5, 7, 14, 15] {
+        for index in [5, 6, 7, 9, 13, 14, 15, 16] {
             checks.private[index] = Probe::NotChecked;
         }
+        checks.corners[1] = Probe::NotChecked;
         let disclosure = PermissionRequest {
             permission: Permission::Disclose,
             scope: PermissionScope::hosted_model_context(),
         };
         let permissions = LedgerPermissions;
         let mut may_disclose = None;
+        let mut disclosure_receipt = None;
         for request in std::iter::once(&disclosure).chain(scopes.iter()) {
-            match permissions.require(transaction, principal, request) {
-                Ok(receipt) => {
-                    let current = receipt.change.context == *principal
+            match permissions.inspect(transaction, principal, request) {
+                Ok(Some(receipt)) => {
+                    let cited = receipt.change.context.owner_subject == principal.owner_subject
+                        && receipt.change.context.current_principal == principal.current_principal
                         && receipt.change.request == *request
-                        && receipt.change.action == crate::permissions::PermissionAction::Grant
-                        && receipt.record.authority.epoch == principal.owner_epoch
+                        && receipt.record.authority.sequence > 0
                         && receipt.record.authority.sequence <= snapshot.anchor.aura_sequence;
-                    if !current {
-                        checks.private[5] = Probe::from_invariant(false);
+                    let epoch = receipt.record.authority.epoch
+                        == receipt.change.context.owner_epoch
+                        && receipt.record.authority.epoch <= principal.owner_epoch;
+                    let row = Probe::from_invariant(cited && epoch);
+                    checks.private[9] = checks.private[9].merge(row);
+                    // Latest-row metadata exposes neither historical epochs nor
+                    // an independently checked AUMLOK owner-signature result.
+                    if !epoch {
                         checks.private[14] = Probe::from_invariant(false);
                     }
+                    if !cited {
+                        checks.corners[1] = Probe::from_invariant(false);
+                    }
+                    if !cited || !epoch {
+                        checks.private[5] = Probe::from_invariant(false);
+                    }
                     if request == &disclosure {
+                        let current = cited
+                            && epoch
+                            && receipt.change.action == PermissionAction::Grant
+                            && receipt.change.context.owner_epoch == principal.owner_epoch;
                         may_disclose = Some(current);
+                        disclosure_receipt = current.then_some(receipt);
                     }
                 }
-                Err(error)
-                    if error == canon::codes::KIRA_DISCLOSURE_NOT_PERMITTED
-                        || error == canon::codes::KIRA_INVALID_FIELD =>
-                {
+                Ok(None) => {
                     if request == &disclosure {
                         may_disclose = Some(false);
                     }
                 }
-                Err(error) if error == canon::codes::KIRA_STORE_UNAVAILABLE => {
-                    checks.private[5] = checks.private[5].merge(Probe::Unreachable);
-                }
-                Err(_) => {
-                    checks.private[5] = Probe::from_invariant(false);
-                    checks.private[9] = Probe::from_invariant(false);
+                Err(error) => {
+                    let failure = if error == canon::codes::KIRA_STORE_UNAVAILABLE {
+                        Probe::Unreachable
+                    } else {
+                        Probe::from_invariant(false)
+                    };
+                    for index in [5, 9, 14] {
+                        checks.private[index] = checks.private[index].merge(failure);
+                    }
+                    checks.corners[1] = checks.corners[1].merge(failure);
                 }
             }
         }
@@ -631,7 +771,7 @@ impl PermissionChecks {
             {
                 Probe::from_invariant(true)
             }
-            (Some(false), PageObservation::Checked | PageObservation::Violation) => {
+            (Some(false), PageObservation::Checked) | (_, PageObservation::Violation) => {
                 Probe::from_invariant(false)
             }
             (Some(true), PageObservation::Refused(error))
@@ -646,7 +786,11 @@ impl PermissionChecks {
             }
             _ => Probe::NotChecked,
         };
-        checks.private[5] = checks.private[5].merge(permission_probe);
+        let listing = checks.private[5].merge(permission_probe);
+        checks.private[5] = match listing {
+            Probe::Measured(ObservationVerdict::Satisfied) => Probe::NotChecked,
+            other => other,
+        };
         let forgotten = inspect_pages(
             store,
             transaction,
@@ -673,11 +817,17 @@ impl PermissionChecks {
             _ => Probe::NotChecked,
         };
         if store.verified_anchor(transaction, principal)? != snapshot.anchor {
-            for index in [5, 7, 14, 15] {
+            for index in [5, 6, 7, 9, 13, 14, 15, 16] {
                 checks.private[index] = Probe::Measured(ObservationVerdict::Disagreement);
             }
+            checks.corners[1] = Probe::Measured(ObservationVerdict::Disagreement);
         }
-        Ok(Self { checks })
+        Ok(Self {
+            checks,
+            listing,
+            disclosure: disclosure_receipt,
+            may_disclose,
+        })
     }
 }
 

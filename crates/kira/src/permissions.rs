@@ -372,6 +372,23 @@ pub const PERMISSION_STATE_NAMESPACE: &str = "kira.permission.v1";
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LedgerPermissions;
 
+impl LedgerPermissions {
+    /// Read the latest verified row for this exact permission under the current
+    /// principal's transaction, including revocations and older owner epochs.
+    /// The authority-state adapter verifies the retained owner proof and history;
+    /// this read validates the row and cannot authorize a use. Missing state is
+    /// None, while unavailable or unverified state refuses.
+    pub fn inspect<T: AuthorityTxn + ?Sized>(
+        &self,
+        txn: &mut T,
+        context: &PermissionContext,
+        request: &PermissionRequest,
+    ) -> Result<Option<PermissionReceipt>> {
+        verify_context(txn, context)?;
+        load_permission(txn, context, request)
+    }
+}
+
 /// Encode current identity data for an Aura transaction adapter. Encoding it does
 /// not verify identity: `authority_state` must obtain it from authenticated state.
 pub fn owner_state_value(context: &PermissionContext) -> Result<Value> {
@@ -470,7 +487,6 @@ impl MemoryPermissions for LedgerPermissions {
         context: &PermissionContext,
         request: &PermissionRequest,
     ) -> Result<PermissionReceipt> {
-        verify_context(txn, context)?;
         let refusal = if request.permission == Permission::Disclose
             && request.scope == PermissionScope::hosted_model_context()
         {
@@ -478,7 +494,7 @@ impl MemoryPermissions for LedgerPermissions {
         } else {
             codes::KIRA_INVALID_FIELD
         };
-        let receipt = load_permission(txn, context, request)?.ok_or(refusal)?;
+        let receipt = self.inspect(txn, context, request)?.ok_or(refusal)?;
         if receipt.change.action != PermissionAction::Grant
             || receipt.change.context.owner_epoch != context.owner_epoch
         {
