@@ -67,9 +67,9 @@ impl OrganId {
 pub enum Cell {
     /// The registered invariant was confirmed in the snapshot's context.
     Verified,
-    /// An implemented check is not yet checked, unreachable or stale.
+    /// A report is absent or the check is not yet checked, unreachable or stale.
     Undetermined,
-    /// The invariant failed, evidence disagrees, or the check is unwritten/missing.
+    /// The invariant failed, evidence disagrees, or the check is unwritten.
     Failed,
 }
 
@@ -243,7 +243,7 @@ pub enum HealthReason {
     Satisfied,
     /// The check has not been implemented; its reduced cell must be Failed.
     Unwritten,
-    /// No report exists for a required check or required corner owner.
+    /// No report exists; absence alone does not establish an unwritten check.
     Missing,
     /// An implemented observer has not completed an observation.
     NotChecked,
@@ -328,11 +328,31 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<HealthSnapshot> {
     decode::snapshot(bytes)
 }
 
+fn registered_spec(check: CheckRef) -> Option<CheckSpec> {
+    match check {
+        CheckRef::Private(id) => CHECKS
+            .iter()
+            .find(|definition| definition.id == id)
+            .map(|definition| definition.spec()),
+        CheckRef::Corner { corner, side } => CORNERS
+            .iter()
+            .find(|definition| definition.id == corner)
+            .and_then(|definition| {
+                definition
+                    .specs()
+                    .into_iter()
+                    .find(|spec| spec.owner == side)
+            }),
+    }
+}
+
 impl HealthSnapshot {
     /// Reduces only registered observations, never instructions or authority.
     ///
-    /// Missing or unwritten checks are Failed. Implemented checks with stale or
-    /// unreachable evidence are Undetermined. A disagreement is Failed. A corner
+    /// Missing reports and not-checked, stale or unreachable evidence are
+    /// Undetermined. Explicitly unwritten checks and disagreements are Failed.
+    /// An absent report does not establish whether an observer is implemented;
+    /// callers with that inventory use `reduce_with_implemented`. A corner
     /// is Verified only when both registered owners independently report Verified
     /// with the exact same epoch, sequence and commitment as this snapshot, and
     /// both reports are fresh. Explicit failure takes precedence over uncertainty.
@@ -360,17 +380,7 @@ impl HealthSnapshot {
         }
         let mut reports = std::collections::BTreeMap::new();
         for item in &evidence {
-            let spec = match item.check {
-                CheckRef::Private(id) => CHECKS
-                    .iter()
-                    .find(|entry| entry.id == id)
-                    .map(|entry| entry.spec()),
-                CheckRef::Corner { corner, side } => CORNERS
-                    .iter()
-                    .find(|entry| entry.id == corner)
-                    .and_then(|entry| entry.specs().into_iter().find(|spec| spec.owner == side)),
-            }
-            .ok_or(invalid)?;
+            let spec = registered_spec(item.check).ok_or(invalid)?;
             if item.v != HEALTH_FORMAT_VERSION
                 || item.algorithm != AlgorithmId::Sha256
                 || item.reporter != spec.owner
@@ -383,22 +393,15 @@ impl HealthSnapshot {
             {
                 return Err(invalid);
             }
-            let reduced = if item.epoch != epoch
-                || item.sequence != sequence
-                || item.commitment != commitment
-            {
-                Cell::Failed
-            } else if item.cell == Cell::Failed
+            let reduced = if item.cell == Cell::Failed
                 || matches!(
                     item.reason,
                     HealthReason::Unwritten
-                        | HealthReason::Missing
                         | HealthReason::Disagreement
                         | HealthReason::InvariantFailed
                         | HealthReason::ContextMismatch
                         | HealthReason::InvalidEvidence
-                )
-            {
+                ) {
                 Cell::Failed
             } else if item.cell == Cell::Undetermined
                 || item.reason != HealthReason::Satisfied
@@ -406,23 +409,31 @@ impl HealthSnapshot {
                 || observed_at_ms - item.observed_at_ms > spec.freshness_ms
             {
                 Cell::Undetermined
+            } else if item.epoch != epoch
+                || item.sequence != sequence
+                || item.commitment != commitment
+            {
+                Cell::Failed
             } else {
                 Cell::Verified
             };
             reports.insert(item.check, reduced);
         }
-        let mut private_cells = [Cell::Failed; PRIVATE_CHECK_COUNT];
+        let mut private_cells = [Cell::Undetermined; PRIVATE_CHECK_COUNT];
         for (slot, definition) in private_cells.iter_mut().zip(CHECKS) {
             *slot = reports
                 .get(&CheckRef::Private(definition.id))
                 .copied()
-                .unwrap_or(Cell::Failed);
+                .unwrap_or(Cell::Undetermined);
         }
-        let mut corner_cells = [Cell::Failed; CORNER_COUNT];
+        let mut corner_cells = [Cell::Undetermined; CORNER_COUNT];
         for (slot, definition) in corner_cells.iter_mut().zip(CORNERS) {
-            let cells = definition
-                .specs()
-                .map(|spec| reports.get(&spec.check).copied().unwrap_or(Cell::Failed));
+            let cells = definition.specs().map(|spec| {
+                reports
+                    .get(&spec.check)
+                    .copied()
+                    .unwrap_or(Cell::Undetermined)
+            });
             *slot = if cells.contains(&Cell::Failed) {
                 Cell::Failed
             } else if cells.contains(&Cell::Undetermined) {
@@ -443,5 +454,69 @@ impl HealthSnapshot {
             private_cells,
             corner_cells,
         })
+    }
+
+    /// Reduces reports using the trusted caller's complete implementation list.
+    /// Missing reports become explicit NotChecked evidence when listed and
+    /// Unwritten evidence otherwise. The returned snapshot retains those reports
+    /// so its existing v1 wire fields replay through `reduce` without an inventory.
+    /// Unknown or duplicate implementation references refuse with
+    /// `health:invalid-evidence`, as do reports from unlisted checks unless they
+    /// explicitly report Failed/Unwritten. Implementation status never verifies
+    /// a check.
+    pub fn reduce_with_implemented(
+        epoch: u64,
+        sequence: u64,
+        observed_at_ms: u64,
+        commitment: Digest32,
+        mut evidence: Vec<HealthEvidence>,
+        implemented: &[CheckRef],
+    ) -> Result<Self> {
+        let invalid = crate::codes::HEALTH_INVALID_EVIDENCE;
+        if evidence.len() > MAX_EVIDENCE_COUNT || implemented.len() > MAX_EVIDENCE_COUNT {
+            return Err(invalid);
+        }
+        let mut inventory = std::collections::BTreeSet::new();
+        for check in implemented {
+            if registered_spec(*check).is_none() || !inventory.insert(*check) {
+                return Err(invalid);
+            }
+        }
+        if evidence.iter().any(|item| {
+            !inventory.contains(&item.check)
+                && (item.cell != Cell::Failed || item.reason != HealthReason::Unwritten)
+        }) {
+            return Err(invalid);
+        }
+        let present: std::collections::BTreeSet<_> =
+            evidence.iter().map(|item| item.check).collect();
+        let specs = CHECKS
+            .into_iter()
+            .map(CheckDefinition::spec)
+            .chain(CORNERS.into_iter().flat_map(CornerDefinition::specs));
+        for spec in specs {
+            if present.contains(&spec.check) {
+                continue;
+            }
+            let (cell, reason) = if inventory.contains(&spec.check) {
+                (Cell::Undetermined, HealthReason::NotChecked)
+            } else {
+                (Cell::Failed, HealthReason::Unwritten)
+            };
+            evidence.push(HealthEvidence {
+                v: HEALTH_FORMAT_VERSION,
+                algorithm: AlgorithmId::Sha256,
+                check: spec.check,
+                reporter: spec.owner,
+                epoch,
+                sequence,
+                observed_at_ms,
+                expires_at_ms: observed_at_ms,
+                cell,
+                reason,
+                commitment,
+            });
+        }
+        Self::reduce(epoch, sequence, observed_at_ms, commitment, evidence)
     }
 }

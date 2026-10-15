@@ -1,0 +1,40 @@
+{
+  "schema": "canon-whitespace-v1-vectors",
+  "vectors": [
+    {
+      "name": "space-lf-tab-surround-value",
+      "input": " \n\t{\"a\":1}\t\n ",
+      "canonical": "{\"a\":1}"
+    },
+    {
+      "name": "leading-carriage-return-refuses",
+      "input": "\rnull",
+      "refusal": "canon:invalid-json"
+    },
+    {
+      "name": "trailing-carriage-return-refuses",
+      "input": "null\r",
+      "refusal": "canon:trailing-bytes"
+    },
+    {
+      "name": "carriage-return-between-array-values-refuses",
+      "input": "[1,\r2]",
+      "refusal": "canon:invalid-json"
+    },
+    {
+      "name": "carriage-return-before-object-colon-refuses",
+      "input": "{\"a\"\r:1}",
+      "refusal": "canon:invalid-json"
+    },
+    {
+      "name": "raw-carriage-return-in-string-refuses",
+      "input": "\"\r\"",
+      "refusal": "canon:invalid-json"
+    },
+    {
+      "name": "escaped-carriage-return-is-string-data",
+      "input": "\"\\r\"",
+      "canonical": "\"\\r\""
+    }
+  ]
+}

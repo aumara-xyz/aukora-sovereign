@@ -43,8 +43,8 @@ const fn corner(
 /// then index order. Organ i is cube i of the pinned geometry; private check j
 /// selects its j-th smallest private global cell index. `CheckDefinition::spec`
 /// exposes each independent observation contract. A named source identifies an
-/// organ-owned observer contract, not an implemented observer. An unwritten or
-/// missing observer reduces to Failed.
+/// organ-owned observer contract, not an implemented observer. Explicitly
+/// unwritten observers reduce to Failed; missing reports remain Undetermined.
 /// Every freshness value is a maximum age in milliseconds, never authorization.
 pub const CHECKS: [CheckDefinition; 90] = [
     check(

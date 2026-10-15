@@ -79,7 +79,10 @@ random_id!(OperationId, "An Aura operation id: 16 random bytes, lowercase hex un
 
 /// The C5 operation-content SHA-256 commitment, distinct from a random `OperationId`.
 /// Its wire representation is exactly 64 lowercase hex digits. It commits to
-/// `aukora:operation-content:v1\0` followed by the exact canonical C5 target object;
+/// `aukora:operation-content:v1\0` followed by
+/// `canon({v:1,node,target,base_sha256,new_sha256,cell})`, with `base_sha256`
+/// set to the literal `"absent"` for a missing target and `cell` set to JSON null
+/// when there is no cell commitment. No authorization-only fields enter the hash;
 /// retaining a claimed digest never establishes that it matches the target bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OperationDigest(Digest32);

@@ -11,8 +11,9 @@
 //!
 //! Input must be UTF-8 without BOM, duplicate object keys, lone surrogates
 //! (including escaped ones), nesting beyond 64 containers or trailing material.
-//! As pinned in `vectors/whitespace.json`, JSON whitespace may surround the one
-//! parsed value; nothing except that whitespace may trail it. C1 has no byte cap.
+//! Space (U+0020), LF (U+000A) and tab (U+0009) may surround the one parsed value;
+//! CR is not whitespace. Nothing except those three characters may trail the
+//! value. C1 has no byte cap.
 //! C4 frames separately require 1..=65,536 bytes and a canonical object whose
 //! reserialization equals the original bytes. The pinned
 //! vectors and corpus are shared inputs, not an alternative implementation.
@@ -251,11 +252,24 @@ fn write_checked_text(value: &str, output: &mut String) {
     output.push('"');
 }
 
-/// Parses one C1 value without a C1 byte cap. Requires UTF-8 without BOM;
-/// refuses duplicate decoded keys, lone raw or escaped surrogates, floats,
-/// exponents, `-0`, leading zeros, integers outside ±(2^53-1), nesting over 64
-/// and trailing non-whitespace. The frozen `vectors/whitespace.json` permits
-/// surrounding JSON whitespace; no second value or other material may trail.
+/// Parses one C1 value without a C1 byte cap. Surrounding whitespace consists
+/// only of space (U+0020), LF (U+000A) and tab (U+0009), never CR.
+///
+/// Refusal order starts with `canon:bom`, then `canon:invalid-utf8` for the whole
+/// input, including raw surrogate encodings such as ED A0 80. Parsing then uses
+/// `canon:invalid-json` for malformed syntax and raw controls, including NUL;
+/// `canon:invalid-number` for missing digits after `-` (including `-x`), leading
+/// zeros, `-0`, fractions or exponents; and `canon:integer-range` for integers
+/// outside ±(2^53-1). Integers are range-checked before surrounding syntax, so
+/// `[-9223372036854775808"x"]` refuses `canon:integer-range`.
+///
+/// `canon:lone-surrogate` rejects unpaired escaped surrogates. A malformed hex
+/// escape after a high surrogate takes `canon:invalid-json` precedence:
+/// `"\ud800\u00xz"` is invalid JSON, while `"\ud800a"` is a lone surrogate.
+/// `canon:duplicate-key` compares keys after escape decoding, before reading
+/// the repeated key's colon or value. `canon:nesting-too-deep` rejects entering
+/// a 65th container. After a complete value, any non-whitespace remainder is
+/// `canon:trailing-bytes`; no second value or other material may trail.
 /// Object key order may vary here; canonical output uses UTF-16 key order and
 /// the string rules above. Frame decoding rejects even surrounding whitespace.
 pub fn parse_strict(raw_utf8: &[u8]) -> Result<Value> {
@@ -295,7 +309,7 @@ struct Cursor<'a> {
 
 impl Cursor<'_> {
     fn skip_space(&mut self) {
-        self.remaining = self.remaining.trim_start_matches([' ', '\t', '\n', '\r']);
+        self.remaining = self.remaining.trim_start_matches([' ', '\t', '\n']);
     }
 
     fn consume(&mut self, token: &str) -> bool {

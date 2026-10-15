@@ -2,8 +2,8 @@
 //! Browser ABI for the same C1 Rust codec. Numeric arguments are offsets in
 //! this module's exported linear memory, never native host pointers. Loading or
 //! decoding failure closes the browser path; there is no JavaScript twin.
-
-#![allow(unsafe_code)]
+//! The export functions permit the `no_mangle` ABI attribute individually; all
+//! allocation lookup and buffer access uses safe Rust, with no raw-pointer reads.
 
 /// ABI version for the four-u32 result descriptor.
 pub const ABI_VERSION: u32 = 1;
@@ -36,6 +36,7 @@ pub struct CanonicalResult {
 /// Reserves a zeroed input buffer of 1..=65,536 bytes. Returns its nonzero memory
 /// offset, or zero when bounds/allocation fail. The caller writes only this
 /// allocation; it remains owned by the caller until `release_input`.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn allocate_input(raw_len: u32) -> u32 {
     if raw_len == 0 || raw_len as usize > crate::frame::MAX_FRAME_BYTES {
@@ -66,6 +67,7 @@ pub extern "C" fn allocate_input(raw_len: u32) -> u32 {
 /// Returns a nonzero `CanonicalResult` descriptor offset, or zero on an invalid
 /// allocation/allocation failure. Failure never returns success bytes. The
 /// input is borrowed, not consumed. No result can authorize an operation.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn canonicalize(raw_utf8: u32, raw_len: u32) -> u32 {
     if raw_utf8.checked_add(raw_len).is_none() {
@@ -114,6 +116,7 @@ pub extern "C" fn canonicalize(raw_utf8: u32, raw_len: u32) -> u32 {
 /// Releases exactly one original input allocation. Refuses unknown, mismatched
 /// or already released offset/length pairs by returning 1; returns 0 on release.
 /// Validation precedes deallocation, including when the browser supplies junk.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn release_input(raw_utf8: u32, raw_len: u32) -> u32 {
     ALLOCATIONS.with(|slot| {
@@ -135,6 +138,7 @@ pub extern "C" fn release_input(raw_utf8: u32, raw_len: u32) -> u32 {
 /// Releases one returned descriptor and its result buffer together. Returns 0
 /// on release or 1 for unknown/already released offsets; never dereferences an
 /// unvalidated descriptor. The browser copies output before calling this.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn release_result(descriptor: u32) -> u32 {
     ALLOCATIONS.with(|slot| {
@@ -175,6 +179,7 @@ std::thread_local! {
 /// The result uses `CanonicalResult` version 1 and is freed by `release_result`;
 /// the input remains allocated until `release_input`. Refusals carry the decoder's
 /// code. Invalid allocations or allocation failures return zero.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn health_decode_snapshot(raw_utf8: u32, raw_len: u32) -> u32 {
     if raw_utf8.checked_add(raw_len).is_none() {

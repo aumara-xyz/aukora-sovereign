@@ -92,7 +92,7 @@ pub(super) fn authorization(auth: &OwnerAuthorization) -> Result<Vec<u8>> {
     Ok(json::to_canonical(&object(vec![
         ("v", number(1)?),
         ("node", text(auth.node)?),
-        ("subject", text(&auth.subject)?),
+        ("subject", text(auth.subject)?),
         ("op", text(auth.op.wire_name())?),
         ("proposal", text(auth.proposal)?),
         ("target", text(&auth.target)?),

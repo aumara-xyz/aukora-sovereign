@@ -12,9 +12,9 @@ pub const OWNER_AUTHORIZATION_DOMAIN: &str = "aukora:owner-authorization:v1";
 pub const OPERATION_CONTENT_DOMAIN: &str = "aukora:operation-content:v1";
 /// C2 Kira associated-data tag, followed by NUL and u32be length-prefixed fields.
 pub const KIRA_AEAD_DOMAIN: &str = "aukora:kira-aead:v1";
-/// Fingerprint digest: SHA-256 of `"pentora.display.v1" || 0x00 || root32`.
-/// `root32` is the 32 raw bytes of `AuraStatus::root`, the RFC 6962 root
-/// used as the display snapshot head.
+/// Fingerprint digest: SHA-256 of `"pentora.display.v1" || 0x00 || head`.
+/// `head` is 32 raw bytes. Prime's Aura display uses `AuraSnapshot.head`,
+/// the commitment to its ordered source heads, not `AuraStatus::root`.
 pub const PENTORA_DISPLAY_DOMAIN: &str = "pentora.display.v1";
 /// Relationship head: tag, NUL, then two raw person Nostr x-only public keys sorted bytewise.
 /// Feed that SHA-256 head through `pentora.display.v1` to obtain the display digest.

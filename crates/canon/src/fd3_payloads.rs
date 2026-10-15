@@ -24,7 +24,8 @@ pub struct Propose {
     pub new_bytes_b64: String,
     /// Untrusted model explanation, rendered as fenced text.
     pub note: String,
-    /// Optional assertions that the supervisor recomputes rather than trusts.
+    /// Omitted when absent; a present value must be an object, never JSON null.
+    /// The supervisor independently recomputes these assertions.
     pub cell: Option<CellCommitments>,
 }
 
@@ -93,7 +94,7 @@ pub struct MemoryPut {
     pub cell: CellCommitments,
     /// Literal proposed memory statement, without instructional authority.
     pub statement: String,
-    /// Optional literal source quote; absent and empty remain distinct.
+    /// Optional literal source quote; absent and empty remain distinct. JSON null is refused.
     pub quote: Option<String>,
     /// Memory category supplied to Kira as data.
     pub category: String,

@@ -216,6 +216,11 @@ impl Reply {
 /// and embedded labels cannot claim Owner.
 /// Body scalars are checked in UTF-16 field-name order before nested values in that
 /// order; arrays check type, then elements in index order. Nullable values are scalar.
+/// A required object that is null, an array or a scalar refuses `frame:not-object`;
+/// this includes envelopes, bodies, cells, functions, parameters and object array
+/// elements. Scalar and array type mismatches refuse `frame:invalid-field`.
+/// Optional propose cell and memory quote may be omitted, but cannot be null;
+/// an empty quote remains present. Nullable scalars retain explicit JSON null.
 ///
 /// V1 request order is: propose base_sha256,new_bytes_b64,note,target then cell;
 /// read target; model.call grant_id,max_output_tokens,model then messages,tools;
@@ -278,6 +283,9 @@ pub fn encode_request(frame: &Frame<Request>) -> Result<Vec<u8>> {
 /// recall result then items, with cite_seq,note_id,text per item; refusal code,next;
 /// status.reply bound,grant_id,grant_remaining,ready; memory.list.reply next,tier then items,
 /// whose scalars are at,category,cite_seq,demoted_at,demoted_seq,note_id,text.
+/// Required objects, including usage and object array elements, refuse
+/// `frame:not-object` for every other JSON type; scalar or array type mismatches
+/// refuse `frame:invalid-field`. Nullable scalar fields emit and accept JSON null.
 /// Memory-list before, next and note_id share the NoteId bound of 1..=128 UTF-8 bytes
 /// without control characters; only before and next admit null. Invalid handles
 /// refuse `frame:invalid-field`.
