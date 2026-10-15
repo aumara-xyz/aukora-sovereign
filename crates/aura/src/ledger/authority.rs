@@ -824,3 +824,75 @@ fn approved_payload(bytes: &[u8]) -> Result<&[u8]> {
     }
     Ok(&bytes[separator + 1..])
 }
+
+pub(super) fn verify_target_consumption(
+    transaction: &LedgerTxn<'_>,
+    stored: &storage::ProposalState,
+    approval: Digest32,
+) -> Result<AuthorityRecord> {
+    use canon::authority::OwnerAssertion;
+    let (proof_bytes, credential, counter, epoch, sequence, previous, operation, proposal, action, appended):
+        (Vec<u8>, String, u32, i64, i64, Option<String>, String, String, String, i64) = transaction.transaction.query_row(
+        "SELECT proof,credential,counter,epoch,sequence,previous_hash,operation,proposal,action,appended FROM authority_consumptions WHERE approval=?1",
+        [approval.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?)),
+    ).map_err(sql)?;
+    let epoch = u64::try_from(epoch).map_err(|_| refusal("target-consumption"))?;
+    let sequence = u64::try_from(sequence).map_err(|_| refusal("target-consumption"))?;
+    let consumed = transaction.record_at(AuthorityVersion {
+        epoch, sequence, previous_hash: previous.as_deref().map(Digest32::from_hex).transpose()?,
+    })?;
+    if proposal != stored.proposal.to_string() || operation != stored.operation.to_string()
+        || action != "apply" || appended != 1 || epoch != stored.authority.epoch
+        || consumed.operation != Some(stored.operation) || consumed.kind != Kind::GateConsume
+        || consumed.phase != Phase::Settle || consumed.actor != "owner" {
+        return Err(refusal("target-consumption"));
+    }
+    bind_gate_body(gate_payload(&consumed.body), stored, approval, "consumed")?;
+    let proof = json::parse_strict(&proof_bytes)?;
+    immune_exact(&proof, &["authorization", "credential", "authenticator_data", "client_data_json",
+        "signed_bytes", "public_keys", "signatures"])?;
+    let authorization_bytes = proof.get("authorization").ok_or(refusal("target-proof"))?.canonical_bytes();
+    let authorization = storage::decode_authorization(&authorization_bytes)?;
+    if proof.canonical_bytes() != proof_bytes || field(&proof, "credential") != Some(credential.as_str())
+        || Digest32::sha256(&authorization_bytes) != approval || authorization.proposal != stored.proposal
+        || authorization.epoch != epoch || authorization.op != OwnerOperation::Apply
+        || authorization.target != stored.target || authorization.base_sha256 != stored.base_sha256
+        || authorization.new_sha256 != Digest32::sha256(&stored.new_bytes)
+        || authorization.cell != stored.cell || authorization.operation != stored.operation_digest
+        || authorization.expires_at <= consumed.at {
+        return Err(refusal("target-proof"));
+    }
+    let (challenge_body, card, challenge, spent): (Vec<u8>, Vec<u8>, String, i64) = transaction.transaction.query_row(
+        "SELECT body,card,challenge,spent FROM authority_challenges WHERE proposal=?1 AND action='apply'",
+        [stored.proposal.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+    ).map_err(sql)?;
+    let decoded_card = storage::decode_card(&card)?;
+    if challenge_body != authorization_bytes || challenge != authorization.challenge.to_string()
+        || spent != 1 || Digest32::sha256(&card) != authorization.display_sha256
+        || decoded_card.risk != stored.risk || decoded_card.model_note != stored.model_note {
+        return Err(refusal("target-proof"));
+    }
+    let credential_bytes = URL_SAFE_NO_PAD.decode(&credential).map_err(|_| refusal("target-proof"))?;
+    if URL_SAFE_NO_PAD.encode(&credential_bytes) != credential { return Err(refusal("target-proof")); }
+    let credential_id = CredentialId::new(credential_bytes)?;
+    let binding = super::epochs::immune_binding_before(&transaction.transaction, &credential_id,
+        epoch, sequence, &transaction.state.keys)?;
+    let proof_keys = storage::decode_keys(&proof.get("public_keys").ok_or(refusal("target-proof"))?.canonical_bytes())?;
+    let signatures = storage::decode_signatures(&proof.get("signatures").ok_or(refusal("target-proof"))?.canonical_bytes())?;
+    if proof_keys != [binding.public_key.clone()] || signatures.components().len() != 1 {
+        return Err(refusal("target-proof"));
+    }
+    let signature = signatures.components()[0].clone();
+    let authenticator_data = immune_standard_bytes(&proof, "authenticator_data")?;
+    let client_data_json = immune_standard_bytes(&proof, "client_data_json")?;
+    let mut signed = authenticator_data.clone();
+    signed.extend_from_slice(Digest32::sha256(&client_data_json).as_bytes());
+    if authenticator_data.len() != 37 || authenticator_data[33..37] != counter.to_be_bytes()
+        || signed != immune_standard_bytes(&proof, "signed_bytes")? {
+        return Err(refusal("target-proof"));
+    }
+    canon::authority::verify_retained_owner_assertion(binding, authorization, OwnerAssertion {
+        v: 1, algorithm: signature.algorithm, credential_id, authenticator_data, client_data_json, signature,
+    }, crate::record::verify_signature)?;
+    Ok(consumed)
+}

@@ -13,6 +13,27 @@ use canon::json::{SafeInteger, Value, ValueView, MAX_SAFE_INTEGER};
 use canon::{Refusal, Result};
 use sha2::{Digest, Sha256};
 
+/// Verify author evidence over row-120's domain-separated manifest bytes.
+/// This primitive does not bind a key, consume a proof, or grant owner authority.
+pub fn verify_app_manifest_signature(
+    public_key: &[u8; 32],
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Result<()> {
+    use signature::Verifier;
+    const PREFIX: &[u8] = b"aukora:app-manifest:v1\0";
+    if !message.starts_with(PREFIX) || message.len() > 16_384 + PREFIX.len() {
+        return Err(refuse("app-author-message"));
+    }
+    let verifier = k256::schnorr::VerifyingKey::from_slice(public_key)
+        .map_err(|_| refuse("app-author-key"))?;
+    let signature = k256::schnorr::Signature::try_from(signature.as_slice())
+        .map_err(|_| refuse("app-author-signature"))?;
+    verifier
+        .verify(message, &signature)
+        .map_err(|_| refuse("app-author-signature"))
+}
+
 /// Personal Nostr derivation and bindings with independent rotation and owner epochs.
 pub mod person_nostr;
 

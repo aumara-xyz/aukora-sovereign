@@ -189,6 +189,71 @@ impl Ledger {
     }
 }
 
+impl LedgerTxn<'_> {
+    /// Recheck the retained owner proof and its signed consumption without issuing a permit.
+    pub fn check_target_consumption(
+        &self,
+        proposal: canon::ids::ProposalId,
+        approval: Digest32,
+    ) -> Result<AuthorityRecord> {
+        self.active()?;
+        let stored = self.proposal(&proposal)?;
+        authority::verify_target_consumption(self, &stored, approval)
+            .map_err(|_| refusal("target-consumption"))
+    }
+
+    /// Record an already-consumed effect observation; this method cannot execute or retry it.
+    pub fn settle_consumed_target(
+        &mut self,
+        proposal: canon::ids::ProposalId,
+        approval: Digest32,
+        status: crate::storage::ProposalStatus,
+        observed: Option<canon::authority::BaseDigest>,
+    ) -> Result<AuthorityRecord> {
+        self.mutate(|this| {
+            use crate::storage::ProposalStatus;
+            use canon::{authority::{BaseDigest, Kind, PendingAuthorityRecord, Phase}, json::Value};
+            let stored = this.proposal(&proposal)?;
+            if stored.status != ProposalStatus::Consumed || this.gate_terminal(&stored.operation)?.is_some() {
+                return Err(refusal("target-settlement"));
+            }
+            this.check_target_consumption(proposal, approval)?;
+            let new = BaseDigest::Present(Digest32::sha256(&stored.new_bytes));
+            let valid = match status {
+                ProposalStatus::Applied | ProposalStatus::Incomplete => observed == Some(new),
+                ProposalStatus::Failed => observed == Some(stored.base_sha256),
+                ProposalStatus::Conflict => observed.is_some_and(|value| value != new && value != stored.base_sha256),
+                ProposalStatus::Unknown => observed.is_none(),
+                _ => false,
+            };
+            if !valid { return Err(refusal("target-settlement")); }
+            let base = |digest| match digest { BaseDigest::Absent => "absent".into(), BaseDigest::Present(hash) => hash.to_string() };
+            let text = |value: String| Value::text(value);
+            let mut fields = vec![
+                ("proposal".into(), text(proposal.to_string())?),
+                ("target".into(), text(stored.target.clone())?),
+                ("operation".into(), text(stored.operation_digest.to_string())?),
+                ("base_sha256".into(), text(base(stored.base_sha256))?),
+                ("new_sha256".into(), text(Digest32::sha256(&stored.new_bytes).to_string())?),
+                ("state".into(), text(status.wire_name().into())?),
+                ("retry".into(), Value::boolean(false)),
+                ("consumed_approval".into(), text(approval.to_string())?),
+                ("observed_sha256".into(), match observed { Some(value) => text(base(value))?, None => Value::null() }),
+            ];
+            if observed.is_none() { fields.push(("observation".into(), text("unavailable".into())?)); }
+            let record = this.write_record(PendingAuthorityRecord {
+                v: 1, algorithm: canon::alg::AlgorithmId::Sha256, authority: this.current_version()?,
+                at: this.services.clock.now_ms()?,
+                kind: if status == ProposalStatus::Applied { Kind::GateApply } else { Kind::GateRecover },
+                actor: "gate".into(), operation: Some(stored.operation), phase: Phase::Terminal,
+                body: Value::object(fields)?,
+            })?;
+            this.set_status(proposal, status)?;
+            Ok(record)
+        })
+    }
+}
+
 pub struct LedgerTxn<'a> {
     observation_start_changes: u64,
     transaction: rusqlite::Transaction<'a>,

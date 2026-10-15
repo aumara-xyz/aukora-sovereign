@@ -957,3 +957,20 @@ fn state_name(state: ProposalState) -> &'static str {
         ProposalState::Unknown => "unknown",
     }
 }
+
+impl<'a, S: TargetStore> Gate<'a, S> {
+    pub(crate) fn install_parts(
+        &mut self,
+    ) -> (&mut Ledger, &mut S, &GateConfig, TransactionServices<'a>) {
+        (&mut self.ledger, &mut self.targets, &self.config, self.services)
+    }
+
+    pub(crate) fn install_construct(
+        ledger: Ledger,
+        targets: S,
+        config: GateConfig,
+        services: TransactionServices<'a>,
+    ) -> Self {
+        Self { ledger, targets, config, services }
+    }
+}

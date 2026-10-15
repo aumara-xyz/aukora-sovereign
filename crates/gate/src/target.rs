@@ -14,6 +14,72 @@ use std::{
 
 const TEMP_PREFIX: &str = ".aukora-gate-";
 
+impl<S: TargetStore> crate::service::Gate<'_, S> {
+    pub(crate) fn install_effect(
+        &mut self,
+        id: canon::ids::ProposalId,
+        approval: Digest32,
+        crash: &mut dyn crate::recovery::CrashInjector,
+    ) -> Result<crate::service::Outcome> {
+        use crate::{install, recovery::{CrashPoint, RecoveryItem}, ProposalState};
+        let (ledger, targets, config, services) = self.install_parts();
+        let mut transaction = ledger.begin(services)?;
+        let proposal = install::transition_load(&transaction, id)?;
+        install::transition_target(config, &proposal.request.target, proposal.request.new_bytes.len())?;
+        install::validate_proposal(&proposal)?;
+        if proposal.state != ProposalState::Consumed || proposal.risk != crate::RiskTier::Critical
+            || proposal.authority.epoch != transaction.current_version()?.epoch
+            || proposal.new_digest != Digest32::sha256(&proposal.request.new_bytes)
+            || proposal.operation_digest != crate::proposal::content_digest(config.node, &proposal.request)? {
+            return Err(crate::refuse("install-consumption"));
+        }
+        let consumed = transaction.check_target_consumption(id, approval)?;
+        let valid = |observation: &TargetObservation| match (&observation.digest, &observation.bytes) {
+            (BaseDigest::Absent, None) => true,
+            (BaseDigest::Present(expected), Some(bytes)) => *expected == Digest32::sha256(bytes),
+            _ => false,
+        };
+        let before = targets.observe(&proposal.request.target).ok().filter(&valid);
+        let mut acknowledged = false;
+        if before.as_ref().is_some_and(|seen| seen.digest == proposal.request.base) {
+            crash.at(CrashPoint::BeforeEffect)?;
+            let result = targets.replace_once(EffectPermit::new(
+                proposal.operation_id, proposal.request.target.clone(), proposal.request.base,
+                proposal.new_digest, proposal.request.new_bytes.clone(),
+            ));
+            crash.at(CrashPoint::AfterEffect)?;
+            acknowledged = result.is_ok_and(|seen| valid(&seen)
+                && seen.digest == BaseDigest::Present(proposal.new_digest)
+                && seen.bytes.as_ref() == Some(&proposal.request.new_bytes));
+        }
+        let observed = targets.observe(&proposal.request.target).ok().filter(valid);
+        let state = match &observed {
+            Some(seen) if acknowledged && seen.digest == BaseDigest::Present(proposal.new_digest)
+                && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) => ProposalState::Applied,
+            Some(seen) => crate::recovery::classify_observation(&RecoveryItem {
+                proposal: id, consumed_approval: approval, consumption: consumed.authority,
+                expected_base: proposal.request.base, expected_new_digest: proposal.new_digest,
+                observed: seen.clone(),
+            })?,
+            None => ProposalState::Unknown,
+        };
+        let status = match state {
+            ProposalState::Applied => aura::storage::ProposalStatus::Applied,
+            ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
+            ProposalState::Failed => aura::storage::ProposalStatus::Failed,
+            ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
+            ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
+            _ => return Err(crate::refuse("install-settlement")),
+        };
+        crash.at(CrashPoint::BeforeTerminal)?;
+        let receipt = transaction.settle_consumed_target(id, approval, status, observed.map(|seen| seen.digest))?;
+        transaction.release_reservation(&id)?;
+        crash.at(CrashPoint::AfterTerminal)?;
+        install::transition_commit(transaction, crash)?;
+        Ok(crate::service::Outcome { proposal: id, state, receipt_hash: receipt.hash })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TargetId(String);
 

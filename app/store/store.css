@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+section { min-width: 0; }
+article { padding-block: 20px; }
+h3 { font-size: 16px; }
+dl { display: grid; gap: 12px; }
+dl div { display: grid; gap: 5px; }
+dt { color: #adbad0; font-size: 12px; }
+dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 13px; }
+summary { cursor: pointer; font-size: 13px; margin-block: 16px; }
+details article { padding-inline: 12px; border-inline-start: 2px solid #3c4659; }
+details p { white-space: pre-wrap; }

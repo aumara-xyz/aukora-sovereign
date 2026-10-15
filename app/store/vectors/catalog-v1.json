@@ -1,0 +1,60 @@
+{
+  "schema": "aukora-catalog-codec-v1-vectors",
+  "scope": "Canonical content, filter, tag and refusal vectors; no signature acceptance is asserted.",
+  "publication_kind": 30078,
+  "rating_kind": 1985,
+  "publication_schema": "aukora-app-publication-v1",
+  "rating_schema": "aukora-app-rating-v1",
+  "algorithm": "secp256k1-schnorr",
+  "manifest_signature": {
+    "algorithm": "secp256k1-schnorr",
+    "message": "sha256(domain || 0x00 || canonical_body_utf8)",
+    "domain": "aukora:app-manifest:v1",
+    "canonical_body_utf8": "{\"face\":{\"entry\":\"face/index.html\"},\"grants\":[\"app.clock\",\"app.storage.read\"],\"id\":\"00000000000000000000000000000001\",\"name\":\"Catalog sample\",\"package_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"runtime\":{\"entry\":\"app/main.wasm\",\"exec\":false,\"kind\":\"user-app\",\"network\":false,\"wasi\":false},\"version\":\"1.0.0\"}"
+  },
+  "filters": [
+    {
+      "query": {"author": null, "text": "", "since_seconds": null, "until_seconds": null, "limit": 20},
+      "canonical_utf8": "{\"#t\":[\"aukora-app\"],\"kinds\":[30078],\"limit\":20}"
+    },
+    {
+      "query": {"author": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9", "text": "sample", "since_seconds": 1, "until_seconds": 2, "limit": 1},
+      "canonical_utf8": "{\"#t\":[\"aukora-app\"],\"authors\":[\"f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9\"],\"kinds\":[30078],\"limit\":1,\"since\":1,\"until\":2}"
+    }
+  ],
+  "rating_content": {
+    "canonical_utf8": "{\"body\":{\"algorithm\":\"secp256k1-schnorr\",\"package_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"rating\":4,\"text\":\"Useful app.\"},\"schema\":\"aukora-app-rating-v1\"}",
+    "publication_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "publication_author": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+    "tags": [["e", "1111111111111111111111111111111111111111111111111111111111111111"], ["p", "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"], ["t", "aukora-app"]],
+    "authority": "none"
+  },
+  "rating_filter": {
+    "publication_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "limit": 20,
+    "canonical_utf8": "{\"#e\":[\"1111111111111111111111111111111111111111111111111111111111111111\"],\"#t\":[\"aukora-app\"],\"kinds\":[1985],\"limit\":20}"
+  },
+  "publication_refusals": [
+    {
+      "content_utf8": "{\"body\":{},\"schema\":\"aukora-app-publication-v2\"}",
+      "refusal": "nostr:catalog-version"
+    },
+    {
+      "content_utf8": "{\"body\":{},\"extra\":0,\"schema\":\"aukora-app-publication-v1\"}",
+      "refusal": "nostr:catalog-fields"
+    },
+    {
+      "content_utf8": "{\"body\":{},\"schema\":\"aukora-app-publication-v1\",\"sch\\u0065ma\":\"aukora-app-publication-v1\"}",
+      "refusal": "nostr:catalog-content"
+    },
+    {
+      "content_utf8": "{\"body\":{\"algorithm\":\"unknown\",\"manifest_b64\":\"e30=\",\"package_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"schema\":\"aukora-app-publication-v1\"}",
+      "refusal": "nostr:catalog-algorithm"
+    },
+    {
+      "content_utf8": "{\"body\":{\"algorithm\":\"secp256k1-schnorr\",\"manifest_b64\":\"e30=\",\"package_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"schema\":\"aukora-app-publication-v1\"}",
+      "tags": [["d", "0000000000000000000000000000000000000000000000000000000000000000"], ["t", "aukora-app"]],
+      "refusal": "nostr:catalog-fields"
+    }
+  ]
+}

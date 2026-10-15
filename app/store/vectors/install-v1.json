@@ -1,0 +1,34 @@
+{
+  "schema": "aukora-app-install-codec-v1-vectors",
+  "scope": "Format and refusal data. These examples do not assert signature or owner approval acceptance.",
+  "manifest_schema": "aukora-app-manifest-v1",
+  "install_schema": "aukora-app-install-v1",
+  "manifest_signature": {
+    "algorithm": "secp256k1-schnorr",
+    "domain": "aukora:app-manifest:v1",
+    "message": "sha256(domain || 0x00 || canonical_body_utf8)",
+    "canonical_body_utf8": "{\"face\":{\"entry\":\"face/index.html\"},\"grants\":[\"app.clock\",\"app.storage.read\"],\"id\":\"00000000000000000000000000000001\",\"name\":\"Example app\",\"package_sha256\":\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"runtime\":{\"entry\":\"app/main.wasm\",\"exec\":false,\"kind\":\"user-app\",\"network\":false,\"wasi\":false},\"version\":\"1.0.0\"}"
+  },
+  "package_commitment": {
+    "package_utf8": "abc",
+    "package_sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  },
+  "closed_grants": ["app.clock", "app.random", "app.storage.read", "app.storage.write"],
+  "grant_refusals": [
+    {"value": "passkey", "refusal": "gate:install-grant"},
+    {"value": "gate", "refusal": "gate:install-grant"},
+    {"value": "broker", "refusal": "gate:install-grant"},
+    {"value": "aura.append", "refusal": "gate:install-grant"},
+    {"value": "network", "refusal": "gate:install-grant"},
+    {"value": "app.storage.delete", "refusal": "gate:install-grant"}
+  ],
+  "service_refusals": [
+    {"operation": "gate.apply", "refusal": "gate:install-service-operation"},
+    {"operation": "broker.call", "refusal": "gate:install-service-operation"},
+    {"operation": "aura.append", "refusal": "gate:install-service-operation"},
+    {"operation": "network.fetch", "refusal": "gate:install-service-operation"}
+  ],
+  "path_refusals": ["../app.wasm", "/app.wasm", "a//app.wasm", "a/./app.wasm", "a/../app.wasm", "https:app.wasm", "a%2fapp.wasm"],
+  "limits": {"manifest_bytes": 16384, "install_bytes": 24000, "package_bytes": 8388608},
+  "authority": "A signed publication, manifest, package digest or rating alone supplies no owner authority. C5 apply commits to the exact install envelope, complete grants and C6 display bytes."
+}

@@ -80,3 +80,18 @@ pub fn authorization(
 pub fn passkey_challenge(_authorization: &OwnerAuthorization) -> Result<Digest32> {
     crate::unavailable()
 }
+
+impl DisplayedCard {
+    pub(crate) fn from_install_card(card: Card) -> Result<Self> {
+        if card.risk != crate::RiskTier::Critical {
+            return Err(crate::refuse("install-card-risk"));
+        }
+        let canonical = card.canonical_bytes()?;
+        let digest = Digest32::sha256(&canonical);
+        Ok(Self {
+            card,
+            canonical,
+            digest,
+        })
+    }
+}
