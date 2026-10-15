@@ -139,7 +139,7 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
   let watching: number | undefined;
   let activity = Date.now();
   let calls = new Set<string>();
-  // Retain observed identities after dismissal or rejection so late events cannot attach to a later turn.
+  // Retain admitted identities after dismissal so late events cannot attach to a later turn.
   const seenRequests = new Set<string>();
   const timers = new Set<number>();
   const changed = () => { if (!signal.aborted) options.changed(); };
@@ -391,11 +391,10 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
     if (stream?.request === request) {
       if (stream.reservation !== reservation) return null;
     } else {
-      const seen = seenRequests.has(request);
-      seenRequests.add(request);
-      if ((stream && stream.receipt === null) || seen
+      if (stream || seenRequests.has(request)
         || !state.turn || state.turn.phase === "creating") return null;
       stream = fresh(request, reservation, state.turn);
+      seenRequests.add(request);
       state.stream = stream;
       calls = new Set();
     }
@@ -432,6 +431,7 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
       case "delta": {
         const stream = streamFor(event.request, event.reservation);
         if (!stream || stream.receipt !== null) return;
+        if (event.index >= stream.index) stream.phase = "streaming";
         if (event.index === stream.index) {
           stream.index++;
           if (event.text !== null && !stream.gap && !stream.clipped) {
