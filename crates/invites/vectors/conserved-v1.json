@@ -1,0 +1,54 @@
+{
+  "schema": "aukora:invite-vectors:v1",
+  "draft": {
+    "value": {
+      "schema": "aukora:invite-draft:v1",
+      "op": "invite",
+      "network": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "issuer": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "issuer_subject": "aukora:1:1111111111111111111111111111111111111111111111111111111111111111",
+      "code_id": "00112233445566778899aabbccddeeff",
+      "issued_at_seconds": 1800000000,
+      "expires_at_seconds": 1800172800,
+      "transfer": {
+        "expected": {
+          "epoch": 7,
+          "sequence": 0,
+          "previous": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "child_units": 2
+      }
+    },
+    "canonical": "{\"code_id\":\"00112233445566778899aabbccddeeff\",\"expires_at_seconds\":1800172800,\"issued_at_seconds\":1800000000,\"issuer\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"issuer_subject\":\"aukora:1:1111111111111111111111111111111111111111111111111111111111111111\",\"network\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"op\":\"invite\",\"schema\":\"aukora:invite-draft:v1\",\"transfer\":{\"child_units\":2,\"expected\":{\"epoch\":7,\"previous\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"sequence\":0}}}"
+  },
+  "tags": {
+    "invite": [["d", "00112233445566778899aabbccddeeff"]],
+    "redemption": [["d", "1111111111111111111111111111111111111111111111111111111111111111"]],
+    "confirmation": [["d", "1111111111111111111111111111111111111111111111111111111111111111"]],
+    "redemption_and_confirmation_d_is_invite_id": true
+  },
+  "exclusive_expiry": [
+    {"now_seconds": 1799999999, "accepted": false},
+    {"now_seconds": 1800000000, "accepted": true},
+    {"now_seconds": 1800172799, "accepted": true},
+    {"now_seconds": 1800172800, "accepted": false}
+  ],
+  "conservation": {
+    "child_units": 2,
+    "before": {"issued": 3, "available": 3, "reserved": 0, "consumed": 0},
+    "reserved": {"issued": 3, "available": 0, "reserved": 3, "consumed": 0},
+    "redeemed": {"issued": 3, "available": 2, "reserved": 0, "consumed": 1},
+    "child_available": 2,
+    "issuer_lifetime_redeemed": 1,
+    "expired_instead": {"issued": 3, "available": 3, "reserved": 0, "consumed": 0},
+    "child_with_two_units_cannot_transfer_two": true,
+    "redeemed_plus_outstanding_maximum": 3,
+    "repeat_redemption_keeps_original_confirmation": true
+  },
+  "domains": {
+    "reservation": "aukora:invite-reservation:v1",
+    "reservation_preimage": ["domain", "NUL", "receipt_hash_raw32", "canonical_draft"],
+    "ancestry": "aukora:invite-ancestry:v1",
+    "ancestry_preimage": ["domain", "NUL", "canonical_prior_links_plus_current_invite_and_redemption"]
+  }
+}
