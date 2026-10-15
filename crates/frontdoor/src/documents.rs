@@ -59,6 +59,8 @@ pub struct DocumentSummary {
 pub struct DocumentPage {
     pub entries: Items<DocumentSummary, MAX_DOCUMENT_PAGE>,
     pub next: Option<DocumentPath>,
+    /// Entries with refused paths in the entire scanned directory, including before the cursor.
+    pub hidden_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -210,6 +212,7 @@ impl DocumentObserver<'_> {
         let mut candidates = BTreeMap::new();
         let mut scanned = 0usize;
         let mut name_bytes = 0usize;
+        let mut hidden_count = 0usize;
         while let Some(entry) = stream.read() {
             let entry = entry.map_err(|_| refused("document-list-refused"))?;
             let name = entry
@@ -224,11 +227,14 @@ impl DocumentObserver<'_> {
             if scanned > MAX_DIRECTORY_ENTRIES || name_bytes > MAX_DIRECTORY_NAME_BYTES {
                 return Err(refused("document-directory-too-large"));
             }
-            let path = DocumentPath::parse(&if parent.is_empty() {
+            let Ok(path) = DocumentPath::parse(&if parent.is_empty() {
                 name.to_owned()
             } else {
                 format!("{parent}/{name}")
-            })?;
+            }) else {
+                hidden_count += 1;
+                continue;
+            };
             if query
                 .after
                 .as_ref()
@@ -282,6 +288,7 @@ impl DocumentObserver<'_> {
         Ok(DocumentPage {
             entries: Items::new(entries)?,
             next,
+            hidden_count,
         })
     }
 
