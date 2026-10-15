@@ -2,6 +2,8 @@
   "schema": "aukora-design-captures-v1",
   "referenceBuild": "3673b98",
   "status": "unavailable",
+  "statuses": ["unavailable", "partial", "complete"],
+  "fileShape": "each file is {subject, state, weights, path, sha256}: subject is a face id or shell; weights is the lane composition and present only for shell; path is captures/<name>.png or .webp beside this file; sha256 is the hash of those bytes",
   "files": [],
   "requiredFaces": ["threads", "sidebar", "lingwa", "live", "zetaharp", "humangraph", "media", "memory", "messages", "documents", "aumlok", "identity", "coherence", "general", "models", "plugins", "presets", "archived"],
   "requiredStates": ["initial", "loading", "empty", "ready", "refusal", "service-unavailable", "phone"],

@@ -1,14 +1,35 @@
 {
   "schema": "aukora-design-copy-v1",
   "appTitle": "AUKORA Sovereign",
+  "brand": "AUKORA SOVEREIGN",
   "appsHeading": "AUKORA APPS",
   "systemHeading": "SYSTEM",
   "threadsHeading": "Threads · Auma",
   "emptySurface": "Choose an app or a System entry.",
   "waiting": "Waiting for required services",
+  "waitingFor": "Waiting for required services: {names}",
+  "loading": "Loading",
+  "unavailable": "Unavailable · {code}",
   "ownerTitle": "Owner ceremony",
+  "ownerFrame": "Owner ceremony · trusted origin",
+  "ownerClose": "Close",
+  "ownerPasskey": "Passkey",
+  "ownerPhrase": "Phrase",
+  "ownerUnavailable": "Owner origin is not configured in this release",
   "fingerprint": "Aura fingerprint",
   "health": "Organ health",
   "undetermined": "Undetermined · verification unavailable",
-  "missingCaptures": "The pilot's build 3673b98 screenshot set has not been supplied. Visual matching is not verified."
+  "missingCaptures": "The pilot's build 3673b98 screenshot set has not been supplied. Visual matching is not verified.",
+  "workspace": "Spatial workspace",
+  "lanes": "Lanes",
+  "lanesPicker": "Lane thirds: Threads, App, Apps and System",
+  "phoneTabs": "Workspace lanes",
+  "laneTabs": {"threads": "Threads", "surface": "App", "menu": "Apps · System"},
+  "laneLabels": {"threads": "Threads", "surface": "Current surface", "menu": "Navigation menu"},
+  "corners": {
+    "left": "Cycle thread pane width",
+    "centreLeft": "Cycle main pane toward threads",
+    "centreRight": "Cycle main pane toward menu",
+    "right": "Cycle menu pane width"
+  }
 }

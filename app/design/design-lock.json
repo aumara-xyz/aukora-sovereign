@@ -1,10 +1,29 @@
 {
   "schema": "aukora-design-lock-v1",
   "assets": [
-    {"path": "tokens.json", "sha256": "3e7ee7f16e6b0ddb3ba04fe8e406c5b644b38a50be2a71ea40e5a54f5e45a9af"},
-    {"path": "fonts.json", "sha256": "4129052ec0ea48d6d6f913ea55ddb7eda2c90917f9414685011815ba6251e6ba"},
-    {"path": "icons.json", "sha256": "a1a3d6f6320ed4c61fef397a800bea91efeae0244ff084bd72cd1711b8b3787a"},
-    {"path": "copy.json", "sha256": "0e388a5b52d42c4544d15c917c039bfff12c3f0dfd747023850db5cd899388d6"},
-    {"path": "captures.json", "sha256": "6d28eb69f4b0654d1b8096925a006666fe492746c160a792dbfa4cb885705f40"}
+    {
+      "path": "brand/aumara-mark-96.png",
+      "sha256": "f7b5a4fac8c8a6309b159ee7f6d65995157fba077625f935824bc9130dee1cdb"
+    },
+    {
+      "path": "captures.json",
+      "sha256": "f054f3ee088d716f8e2aeae8f34d5ba6cc6696dab8de5d938f606cd3698cac51"
+    },
+    {
+      "path": "copy.json",
+      "sha256": "af1acb744ca607b94dc0ace79493cc761e951b32f25b4e26e74e52537a30ef45"
+    },
+    {
+      "path": "fonts.json",
+      "sha256": "4129052ec0ea48d6d6f913ea55ddb7eda2c90917f9414685011815ba6251e6ba"
+    },
+    {
+      "path": "icons.json",
+      "sha256": "8d691718775644e54ff18d04bfdb24ea290b02ac5ee7c575e9a187d75203fc32"
+    },
+    {
+      "path": "tokens.json",
+      "sha256": "6d788379dc056baf2169a5052d574096d896ab31440c77e81adb3a71fefe7d85"
+    }
   ]
 }

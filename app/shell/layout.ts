@@ -1,57 +1,99 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-export type LaneId = 'threads' | 'surface' | 'menu';
-export type PaneWeights = readonly [number, number, number];
-export const LANES: readonly LaneId[] = ['threads', 'surface', 'menu'];
+// The tri-pane. Three lanes sit in three grid tracks at all times; a lane with weight 0 is a zero-width track that
+// is inert and invisible, never removed or moved, so what a hidden lane holds (its frames and their state) stays in
+// the page. A lane that has the whole frame keeps its content at two thirds, centred, with no exception for any app.
+// On a phone one lane shows at a time, full width, and the chosen composition is kept for when the screen widens.
+import { COPY, TOKENS } from '../design/index.js';
+import { BALANCED, LANES, cycle, soleLane, validWeights, wholeFrameLane } from './weights.js';
+import type { Corner, LaneId, PaneWeights } from './weights.js';
 
-export const PANE_WEIGHTS: readonly PaneWeights[] = Object.freeze(
-  Array.from({ length: 4 }, (_, left) =>
-    Array.from({ length: 4 - left }, (_, center) =>
-      Object.freeze([left, center, 3 - left - center]) as PaneWeights)).flat(),
-);
+export { LANES, PANE_WEIGHTS, validWeights } from './weights.js';
+export type { Corner, LaneId, PaneWeights } from './weights.js';
 
-export function validWeights(value: readonly number[]): value is PaneWeights {
-  return value.length === 3 && value.every(n => Number.isInteger(n) && n >= 0 && n <= 3)
-    && value.reduce((sum, n) => sum + n, 0) === 3;
+export interface PaneState {
+  /** The chosen composition. It does not change while a phone shows one lane. */
+  readonly weights: PaneWeights;
+  readonly phone: boolean;
+  readonly phoneLane: LaneId;
+  /** What is on screen now: the chosen weights, or the one lane of a phone with the whole frame. */
+  readonly shown: PaneWeights;
 }
+
+const LANE_CORNERS: Readonly<Record<LaneId, readonly Corner[]>> = {
+  threads: ['left'],
+  surface: ['centre-left', 'centre-right'],
+  menu: ['right'],
+};
+const CORNER_COPY: Readonly<Record<Corner, keyof typeof COPY.corners>> = {
+  left: 'left',
+  'centre-left': 'centreLeft',
+  'centre-right': 'centreRight',
+  right: 'right',
+};
 
 export class TriPane {
   readonly element: HTMLElement;
+  /** The content element of each lane: what a lane shows goes in here. */
   readonly lanes: Readonly<Record<LaneId, HTMLElement>>;
-  #weights: PaneWeights = [1, 1, 1];
+  #sections: Readonly<Record<LaneId, HTMLElement>>;
+  #weights: PaneWeights = BALANCED;
   #phoneLane: LaneId = 'threads';
   #narrow: MediaQueryList;
   #change: () => void;
+  #observers = new Set<(state: PaneState) => void>();
+  #disposed = false;
 
   constructor(parent: HTMLElement) {
     this.element = document.createElement('main');
     this.element.className = 'tri-pane';
-    this.element.setAttribute('aria-label', 'Spatial workspace');
+    this.element.setAttribute('aria-label', COPY.workspace as string);
+    const sections = {} as Record<LaneId, HTMLElement>;
     const lanes = {} as Record<LaneId, HTMLElement>;
     for (const id of LANES) {
-      const lane = document.createElement('section');
-      lane.className = 'lane';
-      lane.dataset.lane = id;
-      lane.setAttribute('aria-label', id === 'surface' ? 'App' : id === 'menu' ? 'Apps and System' : 'Threads');
-      const content = document.createElement('div');
-      content.className = 'lane-content';
-      lane.append(content);
-      this.element.append(lane);
-      lanes[id] = content;
+      const section = document.createElement('section');
+      section.className = 'lane';
+      section.dataset.lane = id;
+      section.setAttribute('aria-label', COPY.laneLabels[id]);
+      const panel = document.createElement('div');
+      panel.className = 'lane-panel';
+      for (const corner of LANE_CORNERS[id]) panel.append(this.#cornerControl(corner));
+      const body = document.createElement('div');
+      body.className = 'lane-body';
+      panel.append(body);
+      section.append(panel);
+      this.element.append(section);
+      sections[id] = section;
+      lanes[id] = body;
     }
+    this.#sections = Object.freeze(sections);
     this.lanes = Object.freeze(lanes);
     parent.append(this.element);
-    this.#narrow = matchMedia('(max-width: 700px)');
+    this.#narrow = matchMedia(`(max-width: ${TOKENS.metrics.phoneMaxWidth}px)`);
     this.#change = () => this.#render();
     this.#narrow.addEventListener('change', this.#change);
     this.#render();
   }
 
-  get weights(): PaneWeights { return [...this.#weights] as unknown as PaneWeights; }
+  get weights(): PaneWeights { return this.#weights; }
   get phoneLane(): LaneId { return this.#phoneLane; }
+  get phone(): boolean { return this.#narrow.matches; }
+  get state(): PaneState { return this.#state(); }
+
+  /** Called after every change of composition, phone lane or screen class. Returns its own removal. */
+  observe(observer: (state: PaneState) => void): () => void {
+    this.#observers.add(observer);
+    return () => { this.#observers.delete(observer); };
+  }
 
   setWeights(weights: PaneWeights): void {
     if (!validWeights(weights)) throw new Error('shell:invalid-weights');
-    this.#weights = [...weights] as unknown as PaneWeights;
+    this.#weights = Object.freeze([...weights]) as PaneWeights;
+    this.#render();
+  }
+
+  /** Use one lane edge, as the corner buttons do. */
+  cycle(corner: Corner): void {
+    this.#weights = cycle(this.#weights, corner);
     this.#render();
   }
 
@@ -61,32 +103,57 @@ export class TriPane {
     this.#render();
   }
 
+  /** Bring a lane into view on every screen. Only a hidden lane changes the composition: it becomes the balanced one. */
   reveal(lane: LaneId): void {
-    this.#phoneLane = lane;
     const index = LANES.indexOf(lane);
     if (index < 0) throw new Error('shell:unknown-lane');
-    if (this.#weights[index] === 0) this.#weights = [1, 1, 1];
+    this.#phoneLane = lane;
+    if (this.#weights[index] === 0) this.#weights = BALANCED;
     this.#render();
   }
 
-  #render(): void {
-    this.element.dataset.phone = String(this.#narrow.matches);
-    this.element.dataset.weights = this.#weights.join('-');
-    const visible = this.#narrow.matches ? 1 : this.#weights.filter(n => n > 0).length;
-    this.element.dataset.single = String(visible === 1);
-    this.element.style.gridTemplateColumns = this.#narrow.matches ? 'minmax(0, 1fr)'
-      : this.#weights.filter(n => n > 0).map(n => `minmax(0, ${n}fr)`).join(' ');
-    LANES.forEach((id, index) => {
-      const lane = this.lanes[id].parentElement!;
-      const active = this.#narrow.matches ? id === this.#phoneLane : this.#weights[index] !== 0;
-      lane.hidden = !active;
-      lane.inert = !active;
-      lane.setAttribute('aria-hidden', String(!active));
+  #cornerControl(corner: Corner): HTMLButtonElement {
+    const control = document.createElement('button');
+    control.type = 'button';
+    control.className = 'corner';
+    control.dataset.corner = corner;
+    control.setAttribute('aria-label', COPY.corners[CORNER_COPY[corner]]);
+    control.addEventListener('click', () => this.cycle(corner));
+    return control;
+  }
+
+  #state(): PaneState {
+    const phone = this.#narrow.matches;
+    return Object.freeze({
+      weights: this.#weights,
+      phone,
+      phoneLane: this.#phoneLane,
+      shown: phone ? soleLane(this.#phoneLane) : this.#weights,
     });
   }
 
+  #render(): void {
+    if (this.#disposed) return;
+    const state = this.#state();
+    this.element.dataset.phone = String(state.phone);
+    this.element.dataset.layout = state.shown.join('-');
+    // The two-thirds measure belongs to a lane that has the whole frame on a screen wide enough to share it.
+    this.element.dataset.measure = !state.phone && wholeFrameLane(state.shown) !== null ? 'focused' : 'shared';
+    LANES.forEach((id, index) => {
+      const active = state.shown[index] !== 0;
+      const section = this.#sections[id];
+      section.dataset.active = String(active);
+      section.inert = !active;
+      section.setAttribute('aria-hidden', String(!active));
+    });
+    for (const observer of [...this.#observers]) observer(state);
+  }
+
   dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
     this.#narrow.removeEventListener('change', this.#change);
+    this.#observers.clear();
     this.element.remove();
   }
 }

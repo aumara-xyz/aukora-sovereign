@@ -1,11 +1,31 @@
 {
   "schema": "aukora-design-icons-v1",
   "viewBox": "0 0 24 24",
+  "strokeWidth": 1.75,
   "paths": {
     "threads": "M4 5h16v11H9l-5 4V5Z",
+    "sidebar": "M4 5h16v14H4zM9 5v14",
+    "lingwa": "M4 4h10v8H8l-4 3V4ZM12 12h8v7l-3-2h-5v-5Z",
+    "live": "M3 12h3l2-6 4 12 3-9 2 3h4",
+    "zetaharp": "M6 4c6 0 12 6 12 16H6V4ZM10 20V9M14 20v-6",
+    "humangraph": "M10 6a2 2 0 1 0 4 0 2 2 0 0 0-4 0ZM4 18a2 2 0 1 0 4 0 2 2 0 0 0-4 0ZM16 18a2 2 0 1 0 4 0 2 2 0 0 0-4 0ZM12 8v4l-6 4M12 12l6 4",
+    "media": "M4 5h16v14H4zM10 9l5 3-5 3V9Z",
+    "memory": "M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3ZM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3",
+    "messages": "M4 6h16v12H4zM4 7l8 6 8-6",
+    "documents": "M7 3h7l5 5v13H7ZM14 3v5h5M10 13h6M10 17h6",
+    "aumlok": "M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3",
+    "identity": "M4 5h16v14H4zM8 10a2 2 0 1 0 4 0 2 2 0 0 0-4 0ZM6 17c.5-2 2-3 4-3s3.5 1 4 3M15 10h3M15 14h3",
+    "coherence": "M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3ZM12 8l4 2.3v4.4L12 17l-4-2.3v-4.4L12 8Z",
+    "general": "M4 7h10M18 7h2M4 17h2M10 17h10M14 5v4M6 15v4",
+    "models": "M7 7h10v10H7zM10 10h4v4h-4zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4",
+    "plugins": "M9 3v5M15 3v5M6 8h12v4a6 6 0 0 1-12 0V8ZM12 18v3",
+    "presets": "M4 6h16M4 12h16M4 18h16M8 4v4M15 10v4M10 16v4",
+    "archived": "M4 5h16v4H4zM5 9v10h14V9M10 13h4",
     "apps": "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
     "system": "M5 5h14v14H5zM9 9h6v6H9z",
+    "surface": "M4 5h16v14H4zM4 9h16",
     "close": "m6 6 12 12M18 6 6 18",
     "owner": "M12 3 4 7v5c0 4 8 9 8 9s8-5 8-9V7z"
-  }
+  },
+  "brand": {"mark": "brand/aumara-mark-96.png", "size": 96}
 }

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { COPY } from '../design/index.js';
+
 export type OwnerRoute = '/passkey' | '/phrase' | '/claim' | `/approval/${string}`;
 export type OwnerNotice = { kind: 'closed' | 'complete' } | { kind: 'refusal'; code: string };
 const protocol = 'aukora.owner.v1';
@@ -32,20 +34,20 @@ export class OwnerFrame {
     this.close();
     const dialog = document.createElement('dialog');
     dialog.className = 'owner-dialog';
-    dialog.setAttribute('aria-label', 'Owner ceremony');
+    dialog.setAttribute('aria-label', COPY.ownerTitle as string);
     const bar = document.createElement('div');
     bar.className = 'owner-toolbar';
     const title = document.createElement('strong');
-    title.textContent = 'Owner ceremony';
+    title.textContent = COPY.ownerTitle as string;
     const close = document.createElement('button');
     close.type = 'button';
-    close.textContent = 'Close';
+    close.textContent = COPY.ownerClose as string;
     const frame = document.createElement('iframe');
     frame.className = 'owner-frame';
-    frame.title = 'Owner ceremony · trusted origin';
+    frame.title = COPY.ownerFrame as string;
     frame.referrerPolicy = 'origin';
     frame.allow = `publickey-credentials-get ${this.#origin}; publickey-credentials-create ${this.#origin}`;
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
     const url = new URL('index.html', `${this.#origin}/`);
     url.hash = route;
     frame.src = url.href;
