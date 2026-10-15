@@ -29,6 +29,10 @@ the browser has no default approval for an unpinned context format. `node` and
 `deviceEpoch` come from the host. `legacyVerifier` adapts the Rust receipt reader;
 the browser never parses decimal legacy receipts with the canonical frame codec.
 Native camera decoding uses `BarcodeDetector`; hosts without it supply `decode`.
+The host supplies `pentora`, an adapter to the pinned Rust WASM `pentora_expand`:
+32 raw receipt-digest bytes in, 110 trits out. Rust applies `pentora.display.v1`;
+the page places the trits using the pinned geometry's `mutable_indices`. A missing
+adapter or malformed expansion refuses; there is no JavaScript derivation fallback.
 The host's TypeScript pipeline serves these modules and `style.css`; geometry is
 the already-pinned Pentora JSON imported as data before an exchange.
 

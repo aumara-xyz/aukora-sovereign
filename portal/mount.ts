@@ -3,8 +3,10 @@ import { BrowserCopresenceEngine, browserStorage, type BrowserEngineOptions } fr
 import { cameraSurface, type FrameDecoder } from "./optical.ts";
 import { createPortalPage } from "./page.ts";
 import { BrowserChannelProbe } from "./senses.ts";
+import type { PentoraExpansion } from "./bloom.ts";
 
 export type PortalMountOptions = Pick<BrowserEngineOptions, "node" | "deviceEpoch" | "contextFormatPinned" | "legacyVerifier"> & {
+  readonly pentora: PentoraExpansion;
   readonly decode?: FrameDecoder;
 };
 
@@ -19,7 +21,7 @@ export function mountPortal(host: HTMLElement, options: PortalMountOptions): () 
   visuals.append(frameLabel, frame, video, bloomLabel, bloom);
   host.append(visuals, controls);
   const storage = browserStorage(), channels = new BrowserChannelProbe();
-  const optical = cameraSurface(frame, video, options.decode, bloom);
+  const optical = cameraSurface(frame, video, options.pentora, options.decode, bloom);
   const engine = new BrowserCopresenceEngine({ ...options, ...storage, channels });
   const unmount = createPortalPage({ prepare: method => channels.prepare(method), release: () => channels.close() }).mount(controls, { engine, attempts: storage.attempts, optical });
   return () => { unmount(); optical.clear(); channels.close(); visuals.remove(); controls.remove(); };

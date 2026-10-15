@@ -2,8 +2,17 @@
 import geometry from "../crates/pentora/vectors/geometry_index_table_v1.json" with { type: "json" };
 import { hex, refuse } from "./bytes.ts";
 
-export function drawRelationshipBloom(canvas: HTMLCanvasElement, digest: Uint8Array): void {
-  if (digest.length !== 32) refuse("bloom-digest");
+export interface PentoraExpansion {
+  // The Rust WASM adapter hashes the raw input with pentora.display.v1 and returns 110 trits.
+  pentora_expand(root32: Uint8Array): Uint8Array;
+}
+
+export function drawRelationshipBloom(canvas: HTMLCanvasElement, digest: Uint8Array, pentora: PentoraExpansion): void {
+  if (!(digest instanceof Uint8Array) || digest.length !== 32) refuse("bloom-digest");
+  if (!pentora || typeof pentora.pentora_expand !== "function") refuse("bloom-expansion-unavailable");
+  const digits = pentora.pentora_expand(digest.slice());
+  if (!(digits instanceof Uint8Array) || digits.length !== 110 || digits.some(trit => trit > 2)) refuse("bloom-expansion");
+  const trits = new Map(geometry.mutable_indices.map((index, digit) => [index, digits[digit]]));
   const context = canvas.getContext("2d");
   if (!context) refuse("canvas");
   canvas.width = canvas.height = 600;
@@ -23,13 +32,6 @@ export function drawRelationshipBloom(canvas: HTMLCanvasElement, digest: Uint8Ar
       context.beginPath(); context.moveTo(from.x, from.y); context.lineTo(to.x, to.y); context.stroke();
     }
   });
-  // These digest trits colour a relationship bloom, never a health map.
-  let number = BigInt(`0x${hex(digest)}`);
-  const trits = new Map<number, number>();
-  for (let index = 0; index < 111; ++index) {
-    if (index === geometry.centre_index) continue;
-    trits.set(index, Number(number % 3n)); number /= 3n;
-  }
   for (const point of [...points].sort((a, b) => a.z - b.z)) {
     const trit = trits.get(point.index);
     context.fillStyle = trit === undefined ? "#07131e" : ["#1c3b50", "#4cacc5", "#c1f4e6"][trit];

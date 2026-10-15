@@ -2,7 +2,7 @@
 import type { OpticalSurface } from "./contracts.ts";
 import { checkAbort, refuse, utf8 } from "./bytes.ts";
 import { drawQr } from "./qr.ts";
-import { drawRelationshipBloom } from "./bloom.ts";
+import { drawRelationshipBloom, type PentoraExpansion } from "./bloom.ts";
 
 export type FrameDecoder = (source: HTMLVideoElement) => Promise<readonly string[]>;
 type Detector = { detect(source: HTMLVideoElement): Promise<readonly { rawValue: string }[]> };
@@ -13,7 +13,8 @@ export function nativeQrDecoder(): FrameDecoder {
   const detector = new constructor({ formats: ["qr_code"] });
   return async source => (await detector.detect(source)).map(found => found.rawValue);
 }
-export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement, decode?: FrameDecoder, bloomCanvas?: HTMLCanvasElement): OpticalSurface {
+export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement, pentora: PentoraExpansion, decode?: FrameDecoder, bloomCanvas?: HTMLCanvasElement): OpticalSurface {
+  if (!pentora || typeof pentora.pentora_expand !== "function") refuse("bloom-expansion-unavailable");
   let release = (): void => {};
   const relationship = bloomCanvas ?? canvas.ownerDocument.createElement("canvas");
   if (!bloomCanvas) canvas.after(relationship);
@@ -21,8 +22,9 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
   return {
     showFrame(bytes) { drawQr(canvas, bytes); },
     showBloom(digest) {
+      relationship.hidden = true;
+      drawRelationshipBloom(relationship, digest, pentora);
       relationship.hidden = false;
-      drawRelationshipBloom(relationship, digest);
     },
     async scan(consume, signal) {
       checkAbort(signal);
