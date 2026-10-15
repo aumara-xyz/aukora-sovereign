@@ -101,6 +101,15 @@ dependencies = [
 [[package]]
 name = "aura"
 version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "canon",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "p256",
+ "rusqlite",
+ "sha2",
+]
 
 [[package]]
 name = "autocfg"
@@ -855,6 +864,16 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 [[package]]
 name = "floor"
 version = "0.0.0"
+dependencies = [
+ "aura",
+ "base64 0.22.1",
+ "canon",
+ "hex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "foldhash"
@@ -971,6 +990,20 @@ dependencies = [
 [[package]]
 name = "gate"
 version = "0.0.0"
+dependencies = [
+ "aumlok",
+ "aura",
+ "base64 0.22.1",
+ "canon",
+ "getrandom 0.4.3",
+ "hex",
+ "icu_normalizer",
+ "icu_properties",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "getrandom"
@@ -1524,6 +1557,12 @@ dependencies = [
 [[package]]
 name = "laya"
 version = "0.0.0"
+dependencies = [
+ "canon",
+ "gate",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "leb128fmt"
@@ -2797,6 +2836,15 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier"
 version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "canon",
+ "ed25519-dalek",
+ "hex",
+ "k256",
+ "p256",
+ "sha2",
+]
 
 [[package]]
 name = "walkdir"

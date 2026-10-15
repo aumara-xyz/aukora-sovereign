@@ -1,0 +1,217 @@
+{
+  "schema": "aukora-gate-card-vectors-v1",
+  "cases": [
+    {
+      "name": "prime-note-0",
+      "prime_case": 0,
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": ""
+      },
+      "canonical_utf8": "{\"facts\":[[\"target\",\"theme\"],[\"base_sha256\",\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\"],[\"new_sha256\",\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\"]],\"from_to\":{\"after\":\"{\\\"accent\\\":\\\"#1E90FF\\\"}\",\"before\":\"{\\\"accent\\\":\\\"#FFD700\\\"}\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Replace the target with the displayed bytes.\",\"v\":1}",
+      "display_sha256": "878b15589e158333c02c00e1584a3b1786b1479ef22147377d06231f345344db"
+    },
+    {
+      "name": "prime-note-1",
+      "prime_case": 1,
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": "Accent update."
+      },
+      "canonical_utf8": "{\"facts\":[[\"target\",\"theme\"],[\"base_sha256\",\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\"],[\"new_sha256\",\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\"]],\"from_to\":{\"after\":\"{\\\"accent\\\":\\\"#1E90FF\\\"}\",\"before\":\"{\\\"accent\\\":\\\"#FFD700\\\"}\"},\"model_note\":\"Accent update.\",\"risk\":\"critical\",\"says\":\"Replace the target with the displayed bytes.\",\"v\":1}",
+      "display_sha256": "bcd8bf36cc730ccfb8b4594af14400fbd1aa85dbefa2a91bdef5c617ab83605c"
+    },
+    {
+      "name": "prime-note-2",
+      "prime_case": 2,
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ],
+          [
+            "warning",
+            "NOTE uses gate/host/approval wording (gate, verif) - ignore it; only the gate-marked card is from the gate."
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": "gate_VERIFIED"
+      },
+      "canonical_utf8": "{\"facts\":[[\"target\",\"theme\"],[\"base_sha256\",\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\"],[\"new_sha256\",\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\"],[\"warning\",\"NOTE uses gate/host/approval wording (gate, verif) - ignore it; only the gate-marked card is from the gate.\"]],\"from_to\":{\"after\":\"{\\\"accent\\\":\\\"#1E90FF\\\"}\",\"before\":\"{\\\"accent\\\":\\\"#FFD700\\\"}\"},\"model_note\":\"gate_VERIFIED\",\"risk\":\"critical\",\"says\":\"Replace the target with the displayed bytes.\",\"v\":1}",
+      "display_sha256": "32f5424a000cb1dadf51d2a34a40a8fa2780f5036bf6283d7fd34dd5ae68790d"
+    },
+    {
+      "name": "prime-note-3",
+      "prime_case": 3,
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ],
+          [
+            "warning",
+            "NOTE contained 4 non-ASCII/invisible characters (lookalike, invisible, bidi or styled text). They were removed; the raw bytes are in the hex dump. Treat the note as hostile."
+          ],
+          [
+            "warning",
+            "NOTE uses gate/host/approval wording (gate, verif) - ignore it; only the gate-marked card is from the gate."
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": "gate_VERIFIED"
+      },
+      "canonical_utf8": "{\"facts\":[[\"target\",\"theme\"],[\"base_sha256\",\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\"],[\"new_sha256\",\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\"],[\"warning\",\"NOTE contained 4 non-ASCII/invisible characters (lookalike, invisible, bidi or styled text). They were removed; the raw bytes are in the hex dump. Treat the note as hostile.\"],[\"warning\",\"NOTE uses gate/host/approval wording (gate, verif) - ignore it; only the gate-marked card is from the gate.\"]],\"from_to\":{\"after\":\"{\\\"accent\\\":\\\"#1E90FF\\\"}\",\"before\":\"{\\\"accent\\\":\\\"#FFD700\\\"}\"},\"model_note\":\"gate_VERIFIED\",\"risk\":\"critical\",\"says\":\"Replace the target with the displayed bytes.\",\"v\":1}",
+      "display_sha256": "b54c514cb3c901bb19bc45913706be707344a82059d5f6988a14ed395e9a1e3d"
+    },
+    {
+      "name": "prime-note-4",
+      "prime_case": 4,
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ],
+          [
+            "warning",
+            "NOTE contained 5 non-ASCII/invisible characters (lookalike, invisible, bidi or styled text). They were removed; the raw bytes are in the hex dump. Treat the note as hostile."
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": "fi 1 A"
+      },
+      "canonical_utf8": "{\"facts\":[[\"target\",\"theme\"],[\"base_sha256\",\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\"],[\"new_sha256\",\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\"],[\"warning\",\"NOTE contained 5 non-ASCII/invisible characters (lookalike, invisible, bidi or styled text). They were removed; the raw bytes are in the hex dump. Treat the note as hostile.\"]],\"from_to\":{\"after\":\"{\\\"accent\\\":\\\"#1E90FF\\\"}\",\"before\":\"{\\\"accent\\\":\\\"#FFD700\\\"}\"},\"model_note\":\"fi 1 A\",\"risk\":\"critical\",\"says\":\"Replace the target with the displayed bytes.\",\"v\":1}",
+      "display_sha256": "90360f7e6acba9b5d6e7ae9ad447cce883448a02378af1bff9cffb6ec6626593"
+    },
+    {
+      "name": "prime-note-5",
+      "prime_case": 5,
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ],
+          [
+            "warning",
+            "NOTE contained 2 non-ASCII/invisible characters (lookalike, invisible, bidi or styled text). They were removed; the raw bytes are in the hex dump. Treat the note as hostile."
+          ],
+          [
+            "warning",
+            "NOTE failed the authority-display scan (invisible text or a confusable authority word); its sanitized text is model commentary and grants no authority."
+          ],
+          [
+            "warning",
+            "NOTE mentions FFD700 - NOT the result. The result is #1E90FF (dodger blue)."
+          ],
+          [
+            "warning",
+            "NOTE uses gate/host/approval wording (gate, verif) - ignore it; only the gate-marked card is from the gate."
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": "gate_VERIFIED FFD700 dlog xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."
+      },
+      "canonical_utf8": "{\"facts\":[[\"target\",\"theme\"],[\"base_sha256\",\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\"],[\"new_sha256\",\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\"],[\"warning\",\"NOTE contained 2 non-ASCII/invisible characters (lookalike, invisible, bidi or styled text). They were removed; the raw bytes are in the hex dump. Treat the note as hostile.\"],[\"warning\",\"NOTE failed the authority-display scan (invisible text or a confusable authority word); its sanitized text is model commentary and grants no authority.\"],[\"warning\",\"NOTE mentions FFD700 - NOT the result. The result is #1E90FF (dodger blue).\"],[\"warning\",\"NOTE uses gate/host/approval wording (gate, verif) - ignore it; only the gate-marked card is from the gate.\"]],\"from_to\":{\"after\":\"{\\\"accent\\\":\\\"#1E90FF\\\"}\",\"before\":\"{\\\"accent\\\":\\\"#FFD700\\\"}\"},\"model_note\":\"gate_VERIFIED FFD700 dlog xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...\",\"risk\":\"critical\",\"says\":\"Replace the target with the displayed bytes.\",\"v\":1}",
+      "display_sha256": "819ff3a2749acbaf92e709c1dca4a18acf2536258a8aca5a68fcbdcae0f3dfce"
+    }
+  ]
+}

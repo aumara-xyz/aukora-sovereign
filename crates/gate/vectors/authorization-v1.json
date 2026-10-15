@@ -1,0 +1,261 @@
+{
+  "schema": "aukora-gate-authorization-vectors-v1",
+  "cases": [
+    {
+      "name": "replace-apply",
+      "operation_content": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": null
+      },
+      "operation_canonical_utf8": "{\"base_sha256\":\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\",\"cell\":null,\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"target\":\"theme\",\"v\":1}",
+      "operation_sha256": "e988d48a43975581b443df5e783f780da2022d308a85e2068ebe3e0b1731239d",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": ""
+      },
+      "display_sha256": "878b15589e158333c02c00e1584a3b1786b1479ef22147377d06231f345344db",
+      "authorization": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "subject": "aukora:1:3333333333333333333333333333333333333333333333333333333333333333",
+        "op": "apply",
+        "proposal": "11223344556677889900aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": null,
+        "display_sha256": "878b15589e158333c02c00e1584a3b1786b1479ef22147377d06231f345344db",
+        "challenge": "00112233445566778899aabbccddeeff",
+        "expires_at": 1792108800000,
+        "epoch": 7,
+        "operation": "e988d48a43975581b443df5e783f780da2022d308a85e2068ebe3e0b1731239d"
+      },
+      "authorization_canonical_utf8": "{\"base_sha256\":\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\",\"cell\":null,\"challenge\":\"00112233445566778899aabbccddeeff\",\"display_sha256\":\"878b15589e158333c02c00e1584a3b1786b1479ef22147377d06231f345344db\",\"epoch\":7,\"expires_at\":1792108800000,\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"op\":\"apply\",\"operation\":\"e988d48a43975581b443df5e783f780da2022d308a85e2068ebe3e0b1731239d\",\"proposal\":\"11223344556677889900aabbccddeeff\",\"subject\":\"aukora:1:3333333333333333333333333333333333333333333333333333333333333333\",\"target\":\"theme\",\"v\":1}",
+      "webauthn_challenge_sha256": "8f6542ae695269710c8e8e060b9c18f159bc91cdb87798e8187cf25df194788c"
+    },
+    {
+      "name": "replace-retire",
+      "operation_content": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": null
+      },
+      "operation_canonical_utf8": "{\"base_sha256\":\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\",\"cell\":null,\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"target\":\"theme\",\"v\":1}",
+      "operation_sha256": "e988d48a43975581b443df5e783f780da2022d308a85e2068ebe3e0b1731239d",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Retire the displayed proposal.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ]
+        ],
+        "from_to": {
+          "before": "{\"accent\":\"#FFD700\"}",
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": ""
+      },
+      "display_sha256": "925eb0ecfe4f70e7fc963d86a7c6f21065c75c54fcf1fadb2b071a39c32edae6",
+      "authorization": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "subject": "aukora:1:3333333333333333333333333333333333333333333333333333333333333333",
+        "op": "retire",
+        "proposal": "11223344556677889900aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": null,
+        "display_sha256": "925eb0ecfe4f70e7fc963d86a7c6f21065c75c54fcf1fadb2b071a39c32edae6",
+        "challenge": "ffeeddccbbaa99887766554433221100",
+        "expires_at": 1792108800000,
+        "epoch": 7,
+        "operation": "e988d48a43975581b443df5e783f780da2022d308a85e2068ebe3e0b1731239d"
+      },
+      "authorization_canonical_utf8": "{\"base_sha256\":\"a2fe58686eb9018e7f22a2d4e919376fca9692aba1cc5bb23bbe3a24e8e243b5\",\"cell\":null,\"challenge\":\"ffeeddccbbaa99887766554433221100\",\"display_sha256\":\"925eb0ecfe4f70e7fc963d86a7c6f21065c75c54fcf1fadb2b071a39c32edae6\",\"epoch\":7,\"expires_at\":1792108800000,\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"op\":\"retire\",\"operation\":\"e988d48a43975581b443df5e783f780da2022d308a85e2068ebe3e0b1731239d\",\"proposal\":\"11223344556677889900aabbccddeeff\",\"subject\":\"aukora:1:3333333333333333333333333333333333333333333333333333333333333333\",\"target\":\"theme\",\"v\":1}",
+      "webauthn_challenge_sha256": "fb89c1bd430605697800f9c2779c5871a073ac427a51e3115ba22aea4c561c3f"
+    },
+    {
+      "name": "create-apply",
+      "operation_content": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "absent",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": {
+          "module_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "input_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "effect_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      },
+      "operation_canonical_utf8": "{\"base_sha256\":\"absent\",\"cell\":{\"effect_sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"input_sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"module_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\"},\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"target\":\"theme\",\"v\":1}",
+      "operation_sha256": "bfe521326ce77c377e314bbd1024ca7723534bfd73af7cac9a2ab6cc44f47c6b",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Replace the target with the displayed bytes.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "absent"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ],
+          [
+            "cell",
+            {
+              "module_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+              "input_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "effect_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+            }
+          ]
+        ],
+        "from_to": {
+          "before": null,
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": ""
+      },
+      "display_sha256": "ac4da7668dde994d6f6ef92b466bfb007690513d848526104de2c4d83f45e232",
+      "authorization": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "subject": "aukora:1:3333333333333333333333333333333333333333333333333333333333333333",
+        "op": "apply",
+        "proposal": "11223344556677889900aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "absent",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": {
+          "module_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "input_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "effect_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "display_sha256": "ac4da7668dde994d6f6ef92b466bfb007690513d848526104de2c4d83f45e232",
+        "challenge": "00112233445566778899aabbccddeeff",
+        "expires_at": 1792108800000,
+        "epoch": 7,
+        "operation": "bfe521326ce77c377e314bbd1024ca7723534bfd73af7cac9a2ab6cc44f47c6b"
+      },
+      "authorization_canonical_utf8": "{\"base_sha256\":\"absent\",\"cell\":{\"effect_sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"input_sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"module_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\"},\"challenge\":\"00112233445566778899aabbccddeeff\",\"display_sha256\":\"ac4da7668dde994d6f6ef92b466bfb007690513d848526104de2c4d83f45e232\",\"epoch\":7,\"expires_at\":1792108800000,\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"op\":\"apply\",\"operation\":\"bfe521326ce77c377e314bbd1024ca7723534bfd73af7cac9a2ab6cc44f47c6b\",\"proposal\":\"11223344556677889900aabbccddeeff\",\"subject\":\"aukora:1:3333333333333333333333333333333333333333333333333333333333333333\",\"target\":\"theme\",\"v\":1}",
+      "webauthn_challenge_sha256": "3c37688c96f6ac7a7cef04d9ae12e4546b61b3eb92deab3884731bb76a80e187"
+    },
+    {
+      "name": "create-retire",
+      "operation_content": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "absent",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": {
+          "module_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "input_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "effect_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      },
+      "operation_canonical_utf8": "{\"base_sha256\":\"absent\",\"cell\":{\"effect_sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"input_sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"module_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\"},\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"target\":\"theme\",\"v\":1}",
+      "operation_sha256": "bfe521326ce77c377e314bbd1024ca7723534bfd73af7cac9a2ab6cc44f47c6b",
+      "card": {
+        "v": 1,
+        "risk": "critical",
+        "says": "Retire the displayed proposal.",
+        "facts": [
+          [
+            "target",
+            "theme"
+          ],
+          [
+            "base_sha256",
+            "absent"
+          ],
+          [
+            "new_sha256",
+            "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86"
+          ],
+          [
+            "cell",
+            {
+              "module_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+              "input_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+              "effect_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+            }
+          ]
+        ],
+        "from_to": {
+          "before": null,
+          "after": "{\"accent\":\"#1E90FF\"}"
+        },
+        "model_note": ""
+      },
+      "display_sha256": "c0ebea46eb70905aeaa21524ba4b205de51a80039919423631a064a0031fff86",
+      "authorization": {
+        "v": 1,
+        "node": "00112233445566778899aabbccddeeff",
+        "subject": "aukora:1:3333333333333333333333333333333333333333333333333333333333333333",
+        "op": "retire",
+        "proposal": "11223344556677889900aabbccddeeff",
+        "target": "theme",
+        "base_sha256": "absent",
+        "new_sha256": "5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86",
+        "cell": {
+          "module_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "input_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "effect_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "display_sha256": "c0ebea46eb70905aeaa21524ba4b205de51a80039919423631a064a0031fff86",
+        "challenge": "ffeeddccbbaa99887766554433221100",
+        "expires_at": 1792108800000,
+        "epoch": 7,
+        "operation": "bfe521326ce77c377e314bbd1024ca7723534bfd73af7cac9a2ab6cc44f47c6b"
+      },
+      "authorization_canonical_utf8": "{\"base_sha256\":\"absent\",\"cell\":{\"effect_sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"input_sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"module_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\"},\"challenge\":\"ffeeddccbbaa99887766554433221100\",\"display_sha256\":\"c0ebea46eb70905aeaa21524ba4b205de51a80039919423631a064a0031fff86\",\"epoch\":7,\"expires_at\":1792108800000,\"new_sha256\":\"5f8d14013e4cbb5aa169e03f8a588fed7b84ffccc44789cfd06755918f99aa86\",\"node\":\"00112233445566778899aabbccddeeff\",\"op\":\"retire\",\"operation\":\"bfe521326ce77c377e314bbd1024ca7723534bfd73af7cac9a2ab6cc44f47c6b\",\"proposal\":\"11223344556677889900aabbccddeeff\",\"subject\":\"aukora:1:3333333333333333333333333333333333333333333333333333333333333333\",\"target\":\"theme\",\"v\":1}",
+      "webauthn_challenge_sha256": "29c7bcf27d21cd8bc4c45fa31f65e4ec4763b667b66f6b075e8c7c89d9651db2"
+    }
+  ]
+}

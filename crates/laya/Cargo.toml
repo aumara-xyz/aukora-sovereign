@@ -6,3 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+canon = { path = "../canon" }
+gate = { path = "../gate" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
