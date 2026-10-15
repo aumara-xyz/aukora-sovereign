@@ -416,3 +416,263 @@ const fn refusal(reason: &'static str) -> Refusal {
         reason,
     }
 }
+
+/// Exact owner-approved state transition; concern labels do not select an action.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QuarantineAction {
+    Quarantine,
+    Recover,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuarantineRequest {
+    pub resource: String,
+    pub concern: Concern,
+    pub memory_note: Option<canon::ids::NoteId>,
+}
+
+/// A new target format. None of these fields is added to a frozen C3 or C5 object.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuarantineTransition {
+    pub action: QuarantineAction,
+    pub request: QuarantineRequest,
+    pub previous: Option<Digest32>,
+}
+
+impl QuarantineTransition {
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        use canon::json::Value;
+        quarantine_resource(&self.request.resource)?;
+        if self.action == QuarantineAction::Recover && self.previous.is_none() {
+            return Err(refusal("not-quarantined"));
+        }
+        let text = |value: &str| Value::checked_text(value.to_owned());
+        let fields = match self.request.concern {
+            Concern::Drift { expected, observed } => {
+                if expected == observed {
+                    return Err(refusal("quarantine-concern"));
+                }
+                vec![
+                    ("kind".into(), text("drift")?),
+                    ("expected".into(), text(&expected.to_string())?),
+                    ("observed".into(), text(&observed.to_string())?),
+                ]
+            }
+            Concern::ProvenTampering { verified_record } => vec![
+                ("kind".into(), text("proven-tampering")?),
+                (
+                    "verified_record".into(),
+                    text(&verified_record.to_string())?,
+                ),
+            ],
+            Concern::Unavailable => vec![("kind".into(), text("unavailable")?)],
+        };
+        Ok(Value::checked_object(vec![
+            ("schema".into(), text("aukora-immune-quarantine-v1")?),
+            (
+                "action".into(),
+                text(match self.action {
+                    QuarantineAction::Quarantine => "quarantine",
+                    QuarantineAction::Recover => "recover",
+                })?,
+            ),
+            ("resource".into(), text(&self.request.resource)?),
+            ("concern".into(), Value::checked_object(fields)?),
+            (
+                "memory_note".into(),
+                match &self.request.memory_note {
+                    Some(note) => text(note.as_str())?,
+                    None => Value::null(),
+                },
+            ),
+            (
+                "previous".into(),
+                match self.previous {
+                    Some(previous) => text(&previous.to_string())?,
+                    None => Value::null(),
+                },
+            ),
+        ])?
+        .canonical_bytes())
+    }
+}
+
+/// State read from verified committed owner-authorized rows, never from a finding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuarantineState {
+    pub transition: QuarantineTransition,
+    pub owner_proposal: canon::ids::ProposalId,
+    pub authority: canon::authority::AuthorityVersion,
+    pub record: Digest32,
+}
+
+impl QuarantineState {
+    pub fn view(&self) -> Result<QuarantineView> {
+        self.transition.canonical_bytes()?;
+        let bound = canon::json::MAX_SAFE_INTEGER as u64;
+        if self.authority.sequence == 0
+            || self.authority.sequence > bound
+            || self.authority.epoch > bound
+        {
+            return Err(refusal("quarantine-state"));
+        }
+        Ok(QuarantineView {
+            resource: self.transition.request.resource.clone(),
+            concern: self.transition.request.concern.clone(),
+            owner_proposal: Some(self.owner_proposal),
+            quarantined: self.transition.action == QuarantineAction::Quarantine,
+            memory_note: self.transition.request.memory_note.clone(),
+        })
+    }
+}
+
+/// Host-only atomic quarantine port. A backend must re-read committed state under
+/// its authority lock, compare the exact target/base/new bytes, persist the passkey
+/// counter, consume its proof once, apply or remove the resource restriction, and
+/// append and durably commit its receipt together. Memory restrictions must update
+/// Kira's quarantine state and index before success. Every failure rolls back all
+/// changes. Evidence and facts cannot implement any of these transitions.
+pub trait ImmuneAuthorityTxn: canon::authority::AuthorityTxn {
+    /// Read only committed owner state, verifying its covering authority records.
+    fn quarantine_state(&mut self, _resource: &str) -> Result<Option<QuarantineState>> {
+        Err(refusal("quarantine-backend-unavailable"))
+    }
+
+    /// Return only after durable commit. The ended authority transaction cannot
+    /// append again; `quarantine_state` remains available for committed read-back.
+    fn commit_quarantine(
+        &mut self,
+        _proof: canon::authority::VerifiedProof,
+        _transition: &QuarantineTransition,
+    ) -> Result<()> {
+        Err(refusal("quarantine-backend-unavailable"))
+    }
+}
+
+/// A failed health cell cannot call this without its own fresh owner proof.
+pub fn quarantine(
+    transaction: &mut impl ImmuneAuthorityTxn,
+    proof: canon::authority::VerifiedProof,
+    request: QuarantineRequest,
+) -> Result<QuarantineView> {
+    quarantine_resource(&request.resource)?;
+    let current = transaction.quarantine_state(&request.resource)?;
+    if current
+        .as_ref()
+        .is_some_and(|state| state.transition.action == QuarantineAction::Quarantine)
+    {
+        return Err(refusal("already-quarantined"));
+    }
+    owner_quarantine_change(
+        transaction,
+        proof,
+        request,
+        current,
+        QuarantineAction::Quarantine,
+    )
+}
+
+/// Recovery retains the recorded concern and note identity and needs a fresh proof.
+pub fn recover(
+    transaction: &mut impl ImmuneAuthorityTxn,
+    proof: canon::authority::VerifiedProof,
+    resource: &str,
+) -> Result<QuarantineView> {
+    quarantine_resource(resource)?;
+    let current = transaction
+        .quarantine_state(resource)?
+        .ok_or(refusal("not-quarantined"))?;
+    if current.transition.request.resource != resource {
+        return Err(refusal("quarantine-state"));
+    }
+    if current.transition.action != QuarantineAction::Quarantine {
+        return Err(refusal("not-quarantined"));
+    }
+    owner_quarantine_change(
+        transaction,
+        proof,
+        current.transition.request.clone(),
+        Some(current),
+        QuarantineAction::Recover,
+    )
+}
+
+fn owner_quarantine_change(
+    transaction: &mut impl ImmuneAuthorityTxn,
+    proof: canon::authority::VerifiedProof,
+    request: QuarantineRequest,
+    current: Option<QuarantineState>,
+    action: QuarantineAction,
+) -> Result<QuarantineView> {
+    use canon::authority::{BaseDigest, OwnerOperation};
+    let previous = current
+        .as_ref()
+        .map(|state| {
+            state.view()?;
+            if state.transition.request.resource != request.resource {
+                return Err(refusal("quarantine-state"));
+            }
+            Ok(Digest32::sha256(&state.transition.canonical_bytes()?))
+        })
+        .transpose()?;
+    let transition = QuarantineTransition {
+        action,
+        request,
+        previous,
+    };
+    let bytes = transition.canonical_bytes()?;
+    let auth = proof.authorization();
+    let expected_base = previous.map_or(BaseDigest::Absent, BaseDigest::Present);
+    let context = transaction.authority_append_context(&proof)?;
+    let binding = transaction.owner_binding(proof.credential_id())?;
+    if proof.transaction_id() != transaction.transaction_id()
+        || auth.op != OwnerOperation::Apply
+        || auth.target != format!("immune.quarantine:{}", transition.request.resource)
+        || auth.cell.is_some()
+        || auth.base_sha256 != expected_base
+        || auth.new_sha256 != Digest32::sha256(&bytes)
+        || binding.v != 1
+        || binding.credential_id != *proof.credential_id()
+        || binding.epoch != auth.epoch
+        || binding.public_key != *proof.public_key()
+        || binding.algorithm != proof.algorithm()
+        || binding.top_origin != proof.top_origin()
+        || context.authority.epoch != auth.epoch
+        || context.at < 0
+        || auth.expires_at <= context.at
+        || current.as_ref().is_some_and(|state| {
+            state.authority.epoch > auth.epoch
+                || state.authority.sequence >= context.authority.sequence
+        })
+        || transaction.rebuild_authorization(&auth.proposal, OwnerOperation::Apply)? != *auth
+        || auth.canonical_bytes()? != proof.authorization_bytes()
+    {
+        return Err(refusal("quarantine-authorization"));
+    }
+    transaction.check_authorization_live(auth)?;
+    let proposal = auth.proposal;
+    transaction.commit_quarantine(proof, &transition)?;
+    let committed = transaction
+        .quarantine_state(&transition.request.resource)?
+        .ok_or(refusal("quarantine-not-committed"))?;
+    if committed.transition != transition
+        || committed.owner_proposal != proposal
+        || committed.authority.epoch != context.authority.epoch
+        || committed.authority.sequence < context.authority.sequence
+    {
+        return Err(refusal("quarantine-not-committed"));
+    }
+    committed.view()
+}
+
+fn quarantine_resource(resource: &str) -> Result<()> {
+    if resource.is_empty()
+        || resource.len() > 128
+        || !resource
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+    {
+        return Err(refusal("quarantine-resource"));
+    }
+    Ok(())
+}
