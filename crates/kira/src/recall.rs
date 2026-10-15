@@ -788,7 +788,6 @@ where
             }
             if bound && disclosure_expected == Some(true) {
                 measured.permissions = Checked;
-                measured.citations = Checked;
             } else if disclosure_expected == Some(false) {
                 measured.permissions = Violation;
             }
@@ -806,11 +805,6 @@ where
                     Some(true) => Disagreement,
                     None => NotChecked,
                 };
-                if disclosure_expected == Some(false) {
-                    measured.citations = Checked;
-                }
-            } else if disclosure_expected == Some(true) && (sentinel || bound) {
-                measured.citations = Checked;
             }
         }
     }

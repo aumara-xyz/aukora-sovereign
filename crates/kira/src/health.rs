@@ -496,6 +496,11 @@ impl MemoryChecks {
             }
             match store.decrypt(retained) {
                 Ok(payload) => {
+                    let memory_data = payload.origin.delivery_source().source
+                        == canon::provenance::Source::Memory
+                        && !payload.origin.grants_authority();
+                    observed.private[13] =
+                        observed.private[13].merge(Probe::from_invariant(memory_data));
                     if let crate::notes::NoteForm::Summary { originals } = &payload.form {
                         for original in originals {
                             let preserved = match snapshot.notes.get(original) {
@@ -535,7 +540,7 @@ impl MemoryChecks {
                     } else {
                         Probe::from_invariant(false)
                     };
-                    for index in [0, 2, 12] {
+                    for index in [0, 2, 12, 13] {
                         observed.private[index] = observed.private[index].merge(failure);
                     }
                     observed.summary_originals = observed.summary_originals.merge(failure);
@@ -559,6 +564,7 @@ impl MemoryChecks {
 pub struct PermissionChecks {
     checks: MemoryChecks,
     listing: Probe,
+    recall_provenance: Probe,
     disclosure: Option<crate::permissions::PermissionReceipt>,
     may_disclose: Option<bool>,
 }
@@ -578,9 +584,10 @@ impl MemoryChecks {
         {
             return Err(canon::codes::KIRA_LEDGER_UNVERIFIED);
         }
-        for index in [5, 6, 7, 9, 13, 14, 15, 16] {
+        for index in [5, 6, 7, 9, 14, 15, 16] {
             self.private[index] = permissions.checks.private[index];
         }
+        self.private[13] = self.private[13].both(permissions.recall_provenance);
         self.corners[1] = permissions.checks.corners[1];
         Ok(self)
     }
@@ -630,20 +637,24 @@ impl PermissionChecks {
         );
         let permission = Probe::from(recalled.permissions);
         let citations = Probe::from(recalled.citations).both(permission);
-        self.checks.private[5] = self.checks.private[5].merge(self.listing.both(citations));
+        self.checks.private[5] = self.checks.private[5].merge(self.listing.both(permission));
         self.checks.private[6] = self.checks.private[6].merge(citations);
-        self.checks.private[13] = self.checks.private[13].merge(recalled.provenance.into());
+        self.recall_provenance = self.recall_provenance.merge(recalled.provenance.into());
+        // A recall page alone cannot verify the provenance of all retained notes.
+        self.checks.private[13] = self.checks.private[13].both(self.recall_provenance);
         self.checks.private[16] = self.checks.private[16].merge(recalled.receipt.into());
         if store.verified_anchor(transaction, principal)? != snapshot.anchor {
             for position in [5, 6, 13, 16] {
                 self.checks.private[position] = Probe::Measured(ObservationVerdict::Disagreement);
             }
+            self.recall_provenance = Probe::Measured(ObservationVerdict::Disagreement);
         }
         Ok(self)
     }
 
     /// Invoke the native permission reader and both listing tiers in the locked
     /// snapshot. Recall-dependent checks remain NotChecked until `with_recall`.
+    /// Provenance also requires `MemoryChecks::inspect` and `with_permissions`.
     /// This does not authorize, append, or change any permission.
     pub fn inspect<T, L>(
         store: &mut crate::anchor::SqliteMemory<'_, L>,
@@ -699,10 +710,11 @@ impl PermissionChecks {
                     let epoch = receipt.record.authority.epoch
                         == receipt.change.context.owner_epoch
                         && receipt.record.authority.epoch <= principal.owner_epoch;
-                    let row = Probe::from_invariant(cited && epoch);
-                    checks.private[9] = checks.private[9].merge(row);
                     // Latest-row metadata exposes neither historical epochs nor
-                    // an independently checked AUMLOK owner-signature result.
+                    // owner-signature verification or membership in Aura history.
+                    if !cited || !epoch {
+                        checks.private[9] = Probe::from_invariant(false);
+                    }
                     if !epoch {
                         checks.private[14] = Probe::from_invariant(false);
                     }
@@ -823,6 +835,7 @@ impl PermissionChecks {
             checks.corners[1] = Probe::Measured(ObservationVerdict::Disagreement);
         }
         Ok(Self {
+            recall_provenance: checks.private[13],
             checks,
             listing,
             disclosure: disclosure_receipt,
