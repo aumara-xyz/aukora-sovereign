@@ -247,7 +247,11 @@ impl PermissionChange {
         Ok(wrapper)
     }
 
-    /// Derive the exact C5 target from the canonical scoped permission identity.
+    /// Return `kira.permission:` followed by lowercase SHA-256 of the C1 identity
+    /// `{owner, permission, principal, scope}`. Only the canonical identity bytes
+    /// are hashed, with no domain prefix or trailing newline. Epoch, action and
+    /// previous revision stay in the separately authorized change body.
+    /// `vectors/permission-target-v1.json` pins these bytes and target strings.
     pub fn target(&self) -> Result<String> {
         self.context.validate()?;
         let identity = Value::checked_object(vec![

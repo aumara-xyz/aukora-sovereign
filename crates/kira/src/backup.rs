@@ -20,6 +20,57 @@ use crate::{
 /// Bounded ciphertext size for one backup chunk, including its authentication tag.
 pub const MAX_BACKUP_CHUNK_BYTES: usize = 65_536;
 
+/// The v1 backup chunk AAD domain, distinct from the note encryption domain.
+pub const BACKUP_AEAD_DOMAIN: &str = "aukora:kira-backup-aead:v1";
+
+fn validate_metadata(key_epoch: u64, head: MemoryHead, index: u32, count: u32) -> Result<()> {
+    if key_epoch == 0
+        || key_epoch > canon::json::MAX_SAFE_INTEGER as u64
+        || head.version != 1
+        || head.sequence > canon::json::MAX_SAFE_INTEGER as u64
+        || (head.sequence == 0) != head.hash.is_none()
+        || count == 0
+        || index >= count
+    {
+        return Err(codes::KIRA_INVALID_FIELD);
+    }
+    Ok(())
+}
+
+/// Exact v1 chunk AAD: domain, NUL, then seven u32be-length-prefixed UTF-8 fields.
+/// Order is archive id, owner subject, key epoch, head sequence, head hash, index,
+/// count. Digests use lowercase hex, integers use unsigned decimal without padding,
+/// and an empty head has sequence `0` and a zero-length hash field. The version and
+/// XChaCha20Poly1305 algorithm are fixed by the v1 domain and wrapper validation.
+/// This checks metadata shape only; it supplies no ownership or transport authority.
+pub fn chunk_associated_data(
+    archive_id: &Digest32,
+    owner_subject: &SubjectId,
+    key_epoch: u64,
+    head: MemoryHead,
+    index: u32,
+    count: u32,
+) -> Result<Vec<u8>> {
+    validate_metadata(key_epoch, head, index, count)?;
+    let fields = [
+        archive_id.to_string(),
+        owner_subject.to_string(),
+        key_epoch.to_string(),
+        head.sequence.to_string(),
+        head.hash.map(|hash| hash.to_string()).unwrap_or_default(),
+        index.to_string(),
+        count.to_string(),
+    ];
+    let mut encoded = BACKUP_AEAD_DOMAIN.as_bytes().to_vec();
+    encoded.push(0);
+    for field in fields {
+        let length = u32::try_from(field.len()).map_err(|_| codes::KIRA_INVALID_FIELD)?;
+        encoded.extend_from_slice(&length.to_be_bytes());
+        encoded.extend_from_slice(field.as_bytes());
+    }
+    Ok(encoded)
+}
+
 /// A selected transport destination. The identifier alone proves no approval or ownership.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackupDestination {
@@ -97,15 +148,10 @@ impl EncryptedBackupChunk {
             || self.algorithm != AlgorithmId::XChaCha20Poly1305
             || self.owner_subject != context.owner_subject
             || self.key_epoch != context.owner_epoch
-            || self.count == 0
-            || self.index >= self.count
-            || self.head.version != 1
-            || (self.head.sequence == 0) != self.head.hash.is_none()
-            || self.head.sequence > canon::json::MAX_SAFE_INTEGER as u64
         {
             return Err(codes::KIRA_INVALID_FIELD);
         }
-        Ok(())
+        validate_metadata(self.key_epoch, self.head, self.index, self.count)
     }
 }
 
@@ -132,7 +178,8 @@ pub trait MemoryBackup {
     /// chunk. Check the relay is approved or the peer is a currently owner-bound node.
     /// Refuse stale, revoked or wrong-owner destinations and permission epochs.
     /// Transfer only ciphertext, nonce and content-free metadata; never keys or notes.
-    /// Authenticate archive id, owner, epoch, head, index and count as chunk AAD.
+    /// Use `chunk_associated_data` with this chunk's exact archive id, owner,
+    /// key epoch, head, index and count as the AEAD associated data.
     fn send<T: AuthorityTxn + ?Sized, P: MemoryPermissions + ?Sized>(
         &mut self,
         txn: &mut T,

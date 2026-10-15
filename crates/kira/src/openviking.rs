@@ -333,6 +333,11 @@ pub trait OpenViking {
     fn rank(&mut self, request: SearchRequest<'_>) -> Result<SearchReply, SemanticError>;
 }
 
+/// Returns ranked candidates from an index whose head and model stay unchanged.
+/// Success is neither C4 `found` nor `empty`: an empty candidate list is a semantic
+/// miss, which `MemoryRecallService::recall` keeps `undetermined`. Each hit remains a
+/// candidate until recall checks its retained ciphertext, authenticated Aura
+/// citation, active-note membership, and current-principal disclose permission.
 pub fn recall_candidates(
     index: &mut dyn OpenViking,
     embedder: &mut dyn LocalEmbedder,
