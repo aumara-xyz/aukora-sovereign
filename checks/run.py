@@ -16,7 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import walls  # noqa: E402
 
 # Crates whose compiler wall lands with an in-flight piece of work (removed as soon as it merges).
-WALLS_PENDING = {"canon"}
+WALLS_PENDING = set()
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FAIL = []
