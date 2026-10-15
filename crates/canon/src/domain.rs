@@ -16,6 +16,9 @@ pub const KIRA_AEAD_DOMAIN: &str = "aukora:kira-aead:v1";
 /// `root32` is the 32 raw bytes of `AuraStatus::root`, the RFC 6962 root
 /// used as the display snapshot head.
 pub const PENTORA_DISPLAY_DOMAIN: &str = "pentora.display.v1";
+/// Relationship head: tag, NUL, then two raw person Nostr x-only public keys sorted bytewise.
+/// Feed that SHA-256 head through `pentora.display.v1` to obtain the display digest.
+pub const PENTORA_BLOOM_DOMAIN: &str = "pentora.bloom.v1";
 /// C2 export convention name; its leaf prefix is the byte `0x00`, not this text.
 pub const RFC6962_LEAF_CONVENTION: &str = "rfc6962-leaf-sha256-0x00-prefixed-v1";
 /// RFC 6962 leaf hash prefix, followed by the raw 32-byte entry hash.

@@ -1,0 +1,161 @@
+{
+  "schema": "person-bloom-v2-vectors",
+  "format_version": 2,
+  "label": "Relationship bloom — display only",
+  "derivation": {
+    "identity": "Each provided value is a person-nostr x-only public key encoded as exactly 32 raw bytes; hex below is lowercase. Key provenance belongs to the caller, never to a receipt, node id or device key.",
+    "fixture_keys": "The successful inputs are the secp256k1 generator, its double and its triple x coordinates. No private key is a derivation input.",
+    "order": "Sort the two raw 32-byte keys lexicographically as unsigned bytes, low before high. Argument order does not change the picture.",
+    "pair_domain": "pentora.bloom.v1",
+    "head": "SHA-256(UTF-8(pair_domain) || 0x00 || low || high)",
+    "display_domain": "pentora.display.v1",
+    "display_digest": "SHA-256(UTF-8(display_domain) || 0x00 || head), obtained through the Rust pentora_expand derivation.",
+    "trits": "N is the big-endian unsigned integer of display_digest. Character i is floor(N / 3^i) mod 3 for i = 0..109, encoded as one of 0, 1, 2.",
+    "cells": "Place trit i on mutable_indices[i] from the pinned geometry. The centre has no trit.",
+    "absence": "A missing person key is null and produces no bloom. Empty or malformed provided bytes refuse. A bare commitment supplies neither person key and always refuses pentora:person-keys-required, including all-zero bytes.",
+    "authority": "Display only. A bloom does not prove a meeting, authorize an operation or encode a health cell."
+  },
+  "pairs": [
+    {
+      "name": "generator-and-double",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "second_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "low": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "high": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "head": "92bc429bb27abc2541e5b7a416b48da8ff909239d42e54b4e58124fbf958ce8c",
+      "display_digest": "626802c6de8eb8218fc47f536ba252689dccbc32928f9c81a88aa1996dc4a84c",
+      "trits": "02011000011021200020201121022121211122122211220112211010122020002101222200000222201112002111022011012002001102"
+    },
+    {
+      "name": "generator-and-double-reversed",
+      "reverse_of": "generator-and-double",
+      "first_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "second_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "low": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "high": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "head": "92bc429bb27abc2541e5b7a416b48da8ff909239d42e54b4e58124fbf958ce8c",
+      "display_digest": "626802c6de8eb8218fc47f536ba252689dccbc32928f9c81a88aa1996dc4a84c",
+      "trits": "02011000011021200020201121022121211122122211220112211010122020002101222200000222201112002111022011012002001102"
+    },
+    {
+      "name": "first-person-key-rotated",
+      "changes_from": "generator-and-double",
+      "first_person_nostr": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "second_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "low": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "high": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "head": "b31a66536c62e16e834ba8f818828d36405b40651a8100f1aaadda2a894db47e",
+      "display_digest": "764f42f65dac7550c8c6a19e6dbd7858c5e228d4a855bc38fa2d2e4d26cb46d1",
+      "trits": "21012101100201000220100010100122120110122020221012210020221210102102021212222021020021120222110221002212201102"
+    },
+    {
+      "name": "first-person-key-rotated-reversed",
+      "reverse_of": "first-person-key-rotated",
+      "first_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "second_person_nostr": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "low": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "high": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "head": "b31a66536c62e16e834ba8f818828d36405b40651a8100f1aaadda2a894db47e",
+      "display_digest": "764f42f65dac7550c8c6a19e6dbd7858c5e228d4a855bc38fa2d2e4d26cb46d1",
+      "trits": "21012101100201000220100010100122120110122020221012210020221210102102021212222021020021120222110221002212201102"
+    },
+    {
+      "name": "second-person-key-rotated",
+      "changes_from": "generator-and-double",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "second_person_nostr": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "low": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "high": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "head": "1e76dba665d05b86f8c592df79edeb6b3e6e95faa07831faf83cf482ca42b98f",
+      "display_digest": "c1a1347d403e0464aa42d9f81fa59e253949d755d03ccda66dbde79837e1fb11",
+      "trits": "21100022110202202010222210211122020010212110211212022001201020211112222110020022220222002202200212020021202200"
+    },
+    {
+      "name": "second-person-key-rotated-reversed",
+      "reverse_of": "second-person-key-rotated",
+      "first_person_nostr": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "second_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "low": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "high": "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+      "head": "1e76dba665d05b86f8c592df79edeb6b3e6e95faa07831faf83cf482ca42b98f",
+      "display_digest": "c1a1347d403e0464aa42d9f81fa59e253949d755d03ccda66dbde79837e1fb11",
+      "trits": "21100022110202202010222210211122020010212110211212022001201020211112222110020022220222002202200212020021202200"
+    }
+  ],
+  "refusals": [
+    {
+      "name": "same-person-key",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "second_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "refusal": "pentora:identities-equal"
+    },
+    {
+      "name": "first-person-key-empty",
+      "first_person_nostr": "",
+      "second_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "refusal": "pentora:identity-invalid"
+    },
+    {
+      "name": "first-person-key-short",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817",
+      "second_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "refusal": "pentora:identity-invalid"
+    },
+    {
+      "name": "first-person-key-long",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179800",
+      "second_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "refusal": "pentora:identity-invalid"
+    },
+    {
+      "name": "second-person-key-empty",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "second_person_nostr": "",
+      "refusal": "pentora:identity-invalid"
+    },
+    {
+      "name": "second-person-key-short",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "second_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817",
+      "refusal": "pentora:identity-invalid"
+    },
+    {
+      "name": "second-person-key-long",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "second_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179800",
+      "refusal": "pentora:identity-invalid"
+    }
+  ],
+  "absent": [
+    {
+      "name": "first-person-key-missing",
+      "first_person_nostr": null,
+      "second_person_nostr": "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+      "bloom": null
+    },
+    {
+      "name": "second-person-key-missing",
+      "first_person_nostr": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      "second_person_nostr": null,
+      "bloom": null
+    },
+    {
+      "name": "both-person-keys-missing",
+      "first_person_nostr": null,
+      "second_person_nostr": null,
+      "bloom": null
+    }
+  ],
+  "bare_commitments": [
+    {
+      "name": "pair-head-without-person-keys",
+      "shared_commitment": "92bc429bb27abc2541e5b7a416b48da8ff909239d42e54b4e58124fbf958ce8c",
+      "refusal": "pentora:person-keys-required"
+    },
+    {
+      "name": "zero-commitment-without-person-keys",
+      "shared_commitment": "0000000000000000000000000000000000000000000000000000000000000000",
+      "refusal": "pentora:person-keys-required"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 // Draws a bloom's trits on the pinned geometry. It takes a canvas context and the trits and reads
 // nothing else: no health state, no fingerprint. The three trits differ in shape as well as colour:
 // a hollow ring, a filled disc, and a larger disc with a halo.
-import { CENTRE_CELL, TRIT_COUNT, refuse, tritOfCell } from "./derive.ts";
+import { CENTRE_CELL, TRIT_COUNT, refuse } from "./derive.ts";
 import { bloomGeometry } from "./geometry.ts";
 
 export const BLOOM_SIZE = 640;
@@ -32,8 +32,9 @@ function ease(value: number): number {
  * centre reaches it, so the settled picture does not depend on how it was reached.
  */
 export function paintBloom(context: CanvasRenderingContext2D, trits: Uint8Array, progress: number): void {
-  if (trits.length !== TRIT_COUNT) refuse("digest-invalid");
+  if (!(trits instanceof Uint8Array) || trits.length !== TRIT_COUNT || trits.some(trit => trit > 2)) refuse("trits-invalid");
   const geometry = bloomGeometry();
+  const cells = new Map(geometry.mutableIndices.map((cell, digit) => [cell, trits[digit]]));
   const open = clamp(progress);
   const middle = BLOOM_SIZE / 2;
   context.globalAlpha = 1;
@@ -69,7 +70,7 @@ export function paintBloom(context: CanvasRenderingContext2D, trits: Uint8Array,
       context.stroke();
       continue;
     }
-    const trit = trits[tritOfCell(index)];
+    const trit = cells.get(index);
     if (trit === 0) {
       context.beginPath();
       context.arc(x, y, 4.4 * near * grow, 0, Math.PI * 2);

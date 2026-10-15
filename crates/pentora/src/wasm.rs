@@ -112,3 +112,44 @@ pub extern "C" fn pentora_release_result(descriptor: u32) -> u32 {
         0
     })
 }
+
+/// Expand two allocated person Nostr public keys with the shared relationship derivation.
+/// The result uses the existing descriptor and digest-plus-trits byte layout. Missing or
+/// unknown input allocations return zero; neither input is interpreted as a receipt hash.
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "C" fn pentora_pairing_expand(first32: u32, second32: u32) -> u32 {
+    BUFFERS.with(|storage| {
+        let mut storage = storage.borrow_mut();
+        if storage.results.len() >= MAX_LIVE_BUFFERS {
+            return 0;
+        }
+        let Some(first) = storage.roots.get(&first32) else {
+            return 0;
+        };
+        let Some(second) = storage.roots.get(&second32) else {
+            return 0;
+        };
+        let (status, bytes) =
+            match crate::bloom::pairing_expansion(first.as_slice(), second.as_slice()) {
+                Ok(display) => {
+                    let mut wire = Vec::with_capacity(EXPANSION_BYTES);
+                    wire.extend_from_slice(display.digest().as_bytes());
+                    wire.extend_from_slice(&display.wire());
+                    (0, wire.into_boxed_slice())
+                }
+                Err(error) => (1, error.to_string().into_bytes().into_boxed_slice()),
+            };
+        let descriptor = Box::new(ExpansionResult {
+            v: ABI_VERSION,
+            status,
+            data_ptr: bytes.as_ptr() as u32,
+            data_len: bytes.len() as u32,
+        });
+        let handle = std::ptr::from_ref(descriptor.as_ref()) as u32;
+        storage
+            .results
+            .insert(handle, OwnedResult { descriptor, bytes });
+        handle
+    })
+}

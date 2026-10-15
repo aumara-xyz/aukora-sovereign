@@ -28,6 +28,18 @@ macro_rules! registry {
 }
 
 registry! {
+    PENTORA_IDENTITY_INVALID => ("pentora", "identity-invalid", "A person public key must contain exactly 32 bytes."),
+    PENTORA_IDENTITIES_EQUAL => ("pentora", "identities-equal", "A relationship requires two different person public keys."),
+    PENTORA_COMMITMENT_EMPTY => ("pentora", "commitment-empty", "Legacy bloom v1 refuses an all-zero commitment."),
+    PENTORA_PERSON_KEYS_REQUIRED => ("pentora", "person-keys-required", "A bare commitment cannot identify the two people in a relationship."),
+    PENTORA_HEAD_INVALID => ("pentora", "head-invalid", "A fingerprint input must contain exactly 32 bytes."),
+    PENTORA_CELL_INDEX => ("pentora", "cell-index", "A cell must be one of the 110 non-centre geometry cells."),
+    PENTORA_TRITS_INVALID => ("pentora", "trits-invalid", "An expansion must contain 110 digits in the range zero through two."),
+    PENTORA_PAIRING_EXPANSION_UNAVAILABLE => ("pentora", "pairing-expansion-unavailable", "The Rust person-key expansion adapter is unavailable."),
+    PENTORA_PAIRING_EXPANSION_INVALID => ("pentora", "pairing-expansion-invalid", "The person-key expansion result has an invalid shape."),
+    PENTORA_GEOMETRY_INVALID => ("pentora", "geometry-invalid", "The supplied geometry does not have the required cells and edges."),
+    PENTORA_CANVAS_UNAVAILABLE => ("pentora", "canvas-unavailable", "The relationship canvas has no drawing context."),
+    PENTORA_DISPOSED => ("pentora", "disposed", "A disposed bloom view cannot draw another relationship."),
     AUMLOK_PERSON_NOSTR_EPOCH_REQUIRED => ("aumlok", "person-nostr-epoch-required", "A personal Nostr binding must record its rotation epoch in the versioned wrapper."),
     AUMLOK_PERSON_NOSTR_OUT_OF_RANGE => ("aumlok", "person-nostr-out-of-range", "The derived personal Nostr scalar is zero or outside the secp256k1 order."),
     CANON_AUTHORIZATION_STATE_UNAVAILABLE => ("canon", "authorization-state-unavailable", "The authority transaction cannot establish live authorization state."),

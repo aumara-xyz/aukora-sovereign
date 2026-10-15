@@ -3,7 +3,7 @@
 // bytes are pinned by hash in checks/pins.json; a browser holds only the parsed table, so this
 // module checks its shape and refuses a table that does not fit it.
 import table from "../../crates/pentora/vectors/geometry_index_table_v1.json" with { type: "json" };
-import { CENTRE_CELL, refuse } from "./derive.ts";
+import { CENTRE_CELL, TRIT_COUNT, refuse } from "./derive.ts";
 
 export const POINT_COUNT = 111;
 const CUBE_COUNT = 5;
@@ -24,6 +24,8 @@ export type BloomCell = {
 
 export type BloomGeometry = {
   readonly cells: readonly BloomCell[];
+  /** Pinned cell index for each returned trit. */
+  readonly mutableIndices: readonly number[];
   /** Cell indices, farthest from the viewer first. */
   readonly order: readonly number[];
   readonly edges: readonly (readonly [number, number])[];
@@ -66,6 +68,8 @@ function noncentre(value: unknown): number {
 function project(source: unknown): BloomGeometry {
   const root = fields(source);
   if (whole(root.centre_index, 0, POINT_COUNT - 1) !== CENTRE_CELL) refuse("geometry-invalid");
+  const mutableIndices = list(root.mutable_indices, TRIT_COUNT).map(noncentre);
+  if (new Set(mutableIndices).size !== TRIT_COUNT) refuse("geometry-invalid");
   const sine = { yaw: Math.sin(YAW), pitch: Math.sin(PITCH) }, cosine = { yaw: Math.cos(YAW), pitch: Math.cos(PITCH) };
   const cells: BloomCell[] = list(root.points, POINT_COUNT).map((raw, at) => {
     const point = fields(raw);
@@ -97,7 +101,12 @@ function project(source: unknown): BloomGeometry {
     }
   }
   const order = cells.map(cell => cell.index).sort((a, b) => (cells[a]?.depth ?? 0) - (cells[b]?.depth ?? 0));
-  return Object.freeze({ cells: Object.freeze(cells), order: Object.freeze(order), edges: Object.freeze(edges) });
+  return Object.freeze({
+    cells: Object.freeze(cells),
+    mutableIndices: Object.freeze(mutableIndices),
+    order: Object.freeze(order),
+    edges: Object.freeze(edges),
+  });
 }
 
 let loaded: BloomGeometry | undefined;
