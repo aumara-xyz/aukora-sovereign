@@ -10,10 +10,15 @@ pinned by the construction checks and consumed by `coverage::HistoricalCorpora`.
 The AUMLOK issue export is stored with hexadecimal encoding so its historical
 paths and code stay inside data. Decoding preserves every byte, including the
 export preamble and section boundaries. No historical code is executable here.
-Use `coverage::bundled_issue_export()` to obtain the original bytes, then pass
-`Some(&bytes)` to `coverage::HistoricalCorpora::pinned`. The existing borrowed
-API is unchanged. The decoder pins the manifest and encoded file before decoding;
-the existing reader pins the decoded export and requires all 81 ordered issues.
+`coverage::HistoricalCorpora::bundled()` loads all three corpora from embedded
+bytes and retains the validated data or refusal. Constructing a `ratchet::Corpus`
+requires this load; its `historical()` accessor exposes the historical inputs
+without adding issue text or theme attacks to the route replay or its Merkle root.
+`HistoricalCorpora::pinned(None)` also uses the embedded issue export;
+`pinned(Some(&bytes))` still validates caller-supplied exact bytes.
+`coverage::bundled_issue_export()` returns the original decoded bytes. The decoder
+pins the manifest and encoded file before decoding; the reader pins the decoded
+export and requires all 81 ordered issues.
 
 `pins-v1.json` records SHA-256 commitments, counts, source repository identity and
 commit. Paths in that manifest are relative to the repository root. New data pins

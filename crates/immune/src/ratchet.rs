@@ -2,6 +2,7 @@
 //! Release observations replay the inventory and canonical route corpus (row 66).
 
 use crate::{
+    coverage::HistoricalCorpora,
     heldout::HeldOut,
     hostile::{Limits, Usage},
     registry::{Antibody, Registry, Status},
@@ -37,6 +38,7 @@ pub struct AttackVector {
 pub struct Corpus {
     vectors: Vec<AttackVector>,
     root: Digest32,
+    historical: &'static HistoricalCorpora<'static>,
 }
 
 fn refuse(reason: &'static str) -> Refusal {
@@ -155,7 +157,11 @@ impl Corpus {
             .flatten()
             .reduce(|right, left| Digest32::rfc6962_node(left, right))
             .ok_or(refuse("corpus-empty"))?;
-        Ok(Self { root, vectors })
+        Ok(Self {
+            root,
+            vectors,
+            historical: HistoricalCorpora::bundled()?,
+        })
     }
 
     pub fn pinned() -> Result<Self> {
@@ -166,6 +172,11 @@ impl Corpus {
     }
     pub fn root(&self) -> Digest32 {
         self.root
+    }
+
+    /// Historical inputs remain separate from route scenarios and their RFC 6962 root.
+    pub fn historical(&self) -> &'static HistoricalCorpora<'static> {
+        self.historical
     }
 }
 

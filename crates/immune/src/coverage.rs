@@ -6,7 +6,7 @@ use canon::{
     json::{self, Value, ValueView},
     Refusal, Result,
 };
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::OnceLock};
 
 pub const ARCHIVE_ATTACK_COUNT: usize = 815;
 pub const AUMLOK_ISSUE_COUNT: usize = 81;
@@ -78,9 +78,13 @@ pub struct HistoricalCorpora<'a> {
 }
 
 impl<'a> HistoricalCorpora<'a> {
-    /// The issue export must be supplied as exact bytes; its historical paths are not bundled.
+    /// Validate supplied exact issue bytes, or decode the embedded export when absent.
     pub fn pinned(issue_export: Option<&'a [u8]>) -> Result<Self> {
-        let issues = read_issues(issue_export.ok_or(refuse("issue-corpus-unavailable"))?)?;
+        let issue_export = match issue_export {
+            Some(bytes) => bytes,
+            None => bundled_issue_bytes()?,
+        };
+        let issues = read_issues(issue_export)?;
         pin(ATTACK_BYTES, ATTACK_SHA256)?;
         let source = json::parse_strict(ATTACK_BYTES)?;
         fields(&source, 6)?;
@@ -148,6 +152,25 @@ impl<'a> HistoricalCorpora<'a> {
     pub fn attack_target(&self) -> &str {
         &self.attack_target
     }
+}
+
+impl HistoricalCorpora<'static> {
+    /// Load all three embedded corpora once, retaining any pin or schema refusal.
+    pub fn bundled() -> Result<&'static Self> {
+        static CORPORA: OnceLock<Result<HistoricalCorpora<'static>>> = OnceLock::new();
+        CORPORA
+            .get_or_init(|| Self::pinned(None))
+            .as_ref()
+            .map_err(|error| *error)
+    }
+}
+
+fn bundled_issue_bytes() -> Result<&'static [u8]> {
+    static EXPORT: OnceLock<Result<Vec<u8>>> = OnceLock::new();
+    EXPORT
+        .get_or_init(bundled_issue_export)
+        .as_deref()
+        .map_err(|error| *error)
 }
 
 fn read_attack(row: &Value) -> Result<HistoricalAttack> {
