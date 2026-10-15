@@ -133,7 +133,9 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
     "surface": "./faces/humangraph/index.html",
     "capabilities": {
       "network": {
-        "methods": [],
+        "methods": [
+          "contacts.list"
+        ],
         "topics": []
       }
     }
@@ -216,7 +218,10 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
     "surface": "./faces/documents/index.html",
     "capabilities": {
       "kira": {
-        "methods": [],
+        "methods": [
+          "documents.list",
+          "documents.read"
+        ],
         "topics": []
       }
     }
