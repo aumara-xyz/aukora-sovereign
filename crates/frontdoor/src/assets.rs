@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Approved-release asset contracts; no source tree, guest HTML or runtime code generation.
 
-use canon::{digest::Digest32, Refusal, Result};
+use canon::{
+    digest::Digest32,
+    json::{self, Value, ValueView},
+    Refusal, Result,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -89,18 +93,12 @@ pub fn load_approved_with_facts(
         return Err(refusal("manifest-digest-mismatch"));
     }
     source.require_current_approval(candidate.manifest_sha256)?;
-    let manifest: Manifest = serde_json::from_slice(&candidate.manifest_bytes)
-        .map_err(|_| refusal("manifest-invalid"))?;
+    let manifest = decode_manifest(&candidate.manifest_bytes)?;
     if manifest.schema != "aukora-browser-release-v1" {
         return Err(refusal("manifest-version-refused"));
     }
     if manifest.entries.shell != "app/shell/index.html"
         || manifest.entries.owner != "ui/owner/index.html"
-        || manifest
-            .entries
-            .portal
-            .as_deref()
-            .is_some_and(|path| path != "portal/index.html")
     {
         return Err(refusal("manifest-entry-refused"));
     }
@@ -142,13 +140,9 @@ pub fn load_approved_with_facts(
         }
     }
     for entry in [
-        Some(manifest.entries.shell.as_str()),
-        Some(manifest.entries.owner.as_str()),
-        manifest.entries.portal.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+        manifest.entries.shell.as_str(),
+        manifest.entries.owner.as_str(),
+    ] {
         if !paths.contains(entry) {
             return Err(refusal("manifest-entry-refused"));
         }
@@ -249,7 +243,6 @@ struct Manifest {
 struct ManifestEntries {
     shell: String,
     owner: String,
-    portal: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -258,6 +251,31 @@ struct ManifestAsset {
     path: String,
     bytes: u64,
     sha256: String,
+}
+
+fn decode_manifest(bytes: &[u8]) -> Result<Manifest> {
+    let value = json::parse_strict(bytes).map_err(|_| refusal("manifest-invalid"))?;
+    require_object_fields(&value, &["schema", "entries", "assets"])?;
+    let entries = value.get("entries").ok_or(refusal("manifest-invalid"))?;
+    require_object_fields(entries, &["shell", "owner"])?;
+    let assets = value.get("assets").ok_or(refusal("manifest-invalid"))?;
+    let ValueView::Array(assets) = assets.view() else {
+        return Err(refusal("manifest-invalid"));
+    };
+    for asset in assets {
+        require_object_fields(asset, &["path", "bytes", "sha256"])?;
+    }
+    serde_json::from_slice(&value.canonical_bytes()).map_err(|_| refusal("manifest-invalid"))
+}
+
+fn require_object_fields(value: &Value, fields: &[&str]) -> Result<()> {
+    let ValueView::Object(members) = value.view() else {
+        return Err(refusal("manifest-invalid"));
+    };
+    if members.len() != fields.len() || fields.iter().any(|field| value.get(field).is_none()) {
+        return Err(refusal("manifest-invalid"));
+    }
+    Ok(())
 }
 
 pub(crate) fn refusal(reason: &'static str) -> Refusal {
@@ -273,6 +291,8 @@ pub(crate) fn hash(bytes: &[u8]) -> Digest32 {
 
 fn validate_asset_path(path: &str) -> Result<()> {
     if path.is_empty()
+        || path == "portal"
+        || path.starts_with("portal/")
         || path.len() > 1024
         || !path
             .bytes()
@@ -309,7 +329,7 @@ fn mounted_path(surface: AssetSurface, request: &str) -> Result<String> {
                     format!("app/shell/{path}")
                 }
             }
-            AssetSurface::Face if !path.starts_with("app/") && !path.starts_with("portal/") => {
+            AssetSurface::Face if !path.starts_with("app/") => {
                 format!("app/{path}")
             }
             _ => path.to_owned(),
@@ -344,7 +364,7 @@ fn surfaces(path: &str) -> Result<Vec<AssetSurface>> {
         || path == "app/faces/catalog.js"
     {
         Ok(vec![AssetSurface::Shell, AssetSurface::Face])
-    } else if path.starts_with("app/faces/") || path.starts_with("portal/") {
+    } else if path.starts_with("app/faces/") {
         Ok(vec![AssetSurface::Face])
     } else {
         Err(refusal("asset-path-refused"))
