@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Gift-wrap contracts with sender authentication separate from message opening.
 
-use crate::{PublicKey, Refusal, Result, Rumor, SecretKey, VerifiedEvent};
+use crate::nip44::{self, ConversationKey};
+use crate::{Event, PublicKey, Refusal, Result, Rumor, SecretKey, VerifiedEvent};
+use zeroize::Zeroizing;
 
 pub const MESSAGE_KIND: u16 = 14;
 pub const SEAL_KIND: u16 = 13;
@@ -29,47 +31,153 @@ impl AuthenticatedSeal {
     }
 }
 
-/// Wave 1 builds kind 13 with empty tags, then kind 1059 with a fresh ephemeral
-/// signer and recipient p tag. Both NIP-44 nonces are fresh; each timestamp is
-/// independently randomized within the preceding 48 hours. Rumor id and sender
-/// must match; future timestamps and oversized encodings refuse. Production time
-/// parameters are UNIX seconds. The pinned seven/six-key wire objects stay fixed.
+/// Encrypts a checked rumor into a signed, tagless seal and an ephemeral wrapper.
+/// The encryptions use separate fresh nonces and independently sampled past times.
 pub fn gift_wrap(
-    _rumor: &Rumor,
-    _sender: &SecretKey,
-    _recipient: &PublicKey,
-    _now_seconds: u64,
+    rumor: &Rumor,
+    sender: &SecretKey,
+    recipient: &PublicKey,
+    now_seconds: u64,
 ) -> Result<VerifiedEvent> {
-    Err(Refusal {
-        organ: "nostr",
-        reason: "unimplemented-gift-wrap",
-    })
+    rumor.check_id()?;
+    if rumor.pubkey != sender.public_key()? {
+        return Err(refusal("sender-mismatch"));
+    }
+    validate_rumor(rumor, now_seconds)?;
+    let shared = ConversationKey::derive(sender, recipient)?;
+    let rumor_json = json_text(rumor.encode()?)?;
+    let seal = Event::sign(
+        sender,
+        past_time(now_seconds)?,
+        SEAL_KIND,
+        Vec::new(),
+        nip44::encrypt(&shared, &rumor_json)?,
+    )?;
+    let ephemeral = SecretKey::generate()?;
+    if ephemeral.public_key()? == rumor.pubkey {
+        return Err(refusal("ephemeral-key-collision"));
+    }
+    let ephemeral_shared = ConversationKey::derive(&ephemeral, recipient)?;
+    let seal_json = json_text(seal.event().encode()?)?;
+    Event::sign(
+        &ephemeral,
+        past_time(now_seconds)?,
+        GIFT_WRAP_KIND,
+        vec![vec!["p".to_owned(), hex::encode(recipient.as_bytes())]],
+        nip44::encrypt(&ephemeral_shared, &seal_json)?,
+    )
 }
 
-/// Wave 1 verifies the outer signature, kind, time and addressed recipient, then
-/// authenticates/decrypts the seal and verifies its signature, empty tags and
-/// kind. Messaging can reject an unknown seal sender before opening the rumor.
+/// Verifies the addressed outer event and authenticates its signed seal without
+/// opening the rumor. The caller can reject the sender before message decryption.
 pub fn authenticate_sender(
-    _wrap: &VerifiedEvent,
-    _recipient: &SecretKey,
-    _now_seconds: u64,
+    wrap: &VerifiedEvent,
+    recipient: &SecretKey,
+    now_seconds: u64,
 ) -> Result<AuthenticatedSeal> {
-    Err(Refusal {
-        organ: "nostr",
-        reason: "unimplemented-gift-wrap",
+    wrap.event().clone().verify()?;
+    let outer = wrap.event();
+    if outer.kind != GIFT_WRAP_KIND {
+        return Err(refusal("wrap-kind-invalid"));
+    }
+    if outer.created_at > now_seconds {
+        return Err(refusal("wrap-time-invalid"));
+    }
+    let recipient_key = recipient.public_key()?;
+    let recipient_hex = hex::encode(recipient_key.as_bytes());
+    let mut addressed = false;
+    for tag in outer
+        .tags
+        .iter()
+        .filter(|tag| tag.first().is_some_and(|name| name == "p"))
+    {
+        if addressed || tag.len() != 2 || tag[1] != recipient_hex {
+            return Err(refusal("wrap-not-for-us"));
+        }
+        addressed = true;
+    }
+    if !addressed {
+        return Err(refusal("wrap-not-for-us"));
+    }
+    let shared = ConversationKey::derive(recipient, &outer.pubkey)?;
+    let encoded_seal = nip44::decrypt(&shared, &outer.content)?;
+    let seal = Event::decode(encoded_seal.as_bytes())?.verify()?;
+    validate_seal(seal.event(), now_seconds)?;
+    Ok(AuthenticatedSeal {
+        seal,
+        recipient: recipient_key,
     })
 }
 
-/// Wave 1 verifies the recipient key, opens the authenticated seal, checks rumor
-/// id/kind/time and exact seal/rumor author equality. The returned rumor is data;
-/// the caller must separately enforce a current contact binding and replay fence.
+/// Opens only for the recorded recipient and checks the rumor's id and author.
+/// Contact bindings and replay fences remain the caller's responsibility.
 pub fn open_message(
-    _seal: &AuthenticatedSeal,
-    _recipient: &SecretKey,
-    _now_seconds: u64,
+    seal: &AuthenticatedSeal,
+    recipient: &SecretKey,
+    now_seconds: u64,
 ) -> Result<Rumor> {
-    Err(Refusal {
+    if recipient.public_key()? != seal.recipient {
+        return Err(refusal("recipient-mismatch"));
+    }
+    let signed = seal.seal.event();
+    validate_seal(signed, now_seconds)?;
+    let shared = ConversationKey::derive(recipient, &signed.pubkey)?;
+    let encoded_rumor = nip44::decrypt(&shared, &signed.content)?;
+    let rumor = Rumor::decode(encoded_rumor.as_bytes())?;
+    rumor.check_id()?;
+    validate_rumor(&rumor, now_seconds)?;
+    if rumor.pubkey != signed.pubkey {
+        return Err(refusal("sender-mismatch"));
+    }
+    Ok(rumor)
+}
+
+fn validate_rumor(rumor: &Rumor, now_seconds: u64) -> Result<()> {
+    if rumor.kind != MESSAGE_KIND {
+        return Err(refusal("rumor-kind-invalid"));
+    }
+    if rumor.created_at > now_seconds {
+        return Err(refusal("rumor-time-invalid"));
+    }
+    Ok(())
+}
+
+fn validate_seal(seal: &Event, now_seconds: u64) -> Result<()> {
+    if seal.kind != SEAL_KIND {
+        return Err(refusal("seal-kind-invalid"));
+    }
+    if !seal.tags.is_empty() {
+        return Err(refusal("seal-tags-invalid"));
+    }
+    if seal.created_at > now_seconds {
+        return Err(refusal("seal-time-invalid"));
+    }
+    Ok(())
+}
+
+fn past_time(now_seconds: u64) -> Result<u64> {
+    let width = now_seconds.min(TIMESTAMP_JITTER_SECONDS) + 1;
+    let sample_space = u64::from(u32::MAX) + 1;
+    let limit = sample_space - sample_space % width;
+    loop {
+        let mut bytes = [0u8; 4];
+        getrandom::fill(&mut bytes).map_err(|_| refusal("random-unavailable"))?;
+        let sample = u64::from(u32::from_be_bytes(bytes));
+        if sample < limit {
+            return Ok(now_seconds - sample % width);
+        }
+    }
+}
+
+fn json_text(bytes: Vec<u8>) -> Result<Zeroizing<String>> {
+    String::from_utf8(bytes)
+        .map(Zeroizing::new)
+        .map_err(|_| refusal("event-malformed"))
+}
+
+fn refusal(reason: &'static str) -> Refusal {
+    Refusal {
         organ: "nostr",
-        reason: "unimplemented-gift-wrap",
-    })
+        reason,
+    }
 }

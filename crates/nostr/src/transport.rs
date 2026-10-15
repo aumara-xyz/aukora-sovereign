@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Bounded ciphertext transport, independent of relay or Bluetooth I/O.
 
-use crate::{EventId, PublicKey, Refusal, Result};
+use crate::{Event, EventId, PublicKey, Refusal, Result};
 
 pub const TRANSPORT_VERSION: u16 = 1;
 pub const MAX_ENVELOPE_BYTES: usize = 65_536;
@@ -55,10 +55,56 @@ impl TransportEnvelope {
     /// Wave 1 checks version, size, exact outer event id, recipient p tag and
     /// kind 1059 before an adapter handles the envelope. It opens no plaintext.
     pub fn validate(&self) -> Result<()> {
-        Err(Refusal {
-            organ: "nostr",
-            reason: "unimplemented-envelope",
-        })
+        if self.v != TRANSPORT_VERSION {
+            return Err(Refusal {
+                organ: "nostr",
+                reason: "transport-version",
+            });
+        }
+        match self.codec {
+            EnvelopeCodec::Nip59V1 => {}
+        }
+        if self.bytes.is_empty() || self.bytes.len() > MAX_ENVELOPE_BYTES {
+            return Err(Refusal {
+                organ: "nostr",
+                reason: "envelope-size",
+            });
+        }
+        let verified = Event::decode(&self.bytes)?.verify()?;
+        let event = verified.event();
+        if event.id != self.id {
+            return Err(Refusal {
+                organ: "nostr",
+                reason: "envelope-id",
+            });
+        }
+        if event.kind != crate::nip59::GIFT_WRAP_KIND {
+            return Err(Refusal {
+                organ: "nostr",
+                reason: "envelope-kind",
+            });
+        }
+        let recipient = hex::encode(self.recipient.as_bytes());
+        let mut addressed = false;
+        for tag in &event.tags {
+            if tag.first().map(String::as_str) != Some("p") {
+                continue;
+            }
+            if addressed || tag.len() != 2 || tag[1] != recipient {
+                return Err(Refusal {
+                    organ: "nostr",
+                    reason: "envelope-recipient",
+                });
+            }
+            addressed = true;
+        }
+        if !addressed {
+            return Err(Refusal {
+                organ: "nostr",
+                reason: "envelope-recipient",
+            });
+        }
+        Ok(())
     }
 }
 

@@ -85,16 +85,37 @@ pub trait DelegationState {
 /// Wave 1 checks current delegation, role/key equality and permitted event scope
 /// before signing. The agent role identifies data; Auma never receives this key.
 pub fn sign_delegated<D: DelegationState + ?Sized>(
-    _delegations: &mut D,
-    _binding: &BoundIdentities,
-    _role: IdentityRole,
-    _secret: &SecretKey,
-    _event: EventDraft,
+    delegations: &mut D,
+    binding: &BoundIdentities,
+    role: IdentityRole,
+    secret: &SecretKey,
+    event: EventDraft,
 ) -> Result<VerifiedEvent> {
-    Err(Refusal {
-        organ: "nostr",
-        reason: "unimplemented-binding",
-    })
+    let request = binding.binding();
+    if request.v != BINDING_VERSION || request.node_key == request.agent_key {
+        return Err(Refusal {
+            organ: "nostr",
+            reason: "binding-invalid",
+        });
+    }
+    let expected = match role {
+        IdentityRole::Node => request.node_key,
+        IdentityRole::Agent => request.agent_key,
+    };
+    if secret.public_key()? != expected {
+        return Err(Refusal {
+            organ: "nostr",
+            reason: "delegated-key-mismatch",
+        });
+    }
+    delegations.check_current(binding, role, event.kind)?;
+    crate::Event::sign(
+        secret,
+        event.created_at_seconds,
+        event.kind,
+        event.tags,
+        event.content,
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
