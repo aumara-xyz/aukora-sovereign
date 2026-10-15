@@ -1,0 +1,38 @@
+{
+  "schema": "zetaharp-reference-contract-v1",
+  "fixtures": {
+    "name": "fixtures.json",
+    "schema": "zetaharp-fixtures-v1",
+    "sha256": "15d20b718c9236be816fff7ae1bb7740e247e5ebbb070c119c76c7033de15156"
+  },
+  "sources": [
+    {
+      "name": "vendor/zeta-harp/js/zh-fixtures-1.js",
+      "sha256": "e5d3e5c3a71515419af8315cfe3d94c52b1aaba581f24167bf57ced582a02adc"
+    },
+    {
+      "name": "vendor/zeta-harp/js/zh-fixtures-2.js",
+      "sha256": "8292c8eb17f4dcf0caf1ac69f87853c4bf0e5aed1c638b168404c9fa525b44b4"
+    }
+  ],
+  "counts": {
+    "windows": 4,
+    "window_samples": 564,
+    "refined_zeros": 40
+  },
+  "source_significant_digits": 13,
+  "semantics": {
+    "main_sum": "Numerical excerpts of the finite Riemann–Siegel main sum.",
+    "reference_z": "Numerical Hardy Z reference values; not certified.",
+    "remainder": "Source numerical reference Z minus the finite main sum.",
+    "heights": "Grid coordinates derived exactly from each source range and step.",
+    "refined_zeros": "Odlyzko-derived, mpmath-refined numerical references; not certified.",
+    "height_decimal": "Source decimal height text preserved without binary64 conversion.",
+    "reference_derivative": "Source numerical reference slope at the refined zero.",
+    "residual_abs_decimal": "Source absolute residual decimal text.",
+    "source_offset_decimal": "Source numerical refinement offset decimal text.",
+    "authority": "Data provenance conveys no authorization and no proof of a conjecture.",
+    "precision_boundary": "These excerpts do not contain the full-precision original fixture set or its original validation manifest."
+  },
+  "extraction": "JSON data literals decoded from fixed assignment wrappers; executable source was not imported."
+}

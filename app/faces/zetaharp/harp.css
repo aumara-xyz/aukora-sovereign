@@ -1,0 +1,53 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+:root { color-scheme: dark; color: var(--text); background: var(--canvas); font-family: var(--font-interface); }
+main { padding: 20px; max-width: 1500px; margin-inline: auto; }
+[hidden] { display: none !important; }
+button, input { font: inherit; border-color: var(--border); border-radius: var(--control-radius); background: var(--control); }
+button:hover { border-color: var(--violet); }
+button[aria-pressed="true"] { background: var(--control-active); border-color: var(--violet); }
+button:focus-visible, input:focus-visible, canvas:focus-visible, summary:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+.harp-title h1 { margin: 0; font-size: var(--type-title); font-weight: 600; }
+.harp-title p { margin: 6px 0 12px; color: var(--secondary); }
+.harp-fence { padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--mint); font-size: var(--type-small); }
+.harp-status { min-height: 0; color: var(--gold); }
+.harp-status:empty { display: none; }
+.harp-readout { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 16px 0; font-variant-numeric: tabular-nums; color: var(--secondary); }
+.harp-gold { color: var(--gold); }
+.harp-cockpit { display: grid; grid-template-columns: auto minmax(120px, 1fr) minmax(90px, .7fr) auto minmax(90px, .7fr) auto; align-items: center; gap: 12px; }
+.harp-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: var(--type-small); color: var(--secondary); }
+.harp-field input { min-width: 0; width: 100%; }
+.harp-field input[type="range"] { padding: 0; accent-color: var(--violet); height: 22px; cursor: pointer; }
+.harp-field output { color: var(--muted); font-variant-numeric: tabular-nums; }
+.harp-caption { color: var(--secondary); font-size: var(--type-small); line-height: 1.65; }
+.harp-navigation { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 16px 0 12px; }
+.harp-navigation .harp-field { flex: 1; min-width: 150px; }
+.harp-layers { display: flex; flex-wrap: wrap; gap: 24px; margin: 14px 0; }
+.harp-layers .harp-field { flex-direction: row; align-items: center; gap: 10px; }
+.harp-layers input { width: 16px; height: 16px; accent-color: var(--mint); }
+canvas { max-width: none; width: 100%; border: 1px solid var(--border); border-radius: var(--radius); background: var(--canvas-deep); }
+.harp-tunnel { height: 340px; cursor: grab; touch-action: none; }
+.harp-tunnel:active { cursor: grabbing; }
+.harp-chart { height: 165px; cursor: crosshair; touch-action: none; }
+.harp-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+.harp-panel { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-width: 0; background: var(--lane); }
+.harp-panel h2 { margin: 0 0 12px; font-size: var(--type-heading); font-weight: 600; }
+.harp-flower, .harp-torus { height: 230px; margin-bottom: 12px; }
+.harp-inspector { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; font-size: var(--type-small); }
+.harp-inspector dt { color: var(--muted); }
+.harp-inspector dd { margin: 0; font-variant-numeric: tabular-nums; color: var(--mint); overflow-wrap: anywhere; }
+.harp-torus-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.harp-disclosure { margin-top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); }
+.harp-disclosure summary { cursor: pointer; color: var(--mint); }
+.harp-disclosure p { color: var(--secondary); font-size: var(--type-small); }
+@media (max-width: 800px) {
+  .harp-cockpit { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .harp-tools { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 420px) {
+  main { padding: 12px; }
+  .harp-cockpit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .harp-tunnel { height: 260px; }
+  .harp-panel { padding: 12px; }
+  button { padding: 9px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
