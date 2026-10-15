@@ -1,104 +1,152 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! WebAuthn JSON parsing independent of the C1 integer-only codec.
+//! WebAuthn JSON grammar, independent of the canonical integer-only codec.
 
 use crate::{codes, Result};
-use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value};
-use std::fmt;
 
-struct JsonValue(usize);
+const CONTAINER_LIMIT: usize = 512;
 
-impl<'de> DeserializeSeed<'de> for JsonValue {
-    type Value = Value;
-
-    fn deserialize<D: de::Deserializer<'de>>(
-        self,
-        decoder: D,
-    ) -> core::result::Result<Value, D::Error> {
-        decoder.deserialize_any(self)
-    }
+struct Input<'a> {
+    remaining: &'a [u8],
 }
 
-impl<'de> Visitor<'de> for JsonValue {
-    type Value = Value;
-
-    fn expecting(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
-        output.write_str("bounded WebAuthn JSON")
+impl Input<'_> {
+    fn whitespace(&mut self) {
+        let count = self
+            .remaining
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+            .count();
+        self.remaining = &self.remaining[count..];
     }
 
-    fn visit_unit<E: de::Error>(self) -> core::result::Result<Value, E> {
-        Ok(Value::Null)
-    }
-    fn visit_bool<E: de::Error>(self, value: bool) -> core::result::Result<Value, E> {
-        Ok(value.into())
-    }
-    fn visit_str<E: de::Error>(self, value: &str) -> core::result::Result<Value, E> {
-        Ok(value.into())
-    }
-    fn visit_string<E: de::Error>(self, value: String) -> core::result::Result<Value, E> {
-        Ok(value.into())
+    fn consume(&mut self, token: &[u8]) -> Result<()> {
+        self.remaining = self
+            .remaining
+            .strip_prefix(token)
+            .ok_or(codes::GATE_PROOF_INVALID)?;
+        Ok(())
     }
 
-    fn visit_u64<E: de::Error>(self, value: u64) -> core::result::Result<Value, E> {
-        if value > crate::json::MAX_SAFE_INTEGER as u64 {
-            return Err(E::custom("integer range"));
+    fn string(&mut self) -> Result<String> {
+        if self.remaining.first() != Some(&b'"') {
+            return Err(codes::GATE_PROOF_INVALID);
         }
-        Ok(value.into())
-    }
-
-    fn visit_i64<E: de::Error>(self, value: i64) -> core::result::Result<Value, E> {
-        if !(-crate::json::MAX_SAFE_INTEGER..=crate::json::MAX_SAFE_INTEGER).contains(&value) {
-            return Err(E::custom("integer range"));
-        }
-        Ok(value.into())
-    }
-
-    fn visit_f64<E: de::Error>(self, value: f64) -> core::result::Result<Value, E> {
-        if value.fract() == 0.0 && value.abs() > crate::json::MAX_SAFE_INTEGER as f64 {
-            return Err(E::custom("integer range"));
-        }
-        Number::from_f64(value)
-            .map(Value::Number)
-            .ok_or_else(|| E::custom("finite number"))
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut access: A) -> core::result::Result<Value, A::Error> {
-        if self.0 >= 512 {
-            return Err(de::Error::custom("nesting limit"));
-        }
-        let mut values = Vec::new();
-        while let Some(value) = access.next_element_seed(JsonValue(self.0 + 1))? {
-            values.push(value);
-        }
-        Ok(Value::Array(values))
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> core::result::Result<Value, A::Error> {
-        if self.0 >= 512 {
-            return Err(de::Error::custom("nesting limit"));
-        }
-        let mut fields = Map::new();
-        while let Some(name) = access.next_key::<String>()? {
-            if fields.contains_key(&name) {
-                return Err(de::Error::custom("duplicate field"));
+        let mut end = 1;
+        loop {
+            match self.remaining.get(end) {
+                Some(b'"') => {
+                    let decoded = serde_json::from_slice(&self.remaining[..=end])
+                        .map_err(|_| codes::GATE_PROOF_INVALID)?;
+                    self.remaining = &self.remaining[end + 1..];
+                    return Ok(decoded);
+                }
+                Some(b'\\') => end += 2,
+                Some(_) => end += 1,
+                None => return Err(codes::GATE_PROOF_INVALID),
             }
-            let value = access.next_value_seed(JsonValue(self.0 + 1))?;
-            fields.insert(name, value);
         }
-        Ok(Value::Object(fields))
+    }
+
+    fn number(&mut self) -> Result<Value> {
+        let count = self
+            .remaining
+            .iter()
+            .take_while(|byte| matches!(byte, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E'))
+            .count();
+        let number: Number = serde_json::from_slice(&self.remaining[..count])
+            .map_err(|_| codes::GATE_PROOF_INVALID)?;
+        let magnitude = number.as_f64().ok_or(codes::GATE_PROOF_INVALID)?.abs();
+        if !magnitude.is_finite() || magnitude > crate::json::MAX_SAFE_INTEGER as f64 {
+            return Err(codes::GATE_PROOF_INVALID);
+        }
+        self.remaining = &self.remaining[count..];
+        Ok(Value::Number(number))
+    }
+
+    fn value(&mut self, containers: usize) -> Result<Value> {
+        self.whitespace();
+        match self.remaining.first() {
+            Some(b'{') => self.object(containers).map(Value::Object),
+            Some(b'[') => self.array(containers).map(Value::Array),
+            Some(b'"') => self.string().map(Value::String),
+            Some(b'-' | b'0'..=b'9') => self.number(),
+            Some(b't') => self.consume(b"true").map(|()| Value::Bool(true)),
+            Some(b'f') => self.consume(b"false").map(|()| Value::Bool(false)),
+            Some(b'n') => self.consume(b"null").map(|()| Value::Null),
+            _ => Err(codes::GATE_PROOF_INVALID),
+        }
+    }
+
+    fn begin(&mut self, delimiter: u8, containers: usize) -> Result<()> {
+        if containers >= CONTAINER_LIMIT {
+            return Err(codes::GATE_PROOF_INVALID);
+        }
+        self.consume(&[delimiter])?;
+        self.whitespace();
+        Ok(())
+    }
+
+    fn closed(&mut self, delimiter: u8) -> bool {
+        self.whitespace();
+        if self.remaining.first() == Some(&delimiter) {
+            self.remaining = &self.remaining[1..];
+            true
+        } else {
+            false
+        }
+    }
+
+    fn object(&mut self, containers: usize) -> Result<Map<String, Value>> {
+        self.begin(b'{', containers)?;
+        let mut fields = Map::new();
+        if self.closed(b'}') {
+            return Ok(fields);
+        }
+        loop {
+            let name = self.string()?;
+            self.whitespace();
+            self.consume(b":")?;
+            let value = self.value(containers + 1)?;
+            if fields.insert(name, value).is_some() {
+                return Err(codes::GATE_PROOF_INVALID);
+            }
+            if self.closed(b'}') {
+                return Ok(fields);
+            }
+            self.consume(b",")?;
+            self.whitespace();
+        }
+    }
+
+    fn array(&mut self, containers: usize) -> Result<Vec<Value>> {
+        self.begin(b'[', containers)?;
+        let mut items = Vec::new();
+        if self.closed(b']') {
+            return Ok(items);
+        }
+        loop {
+            items.push(self.value(containers + 1)?);
+            if self.closed(b']') {
+                return Ok(items);
+            }
+            self.consume(b",")?;
+        }
     }
 }
 
 pub(super) fn parse(bytes: &[u8]) -> Result<Map<String, Value>> {
-    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
-    let mut parser = serde_json::Deserializer::from_slice(bytes);
-    parser.disable_recursion_limit();
-    let value = JsonValue(0)
-        .deserialize(&mut parser)
-        .map_err(|_| codes::GATE_PROOF_INVALID)?;
-    parser.end().map_err(|_| codes::GATE_PROOF_INVALID)?;
-    match value {
-        Value::Object(fields) => Ok(fields),
-        _ => Err(codes::GATE_PROOF_INVALID),
+    let mut input = Input {
+        remaining: match bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
+            Some(rest) => rest,
+            None => bytes,
+        },
+    };
+    input.whitespace();
+    let fields = input.object(0)?;
+    input.whitespace();
+    if !input.remaining.is_empty() {
+        return Err(codes::GATE_PROOF_INVALID);
     }
+    Ok(fields)
 }

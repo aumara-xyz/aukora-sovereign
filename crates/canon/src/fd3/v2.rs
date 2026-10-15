@@ -10,15 +10,19 @@ mod records;
 
 pub(super) use records::{entry_body, parse_entry};
 
-fn record(o: &Object<'_>) -> Result<AlgorithmId> {
-    let algorithm = AlgorithmId::from_wire(text(o.get("algorithm")?)?)?;
+fn record_algorithm(o: &Object<'_>) -> Result<AlgorithmId> {
+    let algorithm = AlgorithmId::from_wire(text(o.get("algorithm")?)?)
+        .map_err(|_| codes::FRAME_INVALID_FIELD)?;
     if algorithm != AlgorithmId::Sha256 {
         return Err(codes::ALG_UNSUPPORTED);
     }
+    Ok(algorithm)
+}
+fn record_version(o: &Object<'_>) -> Result<()> {
     if o.count("v", 0, MAX)? != RECORD_VERSION as u64 {
         return Err(codes::FRAME_UNSUPPORTED_VERSION);
     }
-    Ok(algorithm)
+    Ok(())
 }
 fn mode(value: &Value) -> Result<SessionMode> {
     match text(value)? {
@@ -196,16 +200,16 @@ pub(super) fn parse_reply(kind: &str, value: &Value, _ingress: &Provenance) -> R
             let entries = Items::new(list(o.get("entries")?, |v| parse_entry(v, None))?)?;
             let summary = records::parse_summary(o.get("summary")?)?;
             let items = entries.as_slice();
+            let expected_next = items
+                .last()
+                .filter(|last| last.sequence < summary.sequence)
+                .map(|last| last.sequence);
             if items.iter().any(|entry| {
                 entry.session_id != summary.session_id || entry.sequence > summary.sequence
             }) || items
                 .windows(2)
                 .any(|pair| pair[1].sequence != pair[0].sequence + 1)
-                || next_sequence.is_some_and(|next| {
-                    items
-                        .last()
-                        .is_none_or(|last| next != last.sequence || next >= summary.sequence)
-                })
+                || next_sequence != expected_next
             {
                 return Err(codes::SESSION_SEQUENCE);
             }
@@ -241,10 +245,11 @@ pub(super) fn parse_reply(kind: &str, value: &Value, _ingress: &Provenance) -> R
                 &["algorithm", "commitment", "sequence", "session_id", "v"],
                 &[],
             )?;
-            let algorithm = record(&o)?;
+            let algorithm = record_algorithm(&o)?;
             let commitment = o.digest("commitment")?;
             let sequence = o.count("sequence", 0, MAX)?;
             let session_id = sid(o.get("session_id")?)?;
+            record_version(&o)?;
             Ok(Reply::SessionFlushed(SessionFlushed {
                 v: RECORD_VERSION,
                 algorithm,

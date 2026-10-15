@@ -20,7 +20,7 @@ pub(in crate::fd3) fn parse_summary(value: &Value) -> Result<SessionSummary> {
         ],
         &[],
     )?;
-    let algorithm = record(&o)?;
+    let algorithm = record_algorithm(&o)?;
     let archived = o.boolean("archived")?;
     let created_at_ms = o.count("created_at_ms", 0, MAX)?;
     let mode = mode(o.get("mode")?)?;
@@ -29,6 +29,7 @@ pub(in crate::fd3) fn parse_summary(value: &Value) -> Result<SessionSummary> {
     let thread_id = tid(o.get("thread_id")?)?;
     let title = txt(o.get("title")?)?;
     let updated_at_ms = o.count("updated_at_ms", 0, MAX)?;
+    record_version(&o)?;
     Ok(SessionSummary {
         v: RECORD_VERSION,
         algorithm,
@@ -94,7 +95,7 @@ pub(in crate::fd3) fn parse_entry(
         ],
         &[],
     )?;
-    let algorithm = record(&o)?;
+    let algorithm = record_algorithm(&o)?;
     let at_ms = o.count("at_ms", 0, MAX)?;
     let commitment = o.digest("commitment")?;
     let content = txt(o.get("content")?)?;
@@ -102,6 +103,7 @@ pub(in crate::fd3) fn parse_entry(
     let sequence = o.count("sequence", 1, MAX)?;
     let session_id = sid(o.get("session_id")?)?;
     let tool_call_id = nullable(o.get("tool_call_id")?, txt)?;
+    record_version(&o)?;
     let provenance = crate::fd3::parse_provenance(o.get("provenance")?)?;
     if provenance.source == Source::Stranger
         || ingress.is_some_and(|trusted| *trusted != provenance)

@@ -275,9 +275,9 @@ pub fn encode_command(frame: &Frame<ChatCommand>) -> Result<Vec<u8>> {
 }
 
 /// Decodes one canonical event under the same envelope, provenance and bound rules as commands.
-/// Historical entry provenance comes from authenticated supervisor storage, preserving
-/// mixed-source history without accepting guest assertions of Owner. Historical Owner
-/// entries are transcript data, never fresh instructions or reusable authorization.
+/// Non-owner historical labels may differ from the event ingress. An Owner entry
+/// requires Owner ingress and remains transcript data, never a fresh instruction
+/// or reusable authorization.
 /// Shared session records have no alternate FD 4 fields or title types.
 /// Model deltas preserve tool_calls. Memory events retain C4 nullability, pagination and secrecy rules.
 /// Unknown operations refuse before body interpretation; model output is always data.
@@ -301,6 +301,19 @@ pub fn decode_event(payload: &[u8], ingress: Provenance) -> Result<Frame<Session
         }
         _ => event_from_reply(fd3::parse_reply(&kind, &body, &ingress)?)?,
     };
+    let entries = match &body {
+        SessionEvent::Entry(entry) => std::slice::from_ref(entry),
+        SessionEvent::Appended(appended) => std::slice::from_ref(&appended.entry),
+        SessionEvent::Opened(opened) => opened.entries.as_slice(),
+        _ => &[],
+    };
+    if ingress.source != Source::Owner
+        && entries
+            .iter()
+            .any(|entry| entry.provenance.source == Source::Owner)
+    {
+        return Err(codes::FRAME_PROVENANCE);
+    }
     Ok(Frame {
         v: VERSION,
         id,

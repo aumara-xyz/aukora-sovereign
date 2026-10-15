@@ -102,102 +102,157 @@ pub fn verify_retained_owner_assertion(
     verify(&mut replay, &proposal, action, assertion).map(|_| ())
 }
 
+struct BoundOperation {
+    transaction_id: Digest32,
+    binding: OwnerBinding,
+    authorization: OwnerAuthorization,
+}
+
+impl BoundOperation {
+    fn load<T: AuthorityTxn + ?Sized>(
+        txn: &mut T,
+        proposal: &ProposalId,
+        action: OwnerOperation,
+        assertion: &OwnerAssertion,
+    ) -> Result<Self> {
+        let transaction_id = txn.transaction_id();
+        let binding = txn.owner_binding(&assertion.credential_id)?;
+        let authorization = txn.rebuild_authorization(proposal, action)?;
+        if (authorization.proposal, authorization.op) != (*proposal, action) {
+            return Err(codes::GATE_AUTHORIZATION_MISMATCH);
+        }
+        if binding.epoch != authorization.epoch {
+            return Err(codes::GATE_OWNER_EPOCH);
+        }
+        if binding.credential_id != assertion.credential_id {
+            return Err(codes::GATE_CREDENTIAL_MISMATCH);
+        }
+        let tags = [
+            (binding.v, binding.algorithm),
+            (binding.public_key.v, binding.public_key.algorithm),
+            (assertion.v, assertion.algorithm),
+            (assertion.signature.v, assertion.signature.algorithm),
+        ];
+        match binding.algorithm {
+            AlgorithmId::Ed25519 | AlgorithmId::EcdsaP256Sha256
+                if tags.iter().all(|tag| *tag == (1, binding.algorithm)) => {}
+            _ => return Err(codes::ALG_UNSUPPORTED),
+        }
+        Ok(Self {
+            transaction_id,
+            binding,
+            authorization,
+        })
+    }
+}
+
+struct Authenticator<'a> {
+    bytes: &'a [u8; 37],
+    counter: u32,
+}
+
+impl<'a> Authenticator<'a> {
+    fn read(assertion: &'a OwnerAssertion, binding: &OwnerBinding) -> Result<Self> {
+        let bytes: &[u8; 37] = assertion
+            .authenticator_data
+            .as_slice()
+            .try_into()
+            .map_err(|_| codes::GATE_PROOF_INVALID)?;
+        if assertion.client_data_json.len() > 16_384
+            || !(1..=128).contains(&assertion.signature.bytes.len())
+            || [
+                &binding.relying_party,
+                &binding.owner_origin,
+                &binding.top_origin,
+            ]
+            .iter()
+            .any(|value| value.is_empty())
+        {
+            return Err(codes::GATE_PROOF_INVALID);
+        }
+        // UP and UV are required; only eligible credentials may set backup state.
+        if !matches!(bytes[32], 0x05 | 0x0d | 0x1d) {
+            return Err(codes::GATE_PROOF_INVALID);
+        }
+        let rp_digest = Digest32::sha256(binding.relying_party.as_bytes());
+        if bytes[..32] != rp_digest.as_bytes()[..] {
+            return Err(codes::GATE_PROOF_INVALID);
+        }
+        let counter = u32::from_be_bytes([bytes[33], bytes[34], bytes[35], bytes[36]]);
+        match (binding.sign_counter, counter) {
+            (0, _) => {}
+            (previous, current) if current > previous => {}
+            _ => return Err(codes::GATE_COUNTER_REPLAY),
+        }
+        Ok(Self { bytes, counter })
+    }
+
+    fn signature_message(&self, client_digest: Digest32) -> [u8; 69] {
+        let mut message = [0; 69];
+        message[..37].copy_from_slice(self.bytes);
+        message[37..].copy_from_slice(client_digest.as_bytes());
+        message
+    }
+}
+
+fn check_ceremony(raw: &[u8], binding: &OwnerBinding, authorization: &[u8]) -> Result<()> {
+    let challenge_bytes = [
+        domain::OWNER_AUTHORIZATION_DOMAIN.as_bytes(),
+        &[0],
+        authorization,
+    ]
+    .concat();
+    let challenge = URL_SAFE_NO_PAD.encode(Digest32::sha256(&challenge_bytes).as_bytes());
+    let fields = client::parse(raw)?;
+    for (name, expected) in [
+        ("type", "webauthn.get"),
+        ("challenge", challenge.as_str()),
+        ("origin", binding.owner_origin.as_str()),
+        ("topOrigin", binding.top_origin.as_str()),
+    ] {
+        if fields.get(name).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(codes::GATE_PROOF_INVALID);
+        }
+    }
+    match fields.get("crossOrigin") {
+        Some(serde_json::Value::Bool(true)) => Ok(()),
+        _ => Err(codes::GATE_PROOF_INVALID),
+    }
+}
+
 pub(super) fn verify<T: AuthorityTxn + ?Sized>(
     txn: &mut T,
     proposal: &ProposalId,
     action: OwnerOperation,
     assertion: OwnerAssertion,
 ) -> Result<VerifiedProof> {
-    let invalid = codes::GATE_PROOF_INVALID;
-    let transaction_id = txn.transaction_id();
-    let binding = txn.owner_binding(&assertion.credential_id)?;
-    let authorization = txn.rebuild_authorization(proposal, action)?;
-    if authorization.proposal != *proposal || authorization.op != action {
-        return Err(codes::GATE_AUTHORIZATION_MISMATCH);
-    }
-    if authorization.epoch != binding.epoch {
-        return Err(codes::GATE_OWNER_EPOCH);
-    }
-    if assertion.credential_id != binding.credential_id {
-        return Err(codes::GATE_CREDENTIAL_MISMATCH);
-    }
-    if assertion.v != 1
-        || binding.v != 1
-        || binding.public_key.v != 1
-        || assertion.signature.v != 1
-        || binding.algorithm != binding.public_key.algorithm
-        || binding.algorithm != assertion.algorithm
-        || assertion.algorithm != assertion.signature.algorithm
-        || !matches!(
-            assertion.algorithm,
-            AlgorithmId::Ed25519 | AlgorithmId::EcdsaP256Sha256
-        )
-    {
-        return Err(codes::ALG_UNSUPPORTED);
-    }
-    let auth_data = &assertion.authenticator_data;
-    if auth_data.len() != 37
-        || assertion.client_data_json.len() > 16_384
-        || assertion.signature.bytes.is_empty()
-        || assertion.signature.bytes.len() > 128
-        || binding.relying_party.is_empty()
-        || binding.owner_origin.is_empty()
-        || binding.top_origin.is_empty()
-    {
-        return Err(invalid);
-    }
-    let flags = auth_data[32];
-    if flags & 5 != 5
-        || flags & 0xe2 != 0
-        || flags & 16 != 0 && flags & 8 == 0
-        || auth_data[..32] != Digest32::sha256(binding.relying_party.as_bytes()).as_bytes()[..]
-    {
-        return Err(invalid);
-    }
-    let sign_counter = u32::from_be_bytes(auth_data[33..37].try_into().map_err(|_| invalid)?);
-    if binding.sign_counter != 0 && sign_counter <= binding.sign_counter {
-        return Err(codes::GATE_COUNTER_REPLAY);
-    }
+    let BoundOperation {
+        transaction_id,
+        binding,
+        authorization,
+    } = BoundOperation::load(txn, proposal, action, &assertion)?;
+    let authenticator = Authenticator::read(&assertion, &binding)?;
     let authorization_bytes = authorization.canonical_bytes()?;
-    let mut challenge_preimage = domain::OWNER_AUTHORIZATION_DOMAIN.as_bytes().to_vec();
-    challenge_preimage.push(0);
-    challenge_preimage.extend_from_slice(&authorization_bytes);
-    let challenge = URL_SAFE_NO_PAD.encode(Digest32::sha256(&challenge_preimage).as_bytes());
-    let client = client::parse(&assertion.client_data_json)?;
-    if client.get("type").and_then(serde_json::Value::as_str) != Some("webauthn.get")
-        || client.get("challenge").and_then(serde_json::Value::as_str) != Some(challenge.as_str())
-        || client.get("origin").and_then(serde_json::Value::as_str)
-            != Some(binding.owner_origin.as_str())
-        || client
-            .get("crossOrigin")
-            .and_then(serde_json::Value::as_bool)
-            != Some(true)
-        || client.get("topOrigin").and_then(serde_json::Value::as_str)
-            != Some(binding.top_origin.as_str())
-    {
-        return Err(invalid);
-    }
+    check_ceremony(&assertion.client_data_json, &binding, &authorization_bytes)?;
     txn.check_authorization_live(&authorization)?;
-    let authenticator_data_digest = Digest32::sha256(auth_data);
     let client_data_digest = Digest32::sha256(&assertion.client_data_json);
-    let mut signed_bytes = auth_data.clone();
-    signed_bytes.extend_from_slice(client_data_digest.as_bytes());
-    txn.verify_signature(&binding.public_key, &signed_bytes, &assertion.signature)?;
-    if txn.transaction_id() != transaction_id {
+    let message = authenticator.signature_message(client_data_digest);
+    txn.verify_signature(&binding.public_key, &message, &assertion.signature)?;
+    if transaction_id != txn.transaction_id() {
         return Err(codes::AURA_TRANSACTION);
     }
     Ok(VerifiedProof {
         credential_id: binding.credential_id,
-        algorithm: assertion.algorithm,
-        sign_counter,
-        authenticator_data_digest,
+        algorithm: binding.algorithm,
+        sign_counter: authenticator.counter,
+        authenticator_data_digest: Digest32::sha256(authenticator.bytes),
         client_data_digest,
-        signed_bytes_digest: Digest32::sha256(&signed_bytes),
+        signed_bytes_digest: Digest32::sha256(&message),
         top_origin: binding.top_origin,
         assertion,
         authorization,
         authorization_bytes,
-        signed_bytes,
+        signed_bytes: message.to_vec(),
         public_key: binding.public_key,
         transaction_id,
     })

@@ -18,12 +18,13 @@ fn parse_receipt(value: &Value) -> Result<ModelReceipt> {
         ],
         &[],
     )?;
-    let algorithm = record(&o)?;
+    let algorithm = record_algorithm(&o)?;
     let commitment = o.digest("commitment")?;
     let model = txt(o.get("model")?)?;
     let receipt_seq = o.count("receipt_seq", 1, MAX)?;
     let request_id = rid(o.get("request_id")?)?;
     let reservation_id = reservation(o.get("reservation_id")?)?;
+    record_version(&o)?;
     let usage = parse_usage(o.get("usage")?)?;
     Ok(ModelReceipt {
         v: RECORD_VERSION,
@@ -90,11 +91,12 @@ pub(super) fn parse_reply(kind: &str, value: &Value) -> Result<Reply> {
                 ],
                 &[],
             )?;
-            let algorithm = record(&o)?;
+            let algorithm = record_algorithm(&o)?;
             let content = nullable(o.get("content")?, txt)?;
             let index = o.count("index", 0, MAX)?;
             let request_id = rid(o.get("request_id")?)?;
             let reservation_id = reservation(o.get("reservation_id")?)?;
+            record_version(&o)?;
             let tool_calls = Items::new(list(o.get("tool_calls")?, parse_tool_call)?)?;
             Reply::ModelDelta(ModelDelta {
                 v: RECORD_VERSION,
