@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+.approval-exact-value {
+  direction: ltr;
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+  white-space: pre-wrap;
+}
+.approval-model-note {
+  border: 2px solid currentColor;
+  padding: 0.75rem;
+}
+.approval-review button + button { margin-inline-start: 0.75rem; }
