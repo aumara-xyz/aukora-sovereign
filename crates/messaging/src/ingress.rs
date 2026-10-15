@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Sender admission precedes message opening; refusal facts carry no authority.
 
+mod refusal_audit;
+
 use canon::{
     alg::AlgorithmId,
     authority::{AuthorityTxn, FactKind, FactRecord, Kind, Phase},
@@ -75,6 +77,12 @@ pub struct CountedRefusal {
     sequence: u64,
 }
 
+struct PendingRefusal {
+    attempt: [u8; 16],
+    observation: RefusalObservation,
+    prior: RefusalCounts,
+}
+
 impl CountedRefusal {
     pub const fn observation(&self) -> &RefusalObservation {
         &self.observation
@@ -131,6 +139,8 @@ pub enum IngressOutcome {
 /// committed signed Fact rows; each contributes exactly one named reason.
 /// The messaging.refusals.attempt namespace maps retained attempt hex to exactly
 /// {body,sequence}, from the same committed signed fact and no other row.
+/// The messaging.refusals.fact namespace maps one-based decimal refusal ordinals
+/// to those same {body,sequence} values in increasing Aura sequence order.
 /// The commit hook must reject any transaction with staged authority changes.
 pub fn append_refusal<T: AuthorityTxn + ?Sized>(
     txn: &mut T,
@@ -138,36 +148,44 @@ pub fn append_refusal<T: AuthorityTxn + ?Sized>(
 ) -> Result<CountedRefusal> {
     let mut attempt = [0; 16];
     getrandom::fill(&mut attempt).map_err(|_| refuse("random-unavailable"))?;
-    append_refusal_attempt(txn, observation, attempt)
+    let prior = read_counts(txn)?;
+    append_refusal_attempt(txn, observation, attempt, prior)
 }
 
 fn append_refusal_attempt<T: AuthorityTxn + ?Sized>(
     txn: &mut T,
     observation: RefusalObservation,
     attempt: [u8; 16],
+    prior: RefusalCounts,
 ) -> Result<CountedRefusal> {
     let body = observation_body(&observation, attempt)?;
+    let expected = prior.increment(observation.reason)?;
     // Recovery retains the attempt id when Aura committed before the cache did.
-    if let Some(prior) =
+    if let Some(committed) =
         txn.committed_observation_state("messaging.refusals.attempt", &hex::encode(attempt))?
     {
-        if !matches!(prior.view(), ValueView::Object(fields) if fields.len() == 2) {
+        if !matches!(committed.view(), ValueView::Object(fields) if fields.len() == 2) {
             return Err(refuse("refusal-record"));
         }
-        let sequence = integer_field(&prior, "sequence")?;
-        if prior.get("body") != Some(&body)
-            || sequence == 0
-            || sequence > read_counts(txn)?.last_aura_sequence
-        {
+        let sequence = integer_field(&committed, "sequence")?;
+        if committed.get("body") != Some(&body) || sequence == 0 {
             return Err(refuse("refusal-record"));
+        }
+        let after = read_counts(txn)?;
+        if sequence <= prior.last_aura_sequence
+            || sequence > after.last_aura_sequence
+            || after.without_sequence() != expected.without_sequence()
+        {
+            return Err(refuse("refusal-count-mismatch"));
         }
         return Ok(CountedRefusal {
             observation,
             sequence,
         });
     }
-    let prior = read_counts(txn)?;
-    let expected = prior.increment(observation.reason)?;
+    if read_counts(txn)? != prior {
+        return Err(refuse("refusal-count-mismatch"));
+    }
     let context = txn.observation_context()?;
     let sequence = context.authority.sequence;
     if sequence == 0
@@ -239,11 +257,48 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS messaging_pending_refusal(
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
             attempt BLOB NOT NULL CHECK(length(attempt)=16),
-            observation BLOB NOT NULL
+            observation BLOB NOT NULL,
+            prior_counts BLOB
         );
         UPDATE messaging_refusal_cache SET dirty=1 WHERE singleton=1;",
     )
     .map_err(|_| refuse("store-schema"))?;
+    let has_prior: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('messaging_pending_refusal')
+             WHERE name='prior_counts')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| refuse("store-schema"))?;
+    if !has_prior {
+        db.execute_batch("ALTER TABLE messaging_pending_refusal ADD COLUMN prior_counts BLOB")
+            .map_err(|_| refuse("store-schema"))?;
+    }
+    // Legacy attempts kept their pre-append counts in the dirty cache. Validate
+    // that baseline before retaining it alongside the attempt on upgrade.
+    let legacy: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM messaging_pending_refusal WHERE prior_counts IS NULL)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| refuse("store-read"))?;
+    if legacy {
+        let bytes: Vec<u8> = db
+            .query_row(
+                "SELECT counts FROM messaging_refusal_cache WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|_| refuse("store-read"))?;
+        counts_from_bytes(&bytes)?;
+        db.execute(
+            "UPDATE messaging_pending_refusal SET prior_counts=?1 WHERE prior_counts IS NULL",
+            [bytes],
+        )
+        .map_err(|_| refuse("store-write"))?;
+    }
     Ok(())
 }
 
@@ -303,7 +358,7 @@ impl Messaging {
         transport: TransportKind,
         received_at_ms: u64,
     ) -> Result<IngressOutcome> {
-        self.refresh_refusal_counts(txn)?;
+        let prior = self.refresh_refusal_counts(txn)?;
         match self.admit(txn, envelope, recipient_key, transport, received_at_ms) {
             Ok(data) => Ok(IngressOutcome::Data(data)),
             Err(reason) => {
@@ -331,15 +386,17 @@ impl Messaging {
                     .map_err(|_| refuse("store-write"))?;
                 transaction
                     .execute(
-                        "INSERT INTO messaging_pending_refusal VALUES(1,?1,?2)",
+                        "INSERT INTO messaging_pending_refusal
+                         (singleton,attempt,observation,prior_counts) VALUES(1,?1,?2,?3)",
                         params![
                             attempt.as_slice(),
-                            observation_body(&observation, attempt)?.canonical_bytes()
+                            observation_body(&observation, attempt)?.canonical_bytes(),
+                            prior.to_value()?.canonical_bytes()
                         ],
                     )
                     .map_err(|_| refuse("store-write"))?;
                 transaction.commit().map_err(|_| refuse("store-commit"))?;
-                let counted = append_refusal_attempt(txn, observation, attempt)?;
+                let counted = append_refusal_attempt(txn, observation, attempt, prior)?;
                 self.db
                     .execute(
                         "DELETE FROM messaging_pending_refusal WHERE singleton=1",
@@ -358,11 +415,12 @@ impl Messaging {
         &mut self,
         txn: &mut T,
     ) -> Result<Option<CountedRefusal>> {
-        let Some((attempt, observation)) = self.pending_refusal()? else {
+        let Some(pending) = self.pending_refusal()? else {
             self.refresh_refusal_counts(txn)?;
             return Ok(None);
         };
-        let counted = append_refusal_attempt(txn, observation, attempt)?;
+        let counted =
+            append_refusal_attempt(txn, pending.observation, pending.attempt, pending.prior)?;
         self.db
             .execute(
                 "DELETE FROM messaging_pending_refusal WHERE singleton=1",
@@ -373,10 +431,10 @@ impl Messaging {
         Ok(Some(counted))
     }
 
-    fn pending_refusal(&self) -> Result<Option<([u8; 16], RefusalObservation)>> {
+    fn pending_refusal(&self) -> Result<Option<PendingRefusal>> {
         let mut statement = self
             .db
-            .prepare("SELECT attempt,observation FROM messaging_pending_refusal WHERE singleton=1")
+            .prepare("SELECT attempt,observation,prior_counts FROM messaging_pending_refusal WHERE singleton=1")
             .map_err(|_| refuse("store-read"))?;
         let mut rows = statement.query([]).map_err(|_| refuse("store-read"))?;
         let Some(row) = rows.next().map_err(|_| refuse("store-read"))? else {
@@ -384,8 +442,13 @@ impl Messaging {
         };
         let attempt: Vec<u8> = row.get(0).map_err(|_| refuse("store-read"))?;
         let bytes: Vec<u8> = row.get(1).map_err(|_| refuse("store-read"))?;
+        let prior: Vec<u8> = row.get(2).map_err(|_| refuse("store-read"))?;
         let attempt: [u8; 16] = attempt.try_into().map_err(|_| refuse("refusal-record"))?;
-        Ok(Some((attempt, decode_observation(&bytes, attempt)?)))
+        Ok(Some(PendingRefusal {
+            attempt,
+            observation: decode_observation(&bytes, attempt)?,
+            prior: counts_from_bytes(&prior)?,
+        }))
     }
 
     fn admit<T: AuthorityTxn + ?Sized>(
@@ -497,7 +560,10 @@ impl Messaging {
         } else {
             Err(refuse("health-context"))
         };
-        let counters = counts.as_ref().map(|_| ()).map_err(|error| *error);
+        let counters = counts
+            .as_ref()
+            .map_err(|error| *error)
+            .and_then(|counts| refusal_audit::verify_facts(txn, counts, context.sequence));
         let accepted = self
             .db
             .query_row("SELECT count(*) FROM messaging_seen", [], |row| {
@@ -552,7 +618,9 @@ impl Messaging {
                     Err(error)
                         if error.reason == "ingress-invariant"
                             || error.reason == "refusal-rollback"
-                            || error.reason == "refusal-count-mismatch" =>
+                            || error.reason == "refusal-count-mismatch"
+                            || error.reason == "refusal-count-schema"
+                            || error.reason == "refusal-record" =>
                     {
                         (Cell::Failed, HealthReason::InvariantFailed)
                     }

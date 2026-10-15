@@ -555,9 +555,21 @@ impl crate::Messaging {
                     {
                         return Err(Reason::InvariantFailed);
                     }
-                    let encoded = pairing_value(pairing).map_err(health_failure)?;
-                    let ValueView::Text(method) =
-                        encoded.get("method").ok_or(Reason::InvariantFailed)?.view()
+                    let action: Vec<u8> = self
+                        .db
+                        .query_row(
+                            "SELECT action FROM messaging_contacts WHERE key=?1",
+                            [committed.key().as_bytes().as_slice()],
+                            |row| row.get(0),
+                        )
+                        .map_err(|_| Reason::Unreachable)?;
+                    let action =
+                        canon::json::parse_strict(&action).map_err(|_| Reason::InvariantFailed)?;
+                    let stored_pairing = action.get("pairing").ok_or(Reason::InvariantFailed)?;
+                    let ValueView::Text(method) = stored_pairing
+                        .get("method")
+                        .ok_or(Reason::InvariantFailed)?
+                        .view()
                     else {
                         return Err(Reason::InvariantFailed);
                     };
@@ -565,7 +577,7 @@ impl crate::Messaging {
                         PairingMethod::ScreenToScreen => "screen-to-screen",
                         PairingMethod::Remote => "remote",
                         PairingMethod::Relayed => "relayed",
-                        PairingMethod::Unknown => "unknown",
+                        PairingMethod::Unknown => return Err(Reason::InvariantFailed),
                     };
                     if method != expected {
                         return Err(Reason::InvariantFailed);
@@ -590,40 +602,81 @@ impl crate::Messaging {
         context: &nostr::health::HealthContext,
     ) -> core::result::Result<usize, canon::health::HealthReason> {
         use canon::health::HealthReason as Reason;
-        let mut statement = self.db.prepare("SELECT id,proposal,authorization_receipt,recipient,envelope_id,envelope,state\n            FROM messaging_outbox ORDER BY id LIMIT ?1").map_err(|_| Reason::Unreachable)?;
         let budget = MAX_PAGE_ITEMS * MAX_PAGE_ITEMS;
-        let mut rows = statement
-            .query([(budget + 1) as i64])
-            .map_err(|_| Reason::Unreachable)?;
+        let ids = {
+            let mut statement = self
+                .db
+                .prepare("SELECT id FROM messaging_outbox ORDER BY id LIMIT ?1")
+                .map_err(|_| Reason::Unreachable)?;
+            let rows = statement
+                .query_map([(budget + 1) as i64], |row| row.get::<_, Vec<u8>>(0))
+                .map_err(|_| Reason::Unreachable)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|_| Reason::InvariantFailed)?
+        };
+        if ids.len() > budget {
+            return Err(Reason::NotChecked);
+        }
         let mut inspected = 0;
         let mut observed_ids = std::collections::BTreeSet::new();
-        while let Some(row) = rows.next().map_err(|_| Reason::Unreachable)? {
-            if inspected >= budget {
-                return Err(Reason::NotChecked);
-            }
-            let bytes = |index| {
-                row.get::<_, Vec<u8>>(index)
-                    .map_err(|_| Reason::InvariantFailed)
-            };
+        for bytes in ids {
             let id = crate::OutboxId(Digest32::from_bytes(
-                bytes(0)?.try_into().map_err(|_| Reason::InvariantFailed)?,
+                bytes.try_into().map_err(|_| Reason::InvariantFailed)?,
             ));
+            let (proposal, receipt, recipient, envelope_id, envelope, cached_state, failure) = self
+                .db
+                .query_row(
+                    "SELECT proposal,authorization_receipt,recipient,envelope_id,envelope,state,failure
+                     FROM messaging_outbox WHERE id=?1",
+                    [id.0.as_bytes().as_slice()],
+                    |row| {
+                        Ok((
+                            row.get::<_, Vec<u8>>(0)?,
+                            row.get::<_, Vec<u8>>(1)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                            row.get::<_, Vec<u8>>(3)?,
+                            row.get::<_, Vec<u8>>(4)?,
+                            row.get::<_, i64>(5)?,
+                            row.get::<_, Option<String>>(6)?,
+                        ))
+                    },
+                )
+                .map_err(|_| Reason::InvariantFailed)?;
             let state = txn
                 .committed_authority_state("messaging.outbox", &id.0.to_string())
                 .map_err(health_failure)?
                 .ok_or(Reason::InvariantFailed)?;
             let send = crate::send_state(&state, id).map_err(|_| Reason::InvariantFailed)?;
-            let cached_state = row.get::<_, i64>(6).map_err(|_| Reason::InvariantFailed)?;
-            if bytes(1)? != send.proposal().as_bytes()
-                || bytes(2)? != send.authorization_receipt().as_bytes()
-                || bytes(3)? != send.envelope().recipient.as_bytes()
-                || bytes(4)? != send.envelope().id.as_bytes()
-                || bytes(5)? != send.envelope().bytes
-                || !(0..=3).contains(&cached_state)
+            let outbox_state = self.outbox_state(id).map_err(health_failure)?;
+            let state_matches = match &outbox_state {
+                crate::OutboxState::Queued => cached_state == 0 && failure.is_none(),
+                crate::OutboxState::Published(receipt) => {
+                    cached_state == 1
+                        && failure.is_none()
+                        && receipt.envelope_id == send.envelope().id
+                        && receipt.transport == nostr::TransportKind::NostrRelays
+                        && receipt.status == nostr::transport::SubmissionStatus::Accepted
+                }
+                crate::OutboxState::Unconfirmed => cached_state == 2 && failure.is_none(),
+                crate::OutboxState::Failed(code) => {
+                    cached_state == 3
+                        && *code == refusal("transport-rejected")
+                        && failure.as_deref() == Some("messaging:transport-rejected")
+                }
+            };
+            if proposal != send.proposal().as_bytes()
+                || receipt != send.authorization_receipt().as_bytes()
+                || recipient != send.envelope().recipient.as_bytes()
+                || envelope_id != send.envelope().id.as_bytes()
+                || envelope != send.envelope().bytes
+                || !state_matches
             {
                 return Err(Reason::InvariantFailed);
             }
-            if matches!(cached_state, 0 | 2) {
+            if matches!(
+                outbox_state,
+                crate::OutboxState::Queued | crate::OutboxState::Unconfirmed
+            ) {
                 let contact = self
                     .current_contact(txn, send.envelope().recipient)
                     .map_err(health_failure)?
