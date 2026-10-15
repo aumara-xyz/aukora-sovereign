@@ -645,3 +645,272 @@ pub fn verify_admission_record(
         allowance: confirmation.after,
     })
 }
+
+/// Versioned wrapper inside the frozen claim request's single `token` string.
+pub const INVITE_CLAIM_V2_PREFIX: &str = "aukora-invite-claim-v2.";
+
+/// A separate signed commitment, without changing conserved invite v1 bytes.
+pub const INVITE_CLAIM_BINDING_SCHEMA: &str = "aukora:invite-claim-binding:v1";
+
+/// Parsed possession material, without a constructor that bypasses its grammar.
+/// Neither parsing nor a matching digest consumes an invite or creates a session.
+pub struct InviteClaimV2<'a> {
+    spawn_secret: [u8; 32],
+    handover: &'a str,
+}
+
+impl<'a> InviteClaimV2<'a> {
+    /// Accepts a canonical unpadded base64url 32-byte spawn secret, a period,
+    /// and the invitee's retained 64 lowercase hexadecimal ASCII characters.
+    pub fn parse(candidate: &'a [u8]) -> Result<Self> {
+        let text = std::str::from_utf8(candidate).map_err(|_| refusal("claim-shape"))?;
+        let payload = text
+            .strip_prefix(INVITE_CLAIM_V2_PREFIX)
+            .ok_or(refusal("unknown-operation"))?;
+        let (spawn, handover) = payload.split_once('.').ok_or(refusal("claim-shape"))?;
+        if handover.len() != 64
+            || !handover
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(refusal("claim-shape"));
+        }
+        Ok(Self {
+            spawn_secret: decode_claim_spawn_secret(spawn)?,
+            handover,
+        })
+    }
+
+    /// Spawn commits to raw secret bytes, never to their base64url spelling.
+    pub fn spawn_commitment(&self) -> Digest32 {
+        Digest32::sha256(&self.spawn_secret)
+    }
+
+    /// The archive invite signs the hash of ASCII lowerhex, not decoded bytes.
+    pub fn handover_commitment(&self) -> Digest32 {
+        Digest32::sha256(self.handover.as_bytes())
+    }
+}
+
+/// Host-provisioned pins read independently of browser input under the claim lock.
+pub struct InviteClaimHostContext {
+    pub node: NodeId,
+    pub invite: Event,
+    pub claim_binding: Option<Event>,
+    pub expected_invite_id: EventId,
+    pub expected_network: PublicKey,
+    pub expected_issuer: PublicKey,
+    pub spawn_claim_sha256: Digest32,
+    pub now_seconds: u64,
+}
+
+/// Implemented by the host's claim transaction using spawn's persisted provenance.
+pub trait InviteClaimHost {
+    /// Reads the exact provisioned signed invite, independent identity pins,
+    /// spawn commitment and host clock while the durable claim lock is held.
+    fn invite_claim_context(&mut self) -> Result<InviteClaimHostContext>;
+
+    /// Verifies a committed, consumed owner C5 record over the exact canonical
+    /// claim-binding content and its issuer, subject, target and operation. For
+    /// legacy invites, verifies their original approved issuance provenance.
+    /// Reads host authority state; a node signature or a browser flag is insufficient.
+    fn verify_claim_owner_authority(
+        &mut self,
+        _invite: &Event,
+        _claim_binding: Option<&Event>,
+    ) -> Result<()> {
+        Err(refusal("claim-owner-proof-required"))
+    }
+}
+
+/// Verified possession for one host node and one signed invite, without a session.
+/// The host still consumes its one-time claim and inserts the session atomically.
+pub struct VerifiedInviteClaimV2 {
+    node: NodeId,
+    invite_id: EventId,
+    spawn_commitment: Digest32,
+    expires_at_seconds: u64,
+}
+
+impl VerifiedInviteClaimV2 {
+    pub const fn node(&self) -> NodeId {
+        self.node
+    }
+
+    pub const fn invite_id(&self) -> EventId {
+        self.invite_id
+    }
+
+    pub const fn spawn_commitment(&self) -> Digest32 {
+        self.spawn_commitment
+    }
+
+    pub const fn expires_at_seconds(&self) -> u64 {
+        self.expires_at_seconds
+    }
+}
+
+/// Verifies both secrets against host provisioning and a checked signed invite.
+/// Conserved invites require a separate host-provisioned signed claim binding.
+/// Existing v1 claim candidates belong to the host's unchanged v1 consumer.
+pub fn verify_invite_claim_v2(
+    host: &mut (impl InviteClaimHost + ?Sized),
+    candidate: &[u8],
+) -> Result<VerifiedInviteClaimV2> {
+    let candidate = InviteClaimV2::parse(candidate)?;
+    let context = host.invite_claim_context()?;
+    let (network, issued, expires, handover_commitment) = invite_claim_commitment(&context)?;
+    if context.invite.id != context.expected_invite_id
+        || context.invite.pubkey != context.expected_issuer
+        || network != context.expected_network
+    {
+        return Err(refusal("claim-context"));
+    }
+    live(issued, expires, context.now_seconds)?;
+    host.verify_claim_owner_authority(&context.invite, context.claim_binding.as_ref())?;
+    let spawn_commitment = candidate.spawn_commitment();
+    let spawn_matches = claim_digest_matches(spawn_commitment, context.spawn_claim_sha256);
+    let handover_matches =
+        claim_digest_matches(candidate.handover_commitment(), handover_commitment);
+    if !(spawn_matches & handover_matches) {
+        return Err(refusal("claim-secret"));
+    }
+    Ok(VerifiedInviteClaimV2 {
+        node: context.node,
+        invite_id: context.invite.id,
+        spawn_commitment,
+        expires_at_seconds: expires,
+    })
+}
+
+/// Signs possession evidence for an already verified conserved offer. This does
+/// not reserve allowance, issue an invite, or substitute for owner authorization.
+pub fn sign_invite_claim_binding(
+    offer: &VerifiedOffer,
+    key: &SecretKey,
+    claim_sha256: Digest32,
+    now_seconds: u64,
+) -> Result<Event> {
+    let invite = &offer.offer.invite;
+    let body = ConservedInviteBody::decode(invite)?;
+    live(body.issued_at_seconds, body.expires_at_seconds, now_seconds)?;
+    if key.public_key()? != invite.pubkey {
+        return Err(refusal("claim-context"));
+    }
+    nonzero(claim_sha256)?;
+    Ok(Event::sign(
+        key,
+        body.issued_at_seconds,
+        INVITE_KIND,
+        invite_claim_binding_tags(invite.id),
+        invite_claim_binding_content(invite, &body, claim_sha256)?,
+    )?
+    .event()
+    .clone())
+}
+
+fn invite_claim_commitment(
+    context: &InviteClaimHostContext,
+) -> Result<(PublicKey, u64, u64, Digest32)> {
+    let raw = read_json(context.invite.content.as_bytes(), MAX_INVITE_EVENT_BYTES)?;
+    match string(&raw, "schema")? {
+        "aukora-node-invite-v1" => {
+            if context.claim_binding.is_some() {
+                return Err(refusal("claim-context"));
+            }
+            let body = LegacyStatement::decode(&context.invite)?;
+            Ok((
+                body.root,
+                body.issued_at,
+                body.expires_at,
+                body.claim_sha256,
+            ))
+        }
+        CONSERVED_INVITE_SCHEMA => {
+            let body = ConservedInviteBody::decode(&context.invite)?;
+            let binding = context
+                .claim_binding
+                .as_ref()
+                .ok_or(refusal("claim-binding-required"))?;
+            if binding.encode()?.len() > MAX_INVITE_EVENT_BYTES {
+                return Err(refusal("invite-bound"));
+            }
+            binding.clone().verify()?;
+            let binding_body = read_json(binding.content.as_bytes(), MAX_INVITE_EVENT_BYTES)?;
+            let commitment = digest(&binding_body, "claim_sha256")?;
+            nonzero(commitment)?;
+            if binding.kind != INVITE_KIND
+                || binding.pubkey != context.invite.pubkey
+                || binding.tags != invite_claim_binding_tags(context.invite.id)
+                || binding.created_at != body.issued_at_seconds
+                || binding.content
+                    != invite_claim_binding_content(&context.invite, &body, commitment)?
+            {
+                return Err(refusal("claim-binding"));
+            }
+            Ok((
+                body.network,
+                body.issued_at_seconds,
+                body.expires_at_seconds,
+                commitment,
+            ))
+        }
+        _ => Err(refusal("unknown-operation")),
+    }
+}
+
+fn invite_claim_binding_content(
+    invite: &Event,
+    body: &ConservedInviteBody,
+    commitment: Digest32,
+) -> Result<String> {
+    String::from_utf8(canonical(json!({"schema":INVITE_CLAIM_BINDING_SCHEMA,
+        "algorithm":AlgorithmId::Secp256k1Schnorr.wire_name(),
+        "network":hex::encode(body.network.as_bytes()),
+        "invite_id":invite.id.digest().to_string(),"code_id":hex::encode(body.code_id),
+        "issued_at_seconds":body.issued_at_seconds,"expires_at_seconds":body.expires_at_seconds,
+        "claim_sha256":commitment.to_string()}))?)
+    .map_err(|_| refusal("body-invalid"))
+}
+
+fn claim_digest_matches(left: Digest32, right: Digest32) -> bool {
+    use sha2::digest::CtOutput;
+    CtOutput::<sha2::Sha256>::new((*left.as_bytes()).into())
+        == CtOutput::<sha2::Sha256>::new((*right.as_bytes()).into())
+}
+
+fn invite_claim_binding_tags(invite_id: EventId) -> Vec<Vec<String>> {
+    vec![vec!["d".into(), format!("claim:{}", invite_id.digest())]]
+}
+
+fn decode_claim_spawn_secret(text: &str) -> Result<[u8; 32]> {
+    if text.len() != 43 {
+        return Err(refusal("claim-shape"));
+    }
+    let mut output = [0_u8; 32];
+    let mut accumulator = 0_u16;
+    let mut bits = 0_u8;
+    let mut written = 0_usize;
+    for byte in text.bytes() {
+        let digit = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return Err(refusal("claim-shape")),
+        };
+        accumulator = (accumulator << 6) | u16::from(digit);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            *output.get_mut(written).ok_or(refusal("claim-shape"))? = (accumulator >> bits) as u8;
+            written += 1;
+        }
+        accumulator &= (1_u16 << bits) - 1;
+    }
+    if written != output.len() || bits != 2 || accumulator != 0 {
+        return Err(refusal("claim-shape"));
+    }
+    Ok(output)
+}

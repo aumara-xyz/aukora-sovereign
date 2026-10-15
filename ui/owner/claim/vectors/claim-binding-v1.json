@@ -1,0 +1,71 @@
+{
+  "schema": "aukora:invite-claim-binding-vectors:v1",
+  "scope": "Canonical content and NIP-01 signing preimage; these bytes alone are not a signed event.",
+  "body": {
+    "schema": "aukora:invite-claim-binding:v1",
+    "algorithm": "secp256k1-schnorr",
+    "network": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "invite_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "code_id": "00112233445566778899aabbccddeeff",
+    "issued_at_seconds": 1800000000,
+    "expires_at_seconds": 1800172800,
+    "claim_sha256": "6c86c6aac5fb24bcf5d9939cb7d7d5645ce39418f449e03b262dd4fa14b4b92b"
+  },
+  "canonical_content": "{\"algorithm\":\"secp256k1-schnorr\",\"claim_sha256\":\"6c86c6aac5fb24bcf5d9939cb7d7d5645ce39418f449e03b262dd4fa14b4b92b\",\"code_id\":\"00112233445566778899aabbccddeeff\",\"expires_at_seconds\":1800172800,\"invite_id\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"issued_at_seconds\":1800000000,\"network\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"schema\":\"aukora:invite-claim-binding:v1\"}",
+  "content_sha256": "7c627b1758adb52c3aa7f4cb01bf2805310694b24687f7f4aff84d2a7c6edb6e",
+  "event_pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "event_created_at": 1800000000,
+  "event_kind": 39701,
+  "event_tags": [
+    [
+      "d",
+      "claim:1111111111111111111111111111111111111111111111111111111111111111"
+    ]
+  ],
+  "signing_preimage": "[0,\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",1800000000,39701,[[\"d\",\"claim:1111111111111111111111111111111111111111111111111111111111111111\"]],\"{\\\"algorithm\\\":\\\"secp256k1-schnorr\\\",\\\"claim_sha256\\\":\\\"6c86c6aac5fb24bcf5d9939cb7d7d5645ce39418f449e03b262dd4fa14b4b92b\\\",\\\"code_id\\\":\\\"00112233445566778899aabbccddeeff\\\",\\\"expires_at_seconds\\\":1800172800,\\\"invite_id\\\":\\\"1111111111111111111111111111111111111111111111111111111111111111\\\",\\\"issued_at_seconds\\\":1800000000,\\\"network\\\":\\\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\\\",\\\"schema\\\":\\\"aukora:invite-claim-binding:v1\\\"}\"]",
+  "expected_event_id": "485db63f040498fd48200040857cb849c2070e5f3ba0538a52f151898d8364f5",
+  "signature_required": true,
+  "cases": [
+    {
+      "id": "node-signature-without-committed-owner-record",
+      "expected_refusal": "invites:claim-owner-proof-required"
+    },
+    {
+      "id": "missing-conserved-binding",
+      "expected_refusal": "invites:claim-binding-required"
+    },
+    {
+      "id": "invitation-d-tag-collision",
+      "changed_event_tags": [
+        [
+          "d",
+          "00112233445566778899aabbccddeeff"
+        ]
+      ],
+      "expected_refusal": "invites:claim-binding"
+    },
+    {
+      "id": "different-invite",
+      "changed_body_invite_id": "2222222222222222222222222222222222222222222222222222222222222222",
+      "expected_refusal": "invites:claim-binding"
+    },
+    {
+      "id": "created-at-differs-from-invitation",
+      "changed_event_created_at": 1800000001,
+      "expected_refusal": "invites:claim-binding"
+    },
+    {
+      "id": "extra-body-key",
+      "extra_body_key": [
+        "epoch",
+        1
+      ],
+      "expected_refusal": "invites:claim-binding"
+    },
+    {
+      "id": "exclusive-invite-expiry",
+      "host_now_seconds": 1800172800,
+      "expected_refusal": "invites:invite-expired"
+    }
+  ]
+}

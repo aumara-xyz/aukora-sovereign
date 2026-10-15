@@ -1,0 +1,74 @@
+{
+  "schema": "aukora.joining-context-vectors.v1",
+  "domain": "aukora:joining-context:v1",
+  "domainTerminatorHex": "00",
+  "cases": [
+    {
+      "name": "own-two-devices-full-context",
+      "context": {
+        "schema": "aukora.joining-context.v1",
+        "ceremony": "11111111111111111111111111111111",
+        "node": "22222222222222222222222222222222",
+        "claimDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "purpose": "join-own-devices",
+        "participants": [
+          {
+            "ownerCredential": "AQ",
+            "ownerPublicKey": "a4010103272006215820d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            "ownerEpoch": 0,
+            "devicePublicKey": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+            "deviceEpoch": 0,
+            "sessionContribution": "4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          {
+            "ownerCredential": "Ag",
+            "ownerPublicKey": "a40101032720062158203d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+            "ownerEpoch": 0,
+            "devicePublicKey": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+            "deviceEpoch": 0,
+            "sessionContribution": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "scopes": [
+          "node:owner"
+        ],
+        "method": "screen-to-screen",
+        "requiredLayers": {
+          "sound": false,
+          "motion": false,
+          "intentAcknowledgement": false
+        },
+        "issuedAtMs": 1800000000000,
+        "expiresAtMs": 1800000120000
+      },
+      "canonicalUtf8": "{\"ceremony\":\"11111111111111111111111111111111\",\"claimDigest\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"expiresAtMs\":1800000120000,\"issuedAtMs\":1800000000000,\"method\":\"screen-to-screen\",\"node\":\"22222222222222222222222222222222\",\"participants\":[{\"deviceEpoch\":0,\"devicePublicKey\":\"046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5\",\"ownerCredential\":\"AQ\",\"ownerEpoch\":0,\"ownerPublicKey\":\"a4010103272006215820d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a\",\"sessionContribution\":\"4444444444444444444444444444444444444444444444444444444444444444\"},{\"deviceEpoch\":0,\"devicePublicKey\":\"047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1\",\"ownerCredential\":\"Ag\",\"ownerEpoch\":0,\"ownerPublicKey\":\"a40101032720062158203d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c\",\"sessionContribution\":\"5555555555555555555555555555555555555555555555555555555555555555\"}],\"purpose\":\"join-own-devices\",\"requiredLayers\":{\"intentAcknowledgement\":false,\"motion\":false,\"sound\":false},\"schema\":\"aukora.joining-context.v1\",\"scopes\":[\"node:owner\"]}",
+      "contextDigest": "d32673ee844ab61785dc5d4be19afced37db3f050cfd7b9cf188994086d22e8f"
+    }
+  ],
+  "refusals": [
+    {
+      "change": "missing ownerCredential",
+      "code": "invites:joining-fields"
+    },
+    {
+      "change": "same devicePublicKey on both participants",
+      "code": "invites:joining-participants"
+    },
+    {
+      "change": "same sessionContribution on both participants",
+      "code": "invites:joining-participants"
+    },
+    {
+      "change": "method remote",
+      "code": "invites:joining-context"
+    },
+    {
+      "change": "unsorted or duplicate scopes",
+      "code": "invites:joining-scopes"
+    },
+    {
+      "change": "expiresAtMs equals issuedAtMs",
+      "code": "invites:joining-expired"
+    }
+  ]
+}

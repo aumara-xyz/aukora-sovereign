@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0d1521; color: #edf4f9; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 1.5rem; }
+main { width: min(100%, 34rem); padding: clamp(1.5rem, 5vw, 3rem); background: #172333;
+  border: 1px solid #415266; border-radius: 1.5rem; }
+h1 { font-size: clamp(2rem, 6vw, 3rem); line-height: 1.1; margin: 0 0 1rem; letter-spacing: -.035em; }
+p { line-height: 1.6; }
+form { display: grid; gap: .7rem; margin-top: 2rem; }
+label { font-weight: 600; }
+input, button { font: inherit; border-radius: .6rem; min-height: 3rem; padding: .8rem 1rem; }
+input { width: 100%; background: #0d1521; color: inherit; border: 1px solid #8293a4; font-family: monospace; }
+button { background: #b8eed9; color: #132e27; border: 0; font-weight: 650; cursor: pointer; }
+button:disabled { opacity: .65; cursor: wait; }
+:focus-visible { outline: 3px solid #b8eed9; outline-offset: 3px; }
+.hint { font-size: .9rem; color: #c1cfdb; margin: 0 0 .8rem; }
+[role="status"] { margin-bottom: 0; min-height: 4.8rem; }

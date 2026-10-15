@@ -1,0 +1,10 @@
+{
+  "schema": "aukora-go-sovereign-wire-vectors-v1",
+  "request": "{\"code\":\"00112233445566778899aabbccddeeff\",\"request_key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"schema\":\"aukora-go-sovereign-request-v1\"}",
+  "handoff": "{\"claim_token\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\",\"schema\":\"aukora-go-sovereign-handoff-v1\",\"shell_origin\":\"https://fresh.example\"}",
+  "refusals": [
+    { "input": "{\"code\":\"00112233445566778899aabbccddeeff\",\"code\":\"00112233445566778899aabbccddeeff\",\"request_key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"schema\":\"aukora-go-sovereign-request-v1\"}", "code": "go-sovereign:request-invalid" },
+    { "shell_origin": "https://owner.fresh.example", "code": "go-sovereign:shell-invalid" },
+    { "shell_origin": "https://fresh.example/path", "code": "go-sovereign:shell-invalid" }
+  ]
+}
