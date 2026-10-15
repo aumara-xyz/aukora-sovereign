@@ -1,0 +1,95 @@
+{
+  "schema": "aukora-verifier-owner-binding-regressions-v1",
+  "base": {
+    "path": "crates/aura/vectors/cold-proof-v1.json",
+    "sha256": "4a144adb9fd5bc3ff1ae8a4d0308d40ddd892f802a071731b47933c675cb3af9",
+    "retain_rows": 1,
+    "signing_seed_hex": "2525252525252525252525252525252525252525252525252525252525252525"
+  },
+  "assembly": {
+    "row_sequence": "Append rows consecutively after the retained fixture row.",
+    "row_at": 1760000000001,
+    "row_actor": "owner",
+    "row_op": "00000000000000000000000000000001",
+    "hash_and_signature": "For every appended or edited row, compute C3 hash and sign its raw 32 bytes using the base Ed25519 seed. Rebuild the six-key head.",
+    "checkpoint": "Use the assembled head as an independently supplied checkpoint.",
+    "pinned_key": "Use the original fixture publicKey as an independently supplied key.",
+    "authorization_digest": "SHA-256 of UTF-8 aukora:owner-authorization:v1, one NUL, then C1 canonical auth bytes.",
+    "operation_digest": "SHA-256 of UTF-8 aukora:operation-content:v1, one NUL, then C1 canonical {v,node,target,base_sha256,new_sha256,cell}."
+  },
+  "auth": {
+    "v": 1,
+    "node": "12121212121212121212121212121212",
+    "subject": "aukora:1:3434343434343434343434343434343434343434343434343434343434343434",
+    "op": "apply",
+    "proposal": "00000000000000000000000000000001",
+    "target": "notes/target-1.txt",
+    "base_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "new_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "cell": null,
+    "display_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "challenge": "00000000000000000000000000000001",
+    "expires_at": 1760000100001,
+    "epoch": 1,
+    "operation": {"derive": "operation_digest"}
+  },
+  "cases": [
+    {
+      "id": "digest-never-proves-owner-passkey",
+      "rows": [{"kind": "gate.apply", "phase": "terminal", "body": {"auth": {"ref": "auth"}, "authorization_digest": {"derive": "authorization_digest"}}}],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED"}
+    },
+    {
+      "id": "missing-owner-authorization",
+      "rows": [{"kind": "gate.apply", "phase": "terminal", "body": {}}],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED"}
+    },
+    {
+      "id": "wrong-consume-authorization-digest",
+      "rows": [{"kind": "gate.consume", "phase": "terminal", "body": {"auth": {"ref": "auth"}, "authorization_digest": "abababababababababababababababababababababababababababababababab"}}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 2, "exact_location": true, "codes": ["verifier:authorization-digest"]}
+    },
+    {
+      "id": "wrong-apply-authorization-digest",
+      "rows": [{"kind": "gate.apply", "phase": "terminal", "body": {"auth": {"ref": "auth"}, "authorization_digest": "abababababababababababababababababababababababababababababababab"}}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 2, "exact_location": true, "codes": ["verifier:authorization-digest"]}
+    },
+    {
+      "id": "shape-before-digest",
+      "auth_variants": [
+        {"op": "replace", "pointer": "/v", "value": 2},
+        {"op": "replace", "pointer": "/node", "value": "12"},
+        {"op": "replace", "pointer": "/subject", "value": "owner"},
+        {"op": "replace", "pointer": "/op", "value": "execute"},
+        {"op": "replace", "pointer": "/proposal", "value": "12"},
+        {"op": "replace", "pointer": "/new_sha256", "value": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"},
+        {"op": "replace", "pointer": "/display_sha256", "value": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"},
+        {"op": "replace", "pointer": "/challenge", "value": "12"},
+        {"op": "replace", "pointer": "/cell", "value": 1},
+        {"op": "add", "pointer": "/owner_epoch", "value": true},
+        {"op": "replace", "pointer": "/expires_at", "value": 0},
+        {"op": "add", "pointer": "/issued_at", "value": 0},
+        {"op": "add", "pointer": "/issued_at_ms", "value": 0},
+        {"op": "add", "pointer": "/unexpected", "value": null}
+      ],
+      "rows": [{"kind": "gate.apply", "phase": "terminal", "body": {"auth": {"ref": "auth_after_variant"}, "authorization_digest": {"derive": "authorization_digest_after_variant"}}}],
+      "expected_each": {"not_verdict": "VERIFIED", "owner_bindings": "UNCHECKED"}
+    },
+    {
+      "id": "legacy-auth-without-epoch-and-operation",
+      "auth_edits": [{"op": "remove", "pointer": "/epoch"}, {"op": "remove", "pointer": "/operation"}],
+      "rows": [{"kind": "gate.apply", "phase": "terminal", "body": {"auth": {"ref": "auth_after_edits"}, "authorization_digest": {"derive": "authorization_digest_after_edits"}}}],
+      "expected": {"not_verdict": "VERIFIED", "owner_bindings": "UNCHECKED"}
+    },
+    {
+      "id": "two-terminals-for-one-operation",
+      "rows": [{"kind": "boot.facts", "phase": "terminal", "body": {}}, {"kind": "boot.facts", "phase": "terminal", "body": {}}],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED"}
+    },
+    {
+      "id": "operation-without-terminal",
+      "rows": [{"kind": "gate.consume", "phase": "settle", "body": {}}],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED"}
+    }
+  ]
+}

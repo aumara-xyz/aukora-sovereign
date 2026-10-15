@@ -1,0 +1,171 @@
+{
+  "schema": "aukora-verifier-nostr-binding-regressions-v1",
+  "assembly": {
+    "reference": {"path": "crates/verifier/vectors/witness-regressions-v1.json", "pointer": "/assembly"},
+    "mode": "bundle",
+    "base_rows": 2,
+    "record_edit_pointer_root": "The assembled four-key cold-proof bundle; its binding is rows[1].",
+    "defaults": {
+      "pinned_key": {"source": "assembly.base.original", "pointer": "/publicKey"},
+      "checkpoint": {"source": "assembled_after_edits", "pointer": "/head"},
+      "rehash_and_sign_from_sequence": 2,
+      "rebuild_head": true
+    },
+    "order": [
+      "Resolve the referenced base, seeds and identity binding assembly without constructing a detached witness event.",
+      "For each independent variant, start with an unchanged two-row bundle.",
+      "Apply statement_edits to the temporary four-key identity statement before deriving its commitment and both BIP340 signatures.",
+      "Apply edits to the assembled bundle in array order.",
+      "If append_binding is present, append the described fresh C3 row using an unchanged copy of the original binding body.",
+      "Recompute C3 predecessor links, entry hashes and Ed25519 signatures from sequence 2, then rebuild the six-key embedded head.",
+      "Supply the original fixture key and an independently retained copy of the complete final head as separate verifier inputs."
+    ],
+    "edit_operations": {
+      "replace": "Replace the JSON pointer with the given value.",
+      "add": "Add the member identified by the JSON pointer.",
+      "remove": "Remove the member identified by the JSON pointer.",
+      "ascii_uppercase": "Replace every ASCII a..z character in the selected text with its uppercase counterpart.",
+      "truncate_ascii": "Keep the first length ASCII bytes of the selected text.",
+      "append_ascii": "Append the given ASCII text to the selected text.",
+      "hex_xor": "Decode the selected lowercase hexadecimal text, XOR the zero-based byte with mask, and re-encode lowercase."
+    },
+    "variants": "Every variants entry is replayed separately. Expected_each applies to each independent variant.",
+    "expected_semantics": {
+      "binding_admission": "CHECKED means the binding's shape, identities, fixed-domain commitment and both signatures passed; REFUSED means at least one did not.",
+      "codes_by_engine": "Rust codes are findings in a returned report; Python codes are Refusal.code. A negative binding case must never produce VERIFIED.",
+      "scope": "A checked binding is signed ledger evidence. Owner passkey signatures, occurrence and effects remain outside this verdict."
+    }
+  },
+  "primitive_reference": {
+    "path": "crates/nostr/vectors/bip340-test-vectors.csv",
+    "sha256": "34c9d1d9c3a88d524bc80778540dc43f8306ec249a7485293063c376db851c2d",
+    "rows": 19,
+    "inputs": ["public key", "message", "signature"],
+    "expected_field": "verification result",
+    "true_value": "TRUE",
+    "scope": "Exercise the selected BIP340 verification provider against every CSV row; a primitive result never supplies a complete bundle verdict."
+  },
+  "primitive_cases": [
+    {"id": "xonly-key-one-byte-short", "operation": "bip340-verify", "message_hex": "", "public_key_hex": "00000000000000000000000000000000000000000000000000000000000000", "signature_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "expected": {"accepted": false}},
+    {"id": "signature-one-byte-short", "operation": "bip340-verify", "message_hex": "", "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000", "signature_hex": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "expected": {"accepted": false}},
+    {"id": "zero-key-npub-codec", "operation": "npub-encode", "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000", "expected": {"npub": "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme"}}
+  ],
+  "cases": [
+    {
+      "id": "bound-node-and-agent-with-independent-cover",
+      "edits": [],
+      "expected": {"binding_admission": "CHECKED", "verdict": "VERIFIED", "exit": 0, "rows": 2, "signatures": "CHECKED", "chain": "CHECKED", "tree_root": "CHECKED", "pinned_identity": "CHECKED", "covering_checkpoint": "CHECKED"}
+    },
+    {
+      "id": "embedded-key-and-head-do-not-supply-independence",
+      "pinned_key": null,
+      "checkpoint": null,
+      "edits": [],
+      "expected": {"binding_admission": "CHECKED", "verdict": "UNCHECKED", "exit": 1, "pinned_identity": "UNCHECKED", "covering_checkpoint": "UNCHECKED", "codes": ["verifier:identity-no-pinned-key", "verifier:completeness-no-covering-checkpoint"]}
+    },
+    {
+      "id": "only-one-identity-binding",
+      "append_binding": {"seq": 3, "at": 1760000000002, "kind": "nostr.bind", "actor": "owner", "op": "", "phase": "fact", "body": {"source": "original_assembled", "pointer": "/rows/1/body"}},
+      "expected": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 3, "exact_location": true, "codes": ["verifier:nostr-second-binding"]}
+    },
+    {
+      "id": "binding-commits-to-the-export-aura-key",
+      "statement_edits": [{"op": "replace", "pointer": "/aura_key", "value": "0000000000000000000000000000000000000000000000000000000000000000"}],
+      "edits": [{"op": "replace", "pointer": "/rows/1/body/aura_key", "value": "0000000000000000000000000000000000000000000000000000000000000000"}],
+      "expected": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-aura-key"]}
+    },
+    {
+      "id": "statement-domain-is-fixed",
+      "statement_edits": [{"op": "replace", "pointer": "/domain", "value": "aukora:nostr-identity-binding:v2"}],
+      "edits": [],
+      "expected": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-statement"]}
+    },
+    {
+      "id": "statement-is-recomputed-from-all-identities",
+      "edits": [{"op": "replace", "pointer": "/rows/1/body/statement_sha256", "value": "0000000000000000000000000000000000000000000000000000000000000000"}],
+      "expected": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-statement"]}
+    },
+    {
+      "id": "node-signature-must-verify",
+      "edits": [{"op": "replace", "pointer": "/rows/1/body/node_sig", "value": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}],
+      "expected": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-node-signature"]}
+    },
+    {
+      "id": "agent-signature-must-verify",
+      "edits": [{"op": "replace", "pointer": "/rows/1/body/agent_sig", "value": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}],
+      "expected": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-agent-signature"]}
+    },
+    {
+      "id": "each-npub-must-encode-its-own-public-key",
+      "variants": [
+        {"id": "node", "edits": [{"op": "replace", "pointer": "/rows/1/body/node/npub", "value": "npub1wrong"}]},
+        {"id": "agent", "edits": [{"op": "replace", "pointer": "/rows/1/body/agent/npub", "value": "npub1wrong"}]}
+      ],
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-npub"]}
+    },
+    {
+      "id": "binding-shape-phase-and-version-are-closed",
+      "variants": [
+        {"id": "intent-phase", "edits": [{"op": "replace", "pointer": "/rows/1/phase", "value": "intent"}]},
+        {"id": "unknown-schema", "edits": [{"op": "replace", "pointer": "/rows/1/body/schema", "value": "unknown-v2"}]},
+        {"id": "body-extra-member", "edits": [{"op": "add", "pointer": "/rows/1/body/extra", "value": null}]},
+        {"id": "node-extra-member", "edits": [{"op": "add", "pointer": "/rows/1/body/node/extra", "value": null}]},
+        {"id": "agent-extra-member", "edits": [{"op": "add", "pointer": "/rows/1/body/agent/extra", "value": null}]},
+        {"id": "body-missing-node-signature", "edits": [{"op": "remove", "pointer": "/rows/1/body/node_sig"}]},
+        {"id": "node-missing-npub", "edits": [{"op": "remove", "pointer": "/rows/1/body/node/npub"}]},
+        {"id": "agent-missing-public-key", "edits": [{"op": "remove", "pointer": "/rows/1/body/agent/pubkey"}]}
+      ],
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-binding-shape"]}
+    },
+    {
+      "id": "node-signature-hex-is-canonical",
+      "variants": [
+        {"id": "uppercase", "edits": [{"op": "ascii_uppercase", "pointer": "/rows/1/body/node_sig"}]},
+        {"id": "one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/node_sig", "length": 126}]},
+        {"id": "one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/node_sig", "text": "00"}]},
+        {"id": "changed-byte", "edits": [{"op": "hex_xor", "pointer": "/rows/1/body/node_sig", "byte": 0, "mask": 1}]}
+      ],
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-node-signature"]}
+    },
+    {
+      "id": "agent-signature-hex-is-canonical",
+      "variants": [
+        {"id": "uppercase", "edits": [{"op": "ascii_uppercase", "pointer": "/rows/1/body/agent_sig"}]},
+        {"id": "one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/agent_sig", "length": 126}]},
+        {"id": "one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/agent_sig", "text": "00"}]},
+        {"id": "changed-byte", "edits": [{"op": "hex_xor", "pointer": "/rows/1/body/agent_sig", "byte": 0, "mask": 1}]}
+      ],
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes": ["verifier:nostr-agent-signature"]}
+    },
+    {
+      "id": "aura-key-hex-is-canonical",
+      "variants": [
+        {"id": "uppercase", "edits": [{"op": "ascii_uppercase", "pointer": "/rows/1/body/aura_key"}]},
+        {"id": "one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/aura_key", "length": 62}]},
+        {"id": "one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/aura_key", "text": "00"}]}
+      ],
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes_by_engine": {"rust": ["verifier:hex"], "python": ["verifier:bad-digest"]}}
+    },
+    {
+      "id": "statement-digest-hex-is-canonical",
+      "variants": [
+        {"id": "uppercase", "edits": [{"op": "ascii_uppercase", "pointer": "/rows/1/body/statement_sha256"}]},
+        {"id": "one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/statement_sha256", "length": 62}]},
+        {"id": "one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/statement_sha256", "text": "00"}]}
+      ],
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes_by_engine": {"rust": ["verifier:hex"], "python": ["verifier:nostr-statement"]}}
+    },
+    {
+      "id": "both-public-keys-have-canonical-hex",
+      "variants": [
+        {"id": "node-uppercase", "edits": [{"op": "ascii_uppercase", "pointer": "/rows/1/body/node/pubkey"}]},
+        {"id": "node-one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/node/pubkey", "length": 62}]},
+        {"id": "node-one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/node/pubkey", "text": "00"}]},
+        {"id": "agent-uppercase", "edits": [{"op": "ascii_uppercase", "pointer": "/rows/1/body/agent/pubkey"}]},
+        {"id": "agent-one-byte-short", "edits": [{"op": "truncate_ascii", "pointer": "/rows/1/body/agent/pubkey", "length": 62}]},
+        {"id": "agent-one-byte-long", "edits": [{"op": "append_ascii", "pointer": "/rows/1/body/agent/pubkey", "text": "00"}]}
+      ],
+      "expected_each": {"binding_admission": "REFUSED", "not_verdict": "VERIFIED", "sequence": 2, "exact_location": true, "codes_by_engine": {"rust": ["verifier:hex"], "python": ["verifier:bad-digest"]}}
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "schema": "aukora-verifier-operator-input-regressions-v1",
+  "fixtures": {
+    "retained.json": {"utf8": "{\"root\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"treeSize\":1}"},
+    "presented.json": {"same_bytes_as": "retained.json"},
+    "missing.json": {"filesystem_kind": "absent"},
+    "directory": {"filesystem_kind": "directory"},
+    "oversize.json": {"filesystem_kind": "regular", "byte_length": 1048577, "fill_byte": 0},
+    "encoding.json": {"hex": "ff"}
+  },
+  "cases": [
+    {"id": "legacy-no-arguments", "engine": "python", "args": [], "expected": {"exit": 64, "last_line_prefix": "UNCHECKED", "forbidden_substrings": ["FORGED", "REWRITTEN"]}},
+    {"id": "legacy-one-argument", "engine": "python", "args": ["retained.json"], "expected": {"exit": 64, "last_line_prefix": "UNCHECKED", "forbidden_substrings": ["FORGED", "REWRITTEN"]}},
+    {"id": "legacy-unknown-option", "engine": "python", "args": ["--unknown"], "expected": {"exit": 64, "last_line_prefix": "UNCHECKED", "forbidden_substrings": ["FORGED", "REWRITTEN"]}},
+    {"id": "legacy-extra-argument", "engine": "python", "args": ["retained.json", "presented.json", "retained.json"], "expected": {"exit": 64, "last_line_prefix": "UNCHECKED", "forbidden_substrings": ["FORGED", "REWRITTEN"]}},
+    {
+      "id": "legacy-operator-read-errors",
+      "engine": "python",
+      "argument_templates": [[{"ref": "invalid_input"}, "presented.json"], ["retained.json", {"ref": "invalid_input"}]],
+      "invalid_input_values": ["missing.json", "directory", "oversize.json", "encoding.json"],
+      "expected_each": {"exit": 64, "last_line_prefix": "UNCHECKED", "forbidden_substrings": ["FORGED", "REWRITTEN"]}
+    },
+    {
+      "id": "cold-ambiguous-options",
+      "engines": ["rust", "python"],
+      "argument_variants": [
+        ["--bundle", "proof", "--rows", "rows"],
+        ["--bundle", "proof", "--bundle", "other"],
+        ["--bundle", "--key"],
+        ["--bundle", "proof", "--unknown", "other"]
+      ],
+      "expected_each": {"exit": 64, "not_verdict": "VERIFIED", "codes": ["verifier:usage"]}
+    }
+  ]
+}

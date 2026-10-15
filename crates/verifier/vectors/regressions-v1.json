@@ -1,0 +1,212 @@
+{
+  "schema": "aukora-verifier-regressions-v1",
+  "format": {
+    "base": "A fixture path and SHA-256 identify immutable source bytes.",
+    "edits": "Apply edits in array order to independent copies of the fixture.",
+    "pointers": "JSON pointers use zero-based array indexes.",
+    "canonical": "Serialize structured inputs with C1 and no trailing newline; rows-jsonl uses one newline after every row.",
+    "rehash_and_sign": "Recompute C3 hashes from the indicated row onward, set later predecessor hashes, and sign raw 32-byte hashes with the supplied Ed25519 seed.",
+    "rebuild_head": "Set the six-key retained head from the resulting row count, tail hash and RFC 6962 root."
+  },
+  "fixtures": {
+    "aura-4": {
+      "path": "crates/aura/vectors/cold-proof-v1.json",
+      "sha256": "4a144adb9fd5bc3ff1ae8a4d0308d40ddd892f802a071731b47933c675cb3af9",
+      "signing_seed_hex": "2525252525252525252525252525252525252525252525252525252525252525"
+    }
+  },
+  "cases": [
+    {
+      "id": "independent-key-and-covering-head",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "checkpoint": {"source": "original", "pointer": "/head"},
+      "edits": [],
+      "expected": {"verdict": "VERIFIED", "exit": 0, "rows": 4, "signatures": "CHECKED", "chain": "CHECKED", "tree_root": "CHECKED", "pinned_identity": "CHECKED", "covering_checkpoint": "CHECKED"}
+    },
+    {
+      "id": "embedded-claims-never-independent",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": null,
+      "checkpoint": null,
+      "edits": [],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "rows": 4, "signatures": "CHECKED", "chain": "CHECKED", "tree_root": "CHECKED", "pinned_identity": "UNCHECKED", "covering_checkpoint": "UNCHECKED", "codes": ["verifier:identity-no-pinned-key", "verifier:completeness-no-covering-checkpoint"]}
+    },
+    {
+      "id": "pinned-key-without-independent-head",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "checkpoint": null,
+      "edits": [],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "pinned_identity": "CHECKED", "covering_checkpoint": "UNCHECKED", "codes": ["verifier:completeness-no-covering-checkpoint"]}
+    },
+    {
+      "id": "checkpoint-without-pinned-key",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": null,
+      "checkpoint": {"source": "original", "pointer": "/head"},
+      "edits": [],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "pinned_identity": "UNCHECKED", "covering_checkpoint": "CHECKED", "codes": ["verifier:identity-no-pinned-key"]}
+    },
+    {
+      "id": "body-flipped-without-resigning",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "replace", "pointer": "/rows/1/body/index", "value": 99}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 2, "exact_location": true, "codes": ["verifier:entry-hash"]}
+    },
+    {
+      "id": "dropped-tail-with-original-embedded-head",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "remove", "pointer": "/rows/3"}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 4, "exact_location": true, "codes": ["verifier:bundle-tail-size"]}
+    },
+    {
+      "id": "coherent-truncation-covered-by-checkpoint",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "checkpoint": {"source": "original", "pointer": "/head"},
+      "edits": [{"op": "remove", "pointer": "/rows/3"}, {"op": "rebuild_head"}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 4, "exact_location": true, "codes": ["verifier:shorter-than-checkpoint"]}
+    },
+    {
+      "id": "coherent-truncation-without-independent-head",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "checkpoint": null,
+      "edits": [{"op": "remove", "pointer": "/rows/3"}, {"op": "rebuild_head"}],
+      "expected": {"verdict": "UNCHECKED", "exit": 1, "rows": 3, "covering_checkpoint": "UNCHECKED"}
+    },
+    {
+      "id": "forged-row-signature",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "sign_hash", "pointer": "/rows/1", "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}],
+      "expected": {"verdict": "FORGED", "exit": 2, "sequence": 2, "exact_location": true, "codes": ["verifier:signature"]}
+    },
+    {
+      "id": "claimed-key-substitution",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "derive_public_key", "pointer": "/publicKey", "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}],
+      "expected": {"verdict": "FORGED", "exit": 2, "sequence": 1, "exact_location": true, "codes": ["verifier:signature"]}
+    },
+    {
+      "id": "embedded-key-rejects-key-file-newline-tolerance",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "replace", "pointer": "/publicKey", "value": "bed7d2ab668da3efad613998f06f7abf7875f3a6b7677a9f3ce947d77d7760a6\n"}],
+      "expected": {"verdict": "INVALID_INPUT", "exit": 64}
+    },
+    {
+      "id": "resigned-key-substitution-rejected-by-pin",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "edits": [{"op": "derive_public_key", "pointer": "/publicKey", "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}, {"op": "rehash_and_sign", "first_row": 1, "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}, {"op": "rebuild_head"}],
+      "expected": {"verdict": "KEY_MISMATCH", "exit": 2, "pinned_identity": "UNCHECKED", "codes": ["verifier:bundle-key-mismatch"]}
+    },
+    {
+      "id": "signed-wrong-predecessor",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "replace", "pointer": "/rows/1/prev", "value": "0000000000000000000000000000000000000000000000000000000000000000"}, {"op": "rehash_and_sign", "first_row": 2, "preserve_first_predecessor": true, "signing_seed_hex": "2525252525252525252525252525252525252525252525252525252525252525"}, {"op": "rebuild_head"}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 2, "exact_location": true, "codes": ["verifier:prev-link"]}
+    },
+    {
+      "id": "rows-swapped",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "swap", "left": "/rows/1", "right": "/rows/2"}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 2, "exact_location": true}
+    },
+    {
+      "id": "retained-rows-locate-signed-fork-at-power-of-two",
+      "mode": "chain",
+      "fixture": "aura-4",
+      "retained_rows": {"source": "original", "pointer": "/rows"},
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "edits": [{"op": "replace", "pointer": "/rows/2/body/index", "value": 333}, {"op": "rehash_and_sign", "first_row": 3, "signing_seed_hex": "2525252525252525252525252525252525252525252525252525252525252525"}, {"op": "rebuild_head"}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 3, "exact_location": true}
+    },
+    {
+      "id": "head-only-signed-fork-does-not-invent-location",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "pinned_key": {"source": "original", "pointer": "/publicKey"},
+      "checkpoint": {"source": "original", "pointer": "/head"},
+      "edits": [{"op": "replace", "pointer": "/rows/2/body/index", "value": 333}, {"op": "rehash_and_sign", "first_row": 3, "signing_seed_hex": "2525252525252525252525252525252525252525252525252525252525252525"}, {"op": "rebuild_head"}],
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "exact_location": false, "at_or_before": 4, "codes": ["verifier:checkpoint-mismatch"]}
+    },
+    {
+      "id": "malformed-signature-length",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "replace", "pointer": "/rows/1/sig", "value": "AAAA"}],
+      "expected": {"not_verdict": "VERIFIED", "sequence": 2}
+    },
+    {
+      "id": "noncanonical-signature-padding",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "base64_set_unused_bits", "pointer": "/rows/0/sig", "unused_low_bits": 1}],
+      "expected": {"not_verdict": "VERIFIED", "sequence": 1}
+    },
+    {
+      "id": "noncanonical-signature-missing-padding",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "string_truncate", "pointer": "/rows/0/sig", "length": 86}],
+      "expected": {"not_verdict": "VERIFIED", "sequence": 1, "codes": ["verifier:signature"]}
+    },
+    {
+      "id": "weak-node-key",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "replace", "pointer": "/publicKey", "value": "0100000000000000000000000000000000000000000000000000000000000000"}],
+      "expected": {"not_verdict": "VERIFIED", "codes": ["verifier:key-weak"]}
+    },
+    {
+      "id": "extra-v1-bundle-key",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "add", "pointer": "/extra", "value": null}],
+      "expected": {"verdict": "INVALID_INPUT", "exit": 64, "codes": ["verifier:bundle-format"]}
+    },
+    {
+      "id": "noncanonical-trailing-newline",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "bytes_append_hex", "value": "0a"}],
+      "expected": {"verdict": "INVALID_INPUT", "exit": 64}
+    },
+    {
+      "id": "duplicate-decoded-key",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "bytes_insert_utf8", "offset": 1, "value": "\"schem\\u0061\":\"duplicate\","}],
+      "expected": {"verdict": "INVALID_INPUT", "exit": 64}
+    },
+    {
+      "id": "malformed-row-shape",
+      "mode": "bundle",
+      "fixture": "aura-4",
+      "edits": [{"op": "replace", "pointer": "/rows/0/actor", "value": 2}],
+      "expected": {"verdict": "INVALID_INPUT", "exit": 64, "sequence": 1, "codes": ["verifier:bundle-row-schema"]}
+    },
+    {
+      "id": "earlier-forgery-not-hidden-by-later-malformed-row",
+      "mode": "chain",
+      "fixture": "aura-4",
+      "edits": [{"op": "sign_hash", "pointer": "/rows/1", "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}, {"op": "row_bytes_replace", "row": 4, "utf8": "{"}],
+      "expected": {"verdict": "FORGED", "exit": 2, "sequence": 2, "exact_location": true, "codes": ["verifier:signature"]}
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema": "aukora-verifier-witness-regressions-v1",
+  "assembly": {
+    "base": {"path": "crates/aura/vectors/cold-proof-v1.json", "sha256": "4a144adb9fd5bc3ff1ae8a4d0308d40ddd892f802a071731b47933c675cb3af9", "retain_rows": 1},
+    "aura_seed_hex": "2525252525252525252525252525252525252525252525252525252525252525",
+    "node_secret_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "agent_secret_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+    "binding": {
+      "row": {"seq": 2, "at": 1760000000001, "kind": "nostr.bind", "actor": "owner", "op": "", "phase": "fact"},
+      "body_schema": "aukora-nostr-bind-v1",
+      "body_keys": ["schema", "node", "agent", "aura_key", "statement_sha256", "node_sig", "agent_sig"],
+      "node_and_agent_keys": ["pubkey", "npub"],
+      "statement": {"domain": "aukora:nostr-identity-binding:v1", "aura_key": {"ref": "base.publicKey"}, "node": {"derive": "node_xonly_public_key_hex"}, "agent": {"derive": "agent_xonly_public_key_hex"}},
+      "statement_sha256": "SHA-256 of C1 canonical statement bytes.",
+      "node_sig_and_agent_sig": "BIP340 signatures over the 32-byte statement_sha256, using corresponding secrets and 32 zero auxiliary bytes."
+    },
+    "record": "Compute C3 predecessor, hash and Ed25519 signature for every appended row, then rebuild the six-key head.",
+    "event": {"created_at": 1760000000, "kind": 30078, "tags": [["d", "aukora-aura-head"]], "content": {"derive": "canonical_retained_head_at_requested_size"}, "signing_secret": {"ref": "node_secret_hex"}, "auxiliary_randomness_hex": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "event_id": "SHA-256 of UTF-8 JSON [0,pubkey,created_at,kind,tags,content] with no whitespace and literal Unicode.",
+    "event_signature": "BIP340 signature over the 32-byte event id."
+  },
+  "cases": [
+    {"id": "matching-two-row-head", "proof_rows": 2, "event_head_size": 2, "expected": {"accepted": true}},
+    {"id": "earlier-witness-matches-extended-proof", "proof_rows": 33, "append_facts": {"count": 31, "body_index_start": 0, "at_start": 1760000000002}, "event_head_sizes": [1, 2, 3, 4, 8, 16, 32, 33], "expected_each": {"accepted": true}},
+    {"id": "signed-witness-root-fork", "proof_rows": 2, "event_head_size": 2, "head_edits_before_event_signing": [{"op": "replace", "pointer": "/root", "value": "0000000000000000000000000000000000000000000000000000000000000000"}], "expected": {"accepted": false, "code": "verifier:witness-fork"}},
+    {"id": "signed-witness-hash-fork", "proof_rows": 2, "event_head_size": 2, "head_edits_before_event_signing": [{"op": "replace", "pointer": "/hash", "value": "0000000000000000000000000000000000000000000000000000000000000000"}], "expected": {"accepted": false, "code": "verifier:witness-fork"}},
+    {"id": "sequence-size-disagreement", "proof_rows": 2, "event_head_size": 2, "head_edits_before_event_signing": [{"op": "replace", "pointer": "/sequence", "value": 1}], "expected": {"accepted": false, "code": "verifier:witness-size"}},
+    {"id": "nonpositive-head-size", "proof_rows": 2, "event_head_size": 2, "head_size_variants": [0, -1], "expected_each": {"accepted": false, "code": "verifier:witness-size"}},
+    {"id": "witness-ahead-of-proof", "proof_rows": 2, "head_source_rows": 3, "append_facts": {"count": 1, "body_index_start": 0, "at_start": 1760000000002}, "event_head_size": 3, "expected": {"accepted": false, "code": "verifier:witness-size"}},
+    {"id": "agent-cannot-sign-node-witness", "proof_rows": 2, "event_head_size": 2, "event_signing_secret_hex": "0202020202020202020202020202020202020202020202020202020202020202", "expected": {"accepted": false, "code": "verifier:witness-signer"}},
+    {"id": "unbound-key-cannot-sign-witness", "proof_rows": 2, "event_head_size": 2, "event_signing_secret_hex": "0303030303030303030303030303030303030303030303030303030303030303", "expected": {"accepted": false, "code": "verifier:witness-signer"}},
+    {"id": "missing-nostr-binding", "omit_binding": true, "proof_rows": 1, "event_head_size": 1, "expected": {"accepted": false, "code": "verifier:witness-binding"}},
+    {"id": "second-nostr-binding", "binding_copies": 2, "proof_rows": 3, "event_head_size": 3, "expected": {"accepted": false, "code": "verifier:witness-binding"}},
+    {"id": "edited-proof-row", "proof_rows": 2, "event_head_size": 2, "proof_edits_after_signing": [{"op": "replace", "pointer": "/rows/0/body", "value": {"edited": true}}], "expected": {"accepted": false, "code": "verifier:witness-proof"}},
+    {"id": "empty-proof-object", "proof_utf8": "{}", "event_head_size": 2, "expected": {"accepted": false, "code": "verifier:witness-proof"}},
+    {"id": "signature-over-uncomputed-event-id", "proof_rows": 2, "event_head_size": 2, "event_edits": [{"op": "hex_xor", "pointer": "/id", "byte": 0, "mask": 1}, {"op": "resign_event_id"}], "expected": {"accepted": false, "code": "verifier:witness-malformed"}},
+    {"id": "forged-event-signature", "proof_rows": 2, "event_head_size": 2, "event_edits": [{"op": "hex_xor", "pointer": "/sig", "byte": 0, "mask": 1}], "expected": {"accepted": false, "code": "verifier:witness-malformed"}},
+    {"id": "wrong-event-kind", "proof_rows": 2, "event_head_size": 2, "event_edits_before_signing": [{"op": "replace", "pointer": "/kind", "value": 30079}], "expected": {"accepted": false, "code": "verifier:witness-malformed"}},
+    {"id": "wrong-d-tag", "proof_rows": 2, "event_head_size": 2, "event_edits_before_signing": [{"op": "replace", "pointer": "/tags", "value": [["d", "other"]]}], "expected": {"accepted": false, "code": "verifier:witness-malformed"}},
+    {"id": "missing-d-tag", "proof_rows": 2, "event_head_size": 2, "event_edits_before_signing": [{"op": "replace", "pointer": "/tags", "value": []}], "expected": {"accepted": false, "code": "verifier:witness-malformed"}},
+    {"id": "duplicate-d-tag", "proof_rows": 2, "event_head_size": 2, "event_edits_before_signing": [{"op": "replace", "pointer": "/tags", "value": [["d", "aukora-aura-head"], ["d", "other"]]}], "expected": {"accepted": false, "code": "verifier:witness-malformed"}}
+  ]
+}
