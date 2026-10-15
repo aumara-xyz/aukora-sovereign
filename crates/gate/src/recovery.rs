@@ -258,6 +258,9 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
             crash.at(CrashPoint::AfterTerminal)?;
             (ProposalState::Expired, receipt)
         } else if proposal.state == ProposalState::Consumed {
+            if proposal.authority.epoch != transaction.current_version()?.epoch {
+                return Err(crate::refuse("install-consumption"));
+            }
             let work = transaction.recovery_work(10_001)?;
             if work.len() > 10_000 { return Err(crate::refuse("recovery-limit")); }
             let mut matching = work.into_iter().filter(|work| work.proposal == id);
@@ -274,6 +277,8 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
                 _ => false,
             });
             let state = match &observed {
+                Some(seen) if seen.digest == BaseDigest::Present(proposal.new_digest)
+                    && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) => ProposalState::Applied,
                 Some(seen) => classify_observation(&RecoveryItem {
                     proposal: id, consumed_approval: work.consumed_approval, consumption: work.consumed_at,
                     expected_base: work.base_sha256, expected_new_digest: work.new_sha256, observed: seen.clone(),
@@ -281,6 +286,7 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
                 None => ProposalState::Unknown,
             };
             let status = match state {
+                ProposalState::Applied => aura::storage::ProposalStatus::Applied,
                 ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
                 ProposalState::Failed => aura::storage::ProposalStatus::Failed,
                 ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
@@ -288,6 +294,8 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
                 _ => return Err(crate::refuse("install-settlement")),
             };
             crash.at(CrashPoint::BeforeTerminal)?;
+            install::observe_settlement(&mut transaction, targets, &proposal,
+                work.consumed_approval, status, observed.as_ref())?;
             let receipt = transaction.settle_consumed_target(id, work.consumed_approval, status, observed.map(|seen| seen.digest))?;
             crash.at(CrashPoint::AfterTerminal)?;
             (state, receipt)

@@ -122,6 +122,7 @@ impl Ledger {
             counters: BTreeMap::new(),
             consumptions: BTreeSet::new(),
             floor_obligation: None,
+            target_observation: None,
         })
     }
 
@@ -202,6 +203,60 @@ impl LedgerTxn<'_> {
             .map_err(|_| refusal("target-consumption"))
     }
 
+    /// Read consumed target bytes under this transaction and retain their settlement.
+    pub fn observe_consumed_target(
+        &mut self,
+        proposal: canon::ids::ProposalId,
+        approval: Digest32,
+        reader: impl FnOnce(&str) -> Result<Option<Vec<u8>>>,
+    ) -> Result<(crate::storage::ProposalStatus, Option<canon::authority::BaseDigest>)> {
+        self.mutate(|this| {
+            use crate::storage::ProposalStatus;
+            use canon::authority::BaseDigest;
+
+            if this.target_observation.is_some() {
+                return Err(refusal("target-observation-pending"));
+            }
+            let stored = this.proposal(&proposal)?;
+            if stored.status != ProposalStatus::Consumed
+                || stored.authority.epoch != this.current_version()?.epoch
+                || this.gate_terminal(&stored.operation)?.is_some()
+            {
+                return Err(refusal("target-settlement"));
+            }
+            this.check_target_consumption(proposal, approval)?;
+            let (status, observed) = match reader(&stored.target) {
+                Ok(Some(bytes)) => {
+                    let digest = BaseDigest::Present(Digest32::sha256(&bytes));
+                    let status = if bytes == stored.new_bytes {
+                        ProposalStatus::Applied
+                    } else if digest == stored.base_sha256 {
+                        ProposalStatus::Failed
+                    } else {
+                        ProposalStatus::Conflict
+                    };
+                    (status, Some(digest))
+                }
+                Ok(None) => (
+                    if stored.base_sha256 == BaseDigest::Absent {
+                        ProposalStatus::Failed
+                    } else {
+                        ProposalStatus::Conflict
+                    },
+                    Some(BaseDigest::Absent),
+                ),
+                Err(_) => (ProposalStatus::Unknown, None),
+            };
+            this.target_observation = Some(TargetSettlementObservation {
+                proposal,
+                approval,
+                status,
+                observed,
+            });
+            Ok((status, observed))
+        })
+    }
+
     /// Record an already-consumed effect observation; this method cannot execute or retry it.
     pub fn settle_consumed_target(
         &mut self,
@@ -213,7 +268,17 @@ impl LedgerTxn<'_> {
         self.mutate(|this| {
             use crate::storage::ProposalStatus;
             use canon::{authority::{BaseDigest, Kind, PendingAuthorityRecord, Phase}, json::Value};
+            let observation = this.target_observation.take()
+                .ok_or(refusal("target-observation-required"))?;
+            if observation.proposal != proposal || observation.approval != approval
+                || observation.status != status || observation.observed != observed
+            {
+                return Err(refusal("target-observation-mismatch"));
+            }
             let stored = this.proposal(&proposal)?;
+            if stored.authority.epoch != this.current_version()?.epoch {
+                return Err(refusal("target-settlement"));
+            }
             if stored.status != ProposalStatus::Consumed || this.gate_terminal(&stored.operation)?.is_some() {
                 return Err(refusal("target-settlement"));
             }
@@ -254,6 +319,13 @@ impl LedgerTxn<'_> {
     }
 }
 
+struct TargetSettlementObservation {
+    proposal: canon::ids::ProposalId,
+    approval: Digest32,
+    status: crate::storage::ProposalStatus,
+    observed: Option<canon::authority::BaseDigest>,
+}
+
 pub struct LedgerTxn<'a> {
     observation_start_changes: u64,
     transaction: rusqlite::Transaction<'a>,
@@ -265,6 +337,7 @@ pub struct LedgerTxn<'a> {
     counters: BTreeMap<String, Digest32>,
     consumptions: BTreeSet<String>,
     floor_obligation: Option<Digest32>,
+    target_observation: Option<TargetSettlementObservation>,
 }
 
 impl LedgerTxn<'_> {
@@ -288,6 +361,7 @@ impl LedgerTxn<'_> {
         if !self.counters.is_empty()
             || !self.consumptions.is_empty()
             || self.floor_obligation.is_some()
+            || self.target_observation.is_some()
         {
             return Err(refusal("unfinished-transition"));
         }

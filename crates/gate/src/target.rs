@@ -54,6 +54,8 @@ impl<S: TargetStore> crate::service::Gate<'_, S> {
         }
         let observed = targets.observe(&proposal.request.target).ok().filter(valid);
         let state = match &observed {
+            Some(seen) if seen.digest == BaseDigest::Present(proposal.new_digest)
+                && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) => ProposalState::Applied,
             Some(seen) if acknowledged && seen.digest == BaseDigest::Present(proposal.new_digest)
                 && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) => ProposalState::Applied,
             Some(seen) => crate::recovery::classify_observation(&RecoveryItem {
@@ -72,6 +74,8 @@ impl<S: TargetStore> crate::service::Gate<'_, S> {
             _ => return Err(crate::refuse("install-settlement")),
         };
         crash.at(CrashPoint::BeforeTerminal)?;
+        install::observe_settlement(&mut transaction, targets, &proposal,
+            approval, status, observed.as_ref())?;
         let receipt = transaction.settle_consumed_target(id, approval, status, observed.map(|seen| seen.digest))?;
         transaction.release_reservation(&id)?;
         crash.at(CrashPoint::AfterTerminal)?;

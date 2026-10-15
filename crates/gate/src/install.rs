@@ -112,21 +112,6 @@ impl InstallManifest {
         }
         Ok(())
     }
-
-    /// Only these app-local service names are dispatchable under signed grants.
-    pub fn service_grant(&self, operation: &str) -> Result<AppGrant> {
-        let required = match operation {
-            "storage.read" => AppGrant::StorageRead,
-            "storage.write" => AppGrant::StorageWrite,
-            "clock.now" => AppGrant::Clock,
-            "random.bytes" => AppGrant::Random,
-            _ => return Err(crate::refuse("install-service-operation")),
-        };
-        if !self.grants.contains(&required) {
-            return Err(crate::refuse("install-service-denied"));
-        }
-        Ok(required)
-    }
 }
 
 pub fn decode_manifest(bytes: &[u8]) -> Result<InstallManifest> {
@@ -563,7 +548,7 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
         let proposal = transition_load(&transaction, id)?;
         transition_validate(config, &proposal, now)?;
         transition_observe(targets, &proposal)?;
-        let proof = aumlok::webauthn::verify_owner_assertion(
+        let proof = canon::authority::VerifiedProof::verify(
             &mut transaction,
             &id,
             OwnerOperation::Apply,
@@ -681,6 +666,36 @@ pub(crate) fn transition_now(services: aura::TransactionServices<'_>) -> Result<
     Ok(now)
 }
 
+pub(crate) fn observe_settlement<S: crate::target::TargetStore>(
+    transaction: &mut aura::LedgerTxn<'_>,
+    targets: &S,
+    proposal: &Proposal,
+    approval: Digest32,
+    status: aura::storage::ProposalStatus,
+    observed: Option<&crate::target::TargetObservation>,
+) -> Result<()> {
+    let (read_status, read_digest) = transaction.observe_consumed_target(
+        proposal.id,
+        approval,
+        |target| {
+            if target != proposal.request.target.as_str() {
+                return Err(crate::refuse("install-target-mismatch"));
+            }
+            let seen = targets.observe(&proposal.request.target)?;
+            match (&seen.digest, &seen.bytes) {
+                (BaseDigest::Absent, None) => (),
+                (BaseDigest::Present(digest), Some(bytes)) if *digest == hash(bytes) => (),
+                _ => return Err(crate::refuse("target-observation")),
+            }
+            Ok(seen.bytes)
+        },
+    )?;
+    if read_status != status || read_digest != observed.map(|seen| seen.digest) {
+        return Err(crate::refuse("install-observation-changed"));
+    }
+    Ok(())
+}
+
 pub(crate) fn transition_commit(
     transaction: aura::LedgerTxn<'_>,
     crash: &mut dyn crate::recovery::CrashInjector,
@@ -708,7 +723,17 @@ impl InstalledApp {
         self.receipt_sequence
     }
     pub fn service_grant(&self, operation: &str) -> Result<AppGrant> {
-        self.manifest.service_grant(operation)
+        let required = match operation {
+            "storage.read" => AppGrant::StorageRead,
+            "storage.write" => AppGrant::StorageWrite,
+            "clock.now" => AppGrant::Clock,
+            "random.bytes" => AppGrant::Random,
+            _ => return Err(crate::refuse("install-service-operation")),
+        };
+        if !self.manifest.grants.contains(&required) {
+            return Err(crate::refuse("install-service-denied"));
+        }
+        Ok(required)
     }
 }
 
