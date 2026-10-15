@@ -35,7 +35,8 @@ macro_rules! key_vocabulary {
         #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
         pub enum $name { $(#[doc = $entry_doc] $variant,)+ }
         impl $name {
-            fn wire_name(self) -> &'static str {
+            /// Frozen, case-sensitive spelling in versioned AUMLOK bodies.
+            pub const fn wire_name(self) -> &'static str {
                 use $name::*;
                 match self { $($variant => $wire,)+ }
             }
@@ -84,6 +85,10 @@ key_vocabulary! {
 }
 
 /// Exact subject, node, resources and uses requested for a binding.
+/// The C1 object has exactly subject, node, uses, owner_actions, resources,
+/// not_before_ms and expires_at_ms. Uses are KeyUse::wire_name() strings;
+/// owner_actions are OwnerOperation::wire_name() strings. Arrays retain their
+/// supplied order, and the codec refuses duplicate entries and unknown uses.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyScope {
     /// Identity whose resources the key names.

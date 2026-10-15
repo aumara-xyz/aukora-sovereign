@@ -31,6 +31,9 @@ stored wrappers, not new wire fields. ES256 and EdDSA are the admitted passkey
 algorithms. `user_handle` is required but may be null. clientDataJSON needs its own
 bounded JSON reader: pinned duplicate-key and number behavior differs from C1.
 The exact original bytes, not a reserialization, enter signature verification.
+The `serde_json` `unbounded_depth` feature permits replacing its default recursion
+limit with the WebAuthn reader's explicit `MAX_JSON_DEPTH` limit of 512 containers.
+Client data and registration/assertion material also have independent byte caps.
 
 `OriginContext.expected_top_origin = None` selects the unchanged legacy vector
 behavior. Live shell ceremonies use `Some(shell_origin)` and require both
@@ -85,6 +88,10 @@ credential's PRF under its original RP; phrase-only v1 requires explicit selecti
 PRF eval input is SHA-256 of its tag without NUL. The refresh key is SHA-256 of its
 tag, NUL and root; its associated data is the plain ASCII ceremony id. Domain
 constants preserve these exceptions.
+The current implementation uses RustCrypto `hkdf` for RFC 5869 HKDF-SHA256. The
+`ring` note in pinned `vectors/ENVELOPE.md` describes the archive's backend; the
+frozen inputs remain `phrase_key || prf_output`, the NUL-terminated extraction
+salt and expansion info, and a 32-byte output, as pinned by `backup-kdf-v2.json`.
 
 ## Keys, devices and observations
 
@@ -95,6 +102,23 @@ must re-read all bindings, epochs and revocations inside the current transaction
 Mesh identity/agreement roles are reserved and refuse use until their rows activate.
 New binding/delegation/device formats live inside versioned record bodies; no v1
 Aura row gains keys. Signature input excludes its signatures and self-identifier.
+
+`KeyRole` has 17 roles. The grouped proposal in `spec/REBUILD-GUIDANCE.md` section 3
+maps to `OwnerPasskey`, `Operational`, `Device`, `Node`, `Agent`, the separate
+`NodeNostr` and `AgentNostr` roles, `GuardianShardHolder`, `GuardianRecovery`,
+`GuardianVeto`, and `BackupEncryption`. The remaining six are explicit distinctions:
+`IdentityRoot` is the phrase-sealed identity's commitment, separate from passkey
+authority (row 44); `Session` is the intermediate delegation role (row 48);
+`AuraSigning` signs records (row 50); `PersonNostr` identifies the person independently
+of node and agent keys (row 113 and conductor ruling 14); `DeviceMeshIdentity` and
+`DeviceMeshAgreement` reserve signing and agreement scopes (row 113). The guidance
+table groups roles rather than enumerating 17 wire names; this is the implemented
+mapping.
+
+`KeyRole::wire_name()` and `KeyUse::wire_name()` expose the exact case-sensitive
+spellings used by the codecs. A scope is a C1 object with exactly `subject`, `node`,
+`uses`, `owner_actions`, `resources`, `not_before_ms`, and `expires_at_ms`. Scope
+arrays retain their supplied order; duplicate entries and unknown uses refuse.
 
 Device pairing carries original co-presence receipt bytes, possession signatures,
 old/new device membership and a separate exact-byte owner proof. A supervisor

@@ -7,7 +7,6 @@ publish = false
 
 [dependencies]
 canon = { path = "../canon" }
-aura = { path = "../aura" }
 argon2 = "=0.6.0"
 base64 = "=0.22.1"
 chacha20poly1305 = "=0.11.0"
@@ -28,6 +27,7 @@ url = "=2.5.8"
 zeroize = "=1.9.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aura = { path = "../aura" }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 rustix = { version = "=1.1.5", features = ["fs"] }
 

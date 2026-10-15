@@ -21,6 +21,8 @@ pub const MAX_SIGNATURE_BYTES: usize = 128;
 pub const MAX_USER_HANDLE_BYTES: usize = 64;
 pub const CHALLENGE_BYTES: usize = 32;
 pub const MAX_MATERIAL_BYTES: usize = 65_536;
+/// Maximum nested JSON containers in WebAuthn data, independent of C1's limit.
+pub const MAX_JSON_DEPTH: usize = 512;
 
 /// Wire input, still untrusted. Base64url fields retain the pinned spellings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -255,7 +257,7 @@ impl<'de> Visitor<'de> for ClientValue {
             .ok_or_else(|| E::custom("number bound"))
     }
     fn visit_map<A: MapAccess<'de>>(self, mut input: A) -> core::result::Result<Value, A::Error> {
-        if self.0 >= 512 {
+        if self.0 >= MAX_JSON_DEPTH {
             return Err(de::Error::custom("depth bound"));
         }
         let mut object = Map::new();
@@ -268,7 +270,7 @@ impl<'de> Visitor<'de> for ClientValue {
         Ok(Value::Object(object))
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut input: A) -> core::result::Result<Value, A::Error> {
-        if self.0 >= 512 {
+        if self.0 >= MAX_JSON_DEPTH {
             return Err(de::Error::custom("depth bound"));
         }
         let mut array = Vec::new();
@@ -279,7 +281,8 @@ impl<'de> Visitor<'de> for ClientValue {
     }
 }
 
-/// Parse client data separately from C1; a leading BOM is ignored only for parsing.
+/// Parse client data separately from C1 with byte and MAX_JSON_DEPTH bounds.
+/// A leading BOM is ignored only for parsing; original bytes remain signed.
 pub fn parse_client_data(raw: &[u8]) -> Result<Map<String, Value>> {
     let invalid = refuse("client-data-invalid");
     if raw.len() > MAX_CLIENT_DATA_BYTES {

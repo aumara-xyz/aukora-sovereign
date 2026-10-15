@@ -32,7 +32,24 @@ pub struct PrfBinding {
     /// The credential originally used to seal this backup.
     pub credential_id: CredentialId,
     /// Its original relying-party DNS name, not the recovery machine's RP.
+    /// Encoded as `rp_id` inside the backup's `prf` object.
     pub original_rp_id: String,
+    /// Public WebAuthn eval.first input, encoded as `prf.salt`, not the Argon2 salt.
+    /// Validation requires SHA-256 of `PRF_EVALUATION_TAG` without a trailing NUL.
+    pub evaluation_salt: [u8; 32],
+}
+
+impl PrfBinding {
+    /// Bind public recovery metadata to the fixed PRF input; no PRF output is retained.
+    pub fn new(credential_id: CredentialId, original_rp_id: String) -> Result<Self> {
+        let binding = Self {
+            credential_id,
+            original_rp_id,
+            evaluation_salt: evaluation_salt(),
+        };
+        validate_binding(&binding)?;
+        Ok(binding)
+    }
 }
 
 /// Public request context for a fresh node-issued backup ceremony.
@@ -65,7 +82,7 @@ pub struct BackupEnvelopeV2 {
 
 impl BackupEnvelopeV2 {
     /// The decoder requires canonical v2 bytes, exact field sets,
-    /// bounded costs, fixed byte widths, and the pinned PRF evaluation salt.
+    /// bounded costs, fixed byte widths, and the pinned `prf.salt` evaluation input.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_BACKUP_BYTES {
             return Err(refuse("envelope-too-large"));
@@ -82,15 +99,12 @@ impl BackupEnvelopeV2 {
         if URL_SAFE_NO_PAD.encode(&credential) != wire.prf.credential_id {
             return Err(refuse("backup-prf-metadata"));
         }
-        let prf = PrfBinding {
-            credential_id: CredentialId::new(credential)
-                .map_err(|_| refuse("backup-prf-metadata"))?,
-            original_rp_id: wire.prf.rp_id,
-        };
+        let mut prf = PrfBinding::new(
+            CredentialId::new(credential).map_err(|_| refuse("backup-prf-metadata"))?,
+            wire.prf.rp_id,
+        )?;
+        prf.evaluation_salt = decode_fixed(&wire.prf.salt)?;
         validate_binding(&prf)?;
-        if decode_fixed::<32>(&wire.prf.salt)? != evaluation_salt() {
-            return Err(refuse("backup-prf-metadata"));
-        }
         let decoded = Self {
             canonical: bytes.to_vec(),
             kdf,
@@ -240,7 +254,7 @@ impl From<&PrfBinding> for PrfWire {
         Self {
             credential_id: URL_SAFE_NO_PAD.encode(value.credential_id.as_bytes()),
             rp_id: value.original_rp_id.clone(),
-            salt: STANDARD.encode(evaluation_salt()),
+            salt: STANDARD.encode(value.evaluation_salt),
         }
     }
 }
@@ -268,7 +282,8 @@ fn decode_fixed<const N: usize>(encoded: &str) -> Result<[u8; N]> {
 
 fn validate_binding(binding: &PrfBinding) -> Result<()> {
     let rp = &binding.original_rp_id;
-    if rp.is_empty()
+    if binding.evaluation_salt != evaluation_salt()
+        || rp.is_empty()
         || rp.len() > 253
         || rp.split(['.', '-']).any(|part| {
             part.is_empty()
@@ -306,8 +321,8 @@ pub enum BackupDownload {
 #[cfg(target_arch = "wasm32")]
 pub mod owner {
     use super::{
-        evaluation_salt, refuse, validate_binding, BackupDownload, BackupEnvelopeV2, BackupRequest,
-        PrfBinding, PrfEvaluationRequest, BACKUP_HKDF_INFO, BACKUP_HKDF_SALT,
+        refuse, validate_binding, BackupDownload, BackupEnvelopeV2, BackupRequest, PrfBinding,
+        PrfEvaluationRequest, BACKUP_HKDF_INFO, BACKUP_HKDF_SALT,
     };
     use crate::{
         envelope::{
@@ -397,7 +412,7 @@ pub mod owner {
             put(
                 &eval,
                 "first",
-                Uint8Array::from(evaluation_salt().as_slice()).as_ref(),
+                Uint8Array::from(request.binding.evaluation_salt.as_slice()).as_ref(),
             )?;
             let prf = Object::new();
             put(&prf, "eval", eval.as_ref())?;

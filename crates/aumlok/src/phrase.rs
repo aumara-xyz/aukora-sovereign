@@ -225,10 +225,11 @@ pub mod browser {
                 return Err(missing("refresh-pending"));
             }
             let request = PrfEvaluationRequest {
-                binding: PrfBinding {
-                    credential_id: CredentialId::new(credential_id).map_err(js_refusal)?,
+                binding: PrfBinding::new(
+                    CredentialId::new(credential_id).map_err(js_refusal)?,
                     original_rp_id,
-                },
+                )
+                .map_err(js_refusal)?,
                 ceremony: CeremonyId::from_hex(&ceremony).map_err(js_refusal)?,
                 challenge: challenge
                     .try_into()
