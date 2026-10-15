@@ -84,3 +84,13 @@ impl fmt::Display for Digest32 {
         Ok(())
     }
 }
+
+impl Digest32 {
+    /// Hash an RFC 6962 data leaf without restricting the input to a digest.
+    pub fn rfc6962_data_leaf(bytes: &[u8]) -> Self {
+        let mut primitive = Sha256::new();
+        primitive.update([0]);
+        primitive.update(bytes);
+        Self(primitive.finalize().into())
+    }
+}

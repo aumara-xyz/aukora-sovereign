@@ -9,6 +9,7 @@ mod proof;
 mod standing;
 
 pub use standing::{StandingUseContext, VerifiedStandingUse};
+pub use proof::verify_retained_owner_assertion;
 
 use crate::{
     alg::{AlgorithmId, PublicKey, Signature, Signatures},
@@ -686,6 +687,28 @@ pub struct FactRecord {
 /// transaction and may not be reused after rollback or commit. Aura implements this
 /// interface; cryptographic primitives come only from allowlisted crates.
 pub trait AuthorityTxn {
+    /// Read verified committed immune facts and owner-authorized retirement rows.
+    /// Facts cover release and held-out admissions; limits refuse before allocation
+    /// exceeds 16,384 selected rows or 16 MiB of canonical bodies.
+    /// Pending appends never satisfy this read; unavailable verification refuses.
+    fn committed_immune_records(&mut self) -> Result<Vec<AuthorityRecord>> {
+        Err(crate::Refusal::new("canon", "immune-history-unavailable"))
+    }
+
+    /// Durably commit one exact immune retirement after its counter and approval
+    /// were consumed here. Refuse unrelated staged writes and partial commits.
+    /// The immune registry validates its current replayed base under this same lock.
+    fn commit_antibody_retirement(
+        &mut self,
+        _proof: VerifiedProof,
+        _record: PendingAuthorityRecord,
+    ) -> Result<AuthorityRecord> {
+        Err(crate::Refusal::new(
+            "canon",
+            "immune-retirement-unavailable",
+        ))
+    }
+
     /// Atomically append and durably commit one broker reserve or settle row.
     /// Resolve the retained, owner-consumed grant under the same exclusive lock;
     /// reject revoked, expired, frozen or foreign-epoch grants on reservation.

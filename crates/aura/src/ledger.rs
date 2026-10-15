@@ -428,6 +428,86 @@ fn gate_payload(value: &canon::json::Value) -> &canon::json::Value {
     }
 }
 
+impl LedgerTxn<'_> {
+    fn immune_committed_records(&self) -> Result<Vec<AuthorityRecord>> {
+        if self.poisoned {
+            return Err(refusal("transaction"));
+        }
+        if self.transaction.is_autocommit() {
+            let snapshot = self.transaction.unchecked_transaction().map_err(sql)?;
+            let records = immune_prefix(&snapshot, self.retained)?;
+            snapshot.commit().map_err(sql)?;
+            Ok(records)
+        } else {
+            immune_prefix(&self.transaction, self.retained)
+        }
+    }
+}
+
+fn immune_prefix(
+    connection: &rusqlite::Connection,
+    retained: &io::Snapshot,
+) -> Result<Vec<AuthorityRecord>> {
+    use canon::authority::{Kind, Phase};
+    let mut previous = None;
+    let mut epoch = 0;
+    let mut frontier = crate::merkle::Frontier::default();
+    let mut records = Vec::new();
+    let mut selected_bytes = 0_usize;
+    for sequence in 1..=retained.frontier.size() {
+        let record = io::record_at(connection, sequence)?;
+        crate::record::verify_record(&record, &retained.keys)?;
+        if record.authority.sequence != sequence
+            || record.authority.previous_hash != previous
+            || record.authority.epoch < epoch
+            || record.authority.epoch > epoch + 1
+        {
+            return Err(refusal("immune-history-context"));
+        }
+        if record.authority.epoch != epoch {
+            authority::verify_epoch_body(&record, epoch, connection)?;
+        }
+        previous = Some(record.hash);
+        epoch = record.authority.epoch;
+        frontier.push(record.hash)?;
+        let body = gate_payload(&record.body);
+        let selected = if record.kind == Kind::GateRetire
+            && (record.actor == "immune"
+                || matches!(
+                    body.get("target").map(canon::json::Value::view),
+                    Some(canon::json::ValueView::Text("immune.antibodies"))
+                )) {
+            authority::verify_immune_retirement(connection, &record, &retained.keys)?;
+            true
+        } else if record.kind == Kind::BootFacts
+            && record.actor == "immune"
+            && record.phase == Phase::Fact
+            && record.operation.is_none()
+        {
+            matches!(body.get("schema").map(canon::json::Value::view), Some(canon::json::ValueView::Text(schema))
+                if schema.starts_with("aukora-immune-heldout-") || schema.starts_with("aukora-immune-release-"))
+        } else {
+            false
+        };
+        if selected {
+            selected_bytes = selected_bytes
+                .checked_add(record.body.canonical_bytes().len())
+                .ok_or(refusal("immune-history-limit"))?;
+            if records.len() >= 16_384 || selected_bytes > 16 * 1024 * 1024 {
+                return Err(refusal("immune-history-limit"));
+            }
+            records.push(record);
+        }
+    }
+    if previous != retained.hash
+        || epoch != retained.epoch
+        || frontier.root() != retained.frontier.root()
+    {
+        return Err(refusal("immune-history-context"));
+    }
+    Ok(records)
+}
+
 impl Ledger {
     /// Authenticate a retained checkpoint from one read snapshot.
     pub fn retained_head(&self) -> Result<crate::export::RetainedHeadV1> {

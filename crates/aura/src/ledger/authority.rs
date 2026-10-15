@@ -21,6 +21,69 @@ use rusqlite::params;
 pub(super) use super::epochs::verify_epoch_body;
 
 impl AuthorityTxn for LedgerTxn<'_> {
+    fn committed_immune_records(&mut self) -> Result<Vec<AuthorityRecord>> {
+        self.immune_committed_records()
+    }
+
+    fn commit_antibody_retirement(
+        &mut self,
+        proof: VerifiedProof,
+        record: PendingAuthorityRecord,
+    ) -> Result<AuthorityRecord> {
+        self.mutate(|this| {
+            let writes = this
+                .transaction
+                .total_changes()
+                .checked_sub(this.observation_start_changes)
+                .ok_or(refusal("immune-retirement-context"))?;
+            if this.state.next()? != this.retained.next()?
+                || writes != 4
+                || !this.counters.is_empty()
+                || this.consumptions.len() != 1
+                || this.floor_obligation.is_some()
+            {
+                return Err(refusal("immune-retirement-staged"));
+            }
+            this.check_proof(&proof, true)?;
+            let auth = proof.authorization();
+            let proposal = this.proposal(&auth.proposal)?;
+            let payload = gate_payload(&record.body);
+            let retirement = immune_retirement_payload(payload)?;
+            if auth.op != OwnerOperation::Retire
+                || auth.target != "immune.antibodies"
+                || auth.cell.is_some()
+                || proposal.target != auth.target
+                || retirement.canonical_bytes() != proposal.new_bytes
+                || auth.base_sha256
+                    != canon::authority::BaseDigest::Present(Digest32::from_hex(immune_text(
+                        retirement,
+                        "registry_sha256",
+                    )?)?)
+                || record.kind != Kind::GateRetire
+                || record.phase != Phase::Terminal
+                || record.actor != "immune"
+            {
+                return Err(refusal("immune-retirement-context"));
+            }
+            let appended = this.append_proven(proof, record, false)?;
+            if !this.counters.is_empty()
+                || !this.consumptions.is_empty()
+                || this.floor_obligation.is_some()
+                || this
+                    .transaction
+                    .total_changes()
+                    .checked_sub(this.observation_start_changes)
+                    != Some(8)
+            {
+                return Err(refusal("immune-retirement-staged"));
+            }
+            verify_immune_retirement(&this.transaction, &appended, &this.state.keys)?;
+            this.transaction.execute_batch("COMMIT").map_err(sql)?;
+            *this.retained = this.state.clone();
+            Ok(appended)
+        })
+    }
+
     fn transaction_id(&self) -> Digest32 {
         self.identity
     }
@@ -458,6 +521,242 @@ fn bind_gate_body(
         return Err(refusal("record-approval-mismatch"));
     }
     Ok(())
+}
+
+fn immune_exact(value: &Value, names: &[&str]) -> Result<()> {
+    match value.view() {
+        json::ValueView::Object(fields)
+            if fields.len() == names.len()
+                && names.iter().all(|name| value.get(name).is_some()) =>
+        {
+            Ok(())
+        }
+        _ => Err(refusal("immune-retirement-format")),
+    }
+}
+
+fn immune_text<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
+    field(value, name).ok_or(refusal("immune-retirement-format"))
+}
+
+fn immune_retirement_payload(payload: &Value) -> Result<&Value> {
+    immune_exact(
+        payload,
+        &[
+            "schema",
+            "proposal",
+            "target",
+            "operation",
+            "new_sha256",
+            "consumed_approval",
+            "state",
+            "retirement",
+        ],
+    )?;
+    if immune_text(payload, "schema")? != "aukora-immune-antibody-retirement-record-v1"
+        || immune_text(payload, "target")? != "immune.antibodies"
+        || immune_text(payload, "state")? != "retired"
+    {
+        return Err(refusal("immune-retirement-format"));
+    }
+    let retirement = payload
+        .get("retirement")
+        .ok_or(refusal("immune-retirement-format"))?;
+    immune_exact(
+        retirement,
+        &[
+            "schema",
+            "registry_sha256",
+            "name",
+            "area",
+            "source",
+            "disposition",
+        ],
+    )?;
+    if immune_text(retirement, "schema")? != "aukora-immune-antibody-retirement-v1"
+        || ["name", "area", "source", "disposition"]
+            .iter()
+            .any(|name| {
+                immune_text(retirement, name).map_or(true, |text| {
+                    text.is_empty() || text.len() > 4096 || text.chars().any(char::is_control)
+                })
+            })
+    {
+        return Err(refusal("immune-retirement-format"));
+    }
+    Digest32::from_hex(immune_text(retirement, "registry_sha256")?)?;
+    Ok(retirement)
+}
+
+fn immune_standard_bytes(value: &Value, name: &str) -> Result<Vec<u8>> {
+    let encoded = immune_text(value, name)?;
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|_| refusal("immune-proof-format"))?;
+    if STANDARD.encode(&bytes) != encoded {
+        return Err(refusal("immune-proof-format"));
+    }
+    Ok(bytes)
+}
+
+pub(super) fn verify_immune_retirement(
+    connection: &rusqlite::Connection,
+    record: &AuthorityRecord,
+    keys: &[PublicKey],
+) -> Result<()> {
+    use canon::authority::{BaseDigest, OwnerAssertion};
+    if record.kind != Kind::GateRetire
+        || record.phase != Phase::Terminal
+        || record.actor != "immune"
+    {
+        return Err(refusal("immune-history-context"));
+    }
+    let payload = gate_payload(&record.body);
+    let retirement = immune_retirement_payload(payload)?;
+    let approval = Digest32::from_hex(immune_text(payload, "consumed_approval")?)?;
+    let proposal_id = ProposalId::from_hex(immune_text(payload, "proposal")?)?;
+    let (proof_bytes, credential, counter, epoch, sequence, previous, operation, proposal, action, appended):
+        (Vec<u8>, String, u32, i64, i64, Option<String>, String, String, String, i64) = connection.query_row(
+        "SELECT proof,credential,counter,epoch,sequence,previous_hash,operation,proposal,action,appended FROM authority_consumptions WHERE approval=?1",
+        [approval.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?)),
+    ).map_err(sql)?;
+    let epoch = u64::try_from(epoch).map_err(|_| refusal("immune-history-context"))?;
+    let sequence = u64::try_from(sequence).map_err(|_| refusal("immune-history-context"))?;
+    if action != "retire"
+        || appended != 1
+        || proposal != proposal_id.to_string()
+        || record.authority
+            != (AuthorityVersion {
+                epoch,
+                sequence,
+                previous_hash: previous.as_deref().map(Digest32::from_hex).transpose()?,
+            })
+        || record.operation != Some(OperationId::from_hex(&operation)?)
+    {
+        return Err(refusal("immune-history-context"));
+    }
+    let proof = json::parse_strict(&proof_bytes)?;
+    immune_exact(
+        &proof,
+        &[
+            "authorization",
+            "credential",
+            "authenticator_data",
+            "client_data_json",
+            "signed_bytes",
+            "public_keys",
+            "signatures",
+        ],
+    )?;
+    let authorization_bytes = proof
+        .get("authorization")
+        .ok_or(refusal("immune-proof-format"))?
+        .canonical_bytes();
+    let authorization = storage::decode_authorization(&authorization_bytes)?;
+    let (stored_body, stored_target, stored_operation, stored_status): (
+        Vec<u8>,
+        String,
+        String,
+        String,
+    ) = connection
+        .query_row(
+            "SELECT body,target,operation,status FROM authority_proposals WHERE id=?1",
+            [proposal_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(sql)?;
+    let stored = storage::decode_proposal(&stored_body)?;
+    if proof.canonical_bytes() != proof_bytes
+        || immune_text(&proof, "credential")? != credential
+        || Digest32::sha256(&authorization_bytes) != approval
+        || authorization.proposal != proposal_id
+        || authorization.epoch != epoch
+        || authorization.op != OwnerOperation::Retire
+        || authorization.target != "immune.antibodies"
+        || authorization.cell.is_some()
+        || authorization.expires_at <= record.at
+        || stored.proposal != proposal_id
+        || stored.target != stored_target
+        || stored_target != authorization.target
+        || stored.operation.to_string() != stored_operation
+        || stored_operation != operation
+        || stored_status != "retired"
+        || stored.operation_digest != authorization.operation
+        || stored.base_sha256 != authorization.base_sha256
+        || stored.cell != authorization.cell
+        || Digest32::sha256(&stored.new_bytes) != authorization.new_sha256
+        || stored.new_bytes != retirement.canonical_bytes()
+        || authorization.base_sha256
+            != BaseDigest::Present(Digest32::from_hex(immune_text(
+                retirement,
+                "registry_sha256",
+            )?)?)
+    {
+        return Err(refusal("immune-history-context"));
+    }
+    bind_gate_body(payload, &stored, approval, "retired")?;
+    let (challenge_body, card, challenge, spent): (Vec<u8>,Vec<u8>,String,i64) = connection.query_row(
+        "SELECT body,card,challenge,spent FROM authority_challenges WHERE proposal=?1 AND action='retire'",
+        [proposal_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+    ).map_err(sql)?;
+    let decoded_card = storage::decode_card(&card)?;
+    if challenge_body != authorization_bytes
+        || challenge != authorization.challenge.to_string()
+        || spent != 1
+        || Digest32::sha256(&card) != authorization.display_sha256
+        || decoded_card.risk != stored.risk
+        || decoded_card.model_note != stored.model_note
+    {
+        return Err(refusal("immune-history-context"));
+    }
+    let credential_bytes = URL_SAFE_NO_PAD
+        .decode(&credential)
+        .map_err(|_| refusal("immune-proof-format"))?;
+    if URL_SAFE_NO_PAD.encode(&credential_bytes) != credential {
+        return Err(refusal("immune-proof-format"));
+    }
+    let credential_id = CredentialId::new(credential_bytes)?;
+    let binding =
+        super::epochs::immune_binding_before(connection, &credential_id, epoch, sequence, keys)?;
+    let proof_keys = storage::decode_keys(
+        &proof
+            .get("public_keys")
+            .ok_or(refusal("immune-proof-format"))?
+            .canonical_bytes(),
+    )?;
+    let signatures = storage::decode_signatures(
+        &proof
+            .get("signatures")
+            .ok_or(refusal("immune-proof-format"))?
+            .canonical_bytes(),
+    )?;
+    if proof_keys != [binding.public_key.clone()] || signatures.components().len() != 1 {
+        return Err(refusal("immune-proof-format"));
+    }
+    let signature = signatures.components()[0].clone();
+    let authenticator_data = immune_standard_bytes(&proof, "authenticator_data")?;
+    let client_data_json = immune_standard_bytes(&proof, "client_data_json")?;
+    let mut signed = authenticator_data.clone();
+    signed.extend_from_slice(Digest32::sha256(&client_data_json).as_bytes());
+    if authenticator_data.len() != 37
+        || authenticator_data[33..37] != counter.to_be_bytes()
+        || signed != immune_standard_bytes(&proof, "signed_bytes")?
+    {
+        return Err(refusal("immune-proof-format"));
+    }
+    canon::authority::verify_retained_owner_assertion(
+        binding,
+        authorization,
+        OwnerAssertion {
+            v: 1,
+            algorithm: signature.algorithm,
+            credential_id,
+            authenticator_data,
+            client_data_json,
+            signature,
+        },
+        crate::record::verify_signature,
+    )
 }
 
 fn proof_bytes(proof: &VerifiedProof) -> Result<Vec<u8>> {

@@ -179,6 +179,53 @@ pub(super) fn binding_anchor(
     Err(refusal("binding-unanchored"))
 }
 
+/// Resolve the signed owner binding and preceding counter at a retained row.
+pub(super) fn immune_binding_before(
+    connection: &Connection,
+    credential: &canon::ids::CredentialId,
+    epoch: u64,
+    before: u64,
+    keys: &[PublicKey],
+) -> Result<OwnerBinding> {
+    let before_sql = i64::try_from(before).map_err(|_| refusal("sequence-range"))?;
+    let mut statement = connection.prepare(
+        "SELECT seq FROM aura WHERE seq<?1 AND kind IN ('aumlok.enrol','aumlok.bind') AND phase='terminal' ORDER BY seq DESC",
+    ).map_err(sql)?;
+    let mut rows = statement.query([before_sql]).map_err(sql)?;
+    while let Some(row) = rows.next().map_err(sql)? {
+        let sequence = u64::try_from(row.get::<_, i64>(0).map_err(sql)?)
+            .map_err(|_| refusal("sequence-range"))?;
+        let record = io::record_at(connection, sequence)?;
+        crate::record::verify_record(&record, keys)?;
+        let payload = AuthorityBodyV1::parse(&record.body)?.payload;
+        let Some(value) = payload.get("binding") else {
+            continue;
+        };
+        let mut binding = crate::storage::decode_binding(&value.canonical_bytes())?;
+        if &binding.credential_id != credential {
+            continue;
+        }
+        if record.operation.is_none()
+            || binding.epoch != record.authority.epoch
+            || binding.epoch > epoch
+        {
+            return Err(refusal("immune-binding-context"));
+        }
+        let enrolled_epoch = binding.epoch;
+        binding.epoch = epoch;
+        verify_membership_promotions(connection, &binding, keys, sequence, enrolled_epoch)?;
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        let previous: Option<u32> = connection.query_row(
+            "SELECT max(counter) FROM authority_consumptions WHERE credential=?1 AND sequence<?2",
+            rusqlite::params![URL_SAFE_NO_PAD.encode(credential.as_bytes()), before_sql],
+            |row| row.get(0),
+        ).map_err(sql)?;
+        binding.sign_counter = binding.sign_counter.max(previous.unwrap_or(0));
+        return Ok(binding);
+    }
+    Err(refusal("immune-binding-unavailable"))
+}
+
 fn verify_membership_promotions(
     connection: &Connection,
     binding: &OwnerBinding,

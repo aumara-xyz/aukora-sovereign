@@ -6,6 +6,101 @@ use crate::{codes, domain};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 mod client;
+/// Recheck an already committed assertion without exporting an authority capability.
+/// The caller supplies its authenticated historical binding and authorization.
+pub fn verify_retained_owner_assertion(
+    binding: OwnerBinding,
+    authorization: OwnerAuthorization,
+    assertion: OwnerAssertion,
+    verify_signature: impl Fn(&PublicKey, &[u8], &Signature) -> Result<()>,
+) -> Result<()> {
+    struct Replay<F> {
+        binding: OwnerBinding,
+        authorization: OwnerAuthorization,
+        identity: Digest32,
+        verifier: F,
+    }
+    impl<F: Fn(&PublicKey, &[u8], &Signature) -> Result<()>> AuthorityTxn for Replay<F> {
+        fn transaction_id(&self) -> Digest32 {
+            self.identity
+        }
+        fn owner_binding(&mut self, credential: &CredentialId) -> Result<OwnerBinding> {
+            if credential != &self.binding.credential_id {
+                return Err(codes::GATE_CREDENTIAL_MISMATCH);
+            }
+            Ok(self.binding.clone())
+        }
+        fn rebuild_authorization(
+            &mut self,
+            proposal: &ProposalId,
+            action: OwnerOperation,
+        ) -> Result<OwnerAuthorization> {
+            if proposal != &self.authorization.proposal || action != self.authorization.op {
+                return Err(codes::GATE_AUTHORIZATION_MISMATCH);
+            }
+            Ok(self.authorization.clone())
+        }
+        fn check_authorization_live(&mut self, authorization: &OwnerAuthorization) -> Result<()> {
+            if authorization != &self.authorization {
+                return Err(codes::GATE_AUTHORIZATION_MISMATCH);
+            }
+            Ok(())
+        }
+        fn verify_signature(
+            &mut self,
+            key: &PublicKey,
+            bytes: &[u8],
+            signature: &Signature,
+        ) -> Result<()> {
+            (self.verifier)(key, bytes, signature)
+        }
+        fn persist_counter(&mut self, _: &VerifiedProof) -> Result<()> {
+            Err(codes::AURA_TRANSACTION)
+        }
+        fn consume(&mut self, _: &VerifiedProof) -> Result<()> {
+            Err(codes::AURA_TRANSACTION)
+        }
+        fn append(
+            &mut self,
+            _: VerifiedProof,
+            _: PendingAuthorityRecord,
+        ) -> Result<AuthorityRecord> {
+            Err(codes::AURA_TRANSACTION)
+        }
+        fn check_standing_use(
+            &mut self,
+            _: &ProposalId,
+            _: Digest32,
+            _: &ProposalId,
+            _: OwnerOperation,
+        ) -> Result<StandingUseContext> {
+            Err(codes::AURA_TRANSACTION)
+        }
+        fn append_standing(
+            &mut self,
+            _: VerifiedStandingUse,
+            _: PendingAuthorityRecord,
+        ) -> Result<AuthorityRecord> {
+            Err(codes::AURA_TRANSACTION)
+        }
+        fn append_lifecycle(&mut self, _: LifecycleRecord) -> Result<AuthorityRecord> {
+            Err(codes::AURA_TRANSACTION)
+        }
+        fn append_fact(&mut self, _: FactRecord) -> Result<AuthorityRecord> {
+            Err(codes::AURA_TRANSACTION)
+        }
+    }
+    let proposal = authorization.proposal;
+    let action = authorization.op;
+    let identity = Digest32::sha256(&authorization.canonical_bytes()?);
+    let mut replay = Replay {
+        binding,
+        authorization,
+        identity,
+        verifier: verify_signature,
+    };
+    verify(&mut replay, &proposal, action, assertion).map(|_| ())
+}
 
 pub(super) fn verify<T: AuthorityTxn + ?Sized>(
     txn: &mut T,
