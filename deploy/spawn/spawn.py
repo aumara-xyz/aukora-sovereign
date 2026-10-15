@@ -1,0 +1,309 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""One-command spawn (row 73), behind the deploy guard (row 131).
+
+  spawn.sh create  NAME --release DIR [--on host-lxd|nebius-vm] [--relay URL]... [--provider NAME]...
+                        [--public-ip IP] [--shell-host HOST] [--image IMAGE] [--spend-ok] [--dry-run]
+  spawn.sh destroy NAME [--on ...] [--yes-destroy] [--dry-run]
+  spawn.sh egress  NAME [--on ...] [--relay URL]... [--provider NAME]... [--dry-run]
+
+NAME is checked against deploy/EXISTING-NODES before anything else; a listed node is refused for every action,
+before any state directory, DNS lookup, cloud call or host command. create installs the release that
+scripts/reproduce.sh built (every file checked against its release.json), publishes the node behind one Caddy
+block, and prints the owner's claim link once. Only the SHA-256 of the claim secret is ever written on the host."""
+from __future__ import annotations
+
+import base64
+import hashlib
+import ipaddress
+import json
+import os
+import secrets
+import shutil
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, os.pardir, "upgrade"))
+import core  # noqa: E402
+import egress  # noqa: E402
+import guard  # noqa: E402
+import host  # noqa: E402
+import lxd  # noqa: E402
+import release  # noqa: E402
+import vm  # noqa: E402
+
+NODE_TOOL = "/opt/aukora/current/deploy/upgrade/node_release.py"
+ACTIONS = ("create", "destroy", "egress")
+VALUES = {"--on": "on", "--release": "release", "--public-ip": "public-ip", "--shell-host": "shell-host",
+          "--image": "image"}
+REPEATED = {"--relay": "relay", "--provider": "provider"}
+SWITCHES = {"--dry-run": "dry", "--spend-ok": "spend-ok", "--yes-destroy": "yes-destroy"}
+
+
+class Plan:
+    """Everything one run needs, handed to the backends."""
+
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+
+def parse(argv):
+    if len(argv) < 2 or argv[0] not in ACTIONS or argv[1].startswith("-"):
+        core.refuse("spawn", "usage")
+    action, name, options, index = argv[0], argv[1], {"relay": [], "provider": []}, 2
+    while index < len(argv):
+        flag = argv[index]
+        if flag in SWITCHES and SWITCHES[flag] not in options:
+            options[SWITCHES[flag]], index = True, index + 1
+        elif flag in VALUES and VALUES[flag] not in options and index + 1 < len(argv):
+            options[VALUES[flag]], index = argv[index + 1], index + 2
+        elif flag in REPEATED and index + 1 < len(argv):
+            options[REPEATED[flag]].append(argv[index + 1])
+            index += 2
+        else:
+            core.refuse("spawn", "usage")
+    options.setdefault("on", "host-lxd")
+    if options["on"] not in host.BACKENDS:
+        core.refuse("spawn", "backend")
+    return action, name, options
+
+
+def hostnames(name, public_ip, shell_host):
+    """The node's two hosts. The owner host is a subdomain of the shell host, so both are one registered site."""
+    if shell_host is None:
+        try:
+            address = ipaddress.IPv4Address(public_ip)
+            if not address.is_global:
+                raise ValueError(public_ip)
+        except ValueError:
+            core.refuse("spawn", "public-ip")
+        shell_host = "%s-%s.sslip.io" % (name, str(address).replace(".", "-"))
+    owner_host = "owner." + shell_host
+    if not core.is_hostname(shell_host) or not core.is_hostname(owner_host):
+        core.refuse("spawn", "invalid-host")
+    return shell_host, owner_host
+
+
+def new_claim():
+    """(token, commitment). The token is the 32-byte secret in base64url; the commitment is the SHA-256 of the
+    32 raw bytes, which is what the node's AUMLOK compares in constant time."""
+    secret = secrets.token_bytes(32)
+    return base64.urlsafe_b64encode(secret).rstrip(b"=").decode("ascii"), hashlib.sha256(secret).hexdigest()
+
+
+def node_identity(state):
+    if state.has("node-id"):
+        node_id = state.get("node-id").strip()
+        if not core.is_hex(node_id, 32):
+            core.refuse("spawn", "state-invalid")
+        return node_id
+    node_id = secrets.token_hex(16)
+    state.put("node-id", node_id + "\n")
+    return node_id
+
+
+def install_node(plan, node, mode):
+    """Stage the release and run the node installer once. An interrupted install is never retried."""
+    state = plan.state
+    if state.has("installed"):
+        return
+    if state.has("installing"):
+        core.refuse("spawn", "install-unknown")
+    state.mark("installing")
+    node_input = core.canonical({"name": plan.name, "shell_host": plan.shell_host, "owner_host": plan.owner_host,
+                                 "public_ip": plan.public_ip})
+    stage = release.build_stage(plan.scratch, plan.bundle, release.INSTALL_TOOLS,
+                                {"node-input.json": node_input, "egress.json": plan.policy})
+    node.run(["rm", "-rf", "--", release.NODE_STAGE], check=False)
+    node.push(stage, "/root/aukora-stage.tar")
+    node.run(["tar", "-xf", "/root/aukora-stage.tar", "-C", "/root"])
+    node.run(["rm", "-f", "--", "/root/aukora-stage.tar"])
+    node.push(plan.bundle.tar_path, release.NODE_STAGE + "/release.tar")
+    node.run(["python3", "-B", release.NODE_STAGE + "/node_install.py", "--stage", release.NODE_STAGE, "--mode", mode])
+    state.mark("installed")
+
+
+def issue_claim(plan, node):
+    """Write the commitment on the host, show the secret once, then tell the host it was shown. Until then another
+    run may replace the secret; afterwards the host refuses any other commitment."""
+    shown = json.loads(node.run(["python3", "-B", NODE_TOOL, "status"]).stdout.decode("utf-8"))
+    if shown.get("claim_delivered") is True:  # an earlier run showed it and was interrupted before it said so
+        plan.state.mark("claim-issued")
+        print("The claim link was already shown on an earlier run; nothing was issued.", file=sys.stderr)
+        return
+    token, commitment = new_claim()
+    node.run(["python3", "-B", NODE_TOOL, "claim", "--digest", commitment])
+    print("https://%s/#claim=%s" % (plan.shell_host, token), flush=True)
+    print("This claim link is shown once. Give it only to the owner; it is not stored anywhere.", file=sys.stderr)
+    node.run(["python3", "-B", NODE_TOOL, "claim", "--delivered"])
+    plan.state.mark("claim-issued")
+
+
+def describe(action, name, options):
+    backend = options["on"]
+    print("DRY RUN %s %s %s: the guard admitted the name; no host, cloud API, resolver or state directory was touched."
+          % (backend, action, name))
+    if action == "create" and backend == "host-lxd":
+        print("would: init an unprivileged container (nesting, isolated ids) and start it; push the verified release "
+              "and installer; install packages, the aukora user and subordinate ids, the release link, the node "
+              "configuration, the egress policy and the hardened units; publish its loopback port; add the node's "
+              "Caddy block (validated, reloaded, rolled back on failure); write the claim commitment; print the claim "
+              "link once.")
+    elif action == "create":
+        print("would: with --spend-ok, create one managed VM (smallest CPU preset, 40 GiB disk); ssh as the default "
+              "user; push and install as above, with Caddy on the VM; write the claim commitment; print the claim "
+              "link once.")
+    elif action == "destroy":
+        print("would: remove the node's Caddy block, its ingress device, and the container or VM, only if the "
+              "recorded spawn id matches; then its state directory.")
+    else:
+        print("would: pin new addresses for the given relays and providers under the next epoch, replace the "
+              "node's egress policy, reload its rules and restart the supervisor.")
+
+
+def create(admission, name, options):
+    backend, shell_override = options["on"], options.get("shell-host")
+    if "release" not in options:
+        core.refuse("spawn", "usage")
+    bundle = release.load(os.path.abspath(options["release"]))
+    for url in options["relay"]:
+        core.parse_relay_url(url)
+    if any(provider not in egress.PROVIDERS for provider in options["provider"]):
+        core.refuse("egress", "provider")
+    public_ip = options.get("public-ip") or os.environ.get("AUKORA_PUBLIC_IP")
+    if backend == "host-lxd":
+        if not shell_override:
+            hostnames(name, public_ip, None)
+        if options.get("image") and not lxd.IMAGE.match(options["image"]):
+            core.refuse("spawn", "image-invalid")
+    if options.get("dry"):
+        describe("create", name, options)
+        return 0
+    settings = None
+    if backend == "host-lxd":
+        lxd.require_root()
+    else:
+        settings = vm.environment()
+        vm.require_spend(options.get("spend-ok"))
+    root = host.private_dir(host.default_state_root(backend))
+    scratch = tempfile.mkdtemp(prefix="aukora-spawn-")
+    try:
+        with host.Lock(root):
+            state = host.NodeState(root, backend, name)
+            if state.exists() and state.has("claim-issued"):
+                core.refuse("spawn", "node-exists")
+            state.ensure()
+            node_id = node_identity(state)
+            if state.has("egress.json"):  # the first create fixed it; `egress` is how it changes
+                policy = state.get("egress.json").encode("utf-8")
+                core.validate_policy(policy)
+            else:
+                policy = egress.build(1, options["relay"], options["provider"])
+                state.put("egress.json", policy.decode("utf-8"))
+            plan = Plan(host=host.Host(admission), state=state, name=name, instance="aukora-" + name, node_id=node_id,
+                        image=options.get("image") or os.environ.get("AUKORA_LXD_IMAGE", "ubuntu:24.04"),
+                        bundle=bundle, policy=policy, scratch=scratch, public_ip=public_ip, shell_host=None,
+                        owner_host=None)
+            if backend == "host-lxd":
+                plan.shell_host, plan.owner_host = hostnames(name, public_ip, shell_override)
+                node = lxd.provision(plan)
+                install_node(plan, node, "lxd")
+                lxd.expose(plan)
+            else:
+                node = vm.provision(plan, settings)
+                plan.shell_host, plan.owner_host = hostnames(name, plan.public_ip, shell_override)
+                install_node(plan, node, "vm")
+            state.mark("ready")
+            issue_claim(plan, node)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return 0
+
+
+def existing_plan(admission, name, options, scratch):
+    """The state root and, if this machine's state knows the node, its Plan (None otherwise)."""
+    backend = options["on"]
+    if backend == "host-lxd":
+        lxd.require_root()
+    root = host.private_dir(host.default_state_root(backend))
+    state = host.NodeState(root, backend, name)
+    if not state.exists():
+        return root, None
+    node_id = node_identity(state)
+    runner = host.Host(admission)
+    plan = Plan(host=runner, state=state, name=name, instance="aukora-" + name, node_id=node_id, scratch=scratch,
+                force=bool(options.get("yes-destroy")))
+    return root, plan
+
+
+def destroy(admission, name, options):
+    if options.get("dry"):
+        describe("destroy", name, options)
+        return 0
+    backend = options["on"]
+    settings = None
+    if backend == "nebius-vm":
+        parent = os.environ.get("AUKORA_NEBIUS_PARENT_ID", "")
+        if not parent:
+            core.refuse("spawn", "nebius-settings")
+        settings = {"AUKORA_NEBIUS_PARENT_ID": parent}
+    root, plan = existing_plan(admission, name, options, None)
+    if plan is None:
+        print("nothing to destroy: no state for " + name)
+        return 0
+    if plan.state.has("claim-issued") and not options.get("yes-destroy"):
+        core.refuse("spawn", "claimed-node")  # the owner's binding lives on it
+    with host.Lock(root):
+        if backend == "host-lxd":
+            lxd.destroy(plan)
+        else:
+            vm.destroy(plan, settings)
+        plan.state.remove()
+    return 0
+
+
+def refresh_egress(admission, name, options):
+    """A new policy epoch: re-resolve the relays and providers given and replace the node's policy."""
+    if options.get("dry"):
+        describe("egress", name, options)
+        return 0
+    backend = options["on"]
+    for url in options["relay"]:
+        core.parse_relay_url(url)
+    if any(provider not in egress.PROVIDERS for provider in options["provider"]):
+        core.refuse("egress", "provider")
+    scratch = tempfile.mkdtemp(prefix="aukora-egress-")
+    try:
+        root, plan = existing_plan(admission, name, options, scratch)
+        if plan is None or not plan.state.has("installed"):
+            core.refuse("spawn", "unknown-node")
+        with host.Lock(root):
+            current = core.validate_policy(plan.state.get("egress.json").encode("utf-8"))
+            policy = egress.build(current["epoch"] + 1, options["relay"], options["provider"])
+            plan.state.put("egress.json", policy.decode("utf-8"))  # a retry then uses the next epoch, never this one
+            path = os.path.join(scratch, "egress.json")
+            core.atomic_write(path, policy, 0o600)
+            if backend == "host-lxd":
+                node = lxd.transport_for(plan.host, name, plan.node_id)
+            else:
+                node = vm.transport_for(plan.host, name, plan.node_id, plan.state)
+            node.push(path, "/root/egress.json.new")
+            node.run(["python3", "-B", NODE_TOOL, "egress", "--policy", "/root/egress.json.new"])
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return 0
+
+
+def main(argv):
+    action, name, options = parse(argv)
+    admission = guard.admit(action, name)  # a listed node stops here, before anything else
+    if action == "create":
+        return create(admission, name, options)
+    if action == "destroy":
+        return destroy(admission, name, options)
+    return refresh_egress(admission, name, options)
+
+
+if __name__ == "__main__":
+    core.run_main("spawn", main)

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The status file must stay fresh: the Body check that reads it accepts an observation for 30 seconds.
+[Unit]
+Description=AUKORA egress allowlist re-check, every 15 seconds
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=aukora-egress-verify.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The supervisor (row 102). Every directive is either needed by the supervisor and the cage it launches, and says why,
+# or restricts something they do not touch. deploy/units/check-units.sh audits the installed unit.
+#
+# Left out on purpose, because the launcher needs what they would remove:
+#   RestrictNamespaces, PrivateUsers  the cage is created in new user, mount, pid, net, ipc, uts and cgroup namespaces
+#   ProtectKernelTunables, ProtectKernelLogs, PrivateDevices  these overlay /proc or /dev, and the kernel then refuses
+#       the cage's own fresh /proc inside its user namespace (seen on a live node)
+#   ProtectProc, ProcSubset           the same kind of overlay; left out until a node shows the cage still starts
+#   ProtectControlGroups              the supervisor writes limits into the delegated subtree
+#   MemoryDenyWriteExecute            wasmtime compiles the pinned cell in this process
+#   IPAddressDeny                     the allowlist is the firewall rules of aukora-egress.service
+#   SystemCallFilter of @mount, @privileged, @resources, @debug  the launcher mounts, maps ids and sets limits
+[Unit]
+Description=AUKORA Sovereign supervisor
+After=network-online.target aukora-egress.service
+Wants=network-online.target
+# Without the egress rules loaded the supervisor does not start.
+Requires=aukora-egress.service
+AssertPathExists=/etc/aukora/node.json
+StartLimitIntervalSec=120
+StartLimitBurst=6
+
+[Service]
+Type=exec
+User=aukora
+Group=aukora
+ExecStart=/opt/aukora/current/bin/sovereign serve --config /etc/aukora/node.json
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+KillMode=control-group
+
+# State survives every upgrade and rollback; the runtime directory is wiped at stop and holds the cage root.
+StateDirectory=aukora
+StateDirectoryMode=0700
+RuntimeDirectory=aukora
+RuntimeDirectoryMode=0700
+WorkingDirectory=%S/aukora
+UMask=0077
+
+# The cage's cgroup is a child of this unit's delegated subtree. Starting in the leaf `supervisor` lets a restart
+# succeed after the controllers were enabled for the children (otherwise status 219/CGROUP).
+Delegate=yes
+DelegateSubgroup=supervisor
+# newuidmap and newgidmap are setuid helpers that map the cage's subordinate id.
+NoNewPrivileges=no
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+# AF_NETLINK: the launcher configures the cage's loopback-only network namespace.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=~@reboot @swap @module @raw-io @cpu-emulation @obsolete
+SystemCallErrorNumber=EPERM
+# Nothing here loads modules, touches raw devices or boards, sets the clock, reads the kernel log, or controls
+# security modules; id mapping, namespaces, cgroups and mounts stay available.
+CapabilityBoundingSet=~CAP_SYS_MODULE CAP_SYS_RAWIO CAP_SYS_TIME CAP_SYSLOG CAP_WAKE_ALARM CAP_SYS_BOOT CAP_SYS_PACCT CAP_BPF CAP_PERFMON CAP_LINUX_IMMUTABLE CAP_MAC_ADMIN CAP_MAC_OVERRIDE
+LimitNOFILE=4096
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Loads the node's egress allowlist into the firewall (rows 70 and 102) before the supervisor starts, and stays loaded
+# after it exits: the rules are never removed, so stopping or failing this unit cannot open the network.
+[Unit]
+Description=AUKORA egress allowlist for the node service user
+After=local-fs.target
+Before=aukora-sovereign.service
+AssertPathExists=/etc/aukora/egress.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 -B /opt/aukora/current/deploy/units/egress_apply.py load
+# The status file is world-readable and holds digests only.
+RuntimeDirectory=aukora-egress
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+UMask=0077
+
+# Root, but only to change this node's firewall. The unit does not hide /dev or /proc: inside an LXD container that
+# hides the clean /proc copy the container keeps for new proc mounts.
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
