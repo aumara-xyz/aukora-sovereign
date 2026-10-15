@@ -43,6 +43,22 @@ impl ProposalState {
     pub const fn reserves_target(self) -> bool {
         matches!(self, Self::Pending | Self::Consumed)
     }
+
+    /// Only pending work can retire; an existing retirement is idempotent.
+    /// An unknown outcome remains final and cannot be retired or retried.
+    pub const fn may_retire(self) -> bool {
+        matches!(self, Self::Pending | Self::Retired)
+    }
+
+    pub(crate) fn require_retirable(self) -> crate::Result<()> {
+        if self == Self::Unknown {
+            return Err(crate::refuse("unknown-outcome"));
+        }
+        if !self.may_retire() {
+            return Err(crate::refuse("not-retirable"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

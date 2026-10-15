@@ -10,6 +10,7 @@ pub mod install;
 pub mod proposal;
 pub mod recovery;
 pub mod service;
+pub mod standing;
 pub mod target;
 
 pub use canon::authority::CardRisk as RiskTier;

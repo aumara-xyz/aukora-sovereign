@@ -11,6 +11,7 @@ use crate::{
     recovery::{
         self, CrashInjector, CrashPoint, NoInjection, RecoveryItem, RecoveryResult, RecoverySweep,
     },
+    standing::{self, StandingPermissionRef},
     target::{EffectPermit, TargetClass, TargetObservation, TargetSpec, TargetStore},
     Result,
 };
@@ -192,6 +193,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         let mut transaction = self.ledger.begin(self.services)?;
         let proposal = load(&transaction, id)?;
         validate_content(self.config.node, &proposal)?;
+        if action == OwnerOperation::Retire {
+            proposal.state.require_retirable()?;
+        }
         if proposal.state != ProposalState::Pending {
             return Err(crate::refuse("not-pending"));
         }
@@ -340,16 +344,25 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         self.effect_once(id, approval, crash)
     }
 
+    /// A standing use names the exact signed permission by its fingerprint.
+    /// Locked verification checks that fingerprint and only permits routine Apply.
+    /// It cannot grant, renew or widen a permission; changes require
+    /// `standing::StandingChange`, including a fresh owner assertion.
+    /// This path refuses without effects while standing consumption is unavailable.
     pub fn apply_standing(
         &mut self,
-        _proposal: ProposalId,
-        _permission: ProposalId,
-        _permission_digest: Digest32,
+        proposal: ProposalId,
+        permission: StandingPermissionRef,
         _crash: &mut dyn CrashInjector,
     ) -> Result<Outcome> {
+        coverage::lookup(EntryPoint::Apply, EffectRoute::TargetReplace)?;
+        let mut transaction = self.ledger.begin(self.services)?;
+        let _usage = standing::check_use(&mut transaction, &proposal, permission)?;
         crate::unavailable()
     }
 
+    /// Retire pending work with its exact C5 owner assertion, or return its
+    /// existing retirement receipt. Unknown outcomes refuse `gate:unknown-outcome`.
     pub fn retire(
         &mut self,
         id: ProposalId,
@@ -361,11 +374,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         let now = clock(self.services)?;
         let mut transaction = self.ledger.begin(self.services)?;
         let proposal = load(&transaction, id)?;
+        proposal.state.require_retirable()?;
         if proposal.state == ProposalState::Retired {
             return terminal_outcome(&transaction, &proposal);
-        }
-        if proposal.state != ProposalState::Pending {
-            return Err(crate::refuse("not-retirable"));
         }
         let proof = aumlok::webauthn::verify_owner_assertion(
             &mut transaction,
@@ -410,12 +421,20 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         Ok(result)
     }
 
+    /// One-tap narrowing requires no new passkey assertion. The transaction
+    /// matches the exact grant fingerprint and current owner epoch; a matching
+    /// prior revocation is idempotent. An unavailable adapter refuses.
     pub fn revoke_standing(
         &mut self,
-        _permission: ProposalId,
-        _crash: &mut dyn CrashInjector,
+        permission: StandingPermissionRef,
+        crash: &mut dyn CrashInjector,
     ) -> Result<()> {
-        crate::unavailable()
+        crash.at(CrashPoint::BeforeRevoke)?;
+        let mut transaction = self.ledger.begin(self.services)?;
+        standing::revoke(&mut transaction, permission)?;
+        commit(transaction, crash)?;
+        crash.at(CrashPoint::AfterRevoke)?;
+        Ok(())
     }
 
     pub fn recover(&mut self, crash: &mut dyn CrashInjector) -> Result<RecoverySweep> {

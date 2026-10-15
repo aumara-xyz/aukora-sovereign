@@ -10,7 +10,6 @@ use canon::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EntryPoint {
     Apply,
-    StandingApply,
     Retire,
     Release,
     Grant,
@@ -51,14 +50,9 @@ pub struct CoverageSpec {
     pub success_kind: Kind,
 }
 
-pub const REGISTRY: [CoverageSpec; 15] = [
+pub const REGISTRY: [CoverageSpec; 14] = [
     CoverageSpec {
         entry: EntryPoint::Apply,
-        route: EffectRoute::TargetReplace,
-        success_kind: Kind::GateApply,
-    },
-    CoverageSpec {
-        entry: EntryPoint::StandingApply,
         route: EffectRoute::TargetReplace,
         success_kind: Kind::GateApply,
     },
@@ -141,30 +135,39 @@ pub struct TerminalCount {
     pub operation: OperationId,
     pub entry: EntryPoint,
     pub route: EffectRoute,
+    /// Informational state; it cannot waive the required terminal row.
     pub completed: bool,
     pub terminal_rows: u64,
 }
 
+/// Require one terminal operation for every registered entry and effect route.
 pub fn check_completed(rows: &[TerminalCount]) -> Result<()> {
+    check_registry()?;
     let mut operations = std::collections::BTreeSet::new();
     for row in rows {
         lookup(row.entry, row.route)?;
         if !operations.insert(row.operation) {
             return Err(crate::refuse("coverage-duplicate-operation"));
         }
-        if row.terminal_rows > 1 || (row.completed && row.terminal_rows != 1) {
+        if row.terminal_rows != 1 {
+            return Err(crate::refuse("terminal-count"));
+        }
+    }
+    for spec in REGISTRY {
+        if rows.iter().filter(|row| row.route == spec.route).count() != 1 {
             return Err(crate::refuse("terminal-count"));
         }
     }
     Ok(())
 }
 
-/// A route invocation known to the caller, including operations still in flight.
+/// A known route invocation supplied for a complete coverage audit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CoverageOperation {
     pub operation: OperationId,
     pub entry: EntryPoint,
     pub route: EffectRoute,
+    /// Informational state; an in-flight operation does not satisfy coverage.
     pub completed: bool,
 }
 
@@ -216,11 +219,10 @@ pub fn observe_rows(
     Ok(observations)
 }
 
-/// Check the frozen registry's entry coverage and the sole shared target route.
+/// Require exactly one registry row per entry and a sole entry per effect route.
 pub fn check_registry() -> Result<()> {
     let entries = [
         EntryPoint::Apply,
-        EntryPoint::StandingApply,
         EntryPoint::Retire,
         EntryPoint::Release,
         EntryPoint::Grant,
@@ -242,13 +244,7 @@ pub fn check_registry() -> Result<()> {
     }
     for (index, spec) in REGISTRY.iter().enumerate() {
         for other in &REGISTRY[index + 1..] {
-            if spec.route == other.route
-                && !matches!(
-                    (spec.entry, other.entry),
-                    (EntryPoint::Apply, EntryPoint::StandingApply)
-                        | (EntryPoint::StandingApply, EntryPoint::Apply)
-                )
-            {
+            if spec.route == other.route {
                 return Err(crate::refuse("duplicate-authority-route"));
             }
         }
