@@ -108,6 +108,7 @@
  "crates/nostr/vectors/nip44.vectors.json": "269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040",
  "crates/nostr/vectors/prime-vectors.json": "992bb5c3d714c3dfd33667ab27359235ae8632d6189b3c0f77eda466d5854005",
  "crates/pentora/vectors/MANIFEST": "ed46bcd63a563adfb5d13e92f266d46c57dc77867bdcf4169814dffa32ee5edd",
+ "crates/pentora/vectors/bloom-v1.json": "712a0e434892f5906c96e3423bc2559f4eb75e469eef4113e4d9e2942fc585d9",
  "crates/pentora/vectors/expansion_vectors_1006.json": "02f5c5b9dee82b6eb36fbf02b430af50958165a6c07d7e652524183773e24529",
  "crates/pentora/vectors/expansion_vectors_4354.json": "930bfbb5d8088de1c8aa94b99cdbc868505c79acde504c26b813b714c846e044",
  "crates/pentora/vectors/geometry_index_table_v1.json": "96b27c9b4de41cd961612be5b1e88d40e973a2fded16bd320415b3e15e3b8c61",
