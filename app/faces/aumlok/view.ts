@@ -111,9 +111,8 @@ export function createAumlokView(root: HTMLElement): AumlokView {
       passkeys.textContent = status.passkeys === 0
         ? (status.bound ? "None. Open Passkey in the bar at the top of the app to enrol one." : "None yet.")
         : String(status.passkeys);
-      refresh.textContent = !status.bound ? "Not applicable until a phrase is bound."
-        : status.refreshDue ? "Due. Open Phrase and choose a new phrase; the same identity root is rewrapped under it."
-          : "Not due.";
+      refresh.textContent = status.refreshDue ? "Due. Open Phrase to refresh the phrase binding."
+        : status.bound ? "Not due." : "Not due. No phrase is bound.";
       panesOrigin.textContent = status.ownerOrigin ?? "";
       panesOrigin.parentElement?.toggleAttribute("hidden", status.ownerOrigin === null);
     },

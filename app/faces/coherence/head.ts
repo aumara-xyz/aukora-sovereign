@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The Aura display head the gate-aura service reports: 64 lowercase hex digits, the commitment over the three ordered
-// sources (not Aura's tree root), optionally with the sources it was committed over. Absence always carries its reason.
+// The gate-aura head is AuraStatus::root: 64 lowercase hex digits passed as 32 raw bytes to pentora_expand.
+// Optional source rows are labels only; their heads, counts and absence reasons never enter the fingerprint digest.
 import type { JsonValue } from "../../core/index.js";
 import { fromHex64, isHex64 } from "./bytes.js";
 
@@ -17,7 +17,7 @@ export interface AuraHead {
   readonly sources: readonly AuraSourceView[] | null;
 }
 
-// The three sources, in commitment order, with the only absence reason each may carry.
+// The three source labels in C4 order, with the only absence reason each may carry.
 const SOURCES: readonly (readonly [SourceName, string])[] = [
   ["gate-ledger", "gate-ledger-empty"],
   ["kira-chain", "kira-ledger-empty"],

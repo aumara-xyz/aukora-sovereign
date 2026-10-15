@@ -8,7 +8,7 @@
     "node_npub": "null, or an npub of at most 128 bytes",
     "agent_npub": "null, or an npub of at most 128 bytes",
     "contact_code": "null, or {text, expires_at}: text is 1..1000 printable ASCII characters that the node issued, expires_at is unix seconds or null; null whenever subject is null",
-    "safety": "at most 101 entries {kind, label, digits}: at most one own entry with 35 digits, contact entries with 70 digits; a contact's label that fails the label rules is shown as an unreadable name"
+    "safety": "at most 101 entries {kind, label, digits}: at most one own entry with 35 digits, contact entries with 70 digits; every entry shows its own label after the label rules, or an unreadable name when it fails them"
   },
   "contact_code": {
     "drawing": "the text is encoded as a QR picture on a canvas by qr.ts (UTF-8 byte mode, level M, versions 1 to 40); no data image is used",

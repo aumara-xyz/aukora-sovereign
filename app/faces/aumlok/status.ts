@@ -12,26 +12,25 @@ export interface AumlokStatus {
   readonly ownerOrigin: string | null;
 }
 
-export const MAX_PASSKEYS = 1_000;
+export const MAX_PASSKEYS = Number.MAX_SAFE_INTEGER;
 const REQUIRED = ["bound", "passkeys", "refresh_due"];
+const ORGANS_KEYS = ["approvals_pending", "aumlok", "aura", "kira", "nostr", "owner_origin", "wasm"];
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function origin(value: JsonValue | undefined): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string" || value.length > 253) throw new Error("aumlok:status-invalid");
+  if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).length > 2_048) return null;
   let url: URL;
   try { url = new URL(value); }
-  catch { throw new Error("aumlok:status-invalid"); }
+  catch { return null; }
   const secure = url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname));
-  if (!secure || url.origin !== value) throw new Error("aumlok:status-invalid");
+  if (!secure || url.origin !== value) return null;
   return value;
 }
 
-export function parseStatus(value: JsonValue): AumlokStatus {
+export function parseStatus(value: JsonValue, ownerOrigin?: JsonValue): AumlokStatus {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("aumlok:status-invalid");
   const keys = Object.keys(value);
-  const allowed = [...REQUIRED, "owner_origin"];
-  if (keys.some(key => !allowed.includes(key)) || REQUIRED.some(key => !keys.includes(key))) {
+  if (keys.length !== REQUIRED.length || REQUIRED.some(key => !keys.includes(key))) {
     throw new Error("aumlok:status-invalid");
   }
   const { bound, passkeys, refresh_due: refreshDue } = value;
@@ -39,7 +38,17 @@ export function parseStatus(value: JsonValue): AumlokStatus {
     || !Number.isSafeInteger(passkeys) || passkeys < 0 || passkeys > MAX_PASSKEYS) {
     throw new Error("aumlok:status-invalid");
   }
-  // A refresh is a property of a bound root; an unbound node cannot owe one.
-  if (refreshDue && !bound) throw new Error("aumlok:status-invalid");
-  return { bound, passkeys, refreshDue, ownerOrigin: origin(value.owner_origin) };
+  return { bound, passkeys, refreshDue, ownerOrigin: origin(ownerOrigin) };
+}
+
+/** Read either the strict status projection or its containing organs reply; owner_origin stays a sibling. */
+export function parseStatusReply(value: JsonValue): AumlokStatus {
+  if (value !== null && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "aumlok")) {
+    const keys = Object.keys(value);
+    if (keys.length !== ORGANS_KEYS.length || ORGANS_KEYS.some(key => !keys.includes(key))) {
+      throw new Error("aumlok:status-invalid");
+    }
+    return parseStatus(value.aumlok, value.owner_origin);
+  }
+  return parseStatus(value);
 }

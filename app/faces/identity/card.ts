@@ -71,7 +71,7 @@ function contact(value: JsonValue | undefined): ContactCode | null {
   return { text, expiresAt };
 }
 
-function safety(value: JsonValue | undefined, ownLabel: string): SafetyNumber[] {
+function safety(value: JsonValue | undefined): SafetyNumber[] {
   if (!Array.isArray(value) || value.length > MAX_SAFETY) invalid();
   let own = 0;
   return value.map(item => {
@@ -81,8 +81,8 @@ function safety(value: JsonValue | undefined, ownLabel: string): SafetyNumber[] 
     const length = kind === "own" ? OWN_DIGITS : PAIR_DIGITS;
     if (typeof digits !== "string" || digits.length !== length || !/^[0-9]+$/.test(digits)) invalid();
     if (kind === "own" && ++own > 1) invalid();
-    // A contact chose its own name, so an unreadable one is replaced rather than refusing the whole card.
-    return { kind, digits, label: kind === "own" ? ownLabel : (readableLabel(row.label) ?? UNREADABLE) };
+    // Each safety row keeps its own readable label; unreadable names do not hide the whole card.
+    return { kind, digits, label: readableLabel(row.label) ?? UNREADABLE };
   });
 }
 
@@ -96,6 +96,6 @@ export function parseCard(value: JsonValue): IdentityCard {
   if (subject === null && code !== null) invalid();
   return {
     label, subject, nodeNpub: nullable(row.node_npub, NPUB), agentNpub: nullable(row.agent_npub, NPUB),
-    contact: code, safety: safety(row.safety, label),
+    contact: code, safety: safety(row.safety),
   };
 }

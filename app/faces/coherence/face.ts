@@ -6,10 +6,11 @@
 import type { JsonValue } from "../../core/index.js";
 import { refusalText } from "../aumlok/link.js";
 import type { FaceHost } from "../aumlok/link.js";
-import { healthDecoder, MAX_SNAPSHOT_BYTES } from "./health.js";
+import { MAX_SNAPSHOT_BYTES } from "./health.js";
 import { parseHead } from "./head.js";
 import type { PentoraModule } from "./pentora.js";
 import { createCoherenceViews } from "./views.js";
+import type { HealthDecoder } from "./views.js";
 
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const MAX_BASE64 = Math.ceil(MAX_SNAPSHOT_BYTES / 3) * 4;
@@ -25,7 +26,11 @@ export function snapshotBytes(value: JsonValue): Uint8Array {
   return Uint8Array.from(raw, character => character.charCodeAt(0));
 }
 
-export async function mountCoherence(host: FaceHost, loadPentora: (signal: AbortSignal) => Promise<PentoraModule>): Promise<void> {
+export async function mountCoherence(
+  host: FaceHost,
+  loadPentora: (signal: AbortSignal) => Promise<PentoraModule>,
+  loadHealthDecoder: (signal: AbortSignal) => Promise<HealthDecoder>,
+): Promise<void> {
   const { root, client, signal } = host;
   const lede = document.createElement("p");
   lede.textContent = "Two pictures of one node, kept apart: what its organs report about themselves, and a digest of the Aura head. Neither can approve, open or change anything.";
@@ -38,11 +43,14 @@ export async function mountCoherence(host: FaceHost, loadPentora: (signal: Abort
   const views = createCoherenceViews(stage);
   signal.addEventListener("abort", () => views.dispose(), { once: true });
 
-  // The module loads once and is awaited by every head; its failure is reported on the fingerprint canvas only.
+  // Each module loads once; its failure clears only the canvas that depends on it.
   const pentora = loadPentora(signal);
+  const health = loadHealthDecoder(signal);
   pentora.catch(() => undefined);
+  health.catch(() => undefined);
 
   let generation = 0;
+  let healthGeneration = 0;
   let run: AbortController | undefined;
 
   const start = async () => {
@@ -53,15 +61,25 @@ export async function mountCoherence(host: FaceHost, loadPentora: (signal: Abort
     refresh.disabled = true;
 
     // The client reports an aborted subscription to its error handler, so every handler checks that its own run is live.
-    const showHealth = (value: JsonValue) => {
+    const showHealth = async (value: JsonValue) => {
       if (live.aborted) return;
-      try { views.health(snapshotBytes(value), healthDecoder); }
-      catch (error) { views.clearHealth(`Unavailable · ${refusalText(error)}`); }
+      const current = ++healthGeneration;
+      views.clearHealth("Loading health snapshot…");
+      try {
+        const bytes = snapshotBytes(value);
+        const decoder = await health;
+        if (!live.aborted && current === healthGeneration) views.health(bytes, decoder);
+      } catch (error) {
+        if (!live.aborted && current === healthGeneration) views.clearHealth(`Unavailable · ${refusalText(error)}`);
+      }
     };
     const healthFailed = (error: unknown) => {
-      if (!live.aborted) views.clearHealth(`Unavailable · ${refusalText(error)}`);
+      if (live.aborted) return;
+      ++healthGeneration;
+      views.clearHealth(`Unavailable · ${refusalText(error)}`);
     };
     const showHead = async (value: JsonValue) => {
+      if (live.aborted) return;
       const current = ++generation;
       // Nothing is drawn or named while a head is being read; a failure then forgets the last head.
       views.loadingFingerprint();
@@ -89,7 +107,7 @@ export async function mountCoherence(host: FaceHost, loadPentora: (signal: Abort
       ]);
       if (live.aborted) return;
       await Promise.all([
-        client.subscribe("body", "health.snapshot", {}, showHealth, {
+        client.subscribe("body", "health.snapshot", {}, value => { void showHealth(value); }, {
           signal: live, onError: code => healthFailed(new Error(code)),
         }).catch(healthFailed),
         client.subscribe("gate-aura", "head", {}, value => { void showHead(value); }, {

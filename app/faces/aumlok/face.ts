@@ -4,7 +4,7 @@
 // behind a failure, so a stale "bound" cannot outlive the service that said it.
 import { refusalText } from "./link.js";
 import type { FaceHost } from "./link.js";
-import { parseStatus } from "./status.js";
+import { parseStatusReply } from "./status.js";
 import { createAumlokView } from "./view.js";
 
 export const REFRESH_MS = 30_000;
@@ -22,7 +22,7 @@ export function mountAumlok(host: FaceHost): void {
     const mine = ++reading;
     refresh.disabled = true;
     try {
-      const status = parseStatus(await client.call("aumlok", "status", {}, { signal }));
+      const status = parseStatusReply(await client.call("aumlok", "status", {}, { signal }));
       if (!signal.aborted && mine === reading) view.show(status);
     } catch (error) {
       if (!signal.aborted && mine === reading) view.unavailable(refusalText(error));

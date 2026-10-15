@@ -2,7 +2,8 @@
   "schema": "aukora-coherence-face-v1",
   "health": {
     "input": "body health.snapshot: {snapshot_b64}, standard padded base64, 1..65536 bytes once decoded",
-    "decoder": "health.ts reads the supervisor's canonical JSON snapshot: v 1, private_cells (90) and corner_cells (20), each exactly verified, undetermined or failed; optional epoch, sequence and observed_at_ms as integers. Any other shape refuses; it never reduces evidence",
+    "decoder": "canon health decoder adapter required: health.ts calls canon's health_decode_snapshot WASM export, which invokes health::decode_snapshot on the exact bytes; it requires all ten v1 keys and canonical bytes, reduces the evidence with HealthSnapshot::reduce and refuses mismatched cell arrays. Only successful decoder output is painted; JSON arrays alone are never painted",
+    "module": "app/core/canon.wasm from the same release, compiled without imports; missing exports, loading failures and decoder refusals clear the health canvas",
     "bounds": "1..65536 bytes; 90 private cells and 20 corner cells",
     "order": "canon CHECKS (18 per organ, organ order) then CORNERS (two per organ pair, pair order) mapped to the pinned geometry",
     "states": {
@@ -16,8 +17,8 @@
     "unavailable": "cleared canvas with an explicit unavailable label"
   },
   "fingerprint": {
-    "source": "gate-aura head service returns {head} or {head, sources}; head is the Aura display head as 64 lowercase hex characters, the commitment over the ordered sources gate-ledger, kira-chain, code-chain",
-    "sources": "when present, exactly three in that order; a source with a head has entries >= 1 and no absence, a source without a head has entries 0 and its own absence reason (gate-ledger-empty, kira-ledger-empty, code-record-missing)",
+    "source": "gate-aura head service returns {head} or {head, sources}; head is AuraStatus::root as 64 lowercase hex characters, passed as 32 raw bytes to pentora_expand",
+    "sources": "labels only, excluded from the fingerprint digest; when present, exactly gate-ledger, kira-chain, code-chain in that order; a source with a head has entries >= 1 and no absence, a source without a head has entries 0 and its own absence reason (gate-ledger-empty, kira-ledger-empty, code-record-missing)",
     "derivation": "the pentora_expand(root32) export of crates/pentora compiled to WASM takes the 32 raw head bytes and returns digest32 followed by 110 trits; digest = sha256(UTF8(pentora.display.v1) || 0x00 || head); there is no JavaScript derivation",
     "module": "app/core/pentora.wasm, fetched by the face from its own release, compiled with no imports, and checked against pinned vector 0 of crates/pentora/vectors before first use",
     "digit_order": "least significant base-3 digit first; increasing global cell index excluding 55",
@@ -27,7 +28,7 @@
     "race_guard": "only the latest read may draw or fail the canvas; a result for an older head is dropped",
     "unavailable": "cleared canvas with the reason"
   },
-  "page_policy": "script-src adds 'wasm-unsafe-eval' and connect-src is 'self' only so that the face can fetch and compile the pinned module; no other face has either",
+  "page_policy": "script-src adds 'wasm-unsafe-eval' and connect-src is 'self' only so that the face can fetch and compile the canon and Pentora release modules",
   "canvases": ["Organ health", "Aura fingerprint"],
   "authority": "none"
 }

@@ -40,7 +40,7 @@ export interface CoherenceViews {
   showFingerprint(digest32: Uint8Array, trits110: Uint8Array, head?: string): void;
   /** A new head is being read: nothing is drawn or named until it completes, but the last one is remembered. */
   loadingFingerprint(): void;
-  /** The three sources the head was committed over, or null when the service did not say. */
+  /** Source labels beside the Aura root, excluded from its fingerprint derivation. */
   showSources(sources: readonly AuraSourceView[] | null): void;
   clearHealth(reason: string): void;
   /** A failure: clears the picture and forgets the last head, so the next one is a first. */
@@ -430,9 +430,10 @@ export function createCoherenceViews(root: HTMLElement): CoherenceViews {
         return [index, { state: states[at], corner, owners }];
       }));
       const all = totals(decoded);
-      const summary = all.verified === states.length
+      const cellSummary = all.verified === states.length
         ? `Whole · ${all.verified} of ${states.length} verified`
-        : `${all.verified} verified · ${all.undetermined} undetermined · ${all.failed} failed · ${repairs.size} repairing`;
+        : `${all.verified} verified · ${all.undetermined} undetermined · ${all.failed} failed`;
+      const summary = `${cellSummary}${repairs.size > 0 ? ` · ${repairs.size} repairing` : ""}`;
       health.summary.textContent = summary;
       health.label(summary);
       organTallies(decoded).forEach((tally, at) => {

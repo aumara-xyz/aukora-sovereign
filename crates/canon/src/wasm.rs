@@ -168,3 +168,58 @@ std::thread_local! {
     static ALLOCATIONS: std::cell::RefCell<Allocations> =
         std::cell::RefCell::new(Allocations::default());
 }
+
+/// Decodes a health snapshot from an exact `allocate_input` allocation. Success
+/// returns its canonical bytes only after the health decoder has checked the
+/// schema, evidence and equality of both cell arrays to the registered reduction.
+/// The result uses `CanonicalResult` version 1 and is freed by `release_result`;
+/// the input remains allocated until `release_input`. Refusals carry the decoder's
+/// code. Invalid allocations or allocation failures return zero.
+#[no_mangle]
+pub extern "C" fn health_decode_snapshot(raw_utf8: u32, raw_len: u32) -> u32 {
+    if raw_utf8.checked_add(raw_len).is_none() {
+        return 0;
+    }
+    ALLOCATIONS.with(|slot| {
+        let Ok(mut allocations) = slot.try_borrow_mut() else {
+            return 0;
+        };
+        let Some(input) = allocations
+            .inputs
+            .iter()
+            .find(|buffer| buffer.as_ptr() as u32 == raw_utf8 && buffer.len() == raw_len as usize)
+        else {
+            return 0;
+        };
+        let (status, data) = match crate::health::decode_snapshot(input) {
+            Ok(_) => {
+                let mut validated = Vec::new();
+                if validated.try_reserve_exact(input.len()).is_err() {
+                    return 0;
+                }
+                validated.extend_from_slice(input);
+                (Status::Canonical, validated)
+            }
+            Err(code) => (Status::Refusal, code.to_string().into_bytes()),
+        };
+        let Ok(data_len) = u32::try_from(data.len()) else {
+            return 0;
+        };
+        let mut descriptor = Vec::new();
+        if allocations.outputs.try_reserve(1).is_err() || descriptor.try_reserve_exact(1).is_err() {
+            return 0;
+        }
+        descriptor.push(CanonicalResult {
+            v: ABI_VERSION,
+            status: status as u32,
+            data_ptr: data.as_ptr() as u32,
+            data_len,
+        });
+        let offset = descriptor.as_ptr() as u32;
+        allocations.outputs.push(Output {
+            descriptor,
+            _data: data,
+        });
+        offset
+    })
+}

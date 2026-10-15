@@ -4,13 +4,11 @@
   "reply": {
     "required": {
       "bound": "boolean: the identity root is sealed under a seven-word phrase",
-      "passkeys": "integer 0..1000: enrolled passkeys",
-      "refresh_due": "boolean: a phrase refresh is owed; true only when bound"
+      "passkeys": "integer 0..9007199254740991: enrolled passkeys",
+      "refresh_due": "boolean: a phrase refresh is owed, independently of bound"
     },
-    "optional": {
-      "owner_origin": "string or null: the owner origin the trusted panes are served from, https (or loopback http), origin form only"
-    },
-    "source": "the aumlok object of the pinned organs reply, plus the optional owner origin; any other key or type refuses"
+    "source": "exactly the three keys of the aumlok object in the pinned organs reply; any other key or type refuses. The face also accepts the containing organs.reply body with its seven frozen sibling keys",
+    "owner_origin": "read only from the sibling of aumlok in organs.reply: 1..2048 UTF-8 bytes. Shown only in https (or loopback http) origin form; otherwise only this line is hidden"
   },
   "screen": {
     "layout": "one anchor card (word zero, six letters) above six tiles in the bands ROOT, UNITE and RISE; the state changes only what fills them",
