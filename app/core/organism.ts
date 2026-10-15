@@ -23,229 +23,307 @@ export interface PluginContext {
 export interface PluginStatus { id: string; state: PluginState; missing: readonly string[]; error: string | null }
 export interface PluginHandle { readonly id: string; dispose(): Promise<void> }
 
-interface ServiceSlot { value: unknown; owner: Scope | null }
+const NAME = /^[a-z][a-z0-9._:-]{0,127}$/;
+function checkName(name: string): void {
+  if (typeof name !== 'string' || !NAME.test(name)) throw new Error('app:invalid-name');
+}
+interface ServiceSlot { value: unknown; owner: Lifetime | null }
 interface PluginRecord {
   descriptor: PluginDescriptor;
   state: PluginState;
   error: string | null;
-  scope: Scope | null;
+  lifetime: Lifetime | null;
   stopping: Promise<void> | null;
   removed: boolean;
 }
-const namePattern = /^[a-z][a-z0-9._:-]{0,127}$/;
-function requireName(name: string): void {
-  if (!namePattern.test(name)) throw new Error('app:invalid-name');
-}
 
-class Scope {
-  controller = new AbortController();
-  effects: Dispose[] = [];
+class Lifetime {
+  readonly controller = new AbortController();
+  readonly bindings: ReadonlyMap<string, ServiceSlot>;
   closed = false;
-  released = false;
-  ready: Promise<void>;
-  complete: () => void = () => undefined;
+  #effects: Dispose[] = [];
+  #failed = false;
+  #setup: Promise<void>;
+  #settle!: () => void;
 
-  constructor() {
-    this.ready = new Promise(resolve => { this.complete = resolve; });
+  constructor(bindings: ReadonlyMap<string, ServiceSlot>) {
+    this.bindings = bindings;
+    this.#setup = new Promise(resolve => { this.#settle = resolve; });
   }
 
-  add(cleanup: Dispose): Dispose {
-    let pending: Promise<void> | null = null;
-    const once = () => {
-      if (!pending) pending = Promise.resolve().then(cleanup).then(() => undefined);
-      return pending;
+  own(cleanup: Dispose): Dispose {
+    if (typeof cleanup !== 'function') throw new Error('app:invalid-effect');
+    let result: Promise<void> | null = null;
+    const release = () => {
+      if (!result) {
+        result = Promise.resolve().then(cleanup).then(() => undefined);
+        void result.catch(() => { this.#failed = true; });
+      }
+      return result;
     };
-    if (!this.released) this.effects.push(once);
-    else void once().catch(() => undefined);
-    return once;
+    this.#effects.push(release);
+    if (this.closed) void release();
+    return release;
   }
+
+  setupFinished(): void { this.#settle(); }
 
   async release(): Promise<void> {
-    await this.ready;
-    while (this.effects.length) {
-      const cleanup = this.effects.pop()!;
-      try { await cleanup(); } catch { /* Remaining owned effects still release. */ }
-    }
-    this.released = true;
+    const drain = async () => {
+      while (this.#effects.length) {
+        const effects = this.#effects.splice(0).reverse();
+        const results = await Promise.allSettled(effects.map(effect => effect()));
+        if (results.some(result => result.status === 'rejected')) this.#failed = true;
+      }
+    };
+    // Release existing effects before joining asynchronous setup and late cleanup.
+    await drain();
+    await this.#setup;
+    await drain();
+    if (this.#failed) throw new Error('app:cleanup-failed');
   }
+}
+
+function freezeDescriptor(input: PluginDescriptor): PluginDescriptor {
+  checkName(input.id);
+  if (!Array.isArray(input.requires) || typeof input.setup !== 'function') throw new Error('app:invalid-plugin');
+  for (const name of input.requires) checkName(name);
+  const menu = input.menu;
+  if (menu !== null && (!menu || typeof menu.title !== 'string' || !menu.title
+    || typeof menu.section !== 'string' || !menu.section || !Number.isSafeInteger(menu.order))) {
+    throw new Error('app:invalid-menu');
+  }
+  const surface = input.surface;
+  if (surface !== null && (!surface || surface.kind !== 'frame' || typeof surface.entry !== 'string'
+    || !surface.entry || /[\u0000-\u0020\u007f]/.test(surface.entry))) throw new Error('app:invalid-surface');
+  return Object.freeze({
+    id: input.id, requires: Object.freeze([...new Set(input.requires)]), setup: input.setup,
+    menu: menu === null ? null : Object.freeze({ title: menu.title, section: menu.section, order: menu.order }),
+    surface: surface === null ? null : Object.freeze({ kind: 'frame' as const, entry: surface.entry }),
+  });
 }
 
 export class Organism {
   #services = new Map<string, ServiceSlot>();
   #plugins = new Map<string, PluginRecord>();
   #observers = new Set<(status: PluginStatus) => void>();
+  #stops = new Set<Promise<void>>();
   #reconciling = false;
-  #changed = false;
+  #again = false;
   #closed = false;
+  #disposal: Promise<void> | null = null;
 
-  provide<T>(name: string, value: T): Dispose {
-    return this.#provide(name, value, null);
-  }
-
+  provide<T>(name: string, value: T): Dispose { return this.#register(name, value, null); }
   has(name: string): boolean { return this.#services.has(name); }
 
   install(descriptor: PluginDescriptor): PluginHandle {
     if (this.#closed) throw new Error('app:disposed');
-    requireName(descriptor.id);
-    descriptor.requires.forEach(requireName);
-    if (this.#plugins.has(descriptor.id)) throw new Error('app:duplicate-plugin');
+    const frozen = freezeDescriptor(descriptor);
+    if (this.#plugins.has(frozen.id)) throw new Error('app:duplicate-plugin');
     const record: PluginRecord = {
-      descriptor: Object.freeze({ ...descriptor, requires: Object.freeze([...new Set(descriptor.requires)]) }),
-      state: 'waiting', error: null, scope: null, stopping: null, removed: false,
+      descriptor: frozen, state: 'waiting', error: null, lifetime: null, stopping: null, removed: false,
     };
-    this.#plugins.set(descriptor.id, record);
+    this.#plugins.set(frozen.id, record);
+    this.#notify(record);
     this.#reconcile();
-    return { id: descriptor.id, dispose: () => this.#remove(record) };
+    let removal: Promise<void> | null = null;
+    return Object.freeze({ id: frozen.id, dispose: () => removal ??= this.#remove(record) });
   }
 
   status(id: string): PluginStatus | null {
     const record = this.#plugins.get(id);
-    return record ? this.#status(record) : null;
+    return record ? this.#snapshot(record) : null;
   }
 
   descriptors(): readonly PluginDescriptor[] {
-    return [...this.#plugins.values()].map(record => record.descriptor);
+    return Object.freeze([...this.#plugins.values()].map(record => record.descriptor));
   }
 
   observe(listener: (status: PluginStatus) => void): Dispose {
+    if (this.#closed) throw new Error('app:disposed');
+    if (typeof listener !== 'function') throw new Error('app:invalid-observer');
     this.#observers.add(listener);
     return () => { this.#observers.delete(listener); };
   }
 
-  async dispose(): Promise<void> {
-    if (this.#closed) return;
+  dispose(): Promise<void> {
+    if (this.#disposal) return this.#disposal;
     this.#closed = true;
-    await Promise.all([...this.#plugins.values()].map(record => this.#remove(record)));
     this.#services.clear();
-    this.#observers.clear();
+    const records = [...this.#plugins.values()];
+    this.#disposal = Promise.resolve().then(async () => {
+      const results = await Promise.allSettled([
+        ...records.map(record => this.#remove(record)), ...this.#stops,
+      ]);
+      this.#services.clear();
+      this.#observers.clear();
+      if (results.some(result => result.status === 'rejected')) throw new Error('app:cleanup-failed');
+    });
+    for (const record of records) record.removed = true;
+    void this.#stop(records, 'disposed');
+    return this.#disposal;
   }
 
-  #status(record: PluginRecord): PluginStatus {
+  #snapshot(record: PluginRecord): PluginStatus {
     return Object.freeze({
       id: record.descriptor.id, state: record.state, error: record.error,
-      missing: record.descriptor.requires.filter(name => !this.#services.has(name)),
+      missing: Object.freeze(record.descriptor.requires.filter(name => !this.#services.has(name))),
     });
   }
 
   #notify(record: PluginRecord): void {
-    const status = this.#status(record);
-    for (const observer of this.#observers) {
-      try { observer(status); } catch { /* Observers cannot stop lifecycle cleanup. */ }
+    const snapshot = this.#snapshot(record);
+    for (const observer of [...this.#observers]) {
+      try { observer(snapshot); } catch { /* Observer failures do not interrupt resource release. */ }
     }
   }
 
-  #provide(name: string, value: unknown, owner: Scope | null): Dispose {
-    requireName(name);
+  #register(name: string, value: unknown, owner: Lifetime | null): Dispose {
+    checkName(name);
     if (this.#closed || owner?.closed) throw new Error('app:disposed');
     if (this.#services.has(name)) throw new Error('app:duplicate-service');
-    const slot = { value, owner };
+    const slot: ServiceSlot = { value, owner };
     this.#services.set(name, slot);
-    this.#reconcile();
-    const remove = async () => {
+    const withdraw = async () => {
       if (this.#services.get(name) !== slot) return;
       this.#services.delete(name);
-      const stops = this.#invalidate();
-      await Promise.all(stops);
+      const stopping = this.#stop([], 'waiting');
       this.#reconcile();
+      await stopping;
     };
-    return owner ? owner.add(remove) : remove;
+    const cleanup = owner ? owner.own(withdraw) : this.#once(withdraw);
+    this.#reconcile();
+    return cleanup;
   }
 
-  #invalidate(): Promise<void>[] {
-    const stopped: Promise<void>[] = [];
-    for (const record of this.#plugins.values()) {
-      if (record.scope && record.descriptor.requires.some(name => !this.#services.has(name))) {
-        stopped.push(this.#stop(record, 'waiting'));
+  #once(cleanup: Dispose): Dispose {
+    let result: Promise<void> | null = null;
+    return () => result ??= Promise.resolve().then(cleanup);
+  }
+
+  #invalid(record: PluginRecord): boolean {
+    const lifetime = record.lifetime;
+    return lifetime !== null && [...lifetime.bindings].some(([name, slot]) => this.#services.get(name) !== slot);
+  }
+
+  #stop(roots: readonly PluginRecord[], next: 'waiting' | 'failed' | 'disposed'): Promise<void> {
+    const batch: { record: PluginRecord; lifetime: Lifetime; next: PluginState }[] = [];
+    const joining = new Set<Promise<void>>();
+    let complete!: () => void;
+    let fail!: (error: Error) => void;
+    const task = new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
+    const detach = (record: PluginRecord, target: PluginState) => {
+      if (record.stopping) { joining.add(record.stopping); return; }
+      const lifetime = record.lifetime;
+      if (!lifetime) {
+        if (target === 'disposed') { record.state = 'disposed'; this.#notify(record); }
+        return;
       }
-    }
-    return stopped;
-  }
-
-  #stop(record: PluginRecord, next: 'waiting' | 'failed' | 'disposed'): Promise<void> {
-    const scope = record.scope;
-    if (!scope) return record.stopping ?? Promise.resolve();
-    record.scope = null;
-    scope.closed = true;
-    scope.controller.abort();
-    record.state = 'stopping';
-    for (const [name, slot] of this.#services) {
-      if (slot.owner === scope) this.#services.delete(name);
-    }
-    const dependencies = this.#invalidate();
-    const stopping = Promise.all(dependencies).then(() => scope.release()).then(() => {
-      record.stopping = null;
-      record.state = record.removed ? 'disposed' : next;
-      this.#notify(record);
+      record.lifetime = null;
+      record.stopping = task;
+      record.state = 'stopping';
+      lifetime.closed = true;
+      batch.push({ record, lifetime, next: target });
+      for (const [name, slot] of this.#services) if (slot.owner === lifetime) this.#services.delete(name);
+    };
+    for (const record of roots) detach(record, next);
+    let changed: boolean;
+    do {
+      changed = false;
+      for (const record of this.#plugins.values()) {
+        if (this.#invalid(record)) { detach(record, 'waiting'); changed = true; }
+      }
+    } while (changed);
+    if (!batch.length) { complete(); return Promise.all(joining).then(() => undefined); }
+    this.#stops.add(task);
+    void task.catch(() => undefined);
+    for (const item of batch) item.lifetime.controller.abort();
+    for (const item of batch) this.#notify(item.record);
+    void Promise.allSettled(batch.map(item => item.lifetime.release())).then(async results => {
+      let failed = false;
+      for (let i = 0; i < batch.length; i++) {
+        const { record, next: target } = batch[i];
+        const cleanupFailed = results[i].status === 'rejected';
+        failed ||= cleanupFailed;
+        record.stopping = null;
+        if (cleanupFailed) record.error = 'app:cleanup-failed';
+        record.state = record.removed ? 'disposed' : cleanupFailed ? 'failed' : target;
+        this.#notify(record);
+      }
+      const joined = await Promise.allSettled(joining);
+      failed ||= joined.some(result => result.status === 'rejected');
+      this.#stops.delete(task);
       this.#reconcile();
+      if (failed) fail(new Error('app:cleanup-failed')); else complete();
     });
-    record.stopping = stopping;
-    this.#notify(record);
-    return stopping;
+    return task;
   }
 
-  async #remove(record: PluginRecord): Promise<void> {
-    if (record.removed) { await record.stopping; return; }
+  #remove(record: PluginRecord): Promise<void> {
     record.removed = true;
-    this.#plugins.delete(record.descriptor.id);
-    await this.#stop(record, 'disposed');
-    record.state = 'disposed';
-    this.#notify(record);
+    return this.#stop([record], 'disposed').finally(() => {
+      if (this.#plugins.get(record.descriptor.id) === record) this.#plugins.delete(record.descriptor.id);
+    });
   }
 
   #reconcile(): void {
     if (this.#closed) return;
-    if (this.#reconciling) { this.#changed = true; return; }
+    if (this.#reconciling) { this.#again = true; return; }
     this.#reconciling = true;
-    do {
-      this.#changed = false;
-      for (const record of this.#plugins.values()) {
-        if (record.state !== 'waiting' || record.stopping || record.removed) continue;
-        if (record.descriptor.requires.every(name => this.#services.has(name))) this.#start(record);
-      }
-    } while (this.#changed);
-    this.#reconciling = false;
+    try {
+      do {
+        this.#again = false;
+        for (const record of this.#plugins.values()) {
+          if (record.state === 'waiting' && !record.removed && !record.stopping
+            && record.descriptor.requires.every(name => this.#services.has(name))) this.#start(record);
+        }
+      } while (this.#again);
+    } finally { this.#reconciling = false; }
   }
 
   #start(record: PluginRecord): void {
-    const scope = new Scope();
-    record.scope = scope;
+    const bindings = new Map(record.descriptor.requires.map(name => [name, this.#services.get(name)!]));
+    const lifetime = new Lifetime(bindings);
+    record.lifetime = lifetime;
     record.state = 'starting';
-    this.#notify(record);
-    const assertLive = () => { if (scope.closed) throw new Error('app:disposed'); };
+    record.error = null;
+    const live = () => { if (lifetime.closed || this.#closed) throw new Error('app:disposed'); };
     const context: PluginContext = Object.freeze({
-      id: record.descriptor.id, signal: scope.controller.signal,
+      id: record.descriptor.id, signal: lifetime.controller.signal,
       service: <T>(name: string): T => {
-        assertLive();
-        if (!record.descriptor.requires.includes(name)) throw new Error('app:capability-denied');
-        const slot = this.#services.get(name);
-        if (!slot) throw new Error('app:service-unavailable');
+        live();
+        if (!bindings.has(name)) throw new Error('app:capability-denied');
+        const slot = bindings.get(name)!;
+        if (this.#services.get(name) !== slot) throw new Error('app:service-unavailable');
         return slot.value as T;
       },
-      provide: <T>(name: string, value: T) => this.#provide(name, value, scope),
-      effect: (cleanup: Dispose) => scope.add(cleanup),
+      provide: <T>(name: string, value: T) => { live(); return this.#register(name, value, lifetime); },
+      effect: (cleanup: Dispose) => lifetime.own(cleanup),
       listen: (target: EventTarget, type: string, listener: EventListener, options?: AddEventListenerOptions) => {
-        assertLive();
-        target.addEventListener(type, listener, options);
-        return scope.add(() => target.removeEventListener(type, listener, options));
+        live();
+        const capture = options?.capture === true;
+        const guarded: EventListener = event => { if (!lifetime.closed) listener.call(target, event); };
+        target.addEventListener(type, guarded, options ? { ...options } : undefined);
+        return lifetime.own(() => target.removeEventListener(type, guarded, capture));
       },
       mount: (parent: Node, child: Node) => {
-        assertLive();
+        live();
+        if (child.parentNode !== null) throw new Error('app:already-mounted');
         parent.appendChild(child);
-        return scope.add(() => { child.parentNode?.removeChild(child); });
+        return lifetime.own(() => { child.parentNode?.removeChild(child); });
       },
     });
-    const failed = () => {
-      if (record.scope !== scope) return;
-      record.error = 'app:setup-failed';
-      void this.#stop(record, 'failed');
-    };
-    try {
-      Promise.resolve(record.descriptor.setup(context)).then(cleanup => {
-        if (typeof cleanup === 'function') scope.add(cleanup);
-        if (record.scope !== scope) return;
-        record.state = 'active';
-        this.#notify(record);
-      }, failed).finally(scope.complete);
-    } catch { failed(); scope.complete(); }
+    this.#notify(record);
+    void Promise.resolve().then(async () => {
+      if (lifetime.closed) return;
+      const cleanup = await record.descriptor.setup(context);
+      if (cleanup !== undefined) lifetime.own(cleanup);
+      if (record.lifetime === lifetime) { record.state = 'active'; this.#notify(record); }
+    }).catch(() => {
+      if (record.lifetime === lifetime) {
+        record.error = 'app:setup-failed';
+        void this.#stop([record], 'failed');
+      }
+    }).finally(() => lifetime.setupFinished());
   }
 }
