@@ -5,6 +5,7 @@
 pub mod consistency;
 pub mod format;
 pub mod report;
+pub mod restore;
 
 use canon::{Refusal, Result};
 pub use report::{Finding, IntegrityScope, ObservationScope, Scope, Verdict, VerificationReport};
