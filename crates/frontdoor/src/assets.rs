@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Approved-release asset contracts; no source tree, guest HTML or runtime code generation.
 
-use canon::{digest::Digest32, Result};
+use canon::{digest::Digest32, Refusal, Result};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 pub const MAX_RELEASE_ASSETS: usize = 4096;
 pub const MAX_ASSET_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_RELEASE_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_MANIFEST_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AssetKind {
@@ -69,8 +73,107 @@ pub trait ReleaseSource {
 /// release approval. Strictly decode the versioned manifest and derive entries only from those
 /// bytes; no independent caller-supplied asset list can become approved. Reject unknown versions,
 /// duplicate surface/path pairs, escapes, nonregular files and every count/byte-budget violation.
-pub fn load_approved(_source: &mut impl ReleaseSource) -> Result<ApprovedRelease> {
-    todo!("rows 18, 109")
+pub fn load_approved(source: &mut impl ReleaseSource) -> Result<ApprovedRelease> {
+    load_approved_with_facts(source).map(|(release, _)| release)
+}
+
+/// A successful load reports only bytes actually read and verified against current approval.
+pub fn load_approved_with_facts(
+    source: &mut impl ReleaseSource,
+) -> Result<(ApprovedRelease, AssetFacts)> {
+    let candidate = source.candidate()?;
+    if candidate.manifest_bytes.is_empty() || candidate.manifest_bytes.len() > MAX_MANIFEST_BYTES {
+        return Err(refusal("manifest-size-refused"));
+    }
+    if hash(&candidate.manifest_bytes) != candidate.manifest_sha256 {
+        return Err(refusal("manifest-digest-mismatch"));
+    }
+    source.require_current_approval(candidate.manifest_sha256)?;
+    let manifest: Manifest = serde_json::from_slice(&candidate.manifest_bytes)
+        .map_err(|_| refusal("manifest-invalid"))?;
+    if manifest.schema != "aukora-browser-release-v1" {
+        return Err(refusal("manifest-version-refused"));
+    }
+    if manifest.entries.shell != "app/shell/index.html"
+        || manifest.entries.owner != "ui/owner/index.html"
+        || manifest
+            .entries
+            .portal
+            .as_deref()
+            .is_some_and(|path| path != "portal/index.html")
+    {
+        return Err(refusal("manifest-entry-refused"));
+    }
+    if manifest.assets.is_empty() || manifest.assets.len() > MAX_RELEASE_ASSETS {
+        return Err(refusal("asset-count-refused"));
+    }
+    let mut paths = BTreeSet::new();
+    let mut entries = Vec::new();
+    let mut total = 0usize;
+    for asset in &manifest.assets {
+        validate_asset_path(&asset.path)?;
+        if !paths.insert(asset.path.as_str()) {
+            return Err(refusal("duplicate-asset"));
+        }
+        let length = usize::try_from(asset.bytes).map_err(|_| refusal("asset-size-refused"))?;
+        if length > MAX_ASSET_BYTES {
+            return Err(refusal("asset-size-refused"));
+        }
+        total = total
+            .checked_add(length)
+            .ok_or(refusal("release-size-refused"))?;
+        if total > MAX_RELEASE_BYTES {
+            return Err(refusal("release-size-refused"));
+        }
+        let kind = kind(&asset.path)?;
+        let digest = Digest32::from_hex(&asset.sha256).map_err(|_| refusal("manifest-invalid"))?;
+        for surface in surfaces(&asset.path)? {
+            if entries.len() == MAX_RELEASE_ASSETS {
+                return Err(refusal("asset-count-refused"));
+            }
+            entries.push(AssetEntry {
+                surface,
+                path: asset.path.clone(),
+                kind,
+                sha256: digest,
+                byte_length: asset.bytes,
+                preload: warm_asset(&asset.path, kind),
+            });
+        }
+    }
+    for entry in [
+        Some(manifest.entries.shell.as_str()),
+        Some(manifest.entries.owner.as_str()),
+        manifest.entries.portal.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !paths.contains(entry) {
+            return Err(refusal("manifest-entry-refused"));
+        }
+    }
+    // Validate the complete manifest and its budgets before opening any asset.
+    let release = ApprovedRelease {
+        manifest_sha256: candidate.manifest_sha256,
+        entries,
+    };
+    for asset in &manifest.assets {
+        let entry = release
+            .entries
+            .iter()
+            .find(|entry| entry.path == asset.path)
+            .ok_or(refusal("manifest-entry-refused"))?;
+        read_verified(source, entry)?;
+    }
+    source.require_current_approval(release.manifest_sha256)?;
+    let facts = AssetFacts {
+        served_release_digest: release.manifest_sha256,
+        approved_release_digest: release.manifest_sha256,
+        verified_asset_count: manifest.assets.len() as u32,
+        digest_mismatches: 0,
+    };
+    Ok((release, facts))
 }
 
 pub struct AssetResponse {
@@ -81,12 +184,25 @@ pub struct AssetResponse {
 
 /// Returns only exact manifest-listed bytes; rechecks the digest of the opened file.
 pub fn serve(
-    _release: &ApprovedRelease,
-    _source: &mut impl ReleaseSource,
-    _surface: AssetSurface,
-    _path: &str,
+    release: &ApprovedRelease,
+    source: &mut impl ReleaseSource,
+    surface: AssetSurface,
+    path: &str,
 ) -> Result<AssetResponse> {
-    todo!("row 109")
+    source.require_current_approval(release.manifest_sha256)?;
+    let path = mounted_path(surface, path)?;
+    let entry = release
+        .entries
+        .iter()
+        .find(|entry| entry.surface == surface && entry.path == path)
+        .ok_or(refusal("asset-not-approved"))?;
+    let bytes = read_verified(source, entry)?;
+    source.require_current_approval(release.manifest_sha256)?;
+    Ok(AssetResponse {
+        kind: entry.kind,
+        bytes,
+        sha256: entry.sha256,
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -95,4 +211,170 @@ pub struct AssetFacts {
     pub approved_release_digest: Digest32,
     pub verified_asset_count: u32,
     pub digest_mismatches: u64,
+}
+
+/// Updates an existing successful-load observation for this attempted asset response.
+pub fn serve_observed(
+    release: &ApprovedRelease,
+    source: &mut impl ReleaseSource,
+    surface: AssetSurface,
+    path: &str,
+    facts: &mut AssetFacts,
+) -> Result<AssetResponse> {
+    if facts.served_release_digest != release.manifest_sha256()
+        || facts.approved_release_digest != release.manifest_sha256()
+    {
+        return Err(refusal("asset-observation-refused"));
+    }
+    let result = serve(release, source, surface, path);
+    if result
+        .as_ref()
+        .is_err_and(|error| *error == refusal("asset-digest-mismatch"))
+    {
+        facts.digest_mismatches = facts.digest_mismatches.saturating_add(1);
+    }
+    result
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Manifest {
+    schema: String,
+    entries: ManifestEntries,
+    assets: Vec<ManifestAsset>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestEntries {
+    shell: String,
+    owner: String,
+    portal: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestAsset {
+    path: String,
+    bytes: u64,
+    sha256: String,
+}
+
+pub(crate) fn refusal(reason: &'static str) -> Refusal {
+    Refusal {
+        organ: "frontdoor",
+        reason,
+    }
+}
+
+pub(crate) fn hash(bytes: &[u8]) -> Digest32 {
+    Digest32::from_bytes(Sha256::digest(bytes).into())
+}
+
+fn validate_asset_path(path: &str) -> Result<()> {
+    if path.is_empty()
+        || path.len() > 1024
+        || !path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/._-".contains(&byte))
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+    {
+        return Err(refusal("asset-path-refused"));
+    }
+    Ok(())
+}
+
+// Root entry pages keep their original relative URLs; aliases select only listed assets.
+fn mounted_path(surface: AssetSurface, request: &str) -> Result<String> {
+    let path = request.strip_prefix('/').unwrap_or(request);
+    let mounted = if path.is_empty() && request == "/" {
+        match surface {
+            AssetSurface::Shell => "app/shell/index.html".to_owned(),
+            AssetSurface::Owner => "ui/owner/index.html".to_owned(),
+            AssetSurface::Face => return Err(refusal("asset-not-approved")),
+        }
+    } else {
+        validate_asset_path(path)?;
+        match surface {
+            AssetSurface::Owner if !path.starts_with("ui/owner/") => format!("ui/owner/{path}"),
+            AssetSurface::Shell if !path.starts_with("app/") => {
+                if ["core/", "faces/", "design/", "theme/", "store/", "shell/"]
+                    .iter()
+                    .any(|prefix| path.starts_with(prefix))
+                {
+                    format!("app/{path}")
+                } else {
+                    format!("app/shell/{path}")
+                }
+            }
+            AssetSurface::Face if !path.starts_with("app/") && !path.starts_with("portal/") => {
+                format!("app/{path}")
+            }
+            _ => path.to_owned(),
+        }
+    };
+    validate_asset_path(&mounted)?;
+    Ok(mounted)
+}
+
+fn kind(path: &str) -> Result<AssetKind> {
+    match path.rsplit('.').next() {
+        Some("html") => Ok(AssetKind::Html),
+        Some("js" | "mjs") => Ok(AssetKind::Script),
+        Some("css") => Ok(AssetKind::Style),
+        Some("wasm") => Ok(AssetKind::Wasm),
+        Some("woff" | "woff2") => Ok(AssetKind::Font),
+        Some("svg" | "png" | "webp" | "jpg" | "jpeg") => Ok(AssetKind::Image),
+        Some("json") => Ok(AssetKind::Json),
+        _ => Err(refusal("asset-kind-refused")),
+    }
+}
+
+fn surfaces(path: &str) -> Result<Vec<AssetSurface>> {
+    if path.starts_with("ui/owner/") {
+        Ok(vec![AssetSurface::Owner])
+    } else if path.starts_with("app/shell/") || path == "app/APP-LOCK.json" {
+        Ok(vec![AssetSurface::Shell])
+    } else if path.starts_with("app/core/")
+        || path.starts_with("app/design/")
+        || path.starts_with("app/theme/")
+        || path.starts_with("app/store/")
+        || path == "app/faces/catalog.js"
+    {
+        Ok(vec![AssetSurface::Shell, AssetSurface::Face])
+    } else if path.starts_with("app/faces/") || path.starts_with("portal/") {
+        Ok(vec![AssetSurface::Face])
+    } else {
+        Err(refusal("asset-path-refused"))
+    }
+}
+
+fn warm_asset(path: &str, kind: AssetKind) -> bool {
+    matches!(
+        kind,
+        AssetKind::Script | AssetKind::Style | AssetKind::Wasm | AssetKind::Font
+    ) || matches!(
+        path,
+        "app/shell/index.html"
+            | "ui/owner/index.html"
+            | "app/faces/threads/index.html"
+            | "app/faces/sidebar/index.html"
+    )
+}
+
+fn read_verified(source: &mut impl ReleaseSource, entry: &AssetEntry) -> Result<Vec<u8>> {
+    let length = usize::try_from(entry.byte_length).map_err(|_| refusal("asset-size-refused"))?;
+    if length > MAX_ASSET_BYTES {
+        return Err(refusal("asset-size-refused"));
+    }
+    let bytes = source.read_exact_asset(&entry.path, length)?;
+    if bytes.len() != length {
+        return Err(refusal("asset-length-mismatch"));
+    }
+    if hash(&bytes) != entry.sha256 {
+        return Err(refusal("asset-digest-mismatch"));
+    }
+    Ok(bytes)
 }

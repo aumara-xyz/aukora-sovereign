@@ -4,8 +4,9 @@
 use crate::session::BoundSession;
 use canon::{
     fd4::{ChatCommand, SessionEvent},
-    frame::{Frame, FrameError},
-    Result,
+    frame::{Disposition, Frame, FrameError, MAX_FRAME_BYTES},
+    provenance::{Provenance, Source},
+    Refusal, Result,
 };
 
 pub const MAX_QUEUED_FRAMES: usize = 32;
@@ -31,18 +32,144 @@ impl<C: DataChannel> DataBridge<C> {
 
     /// Canon decodes exact bounded commands; ingress source comes from the live session.
     /// The supervisor rechecks session ownership, epoch and per-frame authorization.
-    pub fn submit(&mut self, _session: &BoundSession<'_>, _payload: &[u8]) -> Result<()> {
-        todo!("row 109")
+    pub fn submit(&mut self, session: &BoundSession<'_>, payload: &[u8]) -> Result<()> {
+        self.submit_inner(session, payload, None)
     }
 
     /// All variants go through canon::fd4::encode_event without interpretation or added fields.
     /// Opaque coherence bytes are never parsed here; code-like text remains literal text.
-    pub fn next_event(&mut self, _session: &BoundSession<'_>) -> Result<Vec<u8>> {
-        todo!("row 109")
+    pub fn next_event(&mut self, session: &BoundSession<'_>) -> Result<Vec<u8>> {
+        self.event_inner(session, None)
+    }
+
+    /// Records this synchronous bridge's refusals and closes without retaining event data.
+    pub fn submit_observed(
+        &mut self,
+        session: &BoundSession<'_>,
+        payload: &[u8],
+        facts: &mut DataFacts,
+    ) -> Result<()> {
+        self.submit_inner(session, payload, Some(facts))
+    }
+
+    /// Queue facts are zero outside the one synchronous channel operation.
+    pub fn next_event_observed(
+        &mut self,
+        session: &BoundSession<'_>,
+        facts: &mut DataFacts,
+    ) -> Result<Vec<u8>> {
+        self.event_inner(session, Some(facts))
+    }
+
+    fn submit_inner(
+        &mut self,
+        session: &BoundSession<'_>,
+        payload: &[u8],
+        mut facts: Option<&mut DataFacts>,
+    ) -> Result<()> {
+        clear_queue(&mut facts);
+        let decoded = require_data_session(session).and_then(|()| {
+            if payload.is_empty() {
+                return Err(canon::codes::FRAME_ZERO_LENGTH);
+            }
+            if payload.len() > MAX_FRAME_BYTES || payload.len() > MAX_QUEUED_BYTES {
+                return Err(canon::codes::FRAME_TOO_LARGE);
+            }
+            canon::fd4::decode_command(
+                payload,
+                Provenance {
+                    source: Source::Owner,
+                },
+            )
+        });
+        let command = match decoded {
+            Ok(command) => command,
+            Err(refusal) => {
+                count_refusal(&mut facts);
+                return Err(refusal);
+            }
+        };
+        if let Some(facts) = facts.as_deref_mut() {
+            facts.queued_frames = 1;
+            facts.queued_bytes = payload.len();
+        }
+        let result = self.channel.send(command);
+        clear_queue(&mut facts);
+        if result.is_err() {
+            count_refusal(&mut facts);
+            self.channel.close();
+            count_close(&mut facts);
+        }
+        result
+    }
+
+    fn event_inner(
+        &mut self,
+        session: &BoundSession<'_>,
+        mut facts: Option<&mut DataFacts>,
+    ) -> Result<Vec<u8>> {
+        clear_queue(&mut facts);
+        if let Err(refusal) = require_data_session(session) {
+            count_refusal(&mut facts);
+            return Err(refusal);
+        }
+        let event = match self.channel.receive() {
+            Ok(event) => event,
+            Err(error) => {
+                count_refusal(&mut facts);
+                if error.disposition == Disposition::Close {
+                    self.channel.close();
+                    count_close(&mut facts);
+                }
+                return Err(error.refusal);
+            }
+        };
+        match canon::fd4::encode_event(&event) {
+            Ok(bytes) if !bytes.is_empty() && bytes.len() <= MAX_FRAME_BYTES => Ok(bytes),
+            result => {
+                count_refusal(&mut facts);
+                self.channel.close();
+                count_close(&mut facts);
+                Err(result.err().unwrap_or(canon::codes::FRAME_TOO_LARGE))
+            }
+        }
     }
 
     pub fn close(&mut self) {
         self.channel.close();
+    }
+}
+
+pub(crate) fn require_data_session(session: &BoundSession<'_>) -> Result<()> {
+    let record = session.record();
+    if record.revoked
+        || record.subject.is_none()
+        || record.scope != crate::session::SessionScope::Shell
+    {
+        return Err(Refusal {
+            organ: "frontdoor",
+            reason: "session-required",
+        });
+    }
+    Ok(())
+}
+
+fn clear_queue(facts: &mut Option<&mut DataFacts>) {
+    if let Some(facts) = facts.as_deref_mut() {
+        facts.queued_frames = 0;
+        facts.queued_bytes = 0;
+    }
+}
+
+fn count_refusal(facts: &mut Option<&mut DataFacts>) {
+    if let Some(facts) = facts.as_deref_mut() {
+        facts.refused_payloads = facts.refused_payloads.saturating_add(1);
+    }
+}
+
+fn count_close(facts: &mut Option<&mut DataFacts>) {
+    if let Some(facts) = facts.as_deref_mut() {
+        facts.fatal_closes = facts.fatal_closes.saturating_add(1);
     }
 }
 

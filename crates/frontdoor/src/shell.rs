@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The release shell owns ceremony-frame creation. Faces have no such API.
 
-use crate::{assets::ApprovedRelease, tls::Origin};
+use crate::{
+    assets::{refusal, ApprovedRelease, AssetKind, AssetSurface},
+    tls::Origin,
+};
 use canon::{ids::ProposalId, Result};
 
 pub const SCRIPT_POLICY: &str = "script-src 'self'";
@@ -38,8 +41,18 @@ impl OwnerFrame {
 
 impl ShellHost {
     /// Native configuration is fixed at approved-shell load, not supplied by a face.
-    pub fn open(_release: &ApprovedRelease, _owner_origin: Origin) -> Result<Self> {
-        todo!("rows 18, 109")
+    pub fn open(release: &ApprovedRelease, owner_origin: Origin) -> Result<Self> {
+        for (surface, path) in [
+            (AssetSurface::Shell, "app/shell/index.html"),
+            (AssetSurface::Owner, "ui/owner/index.html"),
+        ] {
+            if !release.entries().iter().any(|entry| {
+                entry.surface == surface && entry.path == path && entry.kind == AssetKind::Html
+            }) {
+                return Err(refusal("shell-entry-refused"));
+            }
+        }
+        Ok(Self { owner_origin })
     }
 
     pub fn popup(&self, popup: Popup) -> OwnerFrame {
