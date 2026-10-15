@@ -1,7 +1,19 @@
-//! guest: Auma's agent loop inside the cage. See README.md. Built in wave 1 (rows 25, 130).
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Auma's bounded harness contracts. Runtime attachment remains fail-closed.
 #![forbid(unsafe_code)]
 
-fn main() {
-    eprintln!("auma: not built yet");
-    std::process::exit(2);
+pub mod action_gate;
+pub mod agent_loop;
+pub mod compaction;
+pub mod context;
+pub mod dispatch;
+pub mod fd3;
+pub mod presets;
+pub mod rails;
+pub mod session;
+pub mod sites;
+
+fn main() -> std::process::ExitCode {
+    eprintln!("guest:runtime-not-attached");
+    std::process::ExitCode::FAILURE
 }

@@ -6,3 +6,11 @@ license.workspace = true
 publish = false
 
 [dependencies]
+canon = { path = "../canon" }
+sha2 = "=0.11.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "=0.4.7"
+libc = "=0.2.190"
+rustix = { version = "=1.1.5", features = ["fs", "process", "thread", "mount", "system", "net", "event", "pipe", "runtime"] }
+seccompiler = "=0.5.0"

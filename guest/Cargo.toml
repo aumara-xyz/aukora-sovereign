@@ -10,3 +10,6 @@ name = "auma"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "=0.23.1"
+canon = { path = "../crates/canon" }
+getrandom = "=0.4.3"
