@@ -13,6 +13,10 @@ use canon::{
     Result,
 };
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+mod codec;
+mod disk;
 
 /// Host-side storage bounds. Frames retain canon's independent 65,536-byte cap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,13 +122,18 @@ pub trait SessionStore: Send + Sync {
 /// Row 130 disk-store body. No in-memory fallback is substituted for durability.
 pub struct DurableSessions {
     config: SessionStoreConfig,
+    disk: Mutex<disk::Disk>,
 }
 
 impl DurableSessions {
     /// Open a private host-owned root without following symlinks; take the store lock
     /// and recover incomplete tails before publishing any successful session reply.
-    pub fn open(_config: SessionStoreConfig) -> Result<Self> {
-        todo!("row 130")
+    pub fn open(config: SessionStoreConfig) -> Result<Self> {
+        let disk = disk::Disk::open(&config)?;
+        Ok(Self {
+            config,
+            disk: Mutex::new(disk),
+        })
     }
 
     pub const fn config(&self) -> &SessionStoreConfig {
@@ -135,59 +144,78 @@ impl DurableSessions {
 impl SessionStore for DurableSessions {
     fn create(
         &self,
-        _scope: PrincipalScope,
-        _request: SessionCreate,
+        scope: PrincipalScope,
+        request: SessionCreate,
     ) -> ServiceFuture<'_, SessionSummary> {
-        Box::pin(async { todo!("row 130") })
+        Box::pin(async move { self.lock()?.create(scope, request, self.config.limits) })
     }
 
     fn open(
         &self,
-        _scope: PrincipalScope,
-        _request: SessionOpen,
+        scope: PrincipalScope,
+        request: SessionOpen,
     ) -> ServiceFuture<'_, SessionOpened> {
-        Box::pin(async { todo!("row 130") })
+        Box::pin(async move {
+            self.lock()?
+                .open_session(scope, request, self.config.limits)
+        })
     }
 
-    fn list(
-        &self,
-        _scope: PrincipalScope,
-        _request: SessionList,
-    ) -> ServiceFuture<'_, SessionPage> {
-        Box::pin(async { todo!("row 130") })
+    fn list(&self, scope: PrincipalScope, request: SessionList) -> ServiceFuture<'_, SessionPage> {
+        Box::pin(async move { self.lock()?.list(scope, request, self.config.limits) })
     }
 
     fn append(
         &self,
-        _scope: PrincipalScope,
-        _origin: Provenance,
-        _request: SessionAppend,
+        scope: PrincipalScope,
+        origin: Provenance,
+        request: SessionAppend,
     ) -> ServiceFuture<'_, SessionAppended> {
-        Box::pin(async { todo!("row 130") })
+        Box::pin(async move {
+            self.lock()?
+                .append(scope, origin, request, self.config.limits)
+        })
     }
 
     fn flush(
         &self,
-        _scope: PrincipalScope,
-        _request: SessionFlush,
+        scope: PrincipalScope,
+        request: SessionFlush,
     ) -> ServiceFuture<'_, SessionFlushed> {
-        Box::pin(async { todo!("row 130") })
+        Box::pin(async move { self.lock()?.flush(scope, request, self.config.limits) })
     }
 
     fn recover(
         &self,
-        _scope: PrincipalScope,
-        _session_id: SessionId,
+        scope: PrincipalScope,
+        session_id: SessionId,
     ) -> ServiceFuture<'_, TailRecovery> {
-        Box::pin(async { todo!("row 130") })
+        Box::pin(async move { self.lock()?.recover(scope, session_id, self.config.limits) })
     }
 
     fn before_dispatch(
         &self,
-        _scope: PrincipalScope,
-        _session_id: SessionId,
-        _sequence: u64,
+        scope: PrincipalScope,
+        session_id: SessionId,
+        sequence: u64,
     ) -> ServiceFuture<'_, DispatchFence> {
-        Box::pin(async { todo!("row 130") })
+        Box::pin(async move {
+            let receipt =
+                self.lock()?
+                    .before_dispatch(scope, session_id, sequence, self.config.limits)?;
+            Ok(DispatchFence { scope, receipt })
+        })
     }
+}
+
+impl DurableSessions {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, disk::Disk>> {
+        self.disk.lock().map_err(|_| canon::codes::SUPERVISOR_STATE)
+    }
+}
+
+/// SHA-256 of the canonical v2 entry object with only `commitment` omitted.
+/// This checks the shared record schema; it does not establish ingress authority.
+pub fn entry_commitment(entry: &canon::session::SessionEntry) -> Result<Digest32> {
+    codec::entry_commitment(entry)
 }

@@ -9,7 +9,7 @@ use canon::{
         OrgansReply, Outcome, Propose, Read, ReadReply, Recall, StatusReply,
     },
     frame::FrameId,
-    ids::ProposalId,
+    ids::{ProposalId, RequestId, ReservationId},
     session::{ModelCancel, ModelDelta, ModelEnd, ModelError, ModelStart, ModelStarted},
     Result,
 };
@@ -66,7 +66,14 @@ pub trait GateService: Send + Sync {
 
 /// Broker admission owns grants, exactly one reservation, model identity and settlement.
 /// Dropping a client or cancelling a stream never fabricates a receipt.
+/// Admission and call futures may be dropped on revocation. The adapter retains
+/// every in-flight request key until broker settlement, including failed starts.
 pub trait BrokerService: Send + Sync {
+    /// Confirm that nonblocking polling and post-write acknowledgements are installed.
+    fn streaming_ready(&self) -> Result<()> {
+        Err(canon::codes::SUPERVISOR_NOT_READY)
+    }
+
     fn call<'a>(
         &'a self,
         scope: PrincipalScope,
@@ -74,11 +81,49 @@ pub trait BrokerService: Send + Sync {
         call: ModelCall,
     ) -> ServiceFuture<'a, ModelReply>;
 
+    /// A refusal leaves no unsettled reservation; admitted work is retained even
+    /// if this future is dropped before its acknowledgement reaches the router.
     fn start(&self, scope: PrincipalScope, request: ModelStart) -> ServiceFuture<'_, ModelStarted>;
 
+    /// Legacy polling port: observes a stream and never requests cancellation.
     fn next(&self, scope: PrincipalScope, stream: ModelCancel) -> ServiceFuture<'_, BrokerEvent>;
 
+    /// Observe currently available output without cancelling or waiting for provider I/O.
+    /// Adapters must implement this port before the router admits streaming work.
+    fn poll(
+        &self,
+        _scope: PrincipalScope,
+        _stream: StreamHandle,
+    ) -> ServiceFuture<'_, Option<BrokerEvent>> {
+        Box::pin(async { Err(canon::codes::SUPERVISOR_NOT_READY) })
+    }
+
+    /// Release one provider queue slot only after the corresponding FD 3 write.
+    fn delivered(
+        &self,
+        _scope: PrincipalScope,
+        _stream: StreamHandle,
+        _index: u64,
+    ) -> ServiceFuture<'_, ()> {
+        Box::pin(async { Err(canon::codes::SUPERVISOR_NOT_READY) })
+    }
+
+    /// Settle all channel-owned work after disconnect, including dropped call/start
+    /// futures whose admission reply never reached the router. No new work is admitted.
+    /// Repeating cleanup returns existing durable settlements without charging again.
+    fn disconnect(&self, _scope: PrincipalScope) -> ServiceFuture<'_, ()> {
+        Box::pin(async { Err(canon::codes::SUPERVISOR_NOT_READY) })
+    }
+
+    /// Repeated cancellation of an admitted handle returns its existing settlement.
     fn cancel(&self, scope: PrincipalScope, request: ModelCancel) -> ServiceFuture<'_, ModelEnd>;
+}
+
+/// Correlation data for polling and delivery acknowledgement; never a cancel command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamHandle {
+    pub request_id: RequestId,
+    pub reservation_id: ReservationId,
 }
 
 /// Only broker-originated records can be forwarded as usage or final settlement.

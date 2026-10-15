@@ -3,10 +3,13 @@
 
 use crate::services::ServiceFuture;
 use canon::{
+    alg::AlgorithmId,
+    codes,
     digest::Digest32,
-    health::{HealthEvidence, OrganId},
+    health::{self, CheckRef, HealthEvidence, OrganId},
     Result,
 };
+use std::{collections::BTreeSet, time::Duration};
 
 /// Context supplied by the supervisor from the actual observed node state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,8 +52,10 @@ pub struct CoherenceBytes(Vec<u8>);
 impl CoherenceBytes {
     /// Row 128: retain only an immune-produced canonical snapshot within the FD 4 cap.
     /// The health reducer validates cells; the frontdoor only relays these bytes.
-    pub fn from_immune(_bytes: Vec<u8>) -> Result<Self> {
-        todo!("row 128")
+    pub fn from_immune(bytes: Vec<u8>) -> Result<Self> {
+        let bounded = canon::fd4::OpaqueHealthSnapshot::new(bytes)?;
+        health::decode_snapshot(bounded.as_bytes())?;
+        Ok(Self(bounded.as_bytes().to_vec()))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -68,8 +73,102 @@ pub trait ImmuneService: Send + Sync {
 /// 130-report cap, and retain all failures for immune. No result feeds back to routing,
 /// credentials, release admission, grant admission or an authority transaction.
 pub async fn collect(
-    _context: ObservationContext,
-    _observers: &[&dyn OrganObserver],
+    context: ObservationContext,
+    observers: &[&dyn OrganObserver],
 ) -> Result<CollectedEvidence> {
-    todo!("row 128")
+    let bound = canon::json::MAX_SAFE_INTEGER as u64;
+    if context.epoch > bound
+        || context.sequence > bound
+        || context.observed_at_ms > bound
+        || observers.len() > OrganId::ALL.len()
+    {
+        return Err(codes::HEALTH_INVALID_EVIDENCE);
+    }
+    let registered: Vec<_> = observers
+        .iter()
+        .map(|observer| (observer.organ(), *observer))
+        .collect();
+    let mut channels = BTreeSet::new();
+    for (organ, _) in &registered {
+        if !channels.insert(*organ) {
+            return Err(codes::HEALTH_INVALID_EVIDENCE);
+        }
+    }
+    let mut collected = CollectedEvidence {
+        context,
+        reports: Vec::new(),
+        unavailable: OrganId::ALL
+            .into_iter()
+            .filter(|organ| !channels.contains(organ))
+            .map(ObservationFailure::Missing)
+            .collect(),
+    };
+    let mut accepted = BTreeSet::new();
+    for (organ, observer) in registered {
+        let outcome = tokio::time::timeout(Duration::from_secs(5), observer.observe(context)).await;
+        let reports = match outcome {
+            Err(_) => {
+                collected
+                    .unavailable
+                    .push(ObservationFailure::Unreachable(organ));
+                continue;
+            }
+            Ok(Err(refusal)) => {
+                collected
+                    .unavailable
+                    .push(ObservationFailure::Refused(organ, refusal));
+                continue;
+            }
+            Ok(Ok(reports)) => reports,
+        };
+        if !valid_reports(context, organ, &reports, &accepted)
+            || collected.reports.len() + reports.len() > health::MAX_EVIDENCE_COUNT
+        {
+            collected.unavailable.push(ObservationFailure::Refused(
+                organ,
+                codes::HEALTH_INVALID_EVIDENCE,
+            ));
+            continue;
+        }
+        accepted.extend(reports.iter().map(|report| report.check));
+        collected.reports.extend(reports);
+    }
+    Ok(collected)
+}
+
+fn valid_reports(
+    context: ObservationContext,
+    organ: OrganId,
+    reports: &[HealthEvidence],
+    accepted: &BTreeSet<CheckRef>,
+) -> bool {
+    if reports.len() > health::MAX_EVIDENCE_COUNT {
+        return false;
+    }
+    let mut batch = BTreeSet::new();
+    reports.iter().all(|report| {
+        let registered = match report.check {
+            CheckRef::Private(id) => health::CHECKS
+                .iter()
+                .any(|definition| definition.id == id && definition.owner == organ),
+            CheckRef::Corner { corner, side } => {
+                side == organ
+                    && health::CORNERS.iter().any(|definition| {
+                        definition.id == corner && definition.owners.contains(&organ)
+                    })
+            }
+        };
+        registered
+            && report.reporter == organ
+            && report.v == health::HEALTH_FORMAT_VERSION
+            && report.algorithm == AlgorithmId::Sha256
+            && report.epoch == context.epoch
+            && report.sequence == context.sequence
+            && report.commitment == context.commitment
+            && report.observed_at_ms <= context.observed_at_ms
+            && report.expires_at_ms >= report.observed_at_ms
+            && report.expires_at_ms <= canon::json::MAX_SAFE_INTEGER as u64
+            && !accepted.contains(&report.check)
+            && batch.insert(report.check)
+    })
 }

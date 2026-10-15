@@ -2,8 +2,11 @@
 //! Supervisor lifecycle wiring; binding and release policy are supplied by their organs.
 
 use crate::{ingress::PrincipalScope, services::ServiceFuture, transport::GuestChannel};
-use canon::{digest::Digest32, ids::SessionId, Result};
-use std::path::PathBuf;
+use canon::{codes, digest::Digest32, ids::SessionId, Result};
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 /// Local paths originate in host configuration, never guest request text.
 #[derive(Clone, Debug)]
@@ -96,9 +99,25 @@ pub struct SupervisorFacts {
     pub stranger_inputs_refused: u64,
 }
 
+/// Router observations are counters and store acknowledgements, never health cells.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuntimeActivity {
+    pub pending_requests: usize,
+    pub pending_proposals: usize,
+    pub session_sequence: Option<(SessionId, u64)>,
+    pub durable_sequence: Option<(SessionId, u64)>,
+    pub memory_calls_forwarded: u64,
+    pub stranger_inputs_refused: u64,
+}
+
 /// Trusted in-process boot/lifecycle adapter. It returns observations only after
 /// the owning organs have completed their checks; it cannot accept guest approvals.
 pub trait RuntimeServices: Send + Sync {
+    /// Obtain the launcher's actual host probe before any guest is created.
+    fn inspect_host(&self) -> Result<launcher::boot::HostBootFacts> {
+        Err(codes::SUPERVISOR_NOT_READY)
+    }
+
     /// Start the one-link and owner-origin services before guest admission. Their
     /// lifetime is independent of the guest so claim and approval polling continue.
     fn start_host_services(&self) -> ServiceFuture<'_, ()>;
@@ -132,12 +151,44 @@ pub trait RuntimeServices: Send + Sync {
     ) -> ServiceFuture<'_, GuestChannel>;
 
     fn stop_guest(&self) -> ServiceFuture<'_, ()>;
+
+    /// Drive this channel through the typed router. The runtime retains its one
+    /// owner and cancels this future before shutting down on binding revocation.
+    fn serve_guest<'a>(
+        &'a self,
+        _channel: &'a mut GuestChannel,
+        _scope: PrincipalScope,
+    ) -> ServiceFuture<'a, ()> {
+        Box::pin(async { Err(codes::SUPERVISOR_NOT_READY) })
+    }
+
+    /// Settle only reservations already started by this guest. Revocation can
+    /// cancel the serving future, so this cleanup is a separate awaited port.
+    fn settle_guest(&self, _scope: PrincipalScope) -> ServiceFuture<'_, ()> {
+        Box::pin(async { Err(codes::SUPERVISOR_NOT_READY) })
+    }
+
+    /// Snapshot actual router counters. An absent adapter is unknown observation.
+    fn activity(&self) -> Result<RuntimeActivity> {
+        Err(codes::SUPERVISOR_NOT_READY)
+    }
+
+    /// Publish observed raw facts to an independent Body observer. This callback
+    /// returns no admission decision and the default invents no observation.
+    fn observe_runtime(&self, _facts: &SupervisorFacts) {}
 }
 
-/// Runtime startup remains unimplemented until the organ bodies land.
+/// Owns one guest lifecycle and its last actual observations.
 pub struct SupervisorRuntime {
     config: RuntimeConfig,
     state: GuestState,
+    host_started: bool,
+    host_boot_recorded: bool,
+    measured_release: Option<RuntimeMeasurement>,
+    bound_subject: Option<PrincipalScope>,
+    fd3_readers: u32,
+    activity: Option<RuntimeActivity>,
+    observed_at_ms: Option<u64>,
 }
 
 impl SupervisorRuntime {
@@ -145,6 +196,13 @@ impl SupervisorRuntime {
         Self {
             config,
             state: GuestState::Stopped,
+            host_started: false,
+            host_boot_recorded: false,
+            measured_release: None,
+            bound_subject: None,
+            fd3_readers: 0,
+            activity: Some(RuntimeActivity::default()),
+            observed_at_ms: host_time().ok(),
         }
     }
 
@@ -162,12 +220,187 @@ impl SupervisorRuntime {
     /// before releasing the child. Failure keeps the guest stopped and leaves
     /// claim/binding/approval UI up without reporting installed confinement.
     /// Revocation or an epoch change closes the guest channel and stops the cage.
-    pub async fn run(&mut self, _services: &dyn RuntimeServices) -> Result<()> {
-        todo!("row 128")
+    pub async fn run(&mut self, services: &dyn RuntimeServices) -> Result<()> {
+        if matches!(
+            self.state,
+            GuestState::Starting | GuestState::Running | GuestState::Stopping
+        ) {
+            return Err(codes::SUPERVISOR_STATE);
+        }
+        self.state = GuestState::Stopped;
+        self.bound_subject = None;
+        self.measured_release = None;
+        self.sample_activity(services);
+        if !self.host_started {
+            if let Err(refusal) = services.start_host_services().await {
+                self.set_state(GuestState::Failed, services);
+                return Err(refusal);
+            }
+            self.host_started = true;
+        }
+        if !self.host_boot_recorded {
+            let probe = match services.inspect_host() {
+                Ok(probe) => probe,
+                Err(refusal) => {
+                    self.set_state(GuestState::Failed, services);
+                    return Err(refusal);
+                }
+            };
+            if let Err(refusal) = services.record_host_boot(probe).await {
+                self.set_state(GuestState::Failed, services);
+                return Err(refusal);
+            }
+            self.host_boot_recorded = true;
+        }
+        let measured = match services.measure_release().await {
+            Ok(measured) => measured,
+            Err(refusal) => {
+                self.set_state(GuestState::AwaitingRelease, services);
+                return Err(refusal);
+            }
+        };
+        self.measured_release = Some(measured);
+        self.set_state(GuestState::AwaitingBinding, services);
+        let scope = services.bound_principal().await?;
+        self.set_state(GuestState::AwaitingRelease, services);
+        services.release_ready(measured).await?;
+        self.set_state(GuestState::AwaitingBinding, services);
+        if services.bound_principal().await? != scope {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        self.set_state(GuestState::AwaitingRelease, services);
+        services.release_ready(measured).await?;
+        self.set_state(GuestState::Starting, services);
+        let mut channel = match services.launch_guest(scope, measured).await {
+            Ok(channel) => channel,
+            Err(refusal) => {
+                self.set_state(GuestState::Failed, services);
+                services.stop_guest().await?;
+                return Err(refusal);
+            }
+        };
+        if channel.is_closed() {
+            self.set_state(GuestState::Failed, services);
+            services.stop_guest().await?;
+            return Err(codes::SUPERVISOR_STATE);
+        }
+        self.bound_subject = Some(scope);
+        self.fd3_readers = 1;
+        self.state = GuestState::Running;
+        self.sample_activity(services);
+        let mut revoked = false;
+        let served = {
+            let mut serving = services.serve_guest(&mut channel, scope);
+            loop {
+                match tokio::time::timeout(Duration::from_millis(100), serving.as_mut()).await {
+                    Ok(result) => break result,
+                    Err(_) => {
+                        self.sample_activity(services);
+                        match tokio::time::timeout(
+                            Duration::from_secs(5),
+                            services.bound_principal(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(current)) if current == scope => {}
+                            Ok(Ok(_)) => {
+                                revoked = true;
+                                break Err(codes::AUMLOK_BINDING_REQUIRED);
+                            }
+                            Ok(Err(refusal)) => {
+                                revoked = true;
+                                break Err(refusal);
+                            }
+                            Err(_) => {
+                                revoked = true;
+                                break Err(codes::SUPERVISOR_NOT_READY);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        self.set_state(GuestState::Stopping, services);
+        let closed = channel.close();
+        drop(channel);
+        self.fd3_readers = 0;
+        let stopped = services.stop_guest().await;
+        let settled = services.settle_guest(scope).await;
+        self.bound_subject = None;
+        self.sample_activity(services);
+        if closed.is_err() || stopped.is_err() || settled.is_err() {
+            self.set_state(GuestState::Failed, services);
+            return closed.and(stopped).and(settled);
+        }
+        let final_state = if revoked {
+            GuestState::AwaitingBinding
+        } else if served.is_err() {
+            GuestState::Failed
+        } else {
+            GuestState::Stopped
+        };
+        self.set_state(final_state, services);
+        served
     }
 
     /// Row 128: expose observed counters from this runtime without making health cells.
     pub fn facts(&self) -> Result<SupervisorFacts> {
-        todo!("row 128")
+        let activity = self.activity.as_ref().ok_or(codes::SUPERVISOR_NOT_READY)?;
+        Ok(SupervisorFacts {
+            observed_at_ms: self.observed_at_ms.ok_or(codes::SUPERVISOR_STATE)?,
+            guest_state: self.state,
+            guest_bound_subject: self.bound_subject,
+            measured_release: self.measured_release,
+            fd3_reader_count: self.fd3_readers,
+            pending_requests: activity.pending_requests,
+            pending_proposals: activity.pending_proposals,
+            session_sequence: activity.session_sequence,
+            durable_sequence: activity.durable_sequence,
+            memory_calls_forwarded: activity.memory_calls_forwarded,
+            stranger_inputs_refused: activity.stranger_inputs_refused,
+        })
     }
+
+    fn sample_activity(&mut self, services: &dyn RuntimeServices) {
+        self.activity = services.activity().ok().filter(valid_activity);
+        self.observed_at_ms = host_time().ok();
+        self.publish(services);
+    }
+
+    fn set_state(&mut self, state: GuestState, services: &dyn RuntimeServices) {
+        self.state = state;
+        self.publish(services);
+    }
+
+    fn publish(&self, services: &dyn RuntimeServices) {
+        if let Ok(facts) = self.facts() {
+            services.observe_runtime(&facts);
+        }
+    }
+}
+
+fn host_time() -> Result<u64> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| codes::SUPERVISOR_STATE)?
+        .as_millis();
+    if millis > canon::json::MAX_SAFE_INTEGER as u128 {
+        return Err(codes::SUPERVISOR_STATE);
+    }
+    Ok(millis as u64)
+}
+
+fn valid_activity(activity: &RuntimeActivity) -> bool {
+    let bound = canon::json::MAX_SAFE_INTEGER as u64;
+    let cursors_valid = match (activity.session_sequence, activity.durable_sequence) {
+        (Some((session, sequence)), Some((durable_session, durable))) => {
+            session == durable_session && durable <= sequence && sequence <= bound
+        }
+        (Some((_, sequence)), None) => sequence <= bound,
+        (None, None) => true,
+        (None, Some(_)) => false,
+    };
+    activity.pending_requests <= crate::transport::MAX_PENDING_REQUESTS
+        && activity.pending_proposals <= crate::transport::MAX_PENDING_PROPOSALS
+        && cursors_valid
 }
