@@ -20,3 +20,24 @@ trailing newline.
 An exchange has no network interface. Post-ceremony export or opt-in relay delivery
 must be composed separately. A relationship bloom, receipt, or claimed location
 never grants authority; self-reported position has no confidence percentage.
+
+`mount.ts` exports `mountPortal(host, options)`, composing the page, browser engine,
+strict-durability IndexedDB attempt journal, camera, separate QR and relationship
+bloom canvases, WebAudio token matching, and local accelerometer observations.
+`contextFormatPinned` is supplied by the host's conductor-controlled data policy;
+the browser has no default approval for an unpinned context format. `node` and
+`deviceEpoch` come from the host. `legacyVerifier` adapts the Rust receipt reader;
+the browser never parses decimal legacy receipts with the canonical frame codec.
+Native camera decoding uses `BarcodeDetector`; hosts without it supply `decode`.
+The host's TypeScript pipeline serves these modules and `style.css`; geometry is
+the already-pinned Pentora JSON imported as data before an exchange.
+
+The method and exact shared context are fixed before the first optical frame.
+Every exchange and received frame reserves a durable attempt before decode.
+Cancelled reservations remain counted; storage failure prevents acceptance.
+Nonce commitments precede targeted reveals. Receipt signatures bind both reveal
+timestamps, both participants, counters, method, layers, exact context and intent.
+The four-frame transcript is ordered A FACE, B FACE, A SEENYOU, B SEENYOU.
+Sound checks the peer's nonce-derived acoustic token. Motion requires a local
+acceleration event; these channel claims do not prove physical proximity.
+Export remains a private manual download; this module opens no network channel.

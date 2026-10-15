@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+.copresence-portal, .copresence-visuals { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #07131e; color: #edf8f6; padding: 1.25rem; }
+.copresence-portal { max-width: 45rem; margin-inline: auto; }
+.copresence-portal h1 { font-size: 1.7rem; font-weight: 500; }
+.copresence-portal label { display: block; margin-block: .9rem; }
+.copresence-portal label span { display: block; margin-bottom: .35rem; }
+.copresence-portal textarea, .copresence-portal select { box-sizing: border-box; width: 100%; border: 1px solid #43606f; border-radius: .4rem; background: #112432; color: inherit; padding: .7rem; font: inherit; }
+.copresence-portal button, .copresence-portal a { display: inline-block; color: inherit; background: #235063; border: 1px solid #5d8a97; border-radius: .4rem; padding: .65rem 1rem; margin: .4rem .6rem .4rem 0; font: inherit; }
+.copresence-portal button:disabled { opacity: .5; }
+.copresence-portal output { display: block; margin: .8rem 0; }
+.copresence-portal p { overflow-wrap: anywhere; }
+.copresence-portal .approved-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; padding: .7rem; border: 1px solid #43606f; }
+.copresence-portal [hidden] { display: none; }
+.copresence-visuals { display: grid; max-width: 45rem; margin-inline: auto; gap: .8rem; }
+.copresence-visuals canvas { width: 100%; height: auto; image-rendering: pixelated; }
+.copresence-visuals video { width: min(100%, 20rem); height: auto; transform: scaleX(-1); }

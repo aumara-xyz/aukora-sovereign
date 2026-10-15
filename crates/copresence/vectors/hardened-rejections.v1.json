@@ -1,0 +1,89 @@
+{
+  "schema": "aukora.copresence.hardened-rejections.v1",
+  "format_schema": "aukora.copresence.hardened.v1",
+  "frame_schema": "aukora.copresence.frame.v1",
+  "now_seconds": 1,
+  "expected_context": {
+    "a": {
+      "node": "00000000000000000000000000000001",
+      "device_key": "0466d10f775d8eb1738b7a8bc7bd10aaba40434757716dd61da05f6644a5bbea556a1e330f63c42aa02e8aebeaa70eec07e73a7821aefc8064552157423e710ed5",
+      "device_epoch": 0,
+      "session_id": "00000000000000000000000000000011",
+      "attempt_sequence": 1
+    },
+    "b": {
+      "node": "00000000000000000000000000000002",
+      "device_key": "046216a6c80e4225cfea0dfdd8835013d35b7c413d8687c9ca1844f84586ad1ca918606372966259896840a5f4a73621fe96921c9df71231d081eb891056717a0e",
+      "device_epoch": 0,
+      "session_id": "00000000000000000000000000000022",
+      "attempt_sequence": 1
+    },
+    "method": "screen-to-screen",
+    "required_layers": {"sound": false, "motion": false, "intent_ack": false},
+    "purpose": "pair",
+    "intent": null
+  },
+  "initial_face": {
+    "participant": "expected_context.a",
+    "method": "screen-to-screen",
+    "required_layers": {"sound": false, "motion": false, "intent_ack": false},
+    "nonce_commitment": "0000000000000000000000000000000000000000000000000000000000000000",
+    "t_seconds": 1,
+    "frame_index": 0
+  },
+  "transcript_frame_order": ["A FACE", "B FACE", "A SEENYOU", "B SEENYOU"],
+  "transcript_order_rule": "Protocol role order is shared by both devices; concurrent scan arrival order does not change it.",
+  "cases": [
+    {
+      "name": "legacy-receipt-schema-stays-legacy",
+      "entrypoint": "verify_receipt",
+      "input_utf8": "{\"body\":{},\"schema\":\"copresence.v0\"}",
+      "expected": "copresence:receipt-schema"
+    },
+    {
+      "name": "unknown-receipt-schema-refuses",
+      "entrypoint": "verify_receipt",
+      "input_utf8": "{\"body\":{},\"schema\":\"aukora.copresence.hardened.v2\"}",
+      "expected": "copresence:receipt-schema"
+    },
+    {
+      "name": "unknown-envelope-field-refuses",
+      "entrypoint": "verify_receipt",
+      "input_utf8": "{\"body\":{},\"extra\":null,\"schema\":\"aukora.copresence.hardened.v1\"}",
+      "expected": "copresence:fields"
+    },
+    {
+      "name": "unknown-frame-schema-refuses",
+      "entrypoint": "Exchange.observe",
+      "input_utf8": "{\"body\":{},\"schema\":\"aukora.copresence.frame.v2\"}",
+      "expected": "copresence:frame-schema"
+    },
+    {
+      "name": "unknown-operation-refuses",
+      "entrypoint": "Exchange.observe",
+      "input_utf8": "{\"body\":{\"body\":{\"type\":\"APPROVE\"},\"signature\":\"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"},\"schema\":\"aukora.copresence.frame.v1\"}",
+      "expected": "copresence:frame-type"
+    },
+    {
+      "name": "nonce-disclosure-in-first-frame-refuses",
+      "entrypoint": "Exchange.observe",
+      "input_utf8": "{\"body\":{\"body\":{\"frame_index\":0,\"method\":\"screen-to-screen\",\"nonce\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"nonce_commitment\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"participant\":{},\"required_layers\":{\"intent_ack\":false,\"motion\":false,\"sound\":false},\"t_seconds\":1,\"type\":\"FACE\"},\"signature\":\"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"},\"schema\":\"aukora.copresence.frame.v1\"}",
+      "expected": "copresence:fields"
+    }
+  ],
+  "encoding_cases": [
+    {"name": "both-timestamps-enter-core", "t_a_seconds": 1, "t_b_seconds": 2, "timestamp_bytes_hex": "00000000000000010000000000000002"},
+    {"name": "zero-window-is-allowed", "t_a_seconds": 2, "t_b_seconds": 2, "window_seconds": 0},
+    {"name": "ten-second-window-is-allowed", "t_a_seconds": 1, "t_b_seconds": 11, "window_seconds": 10},
+    {"name": "negative-window-refuses", "t_a_seconds": 2, "t_b_seconds": 1, "expected": "copresence:negative-time-skew"},
+    {"name": "eleven-second-window-refuses", "t_a_seconds": 1, "t_b_seconds": 12, "expected": "copresence:ceremony-window"},
+    {"name": "safe-integer-upper-bound", "decimal": "9007199254740991", "bytes_hex": "001fffffffffffff"}
+  ],
+  "accounting": {
+    "precondition": "Each receipt case uses expected_context. Each frame case starts a fresh Exchange from initial_face, resolving participant to expected_context.a. The journal starts at sequence 1, echoes the requested local_session, and durably finishes each ticket once.",
+    "before_decode": "Each case reserves one new ticket before decoding its input.",
+    "on_refusal": "The reserved ticket finishes with the exact refusal code; an active exchange also finishes its initial ticket.",
+    "on_storage_failure": "No verified receipt or verified exchange state is returned."
+  },
+  "authority": "none"
+}

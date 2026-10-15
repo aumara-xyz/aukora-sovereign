@@ -2,10 +2,14 @@
 //! New exchange contracts; none changes the pinned `copresence.v0` core.
 //!
 //! Wire envelope is `{schema, body}`. Schema and signing domains distinguish it
-//! from old portal frames. Each encoder and verifier currently refuses.
+//! from old portal frames. Device signatures supply evidence, never authority.
 
-use crate::{PublicKeyBytes, Refusal, Result, SignatureBytes, UNIMPLEMENTED};
+use crate::{PublicKeyBytes, Refusal, Result, SignatureBytes};
 use canon::{digest::Digest32, ids::NodeId};
+
+mod codec;
+mod crypto;
+mod exchange;
 
 pub const RECEIPT_SCHEMA: &str = "aukora.copresence.hardened.v1";
 pub const FRAME_SCHEMA: &str = "aukora.copresence.frame.v1";
@@ -184,7 +188,7 @@ pub enum Stage {
     Refused,
 }
 
-/// No public constructor or transition can mint a verified receipt in wave 0.
+/// Successful construction requires both device signatures and durable accounting.
 #[derive(Clone, Debug)]
 pub struct VerifiedReceipt {
     body: ReceiptBody,
@@ -210,6 +214,7 @@ impl VerifiedReceipt {
 pub struct Exchange {
     method: Method,
     stage: Stage,
+    state: exchange::State,
 }
 
 impl Exchange {
@@ -221,40 +226,73 @@ impl Exchange {
         self.stage
     }
 
-    /// Counts before starting an exchange; wave 0 cannot start one.
-    pub fn begin(_face: Face, _journal: &mut dyn AttemptJournal) -> Result<Self> {
-        Err(UNIMPLEMENTED)
+    /// Authenticated challenge transcript completion, before receipt acceptance.
+    pub fn verified_core(&self) -> Option<(Digest32, u64)> {
+        if self.stage == Stage::Bloom {
+            exchange::verified(&self.state)
+        } else {
+            None
+        }
+    }
+
+    /// Counts before validating the local first frame.
+    pub fn begin(face: Face, journal: &mut dyn AttemptJournal) -> Result<Self> {
+        exchange::begin(face, journal)
     }
 
     /// Each input is a new counted attempt, including invalid frame bytes.
     /// Unknown frames, changed methods, wrong peers and replays refuse.
     pub fn observe(
         &mut self,
-        _frame_bytes: &[u8],
-        _now_seconds: u64,
-        _journal: &mut dyn AttemptJournal,
+        frame_bytes: &[u8],
+        now_seconds: u64,
+        journal: &mut dyn AttemptJournal,
     ) -> Result<Stage> {
-        Err(UNIMPLEMENTED)
+        exchange::observe(self, frame_bytes, now_seconds, journal)
     }
 }
 
 /// Binary preimage layout is declared in vectors/hardened-v1.json.
-pub fn core_digest(_input: &CoreInput) -> Result<Digest32> {
-    Err(UNIMPLEMENTED)
+pub fn core_digest(input: &CoreInput) -> Result<Digest32> {
+    crypto::core(input)
 }
 
 /// Encodes only the new outer envelope; no v0 frame receives additional keys.
-pub fn encode_frame(_frame: &SignedFrame) -> Result<Vec<u8>> {
-    Err(UNIMPLEMENTED)
+pub fn encode_frame(frame: &SignedFrame) -> Result<Vec<u8>> {
+    codec::encode_frame(frame)
 }
 
 /// Verifies both device signatures and exact expected context after counting.
 /// A single-use success requires durable journal completion, even offline.
 pub fn verify_receipt(
-    _bytes: &[u8],
-    _expected: &Context,
-    _now_seconds: u64,
-    _journal: &mut dyn AttemptJournal,
+    bytes: &[u8],
+    expected: &Context,
+    now_seconds: u64,
+    journal: &mut dyn AttemptJournal,
 ) -> Result<VerifiedReceipt> {
-    Err(UNIMPLEMENTED)
+    let ticket = journal.begin(expected.a.session_id)?;
+    let result = (|| {
+        crypto::validate_context(expected)?;
+        crypto::validate_ticket(&ticket, expected.a.session_id)?;
+        let body = codec::read_receipt(bytes)?;
+        if &body.core.context != expected {
+            return Err(crypto::refusal("context-mismatch"));
+        }
+        let digest = crypto::verify_body(&body, now_seconds)?;
+        Ok((body, digest))
+    })();
+    match result {
+        Ok((body, digest)) => {
+            journal.finish(ticket.clone(), AttemptOutcome::Accepted { receipt: digest })?;
+            Ok(VerifiedReceipt {
+                body,
+                digest,
+                counted_attempt: ticket,
+            })
+        }
+        Err(reason) => {
+            journal.finish(ticket, AttemptOutcome::Refused(reason))?;
+            Err(reason)
+        }
+    }
 }
