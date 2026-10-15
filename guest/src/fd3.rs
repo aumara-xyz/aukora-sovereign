@@ -7,7 +7,7 @@ use canon::{
     frame::{self, Disposition, Frame, FrameError, FrameId},
     ids::{RequestId, ReservationId},
     provenance::{Provenance, Source},
-    session::{ModelEnd, ModelError, ModelStream},
+    session::{ModelEnd, ModelError, ModelStarted, ModelStream},
     Refusal, Result,
 };
 use std::io::{Read, Write};
@@ -29,12 +29,10 @@ pub trait SupervisorLink {
     /// Acknowledges a delta only after its consumer has accepted the data.
     fn acknowledge_delta(
         &mut self,
-        _request_id: RequestId,
-        _reservation_id: ReservationId,
-        _index: u64,
-    ) -> Result<()> {
-        Ok(())
-    }
+        request_id: RequestId,
+        reservation_id: ReservationId,
+        index: u64,
+    ) -> Result<()>;
 }
 
 /// Constructs an Auma-labelled v2 request; the supervisor stamps its own ingress.
@@ -254,6 +252,20 @@ impl PendingRequests {
             {
                 Ok(())
             }
+            (
+                state @ PendingState::Starting {
+                    request,
+                    reservation,
+                    ..
+                },
+                Reply::ModelCancelled(end),
+            ) if self.entries.iter().any(|entry| {
+                matches!(entry.state, PendingState::Cancel { request: r, reservation: s }
+                    if r == *request && s == *reservation)
+            }) =>
+            {
+                check_cancel(state, end)
+            }
             (PendingState::Streaming(stream), reply) => check_stream(stream, reply),
             (
                 PendingState::Cancel {
@@ -262,8 +274,8 @@ impl PendingRequests {
                 },
                 Reply::ModelCancelled(end),
             ) => {
-                let stream = self.stream(*request, *reservation)?;
-                check_stream(stream, &Reply::ModelCancelled(end.clone()))
+                let original = self.model_index(*request, *reservation)?;
+                check_cancel(&self.entries[original].state, end)
             }
             _ => Err(codes::FRAME_STREAM_ORDER),
         }
@@ -274,27 +286,17 @@ impl PendingRequests {
     pub fn observe(&mut self, frame: &Frame<Reply>) -> Result<()> {
         self.check(frame)?;
         let index = self.index(&frame.id)?;
-        if let (
-            PendingState::Cancel {
-                request,
-                reservation,
-            },
-            Reply::ModelCancelled(end),
-        ) = (&self.entries[index].state, &frame.body)
-        {
-            let handle = (*request, *reservation);
-            self.stream_mut(handle.0, handle.1)?.observe_end(end)?;
-            let original = self
-                .entries
-                .iter()
-                .position(|entry| {
-                    exact_handle(&entry.state, handle.0, handle.1)
-                        && !matches!(entry.state, PendingState::Cancel { .. })
-                })
-                .ok_or(codes::FRAME_STREAM_ORDER)?;
+        if let Reply::ModelCancelled(end) = &frame.body {
+            let original = self.model_index(end.request_id, end.reservation_id)?;
+            if let PendingState::Streaming(stream) = &mut self.entries[original].state {
+                stream.observe_end(end)?;
+            }
             let stream = self.entries.remove(original);
             self.retain_unacknowledged(stream);
-            self.finish(&frame.id)?;
+            self.entries.retain(|entry| {
+                !matches!(entry.state, PendingState::Cancel { request, reservation }
+                    if request == end.request_id && reservation == end.reservation_id)
+            });
             return Ok(());
         }
         let entry = &mut self.entries[index];
@@ -387,16 +389,12 @@ impl PendingRequests {
     fn find(&self, id: &FrameId) -> Result<&Pending> {
         Ok(&self.entries[self.index(id)?])
     }
-    fn stream(&self, request: RequestId, reservation: ReservationId) -> Result<&ModelStream> {
+    fn model_index(&self, request: RequestId, reservation: ReservationId) -> Result<usize> {
         self.entries
             .iter()
-            .find_map(|entry| match &entry.state {
-                PendingState::Streaming(stream)
-                    if stream.request_id() == request && stream.reservation_id() == reservation =>
-                {
-                    Some(stream)
-                }
-                _ => None,
+            .position(|entry| {
+                exact_handle(&entry.state, request, reservation)
+                    && !matches!(entry.state, PendingState::Cancel { .. })
             })
             .ok_or(codes::FRAME_STREAM_ORDER)
     }
@@ -481,6 +479,25 @@ fn check_stream(stream: &ModelStream, reply: &Reply) -> Result<()> {
         return Err(codes::FRAME_STREAM_ORDER);
     }
     Ok(())
+}
+
+fn check_cancel(state: &PendingState, end: &ModelEnd) -> Result<()> {
+    match state {
+        PendingState::Starting {
+            request,
+            reservation,
+            window,
+        } => ModelStream::new(&ModelStarted {
+            request_id: *request,
+            reservation_id: *reservation,
+            max_pending_chunks: *window,
+        })?
+        .observe_end(end),
+        PendingState::Streaming(stream) => {
+            check_stream(stream, &Reply::ModelCancelled(end.clone()))
+        }
+        _ => Err(codes::FRAME_STREAM_ORDER),
+    }
 }
 
 fn check_end_receipt(end: &ModelEnd) -> Result<()> {

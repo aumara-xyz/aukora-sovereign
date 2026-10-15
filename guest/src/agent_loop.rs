@@ -623,14 +623,27 @@ impl<L: SupervisorLink> BoundedAgentLoop<L> {
                 if cancellation_reply && !cancelled {
                     return Err(codes::FRAME_STREAM_ORDER);
                 }
-                model
-                    .stream
-                    .as_mut()
-                    .ok_or(codes::FRAME_STREAM_ORDER)?
-                    .observe_end(&end)?;
+                if let Some(stream) = model.stream.as_mut() {
+                    stream.observe_end(&end)?;
+                } else if cancelled
+                    && model.outstanding.cancellation_requested
+                    && model.cancel_id.is_some()
+                    && model.receipt.is_none()
+                {
+                    // A cancellation can settle before the start acknowledgement arrives.
+                    let mut stream = ModelStream::new(&canon::session::ModelStarted {
+                        request_id: model.outstanding.request_id,
+                        reservation_id: model.outstanding.reservation_id,
+                        max_pending_chunks: model.requested_window,
+                    })?;
+                    stream.observe_end(&end)?;
+                    model.stream = Some(stream);
+                } else {
+                    return Err(codes::FRAME_STREAM_ORDER);
+                }
                 model.receipt = Some(end.receipt.clone());
                 model.successful = !cancelled && !model.outstanding.cancellation_requested;
-                if cancellation_reply {
+                if cancelled {
                     model.cancel_id = None;
                 }
                 if !self.stopping {

@@ -53,11 +53,12 @@ impl TargetName {
 }
 
 /// Checks cover closed operation, preset/mode, target law and canonical payload.
-/// The digest identifies the bytes judged; it is evidence, never owner authorization.
+/// The digest identifies a normalized validation frame, never owner authorization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PhiAssessment {
     pub state: PhiState,
     pub checks_passed: u8,
+    /// Hash of the minimum-version Auma frame with id `guard`, not a sent frame.
     pub request_sha256: Option<Digest32>,
 }
 
@@ -97,14 +98,13 @@ impl LocalGate {
             request_sha256: None,
         };
         let (operation, target, consequential) = classification(request);
-        assessment.checks_passed += 1;
         if !self.preset.permits(operation)
             || (consequential && mode != SessionMode::Build)
             || self.preset.mode() != mode
         {
             return (assessment, Some(codes::FRAME_UNKNOWN_KIND));
         }
-        assessment.checks_passed += 1;
+        assessment.checks_passed += 2;
         if let Some(target) = target {
             let target = match TargetName::new(target.to_owned()) {
                 Ok(target) => target,
@@ -115,7 +115,7 @@ impl LocalGate {
             }
         }
         assessment.checks_passed += 1;
-        let bytes = match checked_payload(request) {
+        let bytes = match checked_payload(request, self.preset, mode) {
             Ok(bytes) => bytes,
             Err(refusal) => return (assessment, Some(refusal)),
         };
@@ -171,10 +171,10 @@ fn classification(request: &Request) -> (BuiltinOperation, Option<&str>, bool) {
     }
 }
 
-fn checked_payload(request: &Request) -> Result<Vec<u8>> {
+fn checked_payload(request: &Request, preset: PresetId, mode: SessionMode) -> Result<Vec<u8>> {
     match request {
-        Request::ModelCall(call) => check_model_tools(call)?,
-        Request::ModelStart(start) => check_model_tools(&start.call)?,
+        Request::ModelCall(call) => check_model_tools(call, preset, mode)?,
+        Request::ModelStart(start) => check_model_tools(&start.call, preset, mode)?,
         Request::SessionAppend(append) => {
             crate::rails::validate_entry_origin(&append.entry)?;
             if append.entry.provenance.source != Source::Auma {
@@ -194,15 +194,18 @@ fn checked_payload(request: &Request) -> Result<Vec<u8>> {
     })
 }
 
-fn check_model_tools(call: &ModelCall) -> Result<()> {
+fn check_model_tools(call: &ModelCall, preset: PresetId, mode: SessionMode) -> Result<()> {
     if call.tools.len() > 5 {
         return Err(codes::FRAME_INVALID_FIELD);
     }
     for (index, tool) in call.tools.iter().enumerate() {
-        if !matches!(
-            tool.name.as_str(),
-            "propose" | "read" | "memory.put" | "memory.recall" | "memory.list"
-        ) {
+        let operation = match tool.name.as_str() {
+            "propose" | "read" => BuiltinOperation::Proposals,
+            "memory.put" => BuiltinOperation::MemoryPropose,
+            "memory.recall" | "memory.list" => BuiltinOperation::MemoryRead,
+            _ => return Err(codes::FRAME_UNKNOWN_KIND),
+        };
+        if !preset.permits(operation) || !PresetId::for_mode(mode).permits(operation) {
             return Err(codes::FRAME_UNKNOWN_KIND);
         }
         if call.tools[..index]
