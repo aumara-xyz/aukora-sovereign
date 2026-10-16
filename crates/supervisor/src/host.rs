@@ -75,14 +75,22 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     let ledger = Arc::new(ledger);
     let sessions = state.subdirectory("browser-sessions")?;
     let descriptor = sessions.try_clone().map_err(|_| codes::SUPERVISOR_STATE)?;
-    match std::fs::symlink_metadata(
-        config
-            .state_root
-            .join("browser-sessions")
-            .join("sessions-v1.json"),
+    match rustix::fs::statat(
+        &sessions,
+        "sessions-v1.json",
+        rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
     ) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            DurableSessions::initialize(descriptor, state.node, boundary.shell, boundary.owner)?;
+        Err(rustix::io::Errno::NOENT) => {
+            ledger.transaction(|transaction| {
+                require_initial_sessions(transaction, &sessions)?;
+                DurableSessions::initialize(
+                    descriptor,
+                    state.node,
+                    boundary.shell,
+                    boundary.owner,
+                )?;
+                Ok(())
+            })?;
         }
         Ok(_) => {
             DurableSessions::open(descriptor, state.node, boundary.shell, boundary.owner)?;
@@ -210,6 +218,29 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         runtime_refusal: Mutex::new(None),
     });
     crate::web::serve(host).await
+}
+
+fn require_initial_sessions(transaction: &aura::LedgerTxn<'_>, sessions: &File) -> Result<()> {
+    let missing = canon::Refusal {
+        organ: "supervisor",
+        reason: "sessions-missing",
+    };
+    // Claims are served only after genesis commits. An empty install context also
+    // permits restarting a first boot interrupted after node identity creation.
+    let (context, _, _) = transaction.floor_install_context().map_err(|_| missing)?;
+    if context.sequence != 1 || context.previous_hash.is_some() {
+        return Err(missing);
+    }
+    let mut entries = rustix::fs::Dir::read_from(sessions).map_err(|_| missing)?;
+    while let Some(entry) = entries.read() {
+        let entry = entry.map_err(|_| missing)?;
+        match entry.file_name().to_bytes() {
+            b"." | b".." | b"sessions.lock" => {}
+            // Retain claim databases, their sidecars and incomplete session writes.
+            _ => return Err(missing),
+        }
+    }
+    Ok(())
 }
 
 impl Host {
