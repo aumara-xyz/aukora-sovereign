@@ -7,9 +7,10 @@ import { consumeClaim } from "./claim/transport.js";
 import { deadline, exact, handle, options, post, state, text } from "./transport.js";
 import type { Options, RecordValue } from "./transport.js";
 import { loadAumlok } from "./aumlok.js";
+import { ownerIcon } from "./icons.js";
+import { explainOwnerError, phraseAcknowledgement, phraseInputs, renderPhrase } from "./phrase-layout.js";
 
-const BANDS = ["ANCHOR", "ROOT", "ROOT", "UNITE", "UNITE", "RISE", "RISE"] as const;
-const SYMBOLS = { claim: "◇", passkey: "⌘", phrase: "✦", signin: "↗" };
+const ICONS = { claim: "owner", passkey: "aumlok", phrase: "identity", signin: "surface" } as const;
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, content = "", className = ""): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -18,18 +19,9 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, content = "", cl
   return node;
 }
 
-function explanation(error: unknown): string {
-  const code = error instanceof Error ? error.message : typeof error === "string" ? error : "owner:request-refused";
-  if (error instanceof DOMException && ["NotAllowedError", "AbortError"].includes(error.name)) {
-    return "Passkey cancelled. Try again when ready.";
-  }
-  if (code === "aumlok:word-mismatch" || code === "aumlok:phrase-invalid") return "Check all seven words, in order.";
-  if (code === "aumlok:enrolment-closed") return "A passkey is enrolled. Sign in to continue.";
-  if (code === "aumlok:ceremony-expired") return "This request expired. Start the step again.";
-  return /^[a-z][a-z0-9_-]*:[a-z0-9-]+$/.test(code) ? code : "owner:request-unconfirmed";
-}
-
-export function createOnboarding(config: OwnerConfiguration, initialClaim: string): OwnerPane {
+export function createOnboarding(
+  config: OwnerConfiguration, initialClaim: string, initialStage: "signin" | "enrol" = "signin",
+): OwnerPane {
   let claim = initialClaim;
   return (context: OwnerPaneContext) => {
     if (!["claim", "passkey", "phrase"].includes(context.route.pane)) throw new Error("owner:unknown-route");
@@ -45,8 +37,7 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
     let ceremony: Options | undefined;
     let submission: RecordValue | undefined;
     let bindingId: string | undefined;
-    let bindingExpires: number | undefined;
-    let phraseShown = false;
+    let phrase: string[] = [];
     const fields: HTMLInputElement[] = [];
     const panel = element("section", "", "onboarding");
     const progress = element("ol", "", "owner-steps");
@@ -82,7 +73,8 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
       detail.textContent = description;
       progress.replaceChildren();
       for (const name of ["claim", "passkey", "phrase", "signin"] as const) {
-        const step = element("li", SYMBOLS[name]);
+        const step = element("li");
+        step.append(ownerIcon(ICONS[name]));
         step.title = name === "phrase" ? "Seven words" : name === "signin" ? "Sign in" : name;
         step.setAttribute("aria-label", step.title);
         if (name === stage) step.setAttribute("aria-current", "step");
@@ -96,18 +88,22 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
       controls.querySelectorAll("button").forEach(button => { button.disabled = true; });
       status.textContent = "Working…";
       try { await action(); }
-      catch (error) { if (!signal.aborted) status.textContent = explanation(error); }
+      catch (error) { if (!signal.aborted) status.textContent = explainOwnerError(error); }
       finally {
         busy = false;
-        if (!signal.aborted) controls.querySelectorAll("button").forEach(button => { button.disabled = false; });
+        if (!signal.aborted) controls.querySelectorAll("button").forEach(button => {
+          button.disabled = button.dataset.locked === "true";
+        });
       }
     }
 
-    function button(label: string, action: () => Promise<void> | void, secondary = false): void {
-      const node = element("button", label, secondary ? "secondary" : "primary");
+    function button(label: string, action: () => Promise<void> | void, secondary = false): HTMLButtonElement {
+      const node = element("button", "", secondary ? "secondary" : "primary");
+      node.append(ownerIcon(ICONS[active]), element("span", label));
       node.type = "button";
       node.addEventListener("click", () => { void run(async () => { await action(); }); }, { signal });
       controls.append(node);
+      return node;
     }
 
     function input(label: string, band = ""): HTMLInputElement {
@@ -129,7 +125,7 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
     function claimScreen(): void {
       screen("claim", "Your node", claim ? "Your claim link is ready." : "Open your claim link, or paste it here.");
       const entry = claim ? undefined : input("Claim link");
-      button("◇  Claim", async () => {
+      button("Claim", async () => {
         const token = claimToken(claim || entry?.value || "", config.shellOrigin);
         claim = "";
         clearFields();
@@ -148,8 +144,8 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
     function enrolScreen(): void {
       ceremony = undefined;
       screen("passkey", "Your passkey", "Create it, then confirm possession on your device.");
-      button("⌘  Create passkey", async () => {
-        if (ceremony && ceremony.expires <= Date.now()) ceremony = undefined;
+      button("Create passkey", async () => {
+        if (ceremony && ceremony.expires <= performance.now()) ceremony = undefined;
         ceremony ??= options(await post("/api/enrol/start", {}, signal), true, config.relyingParty);
         live();
         if (!ceremony.registration) { possessionScreen(); return; }
@@ -168,8 +164,8 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
 
     function possessionScreen(): void {
       screen("passkey", "Confirm your passkey", "One more device check completes enrolment.");
-      button("⌘  Confirm passkey", async () => {
-        if (ceremony && ceremony.expires <= Date.now()) ceremony = undefined;
+      button("Confirm passkey", async () => {
+        if (ceremony && ceremony.expires <= performance.now()) ceremony = undefined;
         if (!ceremony) ceremony = options(await post("/api/enrol/start", {}, signal), true, config.relyingParty);
         if (ceremony.registration) { enrolScreen(); return; }
         if (!ceremony.assertion) throw new Error("aumlok:ceremony-state");
@@ -187,9 +183,11 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
     function bindingScreen(): void {
       ceremony = undefined;
       bindingId = undefined;
-      bindingExpires = undefined;
+      phrase.fill("");
+      phrase = [];
       screen("phrase", "Seven words", "An anchor, then ROOT · UNITE · RISE.");
-      button("✦  Reveal my words", async () => {
+      button("Reveal my words", async () => {
+        await prepareBinding();
         if (!wasm) {
           const loaded = await loadAumlok(signal);
           if (signal.aborted) { loaded.dispose(); return; }
@@ -199,58 +197,75 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
         live();
         const draw = wasm.call({ op: "prepare", owner_origin: config.ownerOrigin, shell_origin: config.shellOrigin });
-        const phrase = text(draw.phrase, 256).split(" ");
+        phrase = text(draw.phrase, 256).split(" ");
         if (phrase.length !== 7 || phrase.some(word => !/^[a-z]+$/.test(word))
           || draw.minimum_entropy_bits !== 41.5 || draw.average_entropy_bits !== 43.1) throw new Error("aumlok:phrase-invalid");
-        phraseShown = true;
-        screen("phrase", "Keep these seven words", "Picture one place for each pair.");
-        const bands = element("ol", "", "phrase-bands");
-        phrase.forEach((word, index) => {
-          const row = element("li", "", `word-band band-${BANDS[index].toLowerCase()}`);
-          row.append(element("span", BANDS[index], "word-label"), element("strong", word));
-          bands.append(row);
-        });
-        phrase.fill("");
-        content.append(bands, element("p", "never type these words into an AI", "phrase-warning"),
-          element("p", "41.5 bits minimum · 43.1 average", "phrase-entropy"));
-        button("I saved them · continue", () => { confirmationScreen(); });
+        showWords();
       });
       button("Sign in", () => { signinScreen(); }, true);
     }
 
+    function showWords(): void {
+      screen("phrase", "Keep these seven words", "Picture one place for each pair.");
+      content.append(renderPhrase(phrase), element("p", "never type these words into an AI", "phrase-warning"));
+      button("Continue", () => { confirmationScreen(); });
+    }
+
     function confirmationScreen(): void {
-      screen("phrase", "Your words, once more", "Enter all seven in order. They stay on this owner page.");
-      const inputs = BANDS.map((band, index) => {
-        const entry = input(`${index + 1} · ${band}`, `band-${band.toLowerCase()}`);
-        entry.maxLength = 64;
-        return entry;
-      });
-      content.append(element("p", "never type these words into an AI", "phrase-warning"));
-      button("✦  Seal my identity", async () => {
-        if (!wasm || !phraseShown) throw new Error("aumlok:phrase-locked");
+      screen("phrase", "Your words, once more", "Type all seven in order.");
+      const { element: entries, inputs } = phraseInputs(signal);
+      fields.push(...inputs);
+      const acknowledgement = phraseAcknowledgement(signal);
+      content.append(entries, element("p", "never type these words into an AI", "phrase-warning"), acknowledgement.element);
+      const seal = button("Seal my identity", async () => {
+        if (!wasm || phrase.length !== 7) throw new Error("aumlok:phrase-locked");
+        if (!acknowledgement.checked()) return;
+        const wrong: number[] = [];
+        inputs.forEach((entry, at) => {
+          const mismatch = entry.value.trim().toLowerCase() !== phrase[at];
+          entry.toggleAttribute("aria-invalid", mismatch);
+          if (mismatch) { entry.setAttribute("aria-invalid", "true"); wrong.push(at + 1); }
+        });
+        if (wrong.length) {
+          status.textContent = `Check word${wrong.length === 1 ? "" : "s"} ${wrong.join(", ")}.`;
+          inputs[wrong[0] - 1].focus();
+          return;
+        }
         let entered = inputs.map(entry => entry.value.trim()).join(" ");
         try { submission = wasm.call({ op: "confirm", entered }); }
-        finally { entered = ""; inputs.forEach(entry => { entry.value = ""; }); }
+        finally { entered = ""; }
         exact(submission, ["v", "envelope", "identity_public_key", "subject"]);
         if (submission.v !== 2 || !/^aukora:1:[0-9a-f]{64}$/.test(text(submission.subject))) throw new Error("aumlok:binding-input");
-        phraseShown = false;
+        phrase.fill("");
+        phrase = [];
         wasm.call({ op: "discard" });
         approvalScreen();
       });
+      seal.disabled = true;
+      seal.dataset.locked = "true";
+      acknowledgement.onChange(() => {
+        seal.dataset.locked = String(!acknowledgement.checked());
+        seal.disabled = busy || !acknowledgement.checked();
+      });
+      button("See my words again", () => { showWords(); }, true);
       inputs[0].focus();
+    }
+
+    async function prepareBinding(): Promise<void> {
+      const prepare = await post("/api/binding/prepare", {}, signal);
+      exact(prepare, ["ceremony_id", "expires_at", "schema"]);
+      if (prepare.schema !== "aukora-owner-binding-v2") throw new Error("aumlok:ceremony-kind");
+      if (!Number.isSafeInteger(prepare.expires_at) || (prepare.expires_at as number) < 0) {
+        throw new Error("owner:response-invalid");
+      }
+      bindingId = handle(prepare.ceremony_id);
     }
 
     function approvalScreen(): void {
       screen("phrase", "Bind your identity", "Your passkey approves this sealed identity.");
-      button("⌘  Bind with passkey", async () => {
+      button("Bind with passkey", async () => {
         if (!submission) throw new Error("aumlok:binding-input");
-        if (!bindingId || !bindingExpires || bindingExpires <= Date.now()) {
-          const prepare = await post("/api/binding/prepare", {}, signal);
-          exact(prepare, ["ceremony_id", "expires_at", "schema"]);
-          if (prepare.schema !== "aukora-owner-binding-v2") throw new Error("aumlok:ceremony-kind");
-          bindingId = handle(prepare.ceremony_id);
-          bindingExpires = deadline(prepare.expires_at);
-        }
+        await prepareBinding();
         const prepared = options(await post("/api/binding/confirm", { ceremony_id: bindingId, submission }, signal), false, config.relyingParty);
         if (prepared.id !== bindingId || !prepared.assertion) throw new Error("aumlok:ceremony-state");
         const assertion = await passkey.assert(prepared.assertion, signal);
@@ -265,14 +280,14 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
 
     function signinScreen(): void {
       if (wasm) wasm.call({ op: "discard" });
-      phraseShown = false;
+      phrase.fill("");
+      phrase = [];
       submission = undefined;
       ceremony = undefined;
       bindingId = undefined;
-      bindingExpires = undefined;
       screen("signin", "Welcome home", "Sign in with your passkey.");
-      button("↗  Sign in", async () => {
-        if (ceremony && ceremony.expires <= Date.now()) ceremony = undefined;
+      button("Sign in", async () => {
+        if (ceremony && ceremony.expires <= performance.now()) ceremony = undefined;
         ceremony ??= options(await post("/api/signin/start", {}, signal), false, config.relyingParty);
         if (!ceremony.assertion) throw new Error("aumlok:ceremony-state");
         deadline(ceremony.expires);
@@ -289,6 +304,8 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
       if (signal.aborted) return;
       lifetime.abort();
       clearFields();
+      phrase.fill("");
+      phrase = [];
       claim = "";
       submission = undefined;
       ceremony = undefined;
@@ -301,6 +318,7 @@ export function createOnboarding(config: OwnerConfiguration, initialClaim: strin
     if (context.signal.aborted) dispose();
     else if (active === "claim") claimScreen();
     else if (active === "phrase") bindingScreen();
+    else if (initialStage === "enrol") enrolScreen();
     else signinScreen();
     return dispose;
   };

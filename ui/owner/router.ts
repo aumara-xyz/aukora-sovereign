@@ -22,10 +22,10 @@ function witnessText(observation: WitnessObservation): string {
   const reasons = {
     rollback: "The presented head is older than this browser's retained head.",
     fork: "The presented history conflicts with this browser's retained head.",
-    unavailable: "The browser witness could not inspect the retained or presented head.",
+    unavailable: "Browser witness not enabled",
     undetermined: "An extension of this browser's retained head has not been established.",
   };
-  return `${reasons[observation.reason]} This alarm is evidence; owner actions remain available.`;
+  return reasons[observation.reason];
 }
 
 export function mountOwner(root: HTMLElement, modules: OwnerModules): OwnerDisposer {
@@ -42,23 +42,16 @@ export function mountOwner(root: HTMLElement, modules: OwnerModules): OwnerDispo
   let paneDispose: OwnerDisposer | undefined;
   let initialized = false;
   let currentRoute: OwnerRoute | undefined;
-  const header = document.createElement("header");
-  const title = document.createElement("h1");
-  title.textContent = "Owner ceremony";
-  const close = document.createElement("button");
-  close.type = "button";
-  close.textContent = "Close";
-  header.append(title, close);
   const witness = document.createElement("aside");
   witness.className = "owner-witness";
   witness.setAttribute("aria-label", "Browser head witness");
   witness.setAttribute("role", "status");
-  witness.textContent = "Browser head witness is waiting for the app.";
+  witness.title = "Browser witness not enabled";
+  witness.setAttribute("aria-label", witness.title);
   const pane = document.createElement("section");
   pane.className = "owner-pane";
   pane.setAttribute("aria-live", "polite");
-  pane.textContent = "Waiting for the app's owner pane request.";
-  root.replaceChildren(header, witness, pane);
+  root.replaceChildren(witness, pane);
 
   function post(message: OwnerShellMessage): void {
     if (!lifetime.signal.aborted) window.parent.postMessage(message, shellOrigin);
@@ -81,14 +74,17 @@ export function mountOwner(root: HTMLElement, modules: OwnerModules): OwnerDispo
     const signal = witnessLifetime.signal;
     witness.dataset.state = "checking";
     witness.setAttribute("role", "status");
-    witness.textContent = "Checking this browser's retained Aura head.";
+    witness.title = "Checking browser witness";
+    witness.setAttribute("aria-label", witness.title);
     Promise.resolve().then(() => modules.witness.observeVisit(signal)).catch((): WitnessObservation => ({
       state: "alarm", reason: "unavailable",
     })).then(observation => {
       if (signal.aborted || lifetime.signal.aborted) return;
-      witness.dataset.state = observation.state;
-      witness.setAttribute("role", observation.state === "alarm" ? "alert" : "status");
-      witness.textContent = witnessText(observation);
+      witness.dataset.state = observation.state === "alarm" && observation.reason === "unavailable"
+        ? "disabled" : observation.state;
+      witness.setAttribute("role", observation.state === "alarm" && observation.reason !== "unavailable" ? "alert" : "status");
+      witness.title = witnessText(observation);
+      witness.setAttribute("aria-label", witness.title);
     });
   }
 
@@ -98,7 +94,6 @@ export function mountOwner(root: HTMLElement, modules: OwnerModules): OwnerDispo
     const signal = paneLifetime.signal;
     const routeHost = document.createElement("div");
     pane.replaceChildren(routeHost);
-    title.textContent = route.pane === "approval" ? "Review proposal" : `${route.pane[0].toUpperCase()}${route.pane.slice(1)}`;
     const mount = modules.panes[route.pane];
     if (!mount) {
       routeHost.textContent = "This owner service is unavailable.";
@@ -141,10 +136,6 @@ export function mountOwner(root: HTMLElement, modules: OwnerModules): OwnerDispo
     root.replaceChildren();
   }
 
-  close.addEventListener("click", () => {
-    post({ protocol: OWNER_PROTOCOL, kind: "closed", channel });
-    dispose();
-  }, { signal: lifetime.signal });
   window.addEventListener("message", receive, { signal: lifetime.signal });
   window.addEventListener("pageshow", event => {
     if (event.persisted && initialized) {

@@ -62,12 +62,6 @@ function snapshot(value: unknown): ApprovalSnapshot {
   return { sequence: record.sequence, proposals };
 }
 
-function now(): number {
-  const value = Date.now();
-  if (!safeUnsigned(value)) refuse("approval-clock-invalid");
-  return value;
-}
-
 function failureCode(error: unknown): string {
   if (error instanceof Error && /^[a-z][a-z0-9_-]*:[a-z0-9-]+$/.test(error.message)) return error.message;
   return "frontdoor:approval-notification-unavailable";
@@ -107,8 +101,7 @@ export function startApprovalNotifications(options: ApprovalNotificationOptions)
       const busy = options.ownerBusy();
       if (typeof busy !== "boolean") refuse("approval-configuration-invalid");
       if (busy) return;
-      const at = now();
-      candidates = candidates.filter(item => item.expires_at_ms > at && !shown.has(item.proposal));
+      candidates = candidates.filter(item => !shown.has(item.proposal));
       const next = candidates[0];
       if (!next) return;
       active = next.proposal;
@@ -121,13 +114,11 @@ export function startApprovalNotifications(options: ApprovalNotificationOptions)
 
   const accept = (value: unknown): void => {
     const next = snapshot(value);
-    const at = now();
     if (lastSequence !== null && next.sequence < lastSequence) refuse("approval-sequence-rollback");
     const present = new Set(next.proposals.map(item => item.proposal));
     for (const proposal of shown) if (!present.has(proposal)) shown.delete(proposal);
     lastSequence = next.sequence;
-    candidates = next.proposals.filter(item => item.expires_at_ms > at
-      && !shown.has(item.proposal) && item.proposal !== active);
+    candidates = next.proposals.filter(item => !shown.has(item.proposal) && item.proposal !== active);
     openNext();
   };
 

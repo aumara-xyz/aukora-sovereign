@@ -71,6 +71,7 @@ impl Host {
 }
 
 pub(super) fn owner_gate_response(value: Value) -> Result<http::Response<Vec<u8>>> {
+    let timeout = owner_gate_timeout(&value)?;
     let bytes = value.canonical_bytes();
     if bytes.len() > owner_origin::MAX_GATE_RESPONSE_BYTES {
         return Err(codes::FRONTDOOR_RESPONSE_TOO_LARGE);
@@ -79,6 +80,34 @@ pub(super) fn owner_gate_response(value: Value) -> Result<http::Response<Vec<u8>
         .header("content-type", "application/json")
         .header("cache-control", "no-store")
         .header("x-content-type-options", "nosniff")
+        .header("x-aukora-ceremony-timeout-ms", timeout.to_string())
         .body(bytes)
         .map_err(|_| codes::SUPERVISOR_STATE)
+}
+
+fn owner_gate_timeout(value: &Value) -> Result<u64> {
+    use canon::json::ValueView;
+    let invalid = codes::FRONTDOOR_APPROVAL_REVIEW_INVALID;
+    match value.get("schema").map(Value::view) {
+        Some(ValueView::Text("aukora-owner-outcome-v1")) => Ok(0),
+        Some(ValueView::Text("aukora-owner-review-v1")) => {
+            let Some(ValueView::Text(bytes)) = value.get("authorization").map(Value::view) else {
+                return Err(invalid);
+            };
+            let authorization = canon::json::parse_strict(bytes.as_bytes()).map_err(|_| invalid)?;
+            let Some(ValueView::Integer(expiry)) = authorization.get("expires_at").map(Value::view) else {
+                return Err(invalid);
+            };
+            let expiry = u64::try_from(expiry.get()).map_err(|_| invalid)?;
+            let remaining = expiry.checked_sub(super::now()?).ok_or(codes::GATE_EXPIRED)?;
+            if remaining == 0 {
+                return Err(codes::GATE_EXPIRED);
+            }
+            if remaining > 300_000 {
+                return Err(invalid);
+            }
+            Ok(remaining)
+        }
+        _ => Err(invalid),
+    }
 }

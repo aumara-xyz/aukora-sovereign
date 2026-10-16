@@ -8,6 +8,8 @@
 #face > [role="status"]:empty { display: none; }
 .witness, .panes { max-width: 640px; margin-block-start: 20px; padding: 16px 18px 20px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .witness h2, .panes h2 { margin: 0; font-size: 16px; }
+.witness h2, .note { display: flex; align-items: center; gap: 8px; }
+.witness .icon, .note .icon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--gold); }
 .witness-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 .badge { margin: 0; padding: 2px 12px; border: 1px solid var(--muted); border-radius: 999px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .08em; }
 .badge[data-state="bound"] { border-color: var(--mint); color: var(--mint); }
@@ -31,7 +33,7 @@
   content: ""; position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; border-radius: 50%; background: currentColor; transform: translate(-50%, -50%);
 }
 .phrase[data-filled="false"] .box, .phrase[data-filled="false"] .tile { border-style: dashed; opacity: .45; }
-.lead { margin: 4px 0 0; color: var(--secondary); }
+.lead { margin: 4px 0 0; color: var(--secondary); font-size: 12px; }
 
 .facts { max-width: 640px; margin-block: 20px 0; display: grid; gap: 0; }
 .fact { display: grid; grid-template-columns: minmax(130px, 200px) 1fr; gap: 4px 16px; padding-block: 10px; border-block-start: 1px solid var(--border); }

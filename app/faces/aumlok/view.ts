@@ -4,6 +4,7 @@
 // in the owner pane, and this page has no input that could take one. The panes open from the shell's own buttons; this
 // face has no way to open them.
 import type { AumlokStatus } from "./status.js";
+import { icon } from "../../design/index.js";
 
 export interface AumlokView {
   show(status: AumlokStatus): void;
@@ -18,9 +19,6 @@ const BANDS = [
   { id: "rise", name: "RISE", detail: "spirit, space and technology", tone: "purple" },
 ] as const;
 const ANCHOR_LETTERS = 6;
-// The shipped word lists' honest strength, in bits (crates/aumlok SHIPPED_ENTROPY).
-const MINIMUM_BITS = "41.5";
-const AVERAGE_BITS = "43.1";
 
 function make<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag);
@@ -41,7 +39,8 @@ export function createAumlokView(root: HTMLElement): AumlokView {
   const witness = make("section", "witness");
   witness.setAttribute("aria-labelledby", "witness-title");
   const head = make("div", "witness-head");
-  const title = make("h2", undefined, "Seven-word binding witness");
+  const title = make("h2", undefined, "Seven-word binding");
+  title.prepend(icon("aumlok"));
   title.id = "witness-title";
   const badge = make("p", "badge");
   badge.setAttribute("role", "status");
@@ -50,7 +49,7 @@ export function createAumlokView(root: HTMLElement): AumlokView {
   const phrase = make("figure", "phrase");
   phrase.setAttribute("role", "img");
   const anchor = make("div", "anchor");
-  anchor.append(make("span", "label", "Word zero · anchor"));
+  anchor.append(make("span", "label", "Anchor"));
   const boxes = make("span", "boxes");
   for (let at = 0; at < ANCHOR_LETTERS; at++) boxes.append(make("span", "box"));
   anchor.append(boxes);
@@ -68,24 +67,15 @@ export function createAumlokView(root: HTMLElement): AumlokView {
   witness.append(head, phrase, lead);
 
   const facts = make("dl", "facts");
-  const passkeys = fact(facts, "Passkeys enrolled");
+  const passkeys = fact(facts, "Passkeys");
   const refresh = fact(facts, "Phrase refresh");
   passkeys.textContent = "—";
   refresh.textContent = "—";
-  const strength = fact(facts, "Phrase strength");
-  strength.textContent = `${MINIMUM_BITS} bits at minimum, ${AVERAGE_BITS} on average, over the shipped word lists. Owner authority is the passkey, never the phrase.`;
-  const panesOrigin = fact(facts, "Trusted panes served from");
+  const panesOrigin = fact(facts, "Owner pane");
   panesOrigin.parentElement?.setAttribute("hidden", "");
 
-  const panes = make("section", "panes");
-  panes.setAttribute("aria-labelledby", "panes-title");
-  const panesTitle = make("h2", undefined, "Opening the trusted panes");
-  panesTitle.id = "panes-title";
-  panes.append(
-    panesTitle,
-    make("p", undefined, "Passkey and Phrase open from the buttons in the bar at the top of the app. They are served from a separate owner origin and appear only framed inside this app. This screen cannot open them and never asks for the words."),
-    make("p", "note", "A passkey approval shows that a passkey signed exact bytes after its user check. It does not show which person pressed it."),
-  );
+  const panes = make("p", "note", "Your seven words never appear here.");
+  panes.prepend(icon("owner"));
   root.append(witness, facts, panes);
 
   const set = (state: "bound" | "unbound" | "unavailable" | "checking", label: string, text: string, filled: boolean) => {
@@ -99,27 +89,27 @@ export function createAumlokView(root: HTMLElement): AumlokView {
         : `Seven words: binding status ${state === "checking" ? "being read" : "unavailable"}.`);
     lead.textContent = text;
   };
-  set("checking", "CHECKING", "Reading the binding status from the node.", false);
+  set("checking", "CHECKING", "Reading binding status…", false);
 
   return {
     show(status) {
       if (status.bound) {
-        set("bound", "BOUND", "A seven-word phrase seals this node's identity root. The words were checked in the Phrase pane; this app has never seen them and cannot show them.", true);
+        set("bound", "BOUND", "Your identity root is sealed.", true);
       } else {
-        set("unbound", "UNBOUND", "No seven-word phrase seals this node's identity root yet. Open Phrase in the bar at the top of the app to bind one: the words are shown and checked there, never here.", false);
+        set("unbound", "UNBOUND", "Open Phrase in the app bar to bind your identity.", false);
       }
       passkeys.textContent = status.passkeys === 0
-        ? (status.bound ? "None. Open Passkey in the bar at the top of the app to enrol one." : "None yet.")
+        ? (status.bound ? "None · open Passkey" : "None yet")
         : String(status.passkeys);
-      refresh.textContent = status.refreshDue ? "Due. Open Phrase to refresh the phrase binding."
-        : status.bound ? "Not due." : "Not due. No phrase is bound.";
+      refresh.textContent = status.refreshDue ? "Due · open Phrase"
+        : status.bound ? "Not due" : "Unbound";
       panesOrigin.textContent = status.ownerOrigin ?? "";
       panesOrigin.parentElement?.toggleAttribute("hidden", status.ownerOrigin === null);
     },
     unavailable(reason) {
-      set("unavailable", "UNAVAILABLE", `Binding status is not available (${reason}). Nothing here is shown as bound.`, false);
-      passkeys.textContent = "Unknown.";
-      refresh.textContent = "Unknown.";
+      set("unavailable", "UNAVAILABLE", reason, false);
+      passkeys.textContent = "Unknown";
+      refresh.textContent = "Unknown";
       panesOrigin.parentElement?.setAttribute("hidden", "");
     },
     dispose() {

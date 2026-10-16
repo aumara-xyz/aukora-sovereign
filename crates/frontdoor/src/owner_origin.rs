@@ -55,6 +55,8 @@ impl OwnerRoute {
             (Method::Post, "/api/signin/finish") => Ok(Self::SigninFinish),
             (Method::Get, "/api/approvals") => Ok(Self::Approvals),
             (Method::Post, "/api/approvals") => Ok(Self::ApprovalCeremonyV1),
+            (Method::Post, "/api/v1/approvals/review") => Ok(Self::ApprovalReviewV1),
+            (Method::Post, "/api/v1/approvals/assertion") => Ok(Self::ApprovalAssertionV1),
             (Method::Post, "/api/approvals/retire/challenge") => Ok(Self::ApprovalRetireChallenge),
             _ => Err(Refusal {
                 organ: "frontdoor",

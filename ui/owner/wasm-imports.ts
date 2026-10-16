@@ -138,7 +138,11 @@ export function ownerWasmImports(module: WebAssembly.Module): {
     __wbg_static_accessor_SELF_0b583911f537483a: () => add(self),
     __wbg_static_accessor_GLOBAL_266715b9d96ba635: () => 0,
     __wbg_static_accessor_WINDOW_d7f903d1508cbdc4: () => add(window),
-    __wbg_get_31af05bd4842a84f: caught((object, key) => add(Reflect.get(take(object) as object, take(key) as PropertyKey))),
+    __wbg_get_31af05bd4842a84f: caught((object, key) => {
+      const property = take(key);
+      if (property !== 'ancestorOrigins' && property !== 'length' && property !== '0') return fail();
+      return add(Reflect.get(take(object) as object, property));
+    }),
     __wbg_getRandomValues_436a51d0629d84e1: caught((pointer, length) => {
       if (length > 65_536) return fail();
       crypto.getRandomValues(bytes(pointer, length));

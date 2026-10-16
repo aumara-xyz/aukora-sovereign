@@ -5,28 +5,27 @@ import type {
 import { domainDigest, parseAuthorization, parseCard, refuse, verifyCommitments } from "./codec.js";
 import type { Authorization } from "./codec.js";
 import { renderAuthorization, renderCard } from "./render.js";
+import { createApprovalTransport } from "./transport.js";
+import type { ApprovalServiceOptions } from "./transport.js";
 
 export interface SupervisorApprovalActions {
-  // Only selectors and the opaque assertion cross this port; C5 bytes stay private.
-  submitAuthorization(
-    proposalId: string,
-    action: Authorization["op"],
-    assertion: Uint8Array,
-    signal: AbortSignal,
-  ): Promise<void>;
+  submitAuthorization(proposalId: string, action: Authorization["op"], assertion: Uint8Array, signal: AbortSignal): Promise<void>;
 }
 
-function errorCode(error: unknown): string {
-  return error instanceof Error && /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/.test(error.message)
-    ? error.message : "card:unavailable";
+function failure(error: unknown): string {
+  if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError")) {
+    return "Passkey cancelled or expired. Review again when ready.";
+  }
+  if (error instanceof Error && /(?:spent|expired|stale|conflict|already|closed|not-pending)/.test(error.message)) {
+    return "This approval is no longer available.";
+  }
+  return "Approval unavailable. Review again to check its current state.";
 }
 
 export class ApprovalCards implements ApprovalPaneService {
   private readonly actions: SupervisorApprovalActions;
 
-  constructor(actions: SupervisorApprovalActions) {
-    this.actions = actions;
-  }
+  constructor(actions: SupervisorApprovalActions) { this.actions = actions; }
 
   mount(context: OwnerPaneContext, supervisor: SupervisorCards, passkey: PasskeyPaneService): OwnerDisposer {
     if (context.route.pane !== "approval" || !/^[0-9a-f]{32}$/.test(context.route.proposalId)) refuse("route");
@@ -34,17 +33,20 @@ export class ApprovalCards implements ApprovalPaneService {
     const lifetime = new AbortController();
     const signal = lifetime.signal;
     const document = context.host.ownerDocument;
-    const panel = document.createElement("section");
-    panel.className = "approval-review";
+    const review = document.createElement("section");
+    review.className = "approval-review";
     const stylesheet = document.createElement("link");
     stylesheet.rel = "stylesheet";
     stylesheet.href = new URL("./cards.css", import.meta.url).href;
-    panel.append(stylesheet);
     const status = document.createElement("p");
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.textContent = "Review again";
+    retry.hidden = true;
     status.setAttribute("role", "status");
-    status.textContent = "Loading the proposal from the supervisor.";
-    panel.append(status);
-    context.host.replaceChildren(panel);
+    status.textContent = "Loading approval…";
+    review.append(stylesheet, status, retry);
+    context.host.replaceChildren(review);
     let disposed = false;
     let started = false;
 
@@ -53,77 +55,78 @@ export class ApprovalCards implements ApprovalPaneService {
       disposed = true;
       lifetime.abort();
       context.signal.removeEventListener("abort", dispose);
-      panel.remove();
+      review.remove();
     };
     context.signal.addEventListener("abort", dispose, { once: true });
     if (context.signal.aborted) { dispose(); return dispose; }
-
     const showFailure = (error: unknown): void => {
       if (signal.aborted) return;
       status.setAttribute("role", "alert");
-      status.textContent = errorCode(error);
+      status.textContent = failure(error);
+      retry.hidden = false;
     };
 
     const load = async (): Promise<void> => {
+      started = false;
+      retry.hidden = true;
+      review.replaceChildren(stylesheet, status, retry);
+      status.setAttribute("role", "status");
+      status.textContent = "Loading approval…";
       const loaded = await supervisor.loadByProposalId(proposalId, signal);
-      if (signal.aborted) return;
+      signal.throwIfAborted();
       if (loaded.proposalId !== proposalId || !(loaded.canonicalCard instanceof Uint8Array)
-        || !(loaded.canonicalAuthorization instanceof Uint8Array)) refuse("supervisor-response");
+        || !(loaded.canonicalAuthorization instanceof Uint8Array)) refuse("response");
+      const timeoutMs = loaded.relativeTimeoutMs;
+      if (typeof timeoutMs !== "number" || !Number.isSafeInteger(timeoutMs)
+        || timeoutMs <= 0 || timeoutMs > 300_000) refuse("ceremony-expired");
+      const expires = performance.now() + timeoutMs;
       const cardBytes = new Uint8Array(loaded.canonicalCard);
-      const authorizationBytes = new Uint8Array(loaded.canonicalAuthorization);
+      const authBytes = new Uint8Array(loaded.canonicalAuthorization);
       const card = parseCard(cardBytes);
-      const authorization = parseAuthorization(authorizationBytes, proposalId);
-      await verifyCommitments(cardBytes, authorization);
-      const challenge = await domainDigest("aukora:owner-authorization:v1", authorizationBytes);
-      if (signal.aborted) return;
-      const explanation = document.createElement("p");
-      explanation.textContent = "Strings show quotes and visible escapes, including spaces and Unicode. The passkey authorizes these exact card and operation commitments.";
-      const controls = document.createElement("div");
+      const auth = parseAuthorization(authBytes, proposalId);
+      await verifyCommitments(cardBytes, auth);
+      const challenge = await domainDigest("aukora:owner-authorization:v1", authBytes);
+      signal.throwIfAborted();
+      const cardView = renderCard(document, card);
+      const digest = document.createElement("div");
+      digest.className = "approval-digest";
+      const digestLabel = document.createElement("span");
+      digestLabel.textContent = "SHA-256 · exact bytes";
+      const digestValue = document.createElement("code");
+      digestValue.textContent = auth.new_sha256;
+      digest.append(digestLabel, digestValue);
+      cardView.insertBefore(digest, cardView.children[2]);
       const authorize = document.createElement("button");
       authorize.type = "button";
-      const labels = {
-        apply: "Approve application", retire: "Approve retirement", release: "Approve release",
-        grant: "Approve grant", permission: "Approve permission",
-      };
-      authorize.textContent = labels[authorization.op];
-      const cancel = document.createElement("button");
-      cancel.type = "button";
-      cancel.textContent = "Cancel";
-      controls.append(authorize, cancel);
-      panel.append(explanation, renderAuthorization(document, authorization), renderCard(document, card), controls);
-      status.textContent = "Card and operation commitments match the supervisor's authorization. Review every field before using your passkey.";
-
-      const approve = async (): Promise<void> => {
+      const labels = { apply: "Approve with passkey", retire: "Retire with passkey", release: "Approve release",
+        grant: "Approve grant", permission: "Approve permission" };
+      authorize.textContent = labels[auth.op];
+      const controls = document.createElement("div");
+      controls.className = "approval-actions";
+      controls.append(authorize);
+      review.append(cardView, renderAuthorization(document, auth), controls);
+      status.textContent = "Review the exact bytes, then use your passkey.";
+      authorize.addEventListener("click", () => {
         if (started || signal.aborted) return;
         started = true;
         authorize.disabled = true;
-        cancel.disabled = true;
-        status.textContent = "Waiting for your passkey.";
-        try {
-          const assertion = await passkey.assertExact(new Uint8Array(challenge), context.shellOrigin, signal);
-          if (signal.aborted) return;
+        status.textContent = "Waiting for your passkey…";
+        void (async () => {
+          const remaining = Math.floor(expires - performance.now());
+          if (remaining <= 0 || remaining > 300_000) refuse("ceremony-expired");
+          const ceremonySignal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
+          const assertion = await passkey.assertExact(new Uint8Array(challenge), context.shellOrigin, ceremonySignal, remaining);
+          ceremonySignal.throwIfAborted();
           if (!(assertion instanceof Uint8Array) || assertion.length === 0) refuse("assertion-empty");
-          status.textContent = "Submitting your assertion to the supervisor.";
-          await this.actions.submitAuthorization(proposalId, authorization.op, new Uint8Array(assertion), signal);
-          if (signal.aborted) return;
-          status.textContent = "The supervisor accepted your authorization.";
+          status.textContent = "Applying approval…";
+          await this.actions.submitAuthorization(proposalId, auth.op, new Uint8Array(assertion), ceremonySignal);
+          signal.throwIfAborted();
+          status.textContent = "Approved.";
           context.complete();
-        } catch (error) {
-          showFailure(error);
-          if (!signal.aborted) {
-            cancel.disabled = false;
-            cancel.textContent = "Close review";
-          }
-        }
-      };
-      authorize.addEventListener("click", () => { void approve(); }, { signal });
-      cancel.addEventListener("click", () => {
-        authorize.disabled = true;
-        cancel.disabled = true;
-        status.textContent = "Review cancelled. Use Close to return to the app.";
-        lifetime.abort();
+        })().catch(showFailure);
       }, { signal });
     };
+    retry.addEventListener("click", () => { void load().catch(showFailure); }, { signal });
     void load().catch(showFailure);
     return dispose;
   }
@@ -133,5 +136,13 @@ export function createApprovalPane(actions: SupervisorApprovalActions): Approval
   return new ApprovalCards(actions);
 }
 
+export function createApprovalServices(options: ApprovalServiceOptions = {}): {
+  readonly approval: ApprovalPaneService; readonly supervisor: SupervisorCards;
+} {
+  const transport = createApprovalTransport(options);
+  return { approval: new ApprovalCards(transport), supervisor: transport };
+}
+
 export { renderCard, visibleJson } from "./render.js";
 export type { ApprovalCard, Authorization, JsonValue } from "./codec.js";
+export type { ApprovalRequest, ApprovalServiceOptions } from "./transport.js";

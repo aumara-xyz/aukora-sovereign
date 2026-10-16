@@ -6,7 +6,7 @@
   "protocol": "aukora.owner.v1",
   "frame": "direct child of the configured shell origin only; shell alone creates and navigates the frame",
   "parent_payload": "route only",
-  "routes": ["/passkey", "/phrase", "/approval/<32 lowercase hex proposal id>", "/claim"],
+  "routes": ["/passkey", "/phrase", "/phrase/refresh", "/approval/<32 lowercase hex proposal id>", "/claim", "/witness"],
   "passkey": {
     "implementation": "passkey/",
     "expected_top_origin": "configured shell origin",
@@ -36,5 +36,5 @@
     "alarms": ["rollback", "fork", "unavailable", "undetermined"],
     "authority": "none; alarms do not enable or disable owner actions"
   },
-  "claim": { "implementation": "claim/", "status": "reserved" }
+  "claim": { "implementation": "claim/", "status": "mounted" }
 }

@@ -505,6 +505,28 @@ impl Host {
         if !request.path().starts_with("/api/") {
             return self.asset(request, admission.owner_navigation());
         }
+        if request.role() == HostRole::Shell && request.path() == "/api/approvals" {
+            if request.method() != frontdoor::ingress::Method::Get {
+                return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
+            }
+            self.with_release(|_| Ok(()))?;
+            let mut sessions = self.sessions()?;
+            return frontdoor::session::with_bound_session(
+                &mut sessions,
+                request.cookie().ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                self.state.node,
+                request.origin(),
+                now()?,
+                |session| {
+                    if session.record().scope != frontdoor::session::SessionScope::Shell {
+                        return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+                    }
+                    let snapshot = self.approvals.snapshot(&session, now()?)?;
+                    self.with_release(|_| Ok(()))?;
+                    json_response(snapshot)
+                },
+            );
+        }
         if request.role() == HostRole::Owner && request.path() == "/api/claim" {
             return self.consume_host_claim(request);
         }

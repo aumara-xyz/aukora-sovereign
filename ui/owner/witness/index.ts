@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { OwnerWitness, WitnessObservation } from "../contracts.js";
+import type { OwnerPane, OwnerWitness, WitnessObservation } from "../contracts.js";
 import { assertActive } from "./contracts.js";
 import type { BrowserCheckpoint, PresentedHead, WitnessServices } from "./contracts.js";
 import { checkpoint, checkpointFor, presented } from "./codec.js";
@@ -10,6 +10,32 @@ export type {
   BrowserCheckpoint, PresentedHead, WitnessHeadSource, WitnessPrimitives,
   WitnessServices, WitnessStore,
 } from "./contracts.js";
+
+export function disabledOwnerWitness(): OwnerWitness {
+  return { async observeVisit(signal) {
+    assertActive(signal);
+    return { state: "alarm", reason: "unavailable" };
+  } };
+}
+
+export function witnessPane(witness: OwnerWitness): OwnerPane {
+  return context => {
+    const status = document.createElement("p");
+    status.className = "owner-witness-status";
+    status.setAttribute("role", "status");
+    status.textContent = "Browser witness not enabled";
+    context.host.replaceChildren(status);
+    void witness.observeVisit(context.signal).then(observation => {
+      if (context.signal.aborted) return;
+      status.textContent = observation.state === "first" || observation.state === "extension"
+        ? `Browser head retained · ${observation.treeSize}`
+        : observation.reason === "rollback" ? "History is older than this browser's head."
+          : observation.reason === "fork" ? "History conflicts with this browser's head."
+            : observation.reason === "unavailable" ? "Browser witness not enabled" : "History not yet verified.";
+    }).catch(() => {});
+    return () => status.remove();
+  };
+}
 
 function alarm(reason: "rollback" | "fork" | "unavailable" | "undetermined"): WitnessObservation {
   return { state: "alarm", reason };

@@ -3,7 +3,8 @@ import { credentialBytes } from "./passkey/codec.js";
 import type { AssertionOptions, RegistrationOptions } from "./passkey/index.js";
 
 type Route = "/api/enrol/start" | "/api/enrol/finish" | "/api/binding/prepare"
-  | "/api/binding/confirm" | "/api/signin/start" | "/api/signin/finish";
+  | "/api/binding/confirm" | "/api/signin/start" | "/api/signin/finish"
+  | "/api/binding/refresh" | "/api/binding/refresh/prepare";
 export type RecordValue = Record<string, unknown>;
 
 export function record(value: unknown): RecordValue {
@@ -62,7 +63,9 @@ export function handle(value: unknown): string {
 }
 
 export function deadline(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) <= Date.now()) throw new Error("aumlok:ceremony-expired");
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= performance.now()) {
+    throw new Error("aumlok:ceremony-expired");
+  }
   return value as number;
 }
 
@@ -75,13 +78,14 @@ export function options(reply: RecordValue, enrolment: boolean, rp: string): Opt
   const key = enrolment ? "enrolment_id" : "ceremony_id";
   exact(reply, [key, "expires_at", "public_key"]);
   const id = handle(reply[key]);
-  const expires = deadline(reply.expires_at);
+  if (!Number.isSafeInteger(reply.expires_at) || (reply.expires_at as number) < 0) throw new Error("owner:response-invalid");
   const source = record(reply.public_key);
   const challenge = credentialBytes(text(source.challenge));
   if (challenge.length !== 32) throw new Error("aumlok:challenge-mismatch");
   if (!Number.isInteger(source.timeout) || (source.timeout as number) < 100
     || (source.timeout as number) > 300_000) throw new Error("aumlok:ceremony-expired");
   const timeoutMs = source.timeout as number;
+  const expires = deadline(performance.now() + timeoutMs);
   if ("rp" in source) {
     exact(source, ["challenge", "rp", "user", "pubKeyCredParams", "timeout", "attestation",
       "authenticatorSelection", "excludeCredentials", "extensions"]);

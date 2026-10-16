@@ -5,6 +5,8 @@ import { renderAuthorization, renderCard } from "../cards/render.js";
 import type { PhraseConfiguration, PhraseWasmSession, RefreshSnapshot, RefreshSubmission } from "./services.js";
 import { bytes, copyCurrent, copySubmission, id, refuse, sameCurrent, sameSubmission, snapshot } from "./validate.js";
 import { createView } from "./view.js";
+import { explainOwnerError } from "../phrase-layout.js";
+export { createLivePhraseService } from "./live.js";
 
 export type * from "./services.js";
 
@@ -79,9 +81,7 @@ export function createPhraseService(configuration: PhraseConfiguration): PhraseP
 
     function fail(error: unknown): void {
       if (signal.aborted) return;
-      const code = typeof error === "string" ? error : error instanceof Error ? error.message : "";
-      view.status.textContent = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/.test(code)
-        ? code : "aumlok:phrase-unavailable";
+      view.status.textContent = explainOwnerError(error);
       view.status.setAttribute("role", "alert");
     }
 
@@ -181,6 +181,9 @@ export function createPhraseService(configuration: PhraseConfiguration): PhraseP
       if (!submission || !view.saved.checked || uncertain) refuse("refresh-input");
       const phase = state?.pending?.state === "prepared" ? "finish" : "prepare";
       const loaded = await ceremonies.review(phase, copySubmission(submission), signal);
+      if (!Number.isInteger(loaded.relativeTimeoutMs) || loaded.relativeTimeoutMs! < 100
+        || loaded.relativeTimeoutMs! > 300_000) refuse("refresh-proof");
+      const expires = performance.now() + loaded.relativeTimeoutMs!;
       live();
       bytes(loaded.canonicalCard, 1, 65536); bytes(loaded.canonicalAuthorization, 1, 65536);
       const cardBytes = Uint8Array.from(loaded.canonicalCard);
@@ -190,13 +193,12 @@ export function createPhraseService(configuration: PhraseConfiguration): PhraseP
       if (auth.subject !== submission.subject || BigInt(auth.epoch) !== submission.expectedEpoch
         || auth.op !== "apply" || auth.cell !== null || auth.target !== refreshTarget
         || auth.base_sha256 !== submission.previousDigest
-        || auth.new_sha256 !== hex(await sha256(submission.replacement))
-        || auth.expires_at <= Date.now()) refuse("refresh-proof");
+        || auth.new_sha256 !== hex(await sha256(submission.replacement))) refuse("refresh-proof");
       await verifyCommitments(cardBytes, auth);
       const challenge = await domainDigest("aukora:owner-authorization:v1", authBytes);
       live();
       view.review.replaceChildren(renderAuthorization(view.document, auth), renderCard(view.document, card));
-      approval = { phase, proposalId: loaded.proposalId, challenge, expires: auth.expires_at };
+      approval = { phase, proposalId: loaded.proposalId, challenge, expires };
       view.status.textContent = phase === "prepare"
         ? "Review the exact preparation authorization, then approve with your passkey."
         : "Review the exact replacement authorization. This retires the previous online envelope; old downloads still work offline.";
@@ -205,10 +207,11 @@ export function createPhraseService(configuration: PhraseConfiguration): PhraseP
     async function approve(): Promise<void> {
       const selected = approval;
       const draft = submission;
-      if (!selected || !draft || !view.saved.checked || selected.expires <= Date.now()) refuse("refresh-proof");
-      const assertion = await passkey.assertExact(Uint8Array.from(selected.challenge), shellOrigin, signal);
+      if (!selected || !draft || !view.saved.checked || selected.expires <= performance.now()) refuse("refresh-proof");
+      const assertion = await passkey.assertExact(Uint8Array.from(selected.challenge), shellOrigin, signal,
+        Math.floor(selected.expires - performance.now()));
       live(); bytes(assertion, 1, 65536);
-      if (selected.expires <= Date.now()) refuse("refresh-expired");
+      if (selected.expires <= performance.now()) refuse("refresh-expired");
       uncertain = true;
       approval = undefined;
       view.review.replaceChildren();

@@ -64,7 +64,7 @@ function challengeBytes(value: Uint8Array): Uint8Array<ArrayBuffer> {
 
 function timeout(value?: number): number {
   if (value === undefined) return 60_000;
-  if (!Number.isInteger(value) || value < 100 || value > 300_000) throw new Error("aumlok:ceremony-expired");
+  if (!Number.isInteger(value) || value < 1 || value > 300_000) throw new Error("aumlok:ceremony-expired");
   return value;
 }
 
@@ -89,9 +89,12 @@ function ceremonyId(value: string): void {
 
 function refusal(error: unknown): string {
   if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError")) {
-    return "Passkey request cancelled or expired. You can retry this ceremony.";
+    return "Passkey cancelled or expired. Try again.";
   }
-  return "The passkey request was refused. The owner service has not confirmed completion.";
+  if (error instanceof Error && error.message === "aumlok:webauthn-unavailable") {
+    return "Passkeys are unavailable in this browser.";
+  }
+  return "Passkey not confirmed. Try again.";
 }
 
 export function createPasskeyService(configuration: PasskeyConfiguration): OwnerPasskeyService {
@@ -305,9 +308,9 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
     mount,
     register,
     assert,
-    async assertExact(challenge, expectedTopOrigin, signal) {
+    async assertExact(challenge, expectedTopOrigin, signal, timeoutMs) {
       environment(expectedTopOrigin, signal);
-      return assertionBytes(await assert({ challenge }, signal));
+      return assertionBytes(await assert({ challenge, timeoutMs }, signal));
     },
     backupPrf,
   };

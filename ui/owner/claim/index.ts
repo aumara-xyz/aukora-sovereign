@@ -8,6 +8,7 @@ export interface ClaimConfiguration {
   readonly ownerOrigin: string;
   readonly shellOrigin: string;
   readonly mode: ClaimMode;
+  readonly initialToken?: string;
   // Trusted release composition continues inside the same owner frame.
   readonly joining: OwnerPane;
 }
@@ -28,6 +29,7 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
   const shellOrigin = httpsOrigin(configuration.shellOrigin);
   const mode = configuration.mode;
   const joining = configuration.joining;
+  let initialToken = configuration.initialToken ?? "";
   if (ownerOrigin === shellOrigin || !["invite-v2", "host-token-v1"].includes(mode)
     || typeof joining !== "function") throw new Error("invites:claim-configuration");
   return { mount(context) {
@@ -44,7 +46,7 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     const explanation = document.createElement("p");
     explanation.textContent = mode === "invite-v2"
       ? "Enter your node's claim link and the private secret you kept for this invite. Then use your two devices to join."
-      : "Enter the claim link delivered by your node's operator. Then use your two devices to join.";
+      : "Open your node with its claim link.";
     const tokenLabel = document.createElement("label");
     tokenLabel.textContent = "Node claim link or token";
     const token = document.createElement("input");
@@ -53,6 +55,8 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     token.maxLength = 2048;
     token.autocomplete = "off";
     token.spellcheck = false;
+    token.value = initialToken;
+    initialToken = "";
     tokenLabel.append(token);
     const secretLabel = document.createElement("label");
     secretLabel.textContent = "Invite secret (64 lowercase hexadecimal characters)";
@@ -157,7 +161,8 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
         token.required = false;
         secret.disabled = true;
         secret.required = false;
-        status.textContent = "Setup session opened. Co-presence comes next; the node is owned only after passkey binding.";
+        status.textContent = mode === "invite-v2" ? "Setup opened. Continue joining."
+          : "Setup opened. Create your passkey.";
         await enterJoining();
       }).catch(() => {
         if (!lifetime.signal.aborted) {

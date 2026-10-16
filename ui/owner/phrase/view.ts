@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { PHRASE_ENTROPY_BITS } from "../contracts.js";
-
 export function createView(host: HTMLElement) {
   const document = host.ownerDocument;
   const panel = document.createElement("section");
@@ -11,9 +9,7 @@ export function createView(host: HTMLElement) {
   const title = document.createElement("h2");
   title.textContent = "Your seven-word phrase";
   const explanation = document.createElement("p");
-  explanation.textContent = "Your phrase seals a random identity root. Your passkey approves changes. Enter your phrase here to refresh it or download a backup.";
-  const entropy = document.createElement("p");
-  entropy.textContent = `Shipped vocabulary: ${PHRASE_ENTROPY_BITS.minimum} bits minimum, ${PHRASE_ENTROPY_BITS.average} average. Words follow ROOT, ROOT, UNITE, UNITE, RISE, RISE after the anchor.`;
+  explanation.textContent = "never type these words into an AI";
   const entryLabel = document.createElement("label");
   entryLabel.textContent = "Current seven-word phrase";
   const entry = document.createElement("input");
@@ -58,7 +54,7 @@ export function createView(host: HTMLElement) {
   legacyLabel.hidden = true;
   const legacyDownload = button("Download phrase-only copy (v1)");
   const close = button("Finish");
-  panel.append(css, title, explanation, entropy, entryLabel, phrase, savedLabel, review,
+  panel.append(css, title, explanation, entryLabel, phrase, savedLabel, review,
     legacyLabel, controls, status);
   host.replaceChildren(panel);
   return { document, panel, entry, entryLabel, status, phrase, saved, savedLabel, review,

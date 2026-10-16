@@ -18,12 +18,14 @@ export interface ShellOptions {
   onOwnerNotice?: (notice: OwnerNotice) => void;
   prepareOwner?: () => Promise<string | void>;
   servicesPendingText?: string;
+  phraseRoute?: () => '/phrase' | '/phrase/refresh';
 }
 export interface ShellController {
   readonly organism: Organism;
   readonly layout: TriPane;
   openFace(id: string): void;
-  openOwner(route: OwnerRoute, claim?: string): void;
+  openOwner(route: OwnerRoute, claim?: string): Promise<void>;
+  readonly ownerBusy: boolean;
   provideService(name: string, service: RpcService): Dispose;
   removeFace(id: string): Promise<void>;
   dispose(): Promise<void>;
@@ -85,11 +87,13 @@ export function mountShell(options: ShellOptions): ShellController {
   options.root.append(root);
   const layout = new TriPane(root);
   const owner = options.ownerOrigin ? new OwnerFrame(options.ownerOrigin, options.onOwnerNotice, options.prepareOwner) : null;
-  const openOwner = (route: OwnerRoute, claim?: string): void => {
+  const openOwner = async (route: OwnerRoute, claim?: string): Promise<void> => {
     if (!owner || disposed) throw new Error('shell:owner-unavailable');
-    void owner.open(route, claim).catch(error => {
+    try { await owner.open(route, claim); }
+    catch (error) {
       options.onOwnerNotice?.({ kind: 'refusal', code: error instanceof Error ? error.message : 'shell:owner-unavailable' });
-    });
+      throw error;
+    }
   };
   const faceSlots = new Map<string, FaceSlot>();
   const phoneButtons = new Map<LaneId, HTMLButtonElement>();
@@ -169,7 +173,7 @@ export function mountShell(options: ShellOptions): ShellController {
     if (!slot) return;
     slot.status.hidden = state.state === 'active';
     slot.status.textContent = state.state === 'waiting' ? options.servicesPendingText ?? fill(COPY.waitingFor as string, { names: state.missing.join(', ') })
-      : state.state === 'failed' ? fill(COPY.unavailable as string, { code: state.error ?? 'app:setup-failed' }) : state.state;
+      : state.state === 'failed' ? 'Unavailable' : state.state;
   };
   const unobserve = organism.observe(refresh);
   for (const [name, service] of options.services ?? []) organism.provide(name, service);
@@ -219,7 +223,7 @@ export function mountShell(options: ShellOptions): ShellController {
   for (const [label, route] of [[COPY.ownerPasskey, '/passkey'], [COPY.ownerPhrase, '/phrase']] as const) {
     const control = button(label as string, () => {
       if (!owner) throw new Error('shell:owner-unavailable');
-      openOwner(route);
+      void openOwner(route === '/phrase' ? options.phraseRoute?.() ?? route : route).catch(() => {});
     }, 'owner-entry');
     control.disabled = !owner;
     if (!owner) control.title = COPY.ownerUnavailable as string;
@@ -229,6 +233,7 @@ export function mountShell(options: ShellOptions): ShellController {
   return {
     organism, layout, openFace,
     openOwner,
+    get ownerBusy() { return owner?.busy ?? false; },
     provideService(name, service) { return organism.provide(name, service); },
     async removeFace(id) {
       const slot = faceSlots.get(id);

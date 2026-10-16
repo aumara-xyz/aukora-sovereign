@@ -113,6 +113,9 @@ fn public_identity(
 }
 
 fn dispatch(storage: &mut Storage, input: &[u8]) -> Result<Vec<u8>, String> {
+    if let Some(result) = dispatch_refresh(input) {
+        return result;
+    }
     let request: Request = serde_json::from_slice(input).map_err(|_| refusal("wasm-input"))?;
     match &request {
         Request::Prepare {
@@ -162,6 +165,130 @@ fn dispatch(storage: &mut Storage, input: &[u8]) -> Result<Vec<u8>, String> {
             Ok(b"{}".to_vec())
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum RefreshRequest {
+    RefreshOpen {
+        owner_origin: String,
+        shell_origin: String,
+        envelope: String,
+        entered: String,
+    },
+    RefreshPrepare {
+        ceremony: String,
+    },
+    RefreshConfirm {
+        entered: String,
+    },
+    RefreshDiscard,
+}
+
+impl Drop for RefreshRequest {
+    fn drop(&mut self) {
+        match self {
+            Self::RefreshOpen { entered, .. } | Self::RefreshConfirm { entered } => {
+                entered.zeroize()
+            }
+            _ => {}
+        }
+    }
+}
+
+struct BrowserRefresh {
+    session: crate::phrase::browser::OwnerPhraseSession,
+    owner: String,
+    shell: String,
+}
+
+thread_local! {
+    static REFRESH: RefCell<Option<BrowserRefresh>> = const { RefCell::new(None) };
+}
+
+fn dispatch_refresh(input: &[u8]) -> Option<Result<Vec<u8>, String>> {
+    #[derive(Deserialize)]
+    struct Selector<'a> {
+        op: &'a str,
+    }
+    let selector: Selector<'_> = serde_json::from_slice(input).ok()?;
+    if !selector.op.starts_with("refresh_") {
+        return None;
+    }
+    Some((|| {
+        use crate::phrase::browser::OwnerPhraseSession;
+        use subtle::ConstantTimeEq;
+        let request: RefreshRequest =
+            serde_json::from_slice(input).map_err(|_| refusal("wasm-input"))?;
+        REFRESH.with(|cell| {
+            let mut slot = cell
+                .try_borrow_mut()
+                .map_err(|_| refusal("wasm-operation"))?;
+            let value = match &request {
+                RefreshRequest::RefreshOpen {
+                    owner_origin,
+                    shell_origin,
+                    envelope,
+                    entered,
+                } => {
+                    *slot = None;
+                    let mut session = OwnerPhraseSession::verify(owner_origin, shell_origin)
+                        .map_err(browser_refusal)?;
+                    let subject = session
+                        .unlock(envelope.as_bytes(), entered)
+                        .map_err(browser_refusal)?;
+                    *slot = Some(BrowserRefresh {
+                        session,
+                        owner: owner_origin.clone(),
+                        shell: shell_origin.clone(),
+                    });
+                    serde_json::json!({ "subject": subject })
+                }
+                RefreshRequest::RefreshPrepare { ceremony } => {
+                    let current = slot.as_mut().ok_or_else(|| refusal("phrase-locked"))?;
+                    current.session.prepare(ceremony).map_err(browser_refusal)?;
+                    let phrase = Zeroizing::new(current.session.phrase().map_err(browser_refusal)?);
+                    #[derive(Serialize)]
+                    struct Display<'a> {
+                        phrase: &'a str,
+                    }
+                    return serde_json::to_vec(&Display {
+                        phrase: phrase.as_str(),
+                    })
+                    .map_err(|_| refusal("wasm-output"));
+                }
+                RefreshRequest::RefreshConfirm { entered } => {
+                    let current = slot.as_ref().ok_or_else(|| refusal("phrase-locked"))?;
+                    let browser = OwnerBrowser::verify(&current.owner, &current.shell)
+                        .map_err(|error| error.to_string())?;
+                    let entered = OwnerPhrase::parse(&browser, entered)
+                        .map_err(|_| refusal("word-mismatch"))?;
+                    let expected =
+                        Zeroizing::new(current.session.phrase().map_err(browser_refusal)?);
+                    if !bool::from(
+                        expected
+                            .as_bytes()
+                            .ct_eq(entered.expose(&browser).as_bytes()),
+                    ) {
+                        return Err(refusal("word-mismatch"));
+                    }
+                    let envelope = current
+                        .session
+                        .replacement_envelope()
+                        .map_err(browser_refusal)?;
+                    let envelope =
+                        canon::json::parse_strict(&envelope).map_err(|error| error.to_string())?;
+                    serde_json::from_slice(&envelope.canonical_bytes())
+                        .map_err(|_| refusal("wasm-output"))?
+                }
+                RefreshRequest::RefreshDiscard => {
+                    *slot = None;
+                    serde_json::json!({})
+                }
+            };
+            serde_json::to_vec(&value).map_err(|_| refusal("wasm-output"))
+        })
+    })())
 }
 
 /// Reserve a zeroed buffer of at most 8 KiB; zero refuses a size or allocation.

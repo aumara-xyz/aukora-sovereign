@@ -3,9 +3,10 @@ export const OWNER_PROTOCOL = "aukora.owner.v1" as const;
 
 export type OwnerRoute =
   | { readonly pane: "passkey" }
-  | { readonly pane: "phrase" }
+  | { readonly pane: "phrase"; readonly refresh?: true }
   | { readonly pane: "approval"; readonly proposalId: string }
-  | { readonly pane: "claim" };
+  | { readonly pane: "claim" }
+  | { readonly pane: "witness" };
 
 export type ShellOwnerMessage = {
   readonly protocol: typeof OWNER_PROTOCOL;
@@ -52,13 +53,14 @@ export interface PhrasePaneService {
 export type PasskeyPurpose = "signin" | "enrol" | "authorize";
 export interface PasskeyPaneService {
   mount(context: OwnerPaneContext): OwnerDisposer | Promise<OwnerDisposer>;
-  assertExact(challenge: Uint8Array, expectedTopOrigin: string, signal: AbortSignal): Promise<Uint8Array>;
+  assertExact(challenge: Uint8Array, expectedTopOrigin: string, signal: AbortSignal, timeoutMs?: number): Promise<Uint8Array>;
 }
 
 export type ProposalCardBytes = {
   readonly proposalId: string;
   readonly canonicalCard: Uint8Array;
   readonly canonicalAuthorization: Uint8Array;
+  readonly relativeTimeoutMs?: number;
 };
 
 export interface SupervisorCards {
@@ -72,7 +74,9 @@ export interface ApprovalPaneService {
 export function ownerRoute(text: string): OwnerRoute {
   if (text === "/passkey") return { pane: "passkey" };
   if (text === "/phrase") return { pane: "phrase" };
+  if (text === "/phrase/refresh") return { pane: "phrase", refresh: true };
   if (text === "/claim") return { pane: "claim" };
+  if (text === "/witness") return { pane: "witness" };
   const approval = /^\/approval\/([0-9a-f]{32})$/.exec(text);
   if (approval) return { pane: "approval", proposalId: approval[1] };
   throw new Error("owner:unknown-route");

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { COPY } from '../design/index.js';
 
-export type OwnerRoute = '/passkey' | '/phrase' | '/claim' | `/approval/${string}`;
+export type OwnerRoute = '/passkey' | '/phrase' | '/phrase/refresh' | '/claim' | '/witness' | `/approval/${string}`;
 export type OwnerNotice = { kind: 'closed' | 'complete'; route?: OwnerRoute } | { kind: 'refusal'; code: string };
 const protocol = 'aukora.owner.v1';
 
 export function validOwnerRoute(route: string): route is OwnerRoute {
-  return ['/passkey', '/phrase', '/claim'].includes(route) || /^\/approval\/[0-9a-f]{32}$/.test(route);
+  return ['/passkey', '/phrase', '/phrase/refresh', '/claim', '/witness'].includes(route) || /^\/approval\/[0-9a-f]{32}$/.test(route);
 }
 
 function trustedOrigin(value: string): string {
@@ -24,6 +24,7 @@ export class OwnerFrame {
   #prepare: () => Promise<string | void>;
   #generation = 0;
   #preparing: Promise<void> = Promise.resolve();
+  #route: OwnerRoute | null = null;
 
   constructor(origin: string, notice: (notice: OwnerNotice) => void = () => {}, prepare: () => Promise<string | void> = async () => {}) {
     if (window.top !== window.self) throw new Error('shell:framed-shell');
@@ -37,14 +38,21 @@ export class OwnerFrame {
     if (!validOwnerRoute(route)) throw new Error('shell:unknown-owner-route');
     if (claim && (route !== '/claim' || !/^[A-Za-z0-9_-]{43}$/.test(claim))) throw new Error('shell:claim-invalid');
     this.close();
+    this.#route = route;
     const generation = this.#generation;
     const prepared = this.#preparing.then(() => {
       if (generation !== this.#generation) return;
       return this.#prepare();
     });
     this.#preparing = prepared.then(() => {}, () => {});
-    const reference = await prepared;
-    if (reference !== undefined && !/^[0-9a-f]{64}$/.test(reference)) throw new Error('shell:handoff-refused');
+    let reference: string | void;
+    try {
+      reference = await prepared;
+      if (reference !== undefined && !/^[0-9a-f]{64}$/.test(reference)) throw new Error('shell:handoff-refused');
+    } catch (error) {
+      if (generation === this.#generation) this.close();
+      throw error;
+    }
     if (generation !== this.#generation) return;
     const dialog = document.createElement('dialog');
     dialog.className = 'owner-dialog';
@@ -88,7 +96,7 @@ export class OwnerFrame {
         }
       }
     };
-    const dismiss = () => { this.close(); this.#notice({ kind: 'closed' }); };
+    const dismiss = () => { this.close(); this.#notice({ kind: 'closed', route }); };
     close.addEventListener('click', dismiss);
     dialog.addEventListener('cancel', dismiss);
     window.addEventListener('message', onMessage);
@@ -103,16 +111,20 @@ export class OwnerFrame {
       dialog.close();
       dialog.remove();
     };
-    dialog.showModal();
+    try { dialog.showModal(); }
+    catch (error) { this.close(); throw error; }
   }
 
   close(): void {
     this.#generation++;
+    this.#route = null;
     const close = this.#close;
     this.#close = null;
     this.#dialog = null;
     close?.();
   }
+
+  get busy(): boolean { return this.#route !== null; }
 
   dispose(): void { this.close(); }
 }

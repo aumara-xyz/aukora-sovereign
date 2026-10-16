@@ -11,11 +11,13 @@ export interface FaceHost {
   readonly signal: AbortSignal;
 }
 
-const CODE = /^[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9_-]{1,64}$/;
-
-/** A refusal code the face may print; anything else is reported as a generic service failure. */
 export function refusalText(error: unknown): string {
-  return error instanceof Error && CODE.test(error.message) ? error.message : "app:service-unavailable";
+  const message = error instanceof Error ? error.message : "";
+  if (/(?:session-required|binding-required|session-expired|signin-required)/.test(message)) {
+    return "Sign in to view your binding.";
+  }
+  if (/(?:shell-required|frame-required|origin-mismatch)/.test(message)) return "Open AUMLOK inside the app.";
+  return "Binding status unavailable. Try again shortly.";
 }
 
 /** Heading and status line first, then the face's own mount once the shell link exists. Returns the disposer. */
@@ -49,7 +51,7 @@ export function openFace(id: string, title: string, mount: (host: FaceHost) => v
       status.textContent = "";
       await mount({ root, client, signal: life.signal });
     } catch (error) {
-      if (!life.signal.aborted) status.textContent = `Unavailable · ${refusalText(error)}`;
+      if (!life.signal.aborted) status.textContent = refusalText(error);
     }
   })();
   return dispose;

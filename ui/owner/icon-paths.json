@@ -1,0 +1,11 @@
+{
+  "schema": "aukora-owner-icon-paths-v1",
+  "viewBox": "0 0 24 24",
+  "strokeWidth": 1.75,
+  "paths": {
+    "owner": "M12 3 4 7v5c0 4 8 9 8 9s8-5 8-9V7z",
+    "aumlok": "M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3",
+    "identity": "M4 5h16v14H4zM8 10a2 2 0 1 0 4 0 2 2 0 0 0-4 0ZM6 17c.5-2 2-3 4-3s3.5 1 4 3M15 10h3M15 14h3",
+    "surface": "M4 5h16v14H4zM4 9h16"
+  }
+}
