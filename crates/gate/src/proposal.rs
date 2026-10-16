@@ -196,8 +196,9 @@ pub(crate) fn content_digest(
     )))
 }
 
-pub(crate) fn to_stored(proposal: &Proposal) -> aura::storage::ProposalState {
-    aura::storage::ProposalState {
+pub(crate) fn to_stored(proposal: &Proposal) -> crate::Result<aura::storage::ProposalState> {
+    let model_note = crate::card::prepare_model_note(&proposal.request.model_note)?.displayed;
+    Ok(aura::storage::ProposalState {
         proposal: proposal.id,
         operation: proposal.operation_id,
         operation_digest: proposal.operation_digest,
@@ -222,7 +223,7 @@ pub(crate) fn to_stored(proposal: &Proposal) -> aura::storage::ProposalState {
             _ => None,
         },
         actor: "auma".into(),
-        model_note: proposal.request.model_note.clone(),
+        model_note,
         status: match proposal.state {
             ProposalState::Pending => aura::storage::ProposalStatus::Pending,
             ProposalState::Consumed => aura::storage::ProposalStatus::Consumed,
@@ -235,7 +236,7 @@ pub(crate) fn to_stored(proposal: &Proposal) -> aura::storage::ProposalState {
             ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
             ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
         },
-    }
+    })
 }
 
 pub(crate) fn from_stored(
@@ -292,6 +293,25 @@ pub(crate) fn from_stored(
             None
         }
     };
+    let model_note = match body.get("model_note") {
+        None => stored.model_note.clone(),
+        Some(note) => {
+            let ValueView::Object(fields) = note.view() else {
+                return Err(crate::refuse("proposal-note"));
+            };
+            let raw = note
+                .get("raw")
+                .and_then(as_text)
+                .ok_or(crate::refuse("proposal-note"))?;
+            if fields.len() != 2
+                || note.get("schema").and_then(as_text) != Some("aukora-gate-model-note-v1")
+                || crate::card::prepare_model_note(raw)?.displayed != stored.model_note
+            {
+                return Err(crate::refuse("proposal-note"));
+            }
+            raw.to_owned()
+        }
+    };
     let new_digest = hash(&stored.new_bytes);
     Ok(Proposal {
         id: stored.proposal,
@@ -302,7 +322,7 @@ pub(crate) fn from_stored(
             target: TargetId::new(stored.target)?,
             base: stored.base_sha256,
             new_bytes: stored.new_bytes,
-            model_note: stored.model_note,
+            model_note,
             cell: stored.cell,
             new_evidence,
             suggestion,
@@ -340,6 +360,17 @@ pub(crate) fn lifecycle_body(proposal: &Proposal) -> crate::Result<Value> {
         ("expires_at_ms".into(), integer(proposal.expires_at_ms)?),
         ("suggestion".into(), text(suggestion)?),
     ];
+    if crate::card::prepare_model_note(&proposal.request.model_note)?.displayed
+        != proposal.request.model_note
+    {
+        members.push((
+            "model_note".into(),
+            Value::object(vec![
+                ("schema".into(), text("aukora-gate-model-note-v1")?),
+                ("raw".into(), text(&proposal.request.model_note)?),
+            ])?,
+        ));
+    }
     if let SuggestionOrder::RuleAfterReviewedBatch { batch } = proposal.request.suggestion {
         members.push(("batch".into(), text(batch)?));
     }

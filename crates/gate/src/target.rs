@@ -21,67 +21,107 @@ impl<S: TargetStore> crate::service::Gate<'_, S> {
         approval: Digest32,
         crash: &mut dyn crate::recovery::CrashInjector,
     ) -> Result<crate::service::Outcome> {
-        use crate::{install, recovery::{CrashPoint, RecoveryItem}, ProposalState};
+        use crate::{install, recovery::CrashPoint, ProposalState};
         let (ledger, targets, config, services) = self.install_parts();
         let mut transaction = ledger.begin(services)?;
         let proposal = install::transition_load(&transaction, id)?;
-        install::transition_target(config, &proposal.request.target, proposal.request.new_bytes.len())?;
+        install::transition_target(
+            config,
+            &proposal.request.target,
+            proposal.request.new_bytes.len(),
+        )?;
         install::validate_proposal(&proposal)?;
-        if proposal.state != ProposalState::Consumed || proposal.risk != crate::RiskTier::Critical
+        if proposal.state != ProposalState::Consumed
+            || proposal.risk != crate::RiskTier::Critical
             || proposal.authority.epoch != transaction.current_version()?.epoch
             || proposal.new_digest != Digest32::sha256(&proposal.request.new_bytes)
-            || proposal.operation_digest != crate::proposal::content_digest(config.node, &proposal.request)? {
+            || proposal.operation_digest
+                != crate::proposal::content_digest(config.node, &proposal.request)?
+        {
             return Err(crate::refuse("install-consumption"));
         }
-        let consumed = transaction.check_target_consumption(id, approval)?;
-        let valid = |observation: &TargetObservation| match (&observation.digest, &observation.bytes) {
-            (BaseDigest::Absent, None) => true,
-            (BaseDigest::Present(expected), Some(bytes)) => *expected == Digest32::sha256(bytes),
-            _ => false,
-        };
-        let before = targets.observe(&proposal.request.target).ok().filter(&valid);
+        transaction.check_target_consumption(id, approval)?;
+        let valid =
+            |observation: &TargetObservation| match (&observation.digest, &observation.bytes) {
+                (BaseDigest::Absent, None) => true,
+                (BaseDigest::Present(expected), Some(bytes)) => {
+                    *expected == Digest32::sha256(bytes)
+                }
+                _ => false,
+            };
+        let before = targets
+            .observe(&proposal.request.target)
+            .ok()
+            .filter(&valid);
         let mut acknowledged = false;
-        if before.as_ref().is_some_and(|seen| seen.digest == proposal.request.base) {
+        if before
+            .as_ref()
+            .is_some_and(|seen| seen.digest == proposal.request.base)
+        {
             crash.at(CrashPoint::BeforeEffect)?;
             let result = targets.replace_once(EffectPermit::new(
-                proposal.operation_id, proposal.request.target.clone(), proposal.request.base,
-                proposal.new_digest, proposal.request.new_bytes.clone(),
+                proposal.operation_id,
+                proposal.request.target.clone(),
+                proposal.request.base,
+                proposal.new_digest,
+                proposal.request.new_bytes.clone(),
             ));
             crash.at(CrashPoint::AfterEffect)?;
-            acknowledged = result.is_ok_and(|seen| valid(&seen)
-                && seen.digest == BaseDigest::Present(proposal.new_digest)
-                && seen.bytes.as_ref() == Some(&proposal.request.new_bytes));
+            acknowledged = result.is_ok_and(|seen| {
+                valid(&seen)
+                    && seen.digest == BaseDigest::Present(proposal.new_digest)
+                    && seen.bytes.as_ref() == Some(&proposal.request.new_bytes)
+            });
         }
-        let observed = targets.observe(&proposal.request.target).ok().filter(valid);
-        let state = match &observed {
-            Some(seen) if seen.digest == BaseDigest::Present(proposal.new_digest)
-                && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) => ProposalState::Applied,
-            Some(seen) if acknowledged && seen.digest == BaseDigest::Present(proposal.new_digest)
-                && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) => ProposalState::Applied,
-            Some(seen) => crate::recovery::classify_observation(&RecoveryItem {
-                proposal: id, consumed_approval: approval, consumption: consumed.authority,
-                expected_base: proposal.request.base, expected_new_digest: proposal.new_digest,
-                observed: seen.clone(),
-            })?,
-            None => ProposalState::Unknown,
-        };
-        let status = match state {
-            ProposalState::Applied => aura::storage::ProposalStatus::Applied,
-            ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
-            ProposalState::Failed => aura::storage::ProposalStatus::Failed,
-            ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
-            ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
-            _ => return Err(crate::refuse("install-settlement")),
-        };
         crash.at(CrashPoint::BeforeTerminal)?;
-        install::observe_settlement(&mut transaction, targets, &proposal,
-            approval, status, observed.as_ref())?;
-        let receipt = transaction.settle_consumed_target(id, approval, status, observed.map(|seen| seen.digest))?;
+        let (state, status, observed) =
+            observe_effect(&mut transaction, targets, id, approval, acknowledged)?;
+        let receipt = transaction.settle_consumed_target(id, approval, status, observed)?;
         transaction.release_reservation(&id)?;
         crash.at(CrashPoint::AfterTerminal)?;
         install::transition_commit(transaction, crash)?;
-        Ok(crate::service::Outcome { proposal: id, state, receipt_hash: receipt.hash })
+        Ok(crate::service::Outcome {
+            proposal: id,
+            state,
+            receipt_hash: receipt.hash,
+        })
     }
+}
+
+fn observe_effect<S: TargetStore>(
+    transaction: &mut aura::LedgerTxn<'_>,
+    targets: &S,
+    id: canon::ids::ProposalId,
+    approval: Digest32,
+    acknowledged: bool,
+) -> Result<(
+    crate::ProposalState,
+    aura::storage::ProposalStatus,
+    Option<BaseDigest>,
+)> {
+    let reader = |target: &str| {
+        let observed = targets.observe(&TargetId::new(target.into())?)?;
+        match (&observed.digest, &observed.bytes) {
+            (BaseDigest::Absent, None) => (),
+            (BaseDigest::Present(digest), Some(bytes)) if *digest == Digest32::sha256(bytes) => (),
+            _ => return Err(crate::refuse("target-observation")),
+        }
+        Ok(observed.bytes)
+    };
+    let (status, observed) = if acknowledged {
+        transaction.observe_consumed_target(id, approval, reader)?
+    } else {
+        transaction.observe_interrupted_target(id, approval, reader)?
+    };
+    let state = match status {
+        aura::storage::ProposalStatus::Applied => crate::ProposalState::Applied,
+        aura::storage::ProposalStatus::Incomplete => crate::ProposalState::Incomplete,
+        aura::storage::ProposalStatus::Failed => crate::ProposalState::Failed,
+        aura::storage::ProposalStatus::Conflict => crate::ProposalState::Conflict,
+        aura::storage::ProposalStatus::Unknown => crate::ProposalState::Unknown,
+        _ => return Err(crate::refuse("settlement-state")),
+    };
+    Ok((state, status, observed))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -426,9 +466,8 @@ fn absent() -> TargetObservation {
 pub mod sites {
     use super::{EffectPermit, TargetClass, TargetId, TargetObservation, TargetSpec, TargetStore};
     use crate::{
-        card::DisplayedCard,
         proposal::{Proposal, ProposalRequest, ProposalState, SuggestionOrder},
-        recovery::{CrashInjector, CrashPoint, RecoveryItem},
+        recovery::{CrashInjector, CrashPoint},
         service::{Gate, Outcome, OwnerReview},
         Result, RiskTier,
     };
@@ -436,9 +475,8 @@ pub mod sites {
     use canon::{
         alg::AlgorithmId,
         authority::{
-            AuthorityTxn, AuthorizationChallenge, BaseDigest, Card, Kind, LifecycleKind,
-            LifecycleRecord, OwnerAssertion, OwnerAuthorization, OwnerOperation,
-            PendingAuthorityRecord, Phase,
+            AuthorityTxn, AuthorizationChallenge, BaseDigest, Kind, LifecycleKind, LifecycleRecord,
+            OwnerAssertion, OwnerAuthorization, OwnerOperation, PendingAuthorityRecord, Phase,
         },
         digest::Digest32,
         fd3_payloads::sites::{SiteBundle, SiteProposal},
@@ -530,34 +568,35 @@ pub mod sites {
             pending(&proposal, now)?;
             current_epoch(&transaction, &proposal)?;
             same_base(targets, &proposal)?;
-            let displayed = DisplayedCard::from_install_card(Card {
-                v: 1,
-                risk: RiskTier::Critical,
-                says: "Publish this exact website bundle at the displayed address.".into(),
-                facts: vec![
-                    (
-                        "address".into(),
-                        text(format!("https://{}/", bundle.host()))?,
-                    ),
-                    ("target".into(), text(proposal.request.target.as_str())?),
-                    ("bundle_sha256".into(), text(bundle.digest())?),
-                    (
-                        "isolation".into(),
-                        text("Separate host; no cookies or WebAuthn; framing refused.")?,
-                    ),
-                ],
-                from_to: vec![
-                    (
-                        "base_sha256".into(),
-                        text(base_name(proposal.request.base))?,
-                    ),
-                    (
-                        "new_bytes_b64".into(),
-                        text(STANDARD.encode(&proposal.request.new_bytes))?,
-                    ),
-                ],
-                model_note: proposal.request.model_note.clone(),
-            })?;
+            let displayed = crate::card::build_card(
+                &proposal,
+                OwnerOperation::Apply,
+                crate::card::ReviewFacts {
+                    says: "Publish this exact website bundle at the displayed address.".into(),
+                    facts: vec![
+                        (
+                            "address".into(),
+                            text(format!("https://{}/", bundle.host()))?,
+                        ),
+                        ("target".into(), text(proposal.request.target.as_str())?),
+                        ("bundle_sha256".into(), text(bundle.digest())?),
+                        (
+                            "isolation".into(),
+                            text("Separate host; no cookies or WebAuthn; framing refused.")?,
+                        ),
+                    ],
+                    from_to: vec![
+                        (
+                            "base_sha256".into(),
+                            text(base_name(proposal.request.base))?,
+                        ),
+                        (
+                            "new_bytes_b64".into(),
+                            text(STANDARD.encode(&proposal.request.new_bytes))?,
+                        ),
+                    ],
+                },
+            )?;
             let mut nonce = [0; 16];
             getrandom::fill(&mut nonce).map_err(|_| crate::refuse("randomness"))?;
             let expires_at = now
@@ -640,7 +679,7 @@ pub mod sites {
             pending(&proposal, now)?;
             current_epoch(&transaction, &proposal)?;
             same_base(targets, &proposal)?;
-            let proof = aumlok::webauthn::verify_owner_assertion(
+            let proof = canon::authority::VerifiedProof::verify(
                 &mut transaction,
                 &id,
                 OwnerOperation::Apply,
@@ -695,7 +734,7 @@ pub mod sites {
                 return Err(crate::refuse("not-consumed"));
             }
             current_epoch(&transaction, &proposal)?;
-            let consumed = transaction.check_target_consumption(id, approval)?;
+            transaction.check_target_consumption(id, approval)?;
             let before = targets
                 .observe(&proposal.request.target)
                 .ok()
@@ -720,43 +759,10 @@ pub mod sites {
                         && seen.bytes.as_ref() == Some(&proposal.request.new_bytes)
                 });
             }
-            let observed = targets
-                .observe(&proposal.request.target)
-                .ok()
-                .filter(observation_valid);
-            let state = match &observed {
-                Some(seen)
-                    if acknowledged
-                        && seen.digest == BaseDigest::Present(proposal.new_digest)
-                        && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) =>
-                {
-                    ProposalState::Applied
-                }
-                Some(seen) => crate::recovery::classify_observation(&RecoveryItem {
-                    proposal: id,
-                    consumed_approval: approval,
-                    consumption: consumed.authority,
-                    expected_base: proposal.request.base,
-                    expected_new_digest: proposal.new_digest,
-                    observed: seen.clone(),
-                })?,
-                None => ProposalState::Unknown,
-            };
-            let status = match state {
-                ProposalState::Applied => aura::storage::ProposalStatus::Applied,
-                ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
-                ProposalState::Failed => aura::storage::ProposalStatus::Failed,
-                ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
-                ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
-                _ => return Err(crate::refuse("settlement-state")),
-            };
             crash.at(CrashPoint::BeforeTerminal)?;
-            let terminal = transaction.settle_consumed_target(
-                id,
-                approval,
-                status,
-                observed.map(|value| value.digest),
-            )?;
+            let (state, status, observed) =
+                super::observe_effect(&mut transaction, targets, id, approval, acknowledged)?;
+            let terminal = transaction.settle_consumed_target(id, approval, status, observed)?;
             transaction.release_reservation(&id)?;
             crash.at(CrashPoint::AfterTerminal)?;
             crate::install::transition_commit(transaction, crash)?;
@@ -859,7 +865,10 @@ pub mod sites {
         Ok(())
     }
 
-    pub(crate) fn validate(config: &crate::service::GateConfig, proposal: &Proposal) -> Result<SiteBundle> {
+    pub(crate) fn validate(
+        config: &crate::service::GateConfig,
+        proposal: &Proposal,
+    ) -> Result<SiteBundle> {
         configured(config, &proposal.request)?;
         let bundle = SiteBundle::decode(&proposal.request.new_bytes)?;
         if proposal.request.target.as_str() != bundle.target()

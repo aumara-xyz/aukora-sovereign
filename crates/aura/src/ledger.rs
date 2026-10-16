@@ -21,6 +21,7 @@ mod floor;
 mod io;
 mod observations;
 mod proposals;
+mod recovery;
 
 /// Signing keys remain with the supervisor's signing service.
 pub trait RecordSigner {

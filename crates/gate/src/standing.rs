@@ -43,7 +43,7 @@ impl StandingPermissionRef {
 /// Check a routine Apply using the retained grant proof and exact fingerprint.
 /// The transaction checks current owner, epoch, revocation, expiry, scope and cap.
 /// No use is consumed, and no grant or widening is authorized by this check.
-pub fn check_use<T: AuthorityTxn + ?Sized>(
+pub fn verify_use<T: AuthorityTxn + ?Sized>(
     txn: &mut T,
     proposal: &ProposalId,
     permission: StandingPermissionRef,
@@ -55,6 +55,15 @@ pub fn check_use<T: AuthorityTxn + ?Sized>(
         proposal,
         OwnerOperation::Apply,
     )
+}
+
+/// Compatibility entry point for the same locked standing-permission check.
+pub fn check_use<T: AuthorityTxn + ?Sized>(
+    txn: &mut T,
+    proposal: &ProposalId,
+    permission: StandingPermissionRef,
+) -> Result<VerifiedStandingUse> {
+    verify_use(txn, proposal, permission)
 }
 
 /// Request idempotent revocation of the exact grant without a passkey assertion.
@@ -82,17 +91,18 @@ pub fn verify_change<T: AuthorityTxn + ?Sized>(
     txn: &mut T,
     change: StandingChange,
 ) -> Result<VerifiedProof> {
-    let authorization = txn.rebuild_authorization(&change.proposal, OwnerOperation::Permission)?;
+    let proof = VerifiedProof::verify(
+        txn,
+        &change.proposal,
+        OwnerOperation::Permission,
+        change.assertion,
+    )?;
+    let authorization = proof.authorization();
     if authorization.proposal != change.proposal
         || authorization.op != OwnerOperation::Permission
         || authorization.target != "gate/permission"
     {
         return Err(crate::refuse("standing-action"));
     }
-    aumlok::webauthn::verify_owner_assertion(
-        txn,
-        &change.proposal,
-        OwnerOperation::Permission,
-        change.assertion,
-    )
+    Ok(proof)
 }

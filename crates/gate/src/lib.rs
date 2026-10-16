@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Gate contracts. Storage and effect entry points refuse until implemented.
+//! Exact owner approvals, proposal lifecycles and guarded target effects.
 #![forbid(unsafe_code)]
 
 pub mod card;
@@ -26,8 +26,4 @@ const fn refuse(reason: &'static str) -> Refusal {
         organ: "gate",
         reason,
     }
-}
-
-fn unavailable<T>() -> Result<T> {
-    Err(crate::refuse("unimplemented"))
 }

@@ -8,9 +8,7 @@ use crate::{
         self, DeclinedProposal, EvidenceChange, Proposal, ProposalRequest, ProposalState,
         SuggestionOrder,
     },
-    recovery::{
-        self, CrashInjector, CrashPoint, NoInjection, RecoveryItem, RecoveryResult, RecoverySweep,
-    },
+    recovery::{CrashInjector, CrashPoint, NoInjection, RecoveryResult, RecoverySweep},
     standing::{self, StandingPermissionRef},
     target::{EffectPermit, TargetClass, TargetObservation, TargetSpec, TargetStore},
     Result,
@@ -20,13 +18,15 @@ use canon::{
     alg::AlgorithmId,
     authority::{
         AuthorityTxn, AuthorizationChallenge, BaseDigest, Kind, LifecycleKind, LifecycleRecord,
-        OwnerAssertion, OwnerOperation, PendingAuthorityRecord, Phase,
+        OwnerAssertion, OwnerOperation, PendingAuthorityRecord, Phase, VerifiedProof,
     },
     digest::Digest32,
     ids::{NodeId, OperationId, ProposalId},
     json::{Value, ValueView, MAX_SAFE_INTEGER},
 };
 use sha2::{Digest, Sha256};
+
+mod effects;
 
 #[derive(Clone, Debug)]
 pub struct GateConfig {
@@ -171,7 +171,7 @@ impl<'a, S: TargetStore> Gate<'a, S> {
             created_at_ms: now,
             expires_at_ms: expires,
         };
-        transaction.stage_proposal(proposal::to_stored(&proposal))?;
+        transaction.stage_proposal(proposal::to_stored(&proposal)?)?;
         transaction.append_lifecycle(lifecycle(
             &transaction,
             &proposal,
@@ -224,7 +224,7 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         if action == OwnerOperation::Apply && observed.digest != proposal.request.base {
             return Err(crate::refuse("stale-base"));
         }
-        let facts = ReviewFacts {
+        let mut facts = ReviewFacts {
             says: match action {
                 OwnerOperation::Apply => "Replace the target with the displayed bytes.",
                 OwnerOperation::Retire => "Retire this proposal without applying its bytes.",
@@ -244,6 +244,24 @@ impl<'a, S: TargetStore> Gate<'a, S> {
                 ),
             ],
         };
+        if let Some(cell) = proposal.request.cell {
+            facts.facts.push((
+                "cell".into(),
+                object(vec![
+                    ("module_sha256", text(cell.module_sha256)?),
+                    ("input_sha256", text(cell.input_sha256)?),
+                    ("effect_sha256", text(cell.effect_sha256)?),
+                ])?,
+            ));
+        }
+        if let Some(bytes) = observed.bytes.as_ref() {
+            if let Ok(before) = std::str::from_utf8(bytes) {
+                facts.from_to.push(("before".into(), text(before)?));
+            }
+        }
+        if let Ok(after) = std::str::from_utf8(&proposal.request.new_bytes) {
+            facts.from_to.push(("after".into(), text(after)?));
+        }
         let displayed = card::build_card(&proposal, action, facts)?;
         let authorization = card::authorization(
             &proposal,
@@ -327,12 +345,7 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         if observation.digest != proposal.request.base {
             return Err(crate::refuse("stale-base"));
         }
-        let proof = aumlok::webauthn::verify_owner_assertion(
-            &mut transaction,
-            &id,
-            OwnerOperation::Apply,
-            assertion,
-        )?;
+        let proof = VerifiedProof::verify(&mut transaction, &id, OwnerOperation::Apply, assertion)?;
         crash.at(CrashPoint::AfterProof)?;
         let approval = hash(proof.authorization_bytes());
         transaction.persist_counter(&proof)?;
@@ -353,23 +366,6 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         self.effect_once(id, approval, crash)
     }
 
-    /// A standing use names the exact signed permission by its fingerprint.
-    /// Locked verification checks that fingerprint and only permits routine Apply.
-    /// It cannot grant, renew or widen a permission; changes require
-    /// `standing::StandingChange`, including a fresh owner assertion.
-    /// This path refuses without effects while standing consumption is unavailable.
-    pub fn apply_standing(
-        &mut self,
-        proposal: ProposalId,
-        permission: StandingPermissionRef,
-        _crash: &mut dyn CrashInjector,
-    ) -> Result<Outcome> {
-        coverage::lookup(EntryPoint::Apply, EffectRoute::TargetReplace)?;
-        let mut transaction = self.ledger.begin(self.services)?;
-        let _usage = standing::check_use(&mut transaction, &proposal, permission)?;
-        crate::unavailable()
-    }
-
     /// Retire pending work with its exact C5 owner assertion, or return its
     /// existing retirement receipt. Unknown outcomes refuse `gate:unknown-outcome`.
     pub fn retire(
@@ -387,12 +383,8 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         if proposal.state == ProposalState::Retired {
             return terminal_outcome(&transaction, &proposal);
         }
-        let proof = aumlok::webauthn::verify_owner_assertion(
-            &mut transaction,
-            &id,
-            OwnerOperation::Retire,
-            assertion,
-        )?;
+        let proof =
+            VerifiedProof::verify(&mut transaction, &id, OwnerOperation::Retire, assertion)?;
         crash.at(CrashPoint::AfterProof)?;
         let approval = hash(proof.authorization_bytes());
         transaction.persist_counter(&proof)?;
@@ -448,8 +440,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
 
     pub fn recover(&mut self, crash: &mut dyn CrashInjector) -> Result<RecoverySweep> {
         crash.at(CrashPoint::BeforeRecovery)?;
-        clock(self.services)?;
+        let now = clock(self.services)?;
         let transaction = self.ledger.begin(self.services)?;
+        let epoch = transaction.current_version()?.epoch;
         let pending = transaction.pending_proposals(10_001)?;
         let consumed = transaction.recovery_work(10_001)?;
         if pending.len() > 10_000 || consumed.len() > 10_000 {
@@ -459,7 +452,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         for stored in pending {
             let record = transaction.record_at(stored.authority)?;
             let proposal = proposal::from_stored(stored, &record)?;
-            if proposal.state == ProposalState::Pending {
+            if proposal.state == ProposalState::Pending
+                && (now >= proposal.expires_at_ms || proposal.authority.epoch != epoch)
+            {
                 ids.insert(proposal.id);
             }
         }
@@ -472,6 +467,7 @@ impl<'a, S: TargetStore> Gate<'a, S> {
                 continue;
             }
             match self.reconcile(id, crash) {
+                Ok(outcome) if outcome.state == ProposalState::Pending => (),
                 Ok(outcome) => {
                     let transaction = self.ledger.begin(self.services)?;
                     let stored = transaction.proposal(&id)?;
@@ -495,7 +491,9 @@ impl<'a, S: TargetStore> Gate<'a, S> {
 
     pub fn reconcile(&mut self, id: ProposalId, crash: &mut dyn CrashInjector) -> Result<Outcome> {
         if self.site_proposal(id)? {
-            return self.reconcile_site(id, crash)?.ok_or(crate::refuse("not-pending"));
+            return self
+                .reconcile_site(id, crash)?
+                .ok_or(crate::refuse("not-pending"));
         }
         crash.at(CrashPoint::BeforeReconcile)?;
         let now = clock(self.services)?;
@@ -509,49 +507,35 @@ impl<'a, S: TargetStore> Gate<'a, S> {
             return Ok(result);
         }
         if proposal.state == ProposalState::Pending {
-            if now >= proposal.expires_at_ms {
-                transaction.rollback()?;
-                let result = self.finish_unconsumed(id, true, crash)?;
+            if proposal.authority.epoch != transaction.current_version()?.epoch {
+                crash.at(CrashPoint::BeforeTerminal)?;
+                let receipt = transaction.refuse_stale_pending(id)?;
+                transaction.release_reservation(&id)?;
+                crash.at(CrashPoint::AfterTerminal)?;
+                let result = outcome(&proposal, ProposalState::Refused, receipt.hash);
+                commit(transaction, crash)?;
                 crash.at(CrashPoint::AfterReconcile)?;
                 return Ok(result);
             }
-            crash.at(CrashPoint::BeforeTerminal)?;
-            let row = lifecycle(
-                &transaction,
-                &proposal,
-                LifecycleKind::GateRefuse,
-                Phase::Terminal,
-                now,
-                outcome_body(&proposal, ProposalState::Failed, None, None)?,
-            )?;
-            let receipt = transaction.append_lifecycle(row)?;
-            transaction.release_reservation(&id)?;
-            crash.at(CrashPoint::AfterTerminal)?;
-            let result = outcome(&proposal, ProposalState::Failed, receipt.hash);
-            commit(transaction, crash)?;
+            if now < proposal.expires_at_ms {
+                let receipt = transaction.record_at(proposal.authority)?;
+                transaction.rollback()?;
+                crash.at(CrashPoint::AfterReconcile)?;
+                return Ok(outcome(&proposal, ProposalState::Pending, receipt.hash));
+            }
+            transaction.rollback()?;
+            let result = self.finish_unconsumed(id, true, crash)?;
             crash.at(CrashPoint::AfterReconcile)?;
             return Ok(result);
         }
+        validate_content(self.config.node, &proposal)?;
         let work = recovery_work(&transaction, &proposal)?;
-        let observed = self.targets.observe(&proposal.request.target).ok();
-        let state = match &observed {
-            Some(observed) => recovery::classify_observation(&RecoveryItem {
-                proposal: id,
-                consumed_approval: work.consumed_approval,
-                consumption: work.consumed_at,
-                expected_base: work.base_sha256,
-                expected_new_digest: work.new_sha256,
-                observed: observed.clone(),
-            })?,
-            None => ProposalState::Unknown,
-        };
         let result = settle(
             &mut transaction,
+            &self.targets,
             &proposal,
-            state,
             work.consumed_approval,
-            observed.as_ref(),
-            now,
+            false,
             crash,
         )?;
         commit(transaction, crash)?;
@@ -570,79 +554,6 @@ impl<'a, S: TargetStore> Gate<'a, S> {
     }
     pub fn services(&self) -> &TransactionServices<'a> {
         &self.services
-    }
-
-    fn effect_once(
-        &mut self,
-        id: ProposalId,
-        approval: Digest32,
-        crash: &mut dyn CrashInjector,
-    ) -> Result<Outcome> {
-        let mut transaction = self.ledger.begin(self.services)?;
-        let proposal = load(&transaction, id)?;
-        validate_content(self.config.node, &proposal)?;
-        if proposal.state != ProposalState::Consumed {
-            return Err(crate::refuse("not-consumed"));
-        }
-        let work = recovery_work(&transaction, &proposal)?;
-        if work.consumed_approval != approval {
-            return Err(crate::refuse("consumption-mismatch"));
-        }
-        let before = self
-            .targets
-            .observe(&proposal.request.target)
-            .and_then(|observed| {
-                check_observation(&observed)?;
-                Ok(observed)
-            });
-        let mut applied = false;
-        if matches!(before, Ok(ref observed) if observed.digest == proposal.request.base) {
-            crash.at(CrashPoint::BeforeEffect)?;
-            let permit = EffectPermit::new(
-                proposal.operation_id,
-                proposal.request.target.clone(),
-                proposal.request.base,
-                proposal.new_digest,
-                proposal.request.new_bytes.clone(),
-            );
-            let replacement = self.targets.replace_once(permit);
-            crash.at(CrashPoint::AfterEffect)?;
-            if let Ok(observed) = replacement {
-                applied = check_observation(&observed).is_ok()
-                    && observed.digest == BaseDigest::Present(proposal.new_digest)
-                    && observed.bytes.as_ref() == Some(&proposal.request.new_bytes);
-            }
-        }
-        let observed = self.targets.observe(&proposal.request.target).ok();
-        let state = match &observed {
-            Some(observed)
-                if applied
-                    && observed.digest == BaseDigest::Present(proposal.new_digest)
-                    && observed.bytes.as_ref() == Some(&proposal.request.new_bytes) =>
-            {
-                ProposalState::Applied
-            }
-            Some(observed) => recovery::classify_observation(&RecoveryItem {
-                proposal: id,
-                consumed_approval: approval,
-                consumption: work.consumed_at,
-                expected_base: work.base_sha256,
-                expected_new_digest: work.new_sha256,
-                observed: observed.clone(),
-            })?,
-            None => ProposalState::Unknown,
-        };
-        let result = settle(
-            &mut transaction,
-            &proposal,
-            state,
-            approval,
-            observed.as_ref(),
-            clock(self.services)?,
-            crash,
-        )?;
-        commit(transaction, crash)?;
-        Ok(result)
     }
 
     fn finish_unconsumed(
@@ -738,37 +649,38 @@ fn recovery_work(
     Ok(work)
 }
 
-fn settle(
+fn settle<S: TargetStore>(
     transaction: &mut LedgerTxn<'_>,
+    targets: &S,
     proposal: &Proposal,
-    state: ProposalState,
     approval: Digest32,
-    observed: Option<&TargetObservation>,
-    now: i64,
+    acknowledged: bool,
     crash: &mut dyn CrashInjector,
 ) -> Result<Outcome> {
-    if !matches!(
-        state,
-        ProposalState::Applied
-            | ProposalState::Incomplete
-            | ProposalState::Failed
-            | ProposalState::Conflict
-            | ProposalState::Unknown
-    ) {
-        return Err(crate::refuse("settlement-state"));
-    }
+    let reader = |target: &str| {
+        if target != proposal.request.target.as_str() {
+            return Err(crate::refuse("consumption-mismatch"));
+        }
+        let observed = targets.observe(&proposal.request.target)?;
+        check_observation(&observed)?;
+        Ok(observed.bytes)
+    };
+    let (status, observed) = if acknowledged {
+        transaction.observe_consumed_target(proposal.id, approval, reader)?
+    } else {
+        transaction.observe_interrupted_target(proposal.id, approval, reader)?
+    };
+    use aura::storage::ProposalStatus;
+    let state = match status {
+        ProposalStatus::Applied => ProposalState::Applied,
+        ProposalStatus::Incomplete => ProposalState::Incomplete,
+        ProposalStatus::Failed => ProposalState::Failed,
+        ProposalStatus::Conflict => ProposalState::Conflict,
+        ProposalStatus::Unknown => ProposalState::Unknown,
+        _ => return Err(crate::refuse("settlement-state")),
+    };
     crash.at(CrashPoint::BeforeTerminal)?;
-    let row = lifecycle(
-        transaction,
-        proposal,
-        LifecycleKind::GateRecover {
-            consumed_approval: approval,
-        },
-        Phase::Terminal,
-        now,
-        outcome_body(proposal, state, Some(approval), observed)?,
-    )?;
-    let receipt = transaction.append_lifecycle(row)?;
+    let receipt = transaction.settle_consumed_target(proposal.id, approval, status, observed)?;
     transaction.release_reservation(&proposal.id)?;
     crash.at(CrashPoint::AfterTerminal)?;
     Ok(outcome(proposal, state, receipt.hash))
@@ -983,7 +895,12 @@ impl<'a, S: TargetStore> Gate<'a, S> {
     pub(crate) fn install_parts(
         &mut self,
     ) -> (&mut Ledger, &mut S, &GateConfig, TransactionServices<'a>) {
-        (&mut self.ledger, &mut self.targets, &self.config, self.services)
+        (
+            &mut self.ledger,
+            &mut self.targets,
+            &self.config,
+            self.services,
+        )
     }
 
     pub(crate) fn install_construct(
@@ -992,6 +909,11 @@ impl<'a, S: TargetStore> Gate<'a, S> {
         config: GateConfig,
         services: TransactionServices<'a>,
     ) -> Self {
-        Self { ledger, targets, config, services }
+        Self {
+            ledger,
+            targets,
+            config,
+            services,
+        }
     }
 }

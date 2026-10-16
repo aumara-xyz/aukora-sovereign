@@ -157,10 +157,16 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
         let mut names = std::collections::BTreeSet::new();
         if config.proposal_lifetime_ms == 0
             || config.proposal_lifetime_ms > canon::json::MAX_SAFE_INTEGER as u64
-            || config.ceremony_lifetime_ms == 0 || config.ceremony_lifetime_ms > 300_000
-            || config.targets.iter().any(|spec| spec.class != crate::target::TargetClass::Install
-                || spec.risk != crate::RiskTier::Critical || spec.max_bytes == 0
-                || spec.max_bytes > crate::install::MAX_INSTALL_BYTES || !names.insert(spec.id.clone())) {
+            || config.ceremony_lifetime_ms == 0
+            || config.ceremony_lifetime_ms > 300_000
+            || config.targets.iter().any(|spec| {
+                spec.class != crate::target::TargetClass::Install
+                    || spec.risk != crate::RiskTier::Critical
+                    || spec.max_bytes == 0
+                    || spec.max_bytes > crate::install::MAX_INSTALL_BYTES
+                    || !names.insert(spec.id.clone())
+            })
+        {
             return Err(crate::refuse("install-configuration"));
         }
         let mut gate = Self::install_construct(ledger, targets, config, services);
@@ -183,8 +189,18 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
         }
         let owned = |target: &str| config.targets.iter().any(|spec| spec.id.as_str() == target);
         let mut ids = std::collections::BTreeSet::new();
-        ids.extend(pending.iter().filter(|stored| owned(&stored.target)).map(|stored| stored.proposal));
-        ids.extend(consumed.iter().filter(|work| owned(&work.target)).map(|work| work.proposal));
+        ids.extend(
+            pending
+                .iter()
+                .filter(|stored| owned(&stored.target))
+                .map(|stored| stored.proposal),
+        );
+        ids.extend(
+            consumed
+                .iter()
+                .filter(|work| owned(&work.target))
+                .map(|work| work.proposal),
+        );
         transaction.rollback()?;
         let mut sweep = RecoverySweep::default();
         for id in ids {
@@ -198,60 +214,102 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
         Ok(sweep)
     }
 
-    fn reconcile_store(&mut self, id: ProposalId, crash: &mut dyn CrashInjector) -> Result<Option<RecoveryResult>> {
+    fn reconcile_store(
+        &mut self,
+        id: ProposalId,
+        crash: &mut dyn CrashInjector,
+    ) -> Result<Option<RecoveryResult>> {
+        use crate::install;
         use canon::authority::{AuthorityTxn, Kind, LifecycleKind, LifecycleRecord, Phase};
         use canon::json::{Value, ValueView};
-        use crate::install;
         crash.at(CrashPoint::BeforeReconcile)?;
         let (ledger, targets, config, services) = self.install_parts();
         let now = install::transition_now(services)?;
         let mut transaction = ledger.begin(services)?;
         let proposal = install::transition_load(&transaction, id)?;
-        install::transition_target(config, &proposal.request.target, proposal.request.new_bytes.len())?;
+        install::transition_target(
+            config,
+            &proposal.request.target,
+            proposal.request.new_bytes.len(),
+        )?;
         install::validate_proposal(&proposal)?;
         if proposal.risk != crate::RiskTier::Critical
             || proposal.new_digest != Digest32::sha256(&proposal.request.new_bytes)
-            || proposal.operation_digest != crate::proposal::content_digest(config.node, &proposal.request)? {
+            || proposal.operation_digest
+                != crate::proposal::content_digest(config.node, &proposal.request)?
+        {
             return Err(crate::refuse("operation-mismatch"));
         }
-        if proposal.state == ProposalState::Pending && now < proposal.expires_at_ms {
+        if proposal.state == ProposalState::Pending
+            && proposal.authority.epoch == transaction.current_version()?.epoch
+            && now < proposal.expires_at_ms
+        {
             transaction.rollback()?;
             crash.at(CrashPoint::AfterReconcile)?;
             return Ok(None);
         }
         let (state, receipt) = if proposal.state.is_terminal() {
-            let receipt = transaction.gate_terminal(&proposal.operation_id)?.ok_or(crate::refuse("missing-terminal"))?;
+            let receipt = transaction
+                .gate_terminal(&proposal.operation_id)?
+                .ok_or(crate::refuse("missing-terminal"))?;
             let payload = receipt.body.get("payload").unwrap_or(&receipt.body);
-            let field = |name| match payload.get(name).map(Value::view) { Some(ValueView::Text(s)) => Some(s), _ => None };
+            let field = |name| match payload.get(name).map(Value::view) {
+                Some(ValueView::Text(s)) => Some(s),
+                _ => None,
+            };
             let expected_state = match proposal.state {
-                ProposalState::Applied => "applied", ProposalState::Refused => "refused",
-                ProposalState::Expired => "expired", ProposalState::Retired => "retired",
-                ProposalState::Incomplete => "incomplete", ProposalState::Failed => "failed",
-                ProposalState::Conflict => "conflict", ProposalState::Unknown => "unknown",
+                ProposalState::Applied => "applied",
+                ProposalState::Refused => "refused",
+                ProposalState::Expired => "expired",
+                ProposalState::Retired => "retired",
+                ProposalState::Incomplete => "incomplete",
+                ProposalState::Failed => "failed",
+                ProposalState::Conflict => "conflict",
+                ProposalState::Unknown => "unknown",
                 _ => return Err(crate::refuse("terminal-mismatch")),
             };
             if field("proposal") != Some(id.to_string().as_str())
                 || field("target") != Some(proposal.request.target.as_str())
                 || field("operation") != Some(proposal.operation_digest.to_string().as_str())
                 || field("new_sha256") != Some(proposal.new_digest.to_string().as_str())
-                || field("state") != Some(expected_state) {
+                || field("state") != Some(expected_state)
+            {
                 return Err(crate::refuse("terminal-mismatch"));
             }
             (proposal.state, receipt)
+        } else if proposal.state == ProposalState::Pending
+            && proposal.authority.epoch != transaction.current_version()?.epoch
+        {
+            crash.at(CrashPoint::BeforeTerminal)?;
+            let receipt = transaction.refuse_stale_pending(id)?;
+            crash.at(CrashPoint::AfterTerminal)?;
+            (ProposalState::Refused, receipt)
         } else if proposal.state == ProposalState::Pending {
             let text = |s: String| Value::text(s);
             crash.at(CrashPoint::BeforeTerminal)?;
             let record = LifecycleRecord {
-                v: 1, algorithm: canon::alg::AlgorithmId::Sha256, authority: transaction.current_version()?,
-                at: now, kind: LifecycleKind::GateExpire, actor: "gate".into(), operation: proposal.operation_id,
+                v: 1,
+                algorithm: canon::alg::AlgorithmId::Sha256,
+                authority: transaction.current_version()?,
+                at: now,
+                kind: LifecycleKind::GateExpire,
+                actor: "gate".into(),
+                operation: proposal.operation_id,
                 phase: Phase::Terminal,
                 body: Value::object(vec![
                     ("proposal".into(), text(id.to_string())?),
-                    ("target".into(), text(proposal.request.target.as_str().into())?),
-                    ("operation".into(), text(proposal.operation_digest.to_string())?),
+                    (
+                        "target".into(),
+                        text(proposal.request.target.as_str().into())?,
+                    ),
+                    (
+                        "operation".into(),
+                        text(proposal.operation_digest.to_string())?,
+                    ),
                     ("base_sha256".into(), text("absent".into())?),
                     ("new_sha256".into(), text(proposal.new_digest.to_string())?),
-                    ("state".into(), text("expired".into())?), ("retry".into(), Value::boolean(false)),
+                    ("state".into(), text("expired".into())?),
+                    ("retry".into(), Value::boolean(false)),
                 ])?,
             };
             let receipt = transaction.append_lifecycle(record)?;
@@ -262,52 +320,53 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
                 return Err(crate::refuse("install-consumption"));
             }
             let work = transaction.recovery_work(10_001)?;
-            if work.len() > 10_000 { return Err(crate::refuse("recovery-limit")); }
+            if work.len() > 10_000 {
+                return Err(crate::refuse("recovery-limit"));
+            }
             let mut matching = work.into_iter().filter(|work| work.proposal == id);
-            let work = matching.next().ok_or(crate::refuse("missing-consumption"))?;
-            if matching.next().is_some() || work.operation != proposal.operation_id
-                || work.target != proposal.request.target.as_str() || work.base_sha256 != proposal.request.base
-                || work.new_sha256 != proposal.new_digest {
+            let work = matching
+                .next()
+                .ok_or(crate::refuse("missing-consumption"))?;
+            if matching.next().is_some()
+                || work.operation != proposal.operation_id
+                || work.target != proposal.request.target.as_str()
+                || work.base_sha256 != proposal.request.base
+                || work.new_sha256 != proposal.new_digest
+            {
                 return Err(crate::refuse("consumption-mismatch"));
             }
-            transaction.check_target_consumption(id, work.consumed_approval)?;
-            let observed = targets.observe(&proposal.request.target).ok().filter(|seen| match (&seen.digest, &seen.bytes) {
-                (BaseDigest::Absent, None) => true,
-                (BaseDigest::Present(expected), Some(bytes)) => *expected == Digest32::sha256(bytes),
-                _ => false,
-            });
-            let state = match &observed {
-                Some(seen) if seen.digest == BaseDigest::Present(proposal.new_digest)
-                    && seen.bytes.as_ref() == Some(&proposal.request.new_bytes) => ProposalState::Applied,
-                Some(seen) => classify_observation(&RecoveryItem {
-                    proposal: id, consumed_approval: work.consumed_approval, consumption: work.consumed_at,
-                    expected_base: work.base_sha256, expected_new_digest: work.new_sha256, observed: seen.clone(),
-                })?,
-                None => ProposalState::Unknown,
-            };
-            let status = match state {
-                ProposalState::Applied => aura::storage::ProposalStatus::Applied,
-                ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
-                ProposalState::Failed => aura::storage::ProposalStatus::Failed,
-                ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
-                ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
-                _ => return Err(crate::refuse("install-settlement")),
-            };
-            crash.at(CrashPoint::BeforeTerminal)?;
-            install::observe_settlement(&mut transaction, targets, &proposal,
-                work.consumed_approval, status, observed.as_ref())?;
-            let receipt = transaction.settle_consumed_target(id, work.consumed_approval, status, observed.map(|seen| seen.digest))?;
-            crash.at(CrashPoint::AfterTerminal)?;
-            (state, receipt)
-        } else { return Err(crate::refuse("install-state")); };
-        if receipt.operation != Some(proposal.operation_id) || receipt.phase != Phase::Terminal
-            || !matches!(receipt.kind, Kind::GateApply | Kind::GateRecover | Kind::GateExpire | Kind::GateRefuse | Kind::GateRetire) {
+            settle_interrupted(
+                &mut transaction,
+                targets,
+                &proposal,
+                work.consumed_approval,
+                crash,
+            )?
+        } else {
+            return Err(crate::refuse("install-state"));
+        };
+        if receipt.operation != Some(proposal.operation_id)
+            || receipt.phase != Phase::Terminal
+            || !matches!(
+                receipt.kind,
+                Kind::GateApply
+                    | Kind::GateRecover
+                    | Kind::GateExpire
+                    | Kind::GateRefuse
+                    | Kind::GateRetire
+            )
+        {
             return Err(crate::refuse("terminal-mismatch"));
         }
         transaction.release_reservation(&id)?;
         install::transition_commit(transaction, crash)?;
         crash.at(CrashPoint::AfterReconcile)?;
-        Ok(Some(RecoveryResult { proposal: id, state, terminal: receipt.authority, target_released: true }))
+        Ok(Some(RecoveryResult {
+            proposal: id,
+            state,
+            terminal: receipt.authority,
+            target_released: true,
+        }))
     }
 }
 
@@ -366,7 +425,10 @@ impl<S: crate::target::TargetStore> crate::service::Gate<'_, S> {
         let mut transaction = ledger.begin(services)?;
         let proposal = crate::install::transition_load(&transaction, id)?;
         crate::target::sites::validate(config, &proposal)?;
-        if proposal.state == ProposalState::Pending && now < proposal.expires_at_ms {
+        if proposal.state == ProposalState::Pending
+            && proposal.authority.epoch == transaction.current_version()?.epoch
+            && now < proposal.expires_at_ms
+        {
             transaction.rollback()?;
             crash.at(CrashPoint::AfterReconcile)?;
             return Ok(None);
@@ -408,6 +470,13 @@ impl<S: crate::target::TargetStore> crate::service::Gate<'_, S> {
                 return Err(crate::refuse("terminal-mismatch"));
             }
             (proposal.state, terminal)
+        } else if proposal.state == ProposalState::Pending
+            && proposal.authority.epoch != transaction.current_version()?.epoch
+        {
+            crash.at(CrashPoint::BeforeTerminal)?;
+            let terminal = transaction.refuse_stale_pending(id)?;
+            crash.at(CrashPoint::AfterTerminal)?;
+            (ProposalState::Refused, terminal)
         } else if proposal.state == ProposalState::Pending {
             crash.at(CrashPoint::BeforeTerminal)?;
             let authority = transaction.current_version()?;
@@ -453,44 +522,13 @@ impl<S: crate::target::TargetStore> crate::service::Gate<'_, S> {
             {
                 return Err(crate::refuse("consumption-mismatch"));
             }
-            transaction.check_target_consumption(id, work.consumed_approval)?;
-            let observed = targets
-                .observe(&proposal.request.target)
-                .ok()
-                .filter(|value| match (&value.digest, &value.bytes) {
-                    (BaseDigest::Absent, None) => true,
-                    (BaseDigest::Present(digest), Some(bytes)) => {
-                        *digest == Digest32::sha256(bytes)
-                    }
-                    _ => false,
-                });
-            let state = match &observed {
-                Some(seen) => classify_observation(&RecoveryItem {
-                    proposal: id,
-                    consumed_approval: work.consumed_approval,
-                    consumption: work.consumed_at,
-                    expected_base: work.base_sha256,
-                    expected_new_digest: work.new_sha256,
-                    observed: seen.clone(),
-                })?,
-                None => ProposalState::Unknown,
-            };
-            let status = match state {
-                ProposalState::Incomplete => aura::storage::ProposalStatus::Incomplete,
-                ProposalState::Failed => aura::storage::ProposalStatus::Failed,
-                ProposalState::Conflict => aura::storage::ProposalStatus::Conflict,
-                ProposalState::Unknown => aura::storage::ProposalStatus::Unknown,
-                _ => return Err(crate::refuse("settlement-state")),
-            };
-            crash.at(CrashPoint::BeforeTerminal)?;
-            let terminal = transaction.settle_consumed_target(
-                id,
+            settle_interrupted(
+                &mut transaction,
+                targets,
+                &proposal,
                 work.consumed_approval,
-                status,
-                observed.map(|value| value.digest),
-            )?;
-            crash.at(CrashPoint::AfterTerminal)?;
-            (state, terminal)
+                crash,
+            )?
         } else {
             return Err(crate::refuse("not-consumed"));
         };
@@ -503,4 +541,40 @@ impl<S: crate::target::TargetStore> crate::service::Gate<'_, S> {
             receipt_hash: receipt.hash,
         }))
     }
+}
+
+fn settle_interrupted<S: crate::target::TargetStore>(
+    transaction: &mut aura::LedgerTxn<'_>,
+    targets: &mut S,
+    proposal: &crate::Proposal,
+    approval: Digest32,
+    crash: &mut dyn CrashInjector,
+) -> Result<(ProposalState, canon::authority::AuthorityRecord)> {
+    let (status, observed) =
+        transaction.observe_interrupted_target(proposal.id, approval, |target| {
+            if target != proposal.request.target.as_str() {
+                return Err(crate::refuse("consumption-mismatch"));
+            }
+            let observed = targets.observe(&proposal.request.target)?;
+            match (&observed.digest, &observed.bytes) {
+                (BaseDigest::Absent, None) => Ok(None),
+                (BaseDigest::Present(digest), Some(bytes))
+                    if *digest == Digest32::sha256(bytes) =>
+                {
+                    Ok(observed.bytes)
+                }
+                _ => Err(crate::refuse("observation-digest")),
+            }
+        })?;
+    let state = match status {
+        aura::storage::ProposalStatus::Incomplete => ProposalState::Incomplete,
+        aura::storage::ProposalStatus::Failed => ProposalState::Failed,
+        aura::storage::ProposalStatus::Conflict => ProposalState::Conflict,
+        aura::storage::ProposalStatus::Unknown => ProposalState::Unknown,
+        _ => return Err(crate::refuse("settlement-state")),
+    };
+    crash.at(CrashPoint::BeforeTerminal)?;
+    let receipt = transaction.settle_consumed_target(proposal.id, approval, status, observed)?;
+    crash.at(CrashPoint::AfterTerminal)?;
+    Ok((state, receipt))
 }
