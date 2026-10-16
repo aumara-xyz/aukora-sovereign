@@ -10,14 +10,17 @@ use canon::{
         Accepted, MemoryList, MemoryListReply, MemoryPut, MemoryRecall, Outcome, Recall,
     },
     frame::FrameId,
-    ids::{ProposalId, SessionId},
+    ids::{NoteId, ProposalId, SessionId},
     provenance::{Provenance, Source},
     session::{SessionEntry, SessionRole},
     Result,
 };
 use kira::{
+    anchor::RetainedNote,
     embed::{EmbedInput, EmbedPurpose},
-    notes::{MemoryOrigin, NoteContent, NoteForm, SaveCell, SaveReceipt, SaveRequest},
+    notes::{
+        MemoryOrigin, NoteContent, NoteForm, SaveCell, SaveCommitment, SaveReceipt, SaveRequest,
+    },
     permissions::{
         LedgerPermissions, MemoryPermissions, Permission, PermissionContext, PermissionRequest,
         PermissionScope,
@@ -72,6 +75,15 @@ pub trait KiraBackend: Send + Sync {
         context: &PermissionContext,
         entry: &SessionEntry,
     ) -> Result<Option<CaptureCheckpoint>>;
+
+    /// Read the retained ciphertext and metadata in the supplied transaction.
+    /// The adapter checks both commitments against the cited Aura save row.
+    fn retained_note(
+        &self,
+        transaction: &mut aura::LedgerTxn<'_>,
+        context: &PermissionContext,
+        note_id: &NoteId,
+    ) -> Result<RetainedNote>;
 
     /// Retain the exact entry/chunk commitments and citations, never transcript text.
     /// The checkpoint and every chunk must commit in this same transaction.
@@ -153,7 +165,7 @@ impl KiraAdapter {
                 .collect();
             if let Some(checkpoint) = backend.captured(transaction, &context, entry)? {
                 let receipts = checkpoint_receipts(&context, entry, &cells, &checkpoint)?;
-                verify_citations(transaction, &context, &receipts, None)?;
+                verify_citations(transaction, &context, &receipts, &cells, &**backend, None)?;
                 return Ok(receipts);
             }
             let count = requests.len();
@@ -163,7 +175,14 @@ impl KiraAdapter {
                 receipts.push(backend.save(transaction, &context, &self.cell, request)?);
             }
             validate_capture(&context, count, &receipts)?;
-            verify_citations(transaction, &context, &receipts, Some(first_sequence))?;
+            verify_citations(
+                transaction,
+                &context,
+                &receipts,
+                &cells,
+                &**backend,
+                Some(first_sequence),
+            )?;
             let checkpoint = CaptureCheckpoint {
                 session_id: entry.session_id,
                 entry_sequence: entry.sequence,
@@ -196,8 +215,8 @@ impl KiraService for KiraAdapter {
                 if self.cell.replay(&content)? != request.cell {
                     return Err(codes::WASMCELL_EVIDENCE_MISMATCH);
                 }
-                // C4 accepted requires an owner queue; automatic capture is separate.
-                Err(codes::KIRA_STORE_UNAVAILABLE)
+                // The gate has no review/apply route for an encrypted memory proposal.
+                Err(codes::GATE_UNSUPPORTED_OPERATION)
             })
         })
     }
@@ -454,12 +473,30 @@ fn validate_capture(
 }
 
 fn verify_citations(
-    transaction: &aura::LedgerTxn<'_>,
+    transaction: &mut aura::LedgerTxn<'_>,
     context: &PermissionContext,
     receipts: &[SaveReceipt],
+    cells: &[CellCommitment],
+    backend: &dyn KiraBackend,
     first_sequence: Option<u64>,
 ) -> Result<()> {
-    for receipt in receipts {
+    if receipts.len() != cells.len() {
+        return Err(codes::KIRA_LEDGER_UNVERIFIED);
+    }
+    for (receipt, cell) in receipts.iter().zip(cells) {
+        let note = backend.retained_note(transaction, context, &receipt.commitment.note_id)?;
+        NoteContent::new(note.category.clone(), "metadata".into(), None)?;
+        if note.receipt != *receipt
+            || note.encrypted.owner != context.owner_subject
+            || note.encrypted.root_epoch > context.owner_epoch
+            || note.wrapped_key.key_id != note.encrypted.key_id
+            || note.wrapped_key.root_epoch != note.encrypted.root_epoch
+            || note.cell != *cell
+            || SaveCommitment::from_encrypted(&note.encrypted)? != receipt.commitment
+        {
+            return Err(codes::KIRA_LEDGER_UNVERIFIED);
+        }
+        let metadata = canon::json::Value::checked_text(note.metadata_sha256()?.to_string())?;
         let record = transaction
             .floor_record_at_sequence(receipt.cite_seq)?
             .ok_or(codes::KIRA_LEDGER_UNVERIFIED)?;
@@ -469,6 +506,7 @@ fn verify_citations(
             || record.operation.is_some()
             || body.authority != record.authority
             || body.algorithm != record.algorithm
+            || note.encrypted.root_epoch != record.authority.epoch
             || record.authority.epoch > context.owner_epoch
             || first_sequence.is_some_and(|first| {
                 receipt.cite_seq < first || record.authority.epoch != context.owner_epoch
@@ -485,6 +523,11 @@ fn verify_citations(
                 .get("body")
                 .and_then(|body| body.get("commitment"))
                 != Some(&receipt.commitment.canonical_body()?)
+            || body
+                .payload
+                .get("body")
+                .and_then(|body| body.get("metadata_sha256"))
+                != Some(&metadata)
         {
             return Err(codes::KIRA_LEDGER_UNVERIFIED);
         }
