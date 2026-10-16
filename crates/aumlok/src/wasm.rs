@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Bounded owner-frame ABI over the Rust phrase and identity implementation.
 
+mod recovery;
+
 use crate::ceremony::initial_owner::InitialBindingSession;
 use crate::envelope::{owner::IdentityRoot, EnvelopeV1};
 use crate::keys::person_nostr::owner::PersonNostrKey;
@@ -48,6 +50,12 @@ enum Request {
     Confirm {
         entered: String,
     },
+    Import {
+        owner_origin: String,
+        shell_origin: String,
+        recovery: String,
+        entered: String,
+    },
     Open {
         owner_origin: String,
         shell_origin: String,
@@ -68,7 +76,9 @@ struct PhraseDisplay<'a> {
 impl Drop for Request {
     fn drop(&mut self) {
         match self {
-            Self::Confirm { entered } | Self::Open { entered, .. } => entered.zeroize(),
+            Self::Confirm { entered }
+            | Self::Import { entered, .. }
+            | Self::Open { entered, .. } => entered.zeroize(),
             Self::Prepare { .. } | Self::Discard => {}
         }
     }
@@ -142,6 +152,15 @@ fn dispatch(storage: &mut Storage, input: &[u8]) -> Result<Vec<u8>, String> {
                 .ok_or_else(|| refusal("phrase-locked"))?;
             binding.confirm(entered).map_err(browser_refusal)?;
             binding.confirmation_payload().map_err(browser_refusal)
+        }
+        Request::Import {
+            owner_origin,
+            shell_origin,
+            recovery,
+            entered,
+        } => {
+            storage.binding = None;
+            recovery::open(owner_origin, shell_origin, recovery, entered)
         }
         Request::Open {
             owner_origin,

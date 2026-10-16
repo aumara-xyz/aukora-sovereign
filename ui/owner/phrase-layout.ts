@@ -114,13 +114,61 @@ export function phraseInputs(signal: AbortSignal): { element: HTMLElement; input
   return { element: bandContainer(anchor, rows.slice(1)), inputs };
 }
 
+export function recoveryInput(signal: AbortSignal): {
+  element: HTMLElement; read(): Promise<string>; clear(): void;
+} {
+  checkAbort(signal);
+  const maximum = 1_024;
+  const result = make("div", "", "owner-input");
+  const fileLabel = make("label", "Choose your Light recovery file", "owner-input");
+  const file = make("input");
+  file.type = "file";
+  file.accept = ".json,application/json,text/plain";
+  fileLabel.append(file);
+  const pasteLabel = make("label", "Or paste the sealed envelope", "owner-input");
+  const paste = make("textarea");
+  paste.rows = 5;
+  paste.maxLength = maximum;
+  paste.autocomplete = "off";
+  paste.spellcheck = false;
+  Object.assign(paste.style, { width: "100%", font: "inherit", color: "var(--text)",
+    background: "var(--layer1)", border: "1px solid var(--border)", borderRadius: ".65rem",
+    padding: ".7rem .85rem", resize: "vertical" });
+  paste.setAttribute("autocapitalize", "off");
+  paste.setAttribute("autocorrect", "off");
+  pasteLabel.append(paste);
+  file.addEventListener("change", () => { paste.value = ""; }, { signal });
+  paste.addEventListener("input", () => { file.value = ""; }, { signal });
+  const clear = (): void => { file.value = ""; paste.value = ""; };
+  signal.addEventListener("abort", clear, { once: true });
+  result.append(fileLabel, pasteLabel);
+  return { element: result, clear, async read() {
+    checkAbort(signal);
+    const chosen = file.files?.[0];
+    let raw: string;
+    if (chosen) {
+      if (chosen.size === 0 || chosen.size > maximum) throw new Error("aumlok:envelope-too-large");
+      const bytes = new Uint8Array(await chosen.arrayBuffer());
+      try {
+        checkAbort(signal);
+        raw = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        checkAbort(signal);
+        throw new Error("aumlok:envelope-json");
+      } finally { bytes.fill(0); }
+    } else raw = paste.value;
+    if (!raw || new TextEncoder().encode(raw).length > maximum) throw new Error("aumlok:envelope-too-large");
+    return raw;
+  } };
+}
+
 export function phraseAcknowledgement(signal: AbortSignal, refresh = false): {
   element: HTMLElement; checked(): boolean; onChange(action: () => void): void;
 } {
   const result = make("div", "", "phrase-acknowledgement");
   const warning = make("p", refresh
     ? "Keep these words. Without them or a retained recovery copy, you cannot open this identity."
-    : "If you lose these seven words, this identity is lost forever. A new phrase starts a new identity.", "phrase-warning");
+    : "Keep these seven words and your recovery file. Restoring this identity needs both.", "phrase-warning");
   const label = make("label", "", "phrase-tick");
   const tick = make("input");
   tick.type = "checkbox";
@@ -135,7 +183,10 @@ export function explainOwnerError(error: unknown): string {
     return "Passkey cancelled. Try again when ready.";
   }
   const code = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  if (code === "aumlok:word-mismatch" || code === "aumlok:phrase-invalid") return "Check the marked words.";
+  if (code === "aumlok:word-mismatch") return "Check the marked words.";
+  if (code === "aumlok:phrase-invalid") return "Check all seven words, in order.";
+  if (code === "aumlok:envelope-authentication") return "The words could not open this recovery file. Check both and enter the words again.";
+  if (code.startsWith("aumlok:envelope-")) return "Choose or paste your original Light recovery file, then enter the seven words again.";
   if (code === "aumlok:enrolment-closed") return "A passkey is enrolled. Sign in to continue.";
   if (code === "aumlok:ceremony-expired") return "This request expired. Start the step again.";
   if (code.includes("handoff")) return "Close this pane and reopen Passkey to finish signing in.";

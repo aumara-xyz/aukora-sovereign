@@ -6,11 +6,11 @@ import { renderBrowserAdvice } from "./passkey/browser.js";
 import { checkAbort } from "./abort.js";
 import { claimToken } from "./claim/codec.js";
 import { consumeClaim } from "./claim/transport.js";
-import { deadline, exact, handle, options, post, state, text } from "./transport.js";
+import { deadline, exact, handle, options, post, record, state, text } from "./transport.js";
 import type { Options, RecordValue } from "./transport.js";
 import { loadAumlok } from "./aumlok.js";
 import { ownerIcon } from "./icons.js";
-import { explainOwnerError, phraseAcknowledgement, phraseInputs, renderPhrase } from "./phrase-layout.js";
+import { explainOwnerError, phraseAcknowledgement, phraseInputs, recoveryInput, renderPhrase } from "./phrase-layout.js";
 
 const ICONS = { claim: "owner", passkey: "aumlok", phrase: "identity", signin: "surface" } as const;
 
@@ -198,6 +198,8 @@ export function createOnboarding(
     function bindingScreen(): void {
       ceremony = undefined;
       bindingId = undefined;
+      submission = undefined;
+      if (wasm) wasm.call({ op: "discard" });
       phrase.fill("");
       phrase = [];
       screen("phrase", "Seven words", "An anchor, then ROOT · UNITE · RISE.");
@@ -207,12 +209,8 @@ export function createOnboarding(
           if (error instanceof Error && error.message === "aumlok:enrolment-required") { enrolScreen(); return; }
           throw error;
         }
-        if (!wasm) {
-          const loaded = await loadAumlok(signal);
-          if (signal.aborted) { loaded.dispose(); return; }
-          wasm = loaded;
-        }
-        live();
+        await readyWasm();
+        if (!wasm) throw new Error("aumlok:wasm-abi");
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
         live();
         const draw = wasm.call({ op: "prepare", owner_origin: config.ownerOrigin, shell_origin: config.shellOrigin });
@@ -222,7 +220,81 @@ export function createOnboarding(
         strength = `${draw.minimum_entropy_bits} bits at the weakest, ${draw.average_entropy_bits} on average`;
         showWords();
       });
+      button("I already have AUKORA Light", () => { importScreen(); }, true);
       button("Sign in", () => { signinScreen(); }, true);
+    }
+
+    async function readyWasm(): Promise<void> {
+      if (!wasm) {
+        const loaded = await loadAumlok(signal);
+        if (signal.aborted) { loaded.dispose(); live(); }
+        wasm = loaded;
+      }
+      live();
+    }
+
+    function importScreen(): void {
+      submission = undefined;
+      screen("phrase", "Your AUKORA Light identity", "Choose or paste your Light recovery file and enter its seven words. Both are needed to open the same identity.");
+      const recovery = recoveryInput(stepLifetime.signal);
+      const { element: entries, inputs } = phraseInputs(stepLifetime.signal);
+      fields.push(...inputs);
+      content.append(recovery.element, entries,
+        element("p", "Never type these words into an AI.", "phrase-warning"));
+      button("Open my Light identity", async () => {
+        try { await prepareBinding(); }
+        catch (error) {
+          if (error instanceof Error && error.message === "aumlok:enrolment-required") { enrolScreen(); return; }
+          throw error;
+        }
+        await readyWasm();
+        if (!wasm) throw new Error("aumlok:wasm-abi");
+        let sealed = "";
+        let entered = "";
+        let imported: RecordValue;
+        try {
+          sealed = await recovery.read();
+          live();
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          live();
+          entered = inputs.map(entry => entry.value).join(" ");
+          imported = wasm.call({ op: "import", owner_origin: config.ownerOrigin,
+            shell_origin: config.shellOrigin, recovery: sealed, entered });
+        } finally {
+          entered = "";
+          sealed = "";
+          inputs.forEach(entry => { entry.value = ""; });
+          recovery.clear();
+        }
+        exact(imported, ["submission", "person_nostr_public_key", "person_nostr_npub"]);
+        const candidate = record(imported.submission);
+        validateSubmission(candidate);
+        if (!/^[0-9a-f]{64}$/.test(text(imported.person_nostr_public_key, 64))) throw new Error("aumlok:binding-input");
+        const npub = text(imported.person_nostr_npub, 63);
+        if (!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(npub)) throw new Error("aumlok:binding-input");
+        wasm.call({ op: "discard" });
+        submission = candidate;
+        compareIdentityScreen(npub);
+      });
+      button("Back", () => { bindingScreen(); }, true);
+    }
+
+    function compareIdentityScreen(npub: string): void {
+      screen("phrase", "Compare with AUKORA Light", "Compare this person-nostr address with your address in Light before binding this node.");
+      const address = element("code", npub);
+      address.style.overflowWrap = "anywhere";
+      content.append(element("p", "Your person-nostr address"), address);
+      button("It matches my Light address", () => { approvalScreen(); });
+      button("Use another recovery file", () => { importScreen(); }, true);
+    }
+
+    function validateSubmission(value: RecordValue): void {
+      exact(value, ["v", "envelope", "identity_public_key", "subject"]);
+      if (value.v !== 2 || !/^aukora:1:[0-9a-f]{64}$/.test(text(value.subject))) throw new Error("aumlok:binding-input");
+      const envelope = record(value.envelope);
+      exact(envelope, ["ciphertext", "kdf", "nonce", "salt", "version"]);
+      if (envelope.version !== 1) throw new Error("aumlok:binding-input");
+      if (!/^[A-Za-z0-9+/]{43}=$/.test(text(value.identity_public_key, 44))) throw new Error("aumlok:binding-input");
     }
 
     function showWords(): void {
@@ -255,8 +327,7 @@ export function createOnboarding(
         let entered = inputs.map(entry => entry.value.trim()).join(" ");
         try { submission = wasm.call({ op: "confirm", entered }); }
         finally { entered = ""; }
-        exact(submission, ["v", "envelope", "identity_public_key", "subject"]);
-        if (submission.v !== 2 || !/^aukora:1:[0-9a-f]{64}$/.test(text(submission.subject))) throw new Error("aumlok:binding-input");
+        validateSubmission(submission);
         phrase.fill("");
         phrase = [];
         wasm.call({ op: "discard" });
