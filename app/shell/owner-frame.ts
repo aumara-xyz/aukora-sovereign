@@ -29,8 +29,10 @@ export class OwnerFrame {
     this.#notice = notice;
   }
 
-  open(route: OwnerRoute): void {
+  /** A claim token rides in the frame's fragment, which never reaches a server; only `/claim` carries one. */
+  open(route: OwnerRoute, claim = ''): void {
     if (!validOwnerRoute(route)) throw new Error('shell:unknown-owner-route');
+    if (claim && (route !== '/claim' || !/^[A-Za-z0-9_-]{43}$/.test(claim))) throw new Error('shell:claim-invalid');
     this.close();
     const dialog = document.createElement('dialog');
     dialog.className = 'owner-dialog';
@@ -48,8 +50,9 @@ export class OwnerFrame {
     frame.referrerPolicy = 'origin';
     frame.allow = `publickey-credentials-get ${this.#origin}; publickey-credentials-create ${this.#origin}`;
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-    const url = new URL('index.html', `${this.#origin}/`);
-    url.hash = route;
+    // The owner host serves its document only at `/`; the route itself travels in the init message.
+    const url = new URL('/', `${this.#origin}/`);
+    if (claim) url.hash = `claim=${claim}`;
     frame.src = url.href;
     let channel: string | null = null;
     const onMessage = (event: MessageEvent) => {

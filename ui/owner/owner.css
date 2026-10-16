@@ -1,11 +1,40 @@
-:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111217; color: #eef0f4; }
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+:root { color-scheme: dark; font-family: var(--font-interface, system-ui, sans-serif); background: var(--canvas, #0b0d18); color: var(--text, #e8eaed); }
+* { box-sizing: border-box; }
 body { margin: 0; }
-main { margin-inline: auto; max-width: 44rem; padding: 1.5rem; }
-header { align-items: center; display: flex; justify-content: space-between; gap: 1rem; }
-h1 { font-size: 1.25rem; }
-button { background: #262833; color: inherit; border: 1px solid #6b7280; border-radius: .5rem; padding: .65rem 1rem; }
-button:focus-visible { outline: 2px solid #b9d2ff; outline-offset: 3px; }
-.owner-witness { border: 1px solid #626979; padding: .75rem; margin-block: 1rem; }
-.owner-witness[data-state="alarm"] { border-color: #ed7979; color: #ffc6c6; }
-.owner-witness[data-state="first"] { color: #c0c4ce; }
-.owner-pane { min-height: 10rem; }
+main { max-width: 42rem; margin-inline: auto; padding: clamp(1rem, 4vw, 2rem); }
+header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+h1 { color: var(--muted); font-size: .8rem; font-weight: 500; }
+h2 { margin: 1.5rem 0 .5rem; font-size: 1.5rem; font-weight: 550; letter-spacing: -.03em; }
+button, input { font: inherit; }
+button { cursor: pointer; border: 1px solid var(--border, #ffffff1a); color: var(--text); background: var(--control); border-radius: .65rem; padding: .75rem 1rem; }
+button:disabled { cursor: wait; opacity: .5; }
+button:hover:enabled { background: var(--layer3); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.primary { background: var(--control-active, #c4aaff1f); color: var(--violet); border-color: var(--violet); }
+.secondary { color: var(--secondary); }
+.owner-pane { min-height: 20rem; }
+.owner-witness { margin-top: .5rem; font-size: .7rem; line-height: 1.5; color: var(--muted); }
+.owner-witness[data-state="alarm"] { border-left: 2px solid var(--gold); padding-left: .6rem; }
+.owner-steps { display: flex; gap: .75rem; padding: 0; list-style: none; margin: 1.5rem 0; }
+.owner-steps li { display: grid; place-items: center; border-radius: 50%; width: 2.5rem; height: 2.5rem; color: var(--muted); background: var(--layer1); border: 1px solid var(--border); }
+.owner-steps [aria-current] { color: var(--mint); border-color: var(--mint); background: var(--glow-mint); }
+.owner-detail { color: var(--secondary); font-size: .9rem; line-height: 1.6; }
+.owner-content { display: grid; gap: .65rem; margin-block: 1.5rem; }
+.owner-controls { display: flex; flex-wrap: wrap; gap: .75rem; }
+.owner-status { min-height: 1.5rem; color: var(--gold); font-size: .85rem; overflow-wrap: anywhere; }
+.owner-input { display: grid; gap: .45rem; font-size: .7rem; letter-spacing: .09em; color: var(--band, var(--secondary)); }
+.owner-input input { width: 100%; min-width: 0; color: var(--text); background: var(--layer1); border: 1px solid var(--border); border-left: 3px solid var(--band, var(--violet)); border-radius: .65rem; padding: .7rem .85rem; }
+.phrase-bands { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; padding: 0; margin: 0; list-style: none; }
+.word-band { display: grid; gap: .5rem; background: var(--layer1); border: 1px solid var(--border); border-top: 3px solid var(--band); border-radius: .85rem; padding: 1rem; }
+.word-band:first-child { grid-column: 1 / -1; background: var(--layer2); }
+.word-label { font-size: .6rem; letter-spacing: .15em; color: var(--band); }
+.word-band strong { font-size: 1.25rem; color: var(--band); font-weight: 550; overflow-wrap: anywhere; }
+.band-anchor { --band: var(--gold, #e0b76a); }
+.band-root { --band: var(--mint, #81d4b4); }
+.band-unite { --band: var(--blue, #96b4ff); }
+.band-rise { --band: var(--violet, #c4aaff); }
+.phrase-warning { font-size: .85rem; color: var(--gold); margin: .75rem 0 0; }
+.phrase-entropy { font-size: .7rem; color: var(--muted); margin: 0; }
+@media (max-width: 420px) { .owner-controls { flex-direction: column; } .word-band { padding: .8rem; } }
+@media (prefers-reduced-motion: no-preference) { button { transition: background 150ms ease; } }

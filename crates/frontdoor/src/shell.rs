@@ -72,7 +72,7 @@ pub struct ShellPolicies {
 pub fn policies(shell: &Origin, owner: &Origin) -> ShellPolicies {
     ShellPolicies {
         shell_csp: format!("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-src 'self' {}; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'", owner.as_str()),
-        owner_csp: format!("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src 'none'; frame-ancestors {}; object-src 'none'; base-uri 'none'; form-action 'self'", shell.as_str()),
+        owner_csp: format!("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src 'none'; frame-ancestors {}; object-src 'none'; base-uri 'none'; form-action 'self'", shell.as_str()),
     }
 }
 

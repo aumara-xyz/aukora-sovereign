@@ -43,6 +43,8 @@ export interface PasskeyConfiguration {
 }
 
 export interface OwnerPasskeyService extends PasskeyPaneService {
+  register(options: RegistrationOptions, signal: AbortSignal): Promise<RegistrationMaterial>;
+  assert(options: AssertionOptions, signal: AbortSignal): Promise<AssertionMaterial>;
   backupPrf(
     challenge: Uint8Array, credentialId: string, signal: AbortSignal,
   ): Promise<{ readonly assertion: AssertionMaterial; readonly key: Uint8Array }>;
@@ -301,6 +303,8 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
 
   return {
     mount,
+    register,
+    assert,
     async assertExact(challenge, expectedTopOrigin, signal) {
       environment(expectedTopOrigin, signal);
       return assertionBytes(await assert({ challenge }, signal));

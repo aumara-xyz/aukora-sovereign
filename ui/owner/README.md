@@ -4,9 +4,17 @@ The trusted pop-ups (passkey, phrase, approvals, AUMLOK), served from the owner 
 **Bricks:** 10, 19, 20, 35, 45, 53, 75 (NORTH-STAR.md).
 
 `contracts.ts` and `contract.json` freeze the owner boundary. The trusted owner
-release calls `mountOwner(root, modules)` from `index.ts` with its configured shell
-origin and owner services. The static entry remains unavailable without that
-composition. Configuration is never taken from a message, URL, or face.
+entry calls `mountOwner(root, modules)` on load. It reads the native-configured
+shell origin from the CSP on a same-origin HEAD request for its entry module;
+missing or ambiguous configuration refuses. Configuration is never taken from a
+message, URL, or face.
+
+`onboarding.ts` connects claim, passkey registration and possession, initial
+binding, and sign-in to the owner routes. A shell-provided `#claim=` fragment is
+removed before setup; a missing fragment can be entered as a claim link. The
+seven words are generated, checked and sealed through the owner-only AUMLOK WASM
+asset. The server receives only the existing v2 public submission and passkey
+assertion. No phrase or root is sent to the parent or stored by this flow.
 
 The router accepts only an enumerated pane route after matching the direct parent,
 its exact configured origin, and a fresh channel. Approval routes carry a proposal

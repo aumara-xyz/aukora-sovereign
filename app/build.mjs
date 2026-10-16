@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The app build: erasable TypeScript turned into ES modules, the design data checked against its pins, the face
-// catalog checked against the face manifests, the two WebAssembly modules built from crates/pentora and crates/canon,
+// catalog checked against the face manifests, WebAssembly built from canon, pentora and aumlok,
 // and a release manifest listing every byte. `node app/build.mjs --pin-design` rewrites design-lock.json instead.
 // `--pin-captures 3673b98` indexes a supplied complete capture directory and updates only its two pins.
 import { execFileSync } from 'node:child_process';
@@ -29,6 +29,7 @@ const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 const WASM_MODULES = {
   pentora: ['memory', 'pentora_allocate_root32', 'pentora_expand', 'pentora_release_root32', 'pentora_release_result'],
   canon: ['memory', 'allocate_input', 'canonicalize', 'health_decode_snapshot', 'release_input', 'release_result'],
+  aumlok: ['memory', 'aumlok_allocate_input', 'aumlok_call', 'aumlok_release_input', 'aumlok_release_result'],
 };
 const MAX_WASM_BYTES = 16 * 1024 * 1024;
 
@@ -410,18 +411,24 @@ async function pinCaptures(referenceBuild) {
   process.stdout.write(`app:design-captures-pinned build ${referenceBuild}: ${files.length} files\n`);
 }
 
-// Requires the wasm32-unknown-unknown Rust target installed before this offline build; modules must import nothing.
+// Requires the wasm32-unknown-unknown target installed before this offline build.
 function buildWasm() {
-  const output = execFileSync('cargo', ['build', '--release', '--offline', '--locked', '--target', 'wasm32-unknown-unknown',
-    '--message-format', 'json-render-diagnostics', ...Object.keys(WASM_MODULES).flatMap(name => ['-p', name])],
-  { cwd: repository, encoding: 'utf8', maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'inherit'] });
   const found = new Map();
-  for (const line of output.split('\n')) {
-    if (!line.startsWith('{')) continue;
-    const message = JSON.parse(line);
-    if (message.reason !== 'compiler-artifact' || !message.target?.kind?.includes('cdylib')) continue;
-    const wasm = (message.filenames ?? []).filter(name => name.endsWith('.wasm'));
-    if (wasm.length === 1 && message.target.name in WASM_MODULES) found.set(message.target.name, wasm[0]);
+  const common = ['--release', '--offline', '--locked', '--target', 'wasm32-unknown-unknown',
+    '--message-format', 'json-render-diagnostics'];
+  for (const args of [
+    ['build', ...common, '-p', 'canon', '-p', 'pentora'],
+    ['rustc', ...common, '-p', 'aumlok', '--lib', '--crate-type', 'cdylib'],
+  ]) {
+    const output = execFileSync('cargo', args,
+      { cwd: repository, encoding: 'utf8', maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'inherit'] });
+    for (const line of output.split('\n')) {
+      if (!line.startsWith('{')) continue;
+      const message = JSON.parse(line);
+      if (message.reason !== 'compiler-artifact' || !(message.target?.name in WASM_MODULES)) continue;
+      const wasm = (message.filenames ?? []).filter(name => name.endsWith('.wasm'));
+      if (wasm.length === 1 && !found.has(message.target.name)) found.set(message.target.name, wasm[0]);
+    }
   }
   return found;
 }
@@ -435,9 +442,18 @@ async function wasmModules() {
     if (bytes.length > MAX_WASM_BYTES) throw new Error(`app:wasm-size ${name}`);
     const compiled = await WebAssembly.compile(bytes);
     const names = WebAssembly.Module.exports(compiled).map(value => value.name);
-    if (WebAssembly.Module.imports(compiled).length !== 0) throw new Error(`app:wasm-imports ${name}`);
-    if (exported.some(value => !names.includes(value))) throw new Error(`app:wasm-exports ${name}`);
-    modules.push({ path: `app/core/${name}.wasm`, bytes });
+    const imports = WebAssembly.Module.imports(compiled);
+    if (name === 'aumlok') {
+      const adapter = await readFile(join(repository, 'ui/owner/wasm-imports.ts'), 'utf8');
+      if (imports.some(entry => entry.kind !== 'function'
+        || !['__wbindgen_placeholder__', '__wbindgen_externref_xform__'].includes(entry.module)
+        || !adapter.includes(entry.name))) throw new Error(`app:wasm-imports ${name}`);
+    } else if (imports.length !== 0) throw new Error(`app:wasm-imports ${name}`);
+    if (exported.some(value => names.filter(found => found === value
+      || (name === 'aumlok' && new RegExp(`^${value}_[0-9a-f]{16}$`).test(found))).length !== 1)) {
+      throw new Error(`app:wasm-exports ${name}`);
+    }
+    modules.push({ path: name === 'aumlok' ? 'ui/owner/aumlok.wasm' : `app/core/${name}.wasm`, bytes });
   }
   return modules;
 }
@@ -482,9 +498,11 @@ async function build() {
     files.push({ path, bytes: result });
   }
   if (syntax.length) throw new Error(`app:syntax\n  ${syntax.join('\n  ')}`);
-  if (outputs.has('app/design/tokens.css')) throw new Error('app:asset-collision');
-  outputs.add('app/design/tokens.css');
-  files.push({ path: 'app/design/tokens.css', bytes: Buffer.from(design.css) });
+  for (const path of ['app/design/tokens.css', 'ui/owner/tokens.css']) {
+    if (outputs.has(path)) throw new Error('app:asset-collision');
+    outputs.add(path);
+    files.push({ path, bytes: Buffer.from(design.css) });
+  }
   for (const module of await wasmModules()) {
     if (outputs.has(module.path)) throw new Error('app:asset-collision');
     outputs.add(module.path);

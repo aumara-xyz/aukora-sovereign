@@ -21,7 +21,7 @@ export interface ShellController {
   readonly organism: Organism;
   readonly layout: TriPane;
   openFace(id: string): void;
-  openOwner(route: OwnerRoute): void;
+  openOwner(route: OwnerRoute, claim?: string): void;
   provideService(name: string, service: RpcService): Dispose;
   removeFace(id: string): Promise<void>;
   dispose(): Promise<void>;
@@ -218,9 +218,9 @@ export function mountShell(options: ShellOptions): ShellController {
   openFace('threads');
   return {
     organism, layout, openFace,
-    openOwner(route) {
+    openOwner(route, claim) {
       if (!owner || disposed) throw new Error('shell:owner-unavailable');
-      owner.open(route);
+      owner.open(route, claim);
     },
     provideService(name, service) { return organism.provide(name, service); },
     async removeFace(id) {
