@@ -195,7 +195,17 @@ impl Client {
         now_seconds: u64,
         deadline_ms: u64,
     ) -> crate::Result<PublishAck> {
-        self.begin(deadline_ms)?;
+        self.publish_until(event, auth, now_seconds, Deadline::new(deadline_ms)?)
+    }
+
+    fn publish_until(
+        &mut self,
+        event: &VerifiedEvent,
+        auth: Option<&mut AuthContext<'_>>,
+        now_seconds: u64,
+        deadline: Deadline,
+    ) -> crate::Result<PublishAck> {
+        self.begin_until(deadline)?;
         let bytes = event.event().encode()?;
         let raw = std::str::from_utf8(&bytes).map_err(|_| refusal("event-invalid"))?;
         let request = format!("[\"EVENT\",{raw}]");
@@ -254,7 +264,17 @@ impl Client {
         now_seconds: u64,
         deadline_ms: u64,
     ) -> crate::Result<QueryResult> {
-        self.begin(deadline_ms)?;
+        self.query_until(filters, auth, now_seconds, Deadline::new(deadline_ms)?)
+    }
+
+    fn query_until(
+        &mut self,
+        filters: &[Filter],
+        auth: Option<&mut AuthContext<'_>>,
+        now_seconds: u64,
+        deadline: Deadline,
+    ) -> crate::Result<QueryResult> {
+        self.begin_until(deadline)?;
         validate_filters(filters)?;
         self.subscription = self
             .subscription
@@ -347,7 +367,11 @@ impl Client {
     }
 
     fn begin(&mut self, deadline_ms: u64) -> crate::Result<()> {
-        let deadline = Deadline::new(deadline_ms)?;
+        self.begin_until(Deadline::new(deadline_ms)?)
+    }
+
+    fn begin_until(&mut self, deadline: Deadline) -> crate::Result<()> {
+        deadline.remaining()?;
         let relay = self.relay.clone();
         let guard = self.guard()?;
         relay.check_current_peer(
@@ -483,9 +507,9 @@ impl Client {
     }
 }
 
-/// Relay-backed implementation slot for the message transport interface.
+/// Bounded gift-wrap submission and one-shot queries over validated relays.
 pub struct RelayTransport {
-    _clients: Vec<Client>,
+    clients: Vec<Client>,
 }
 
 impl RelayTransport {
@@ -500,7 +524,7 @@ impl RelayTransport {
                 return Err(refusal("relay-set"));
             }
         }
-        Ok(Self { _clients: clients })
+        Ok(Self { clients })
     }
 }
 
@@ -511,15 +535,105 @@ impl Transport for RelayTransport {
 
     fn send(
         &mut self,
-        _envelope: &TransportEnvelope,
-        _deadline_ms: u64,
+        envelope: &TransportEnvelope,
+        deadline_ms: u64,
     ) -> canon::Result<TransportReceipt> {
-        todo!("row 71")
+        let deadline = transport_deadline(deadline_ms)?;
+        envelope.validate()?;
+        let event = nostr::Event::decode(&envelope.bytes)?.verify()?;
+        deadline.remaining()?;
+        let mut status = SubmissionStatus::Rejected;
+        for client in &mut self.clients {
+            if deadline.remaining().is_err() {
+                if status != SubmissionStatus::Accepted {
+                    status = SubmissionStatus::Unknown;
+                }
+                break;
+            }
+            // This interface holds no delegation for relay authentication.
+            match client.publish_until(&event, None, 0, deadline) {
+                Ok(ack) if ack.status == SubmissionStatus::Accepted => {
+                    status = SubmissionStatus::Accepted;
+                }
+                Ok(ack) if ack.status == SubmissionStatus::Rejected => {}
+                _ if status != SubmissionStatus::Accepted => status = SubmissionStatus::Unknown,
+                _ => {}
+            }
+        }
+        // A lost reply cannot turn a possibly published event into a rejection.
+        Ok(TransportReceipt {
+            envelope_id: envelope.id,
+            transport: self.kind(),
+            status,
+        })
     }
 
-    fn receive(&mut self, _request: &ReceiveRequest) -> canon::Result<ReceiveBatch> {
-        todo!("row 71")
+    fn receive(&mut self, request: &ReceiveRequest) -> canon::Result<ReceiveBatch> {
+        let deadline = transport_deadline(request.deadline_ms)?;
+        if request.max_items == 0
+            || request.max_items > nostr::transport::MAX_BATCH_ITEMS
+            || request.max_bytes == 0
+            || request.max_bytes > nostr::transport::MAX_BATCH_BYTES
+        {
+            return Err(refusal("batch-limit"));
+        }
+        // Queries return a complete bounded snapshot; no pagination codec is accepted.
+        if request.cursor.is_some() {
+            return Err(refusal("cursor-unsupported"));
+        }
+        let filter = Filter {
+            kinds: vec![nostr::nip59::GIFT_WRAP_KIND],
+            recipients: vec![request.recipient],
+            ..Filter::default()
+        };
+        let mut envelopes = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut bytes = 0usize;
+        for client in &mut self.clients {
+            deadline.remaining()?;
+            let result = client.query_until(std::slice::from_ref(&filter), None, 0, deadline)?;
+            if !result.end_of_stored_events {
+                return Err(refusal("query-incomplete"));
+            }
+            for verified in result.events {
+                deadline.remaining()?;
+                let event = verified.event();
+                let envelope = TransportEnvelope {
+                    v: nostr::transport::TRANSPORT_VERSION,
+                    codec: nostr::EnvelopeCodec::Nip59V1,
+                    recipient: request.recipient,
+                    id: event.id,
+                    bytes: event.encode()?,
+                };
+                envelope.validate()?;
+                if !seen.insert(envelope.id) {
+                    continue;
+                }
+                bytes = bytes
+                    .checked_add(envelope.bytes.len())
+                    .ok_or_else(|| refusal("batch-limit"))?;
+                if envelopes.len() >= usize::from(request.max_items)
+                    || bytes > request.max_bytes as usize
+                {
+                    return Err(refusal("batch-limit"));
+                }
+                envelopes.push(envelope);
+            }
+        }
+        deadline.remaining()?;
+        Ok(ReceiveBatch {
+            envelopes,
+            next_cursor: None,
+            exhausted: true,
+        })
     }
+}
+
+fn transport_deadline(requested_ms: u64) -> crate::Result<Deadline> {
+    let limit = clock_ms()?
+        .checked_add(MAX_OPERATION_MS)
+        .ok_or_else(|| refusal("operation-timeout"))?;
+    Deadline::new(requested_ms.min(limit))
 }
 
 const MAX_FILTER_VALUES: usize = MAX_QUERY_EVENTS;
