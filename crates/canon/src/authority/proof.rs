@@ -7,6 +7,33 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 mod client;
 
+impl OwnerAssertion {
+    /// Check a caller's exact challenge against the transaction's anchored owner.
+    /// This creates no proof capability and neither consumes nor persists a counter.
+    pub fn verify_challenge<T: AuthorityTxn + ?Sized>(
+        &self,
+        txn: &mut T,
+        challenge: &[u8; 32],
+    ) -> Result<OwnerBinding> {
+        let binding = txn.owner_binding(&self.credential_id)?;
+        if self.v != 1
+            || binding.v != 1
+            || self.credential_id != binding.credential_id
+            || self.algorithm != binding.algorithm
+            || self.algorithm != binding.public_key.algorithm
+            || self.signature.v != 1
+            || self.signature.algorithm != binding.algorithm
+        {
+            return Err(codes::GATE_CREDENTIAL_MISMATCH);
+        }
+        let authenticator = Authenticator::read(self, &binding)?;
+        verify_ceremony_client_data(&self.client_data_json, challenge, &binding)?;
+        let message = authenticator.signature_message(Digest32::sha256(&self.client_data_json));
+        txn.verify_signature(&binding.public_key, &message, &self.signature)?;
+        Ok(binding)
+    }
+}
+
 /// Validate framed possession client data against a locked ceremony challenge.
 /// This checks context only; callers must verify the original signature bytes.
 pub fn verify_ceremony_client_data(

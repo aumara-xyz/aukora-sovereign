@@ -10,12 +10,15 @@ the one-time secret's commitment arrives afterwards from the operator
 from __future__ import annotations
 
 import ctypes
+from contextlib import contextmanager
+import fcntl
 import grp
 import ipaddress
 import json
 import os
 import pwd
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -26,7 +29,7 @@ import caddy  # noqa: E402
 import core  # noqa: E402
 import node_release as release  # noqa: E402
 
-PACKAGES = ("uidmap", "nftables", "ca-certificates", "python3")
+PACKAGES = ("uidmap", "nftables", "ca-certificates", "python3", "openssl")
 VM_PACKAGES = ("caddy", "apparmor")
 LISTEN = "127.0.0.1:18080"
 USER = "aukora"
@@ -325,6 +328,114 @@ def node_config(node, cage_id):
         "egress_status": "/run/aukora-egress/status.json", "release_state": release.ACTIVE})
 
 
+def require_unactivated_node():
+    """Only an installation with no release, claim or supervisor state can resume."""
+    for path in (release.NODE_JSON, release.CURRENT, release.PREVIOUS, release.ACTIVE,
+                 release.DELIVERED, release.CLAIM):
+        if os.path.lexists(path):
+            core.refuse("install", "node-exists")
+    state_root = os.path.join(os.path.dirname(release.STATE), USER)
+    records = {os.path.basename(release.INSTANCE), os.path.basename(release.SEQUENCE), "install.lock"}
+    for directory in (release.STATE, state_root):
+        if not os.path.lexists(directory):
+            continue
+        info = os.lstat(directory)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            core.refuse("install", "node-exists")
+        contents = set(os.listdir(directory))
+        if contents - (records if directory == release.STATE else set()):
+            core.refuse("install", "node-exists")
+
+
+@contextmanager
+def install_lock():
+    """Serialize package, identity, release and configuration changes across installer processes."""
+    os.makedirs(release.STATE, mode=0o755, exist_ok=True)
+    directory = os.open(release.STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    lock = None
+    try:
+        info = os.fstat(directory)
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            core.refuse("install", "node-exists")
+        lock = os.open("install.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                       0o600, dir_fd=directory)
+        info = os.fstat(lock)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_mode & 0o7777 != 0o600 or info.st_nlink != 1):
+            core.refuse("install", "install-state")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            core.refuse("install", "install-busy")
+        require_unactivated_node()
+        yield directory
+    finally:
+        if lock is not None:
+            os.close(lock)
+        os.close(directory)
+
+
+def initial_record(directory, path, keys):
+    descriptor = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                         dir_fd=directory)
+    with os.fdopen(descriptor, "rb") as source:
+        info = os.fstat(source.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                or info.st_mode & 0o7777 != 0o600 or info.st_size > 4096):
+            core.refuse("install", "install-state")
+        raw = source.read(4097)
+        os.fsync(source.fileno())
+    record = core.parse_json(raw, "install", 4096)
+    core.exact_keys(record, keys, "install", "install-state")
+    if core.canonical(record) != raw:
+        core.refuse("install", "install-state")
+    return record
+
+
+def sync_instance_directory(directory):
+    os.fsync(directory)
+    parent = os.open(os.path.dirname(release.STATE), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.fsync(parent)
+    finally:
+        os.close(parent)
+
+
+def retain_instance(directory, node):
+    """A retry keeps both initial records exactly; incomplete or used records refuse."""
+    entries = set(os.listdir(directory))
+    retained = {os.path.basename(release.INSTANCE), os.path.basename(release.SEQUENCE)} & entries
+    if retained:
+        if len(retained) != 2:
+            core.refuse("install", "install-state")
+        identity = initial_record(directory, release.INSTANCE, ("schema", "node", "instance"))
+        sequence = initial_record(directory, release.SEQUENCE, ("schema", "instance", "seq", "pointer_sha256"))
+        if (identity["schema"] != "aukora-node-instance-v1" or identity["node"] != node["name"]
+                or not core.is_hex(identity["instance"], 64)
+                or sequence["schema"] != "aukora-release-sequence-v1"
+                or sequence["instance"] != identity["instance"] or not core.is_int(sequence["seq"], 0, 0)
+                or sequence["pointer_sha256"] is not None):
+            core.refuse("install", "install-state")
+        sync_instance_directory(directory)
+        return
+    instance = secrets.token_hex(32)
+    records = (
+        (release.INSTANCE, {"schema": "aukora-node-instance-v1", "node": node["name"], "instance": instance}),
+        (release.SEQUENCE, {"schema": "aukora-release-sequence-v1", "instance": instance,
+                            "seq": 0, "pointer_sha256": None}),
+    )
+    for path, document in records:
+        descriptor = os.open(os.path.basename(path),
+                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                             0o600, dir_fd=directory)
+        try:
+            core.write_all(descriptor, core.canonical(document))
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    sync_instance_directory(directory)
+
+
 def wait_active():
     steady = None
     for _attempt in range(START_WAIT_SECONDS):
@@ -371,8 +482,7 @@ def main(argv):
     node = load_input(stage)
     policy_raw = core.read_regular(os.path.join(stage, "egress.json"), 256 * 1024, "install")
     policy = core.validate_policy(policy_raw)
-    if os.path.lexists(release.NODE_JSON) or os.path.lexists(release.CURRENT):
-        core.refuse("install", "node-exists")
+    require_unactivated_node()
     if landlock_abi() < MIN_LANDLOCK_ABI:
         core.refuse("install", "landlock-abi")
     if not os.path.exists("/sys/fs/cgroup/cgroup.controllers"):
@@ -380,6 +490,12 @@ def main(argv):
     restricted = userns_restricted()
     if restricted and mode != "vm":
         core.refuse("install", "userns-policy")  # a container cannot load the profile that would allow it
+    with install_lock() as directory:
+        retain_instance(directory, node)
+        return install_node(stage, mode, node, policy, restricted)
+
+
+def install_node(stage, mode, node, policy, restricted):
     ensure_packages(PACKAGES + (VM_PACKAGES if mode == "vm" else ()), stage)
     if restricted:
         install_userns_profile()

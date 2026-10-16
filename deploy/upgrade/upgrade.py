@@ -5,9 +5,10 @@
              [--release DIR] [--probe-seconds N] [--dry-run]
 
 Order, and what has happened by each step: the guard refuses listed nodes; the pointer's passkey signature is
-verified against the owner's credential; the release (given, or rebuilt twice from the pointer's commit with
+preflighted against the supplied credential; the release (given, or rebuilt twice from the pointer's commit with
 scripts/reproduce.sh) must be the commit and the release id the pointer names. Only then does anything touch the
-node: the release is staged and verified there, the release link is switched, the supervisor is restarted and
+node: its installed verifier stages the release, verifies the assertion against its own current owner binding,
+instance, expiry and spent sequence, then switches the release link. The supervisor is restarted and
 probed, and a failed probe puts the previous release back. State is never restored. The node still asks its owner
 to approve the new release in the app before the agent runs."""
 from __future__ import annotations
@@ -25,6 +26,7 @@ import core  # noqa: E402
 import guard  # noqa: E402
 import host  # noqa: E402
 import lxd  # noqa: E402
+import node_release  # noqa: E402
 import pointer  # noqa: E402
 import release  # noqa: E402
 import vm  # noqa: E402
@@ -71,22 +73,26 @@ def rebuild(commit, scratch):
     return output
 
 
-def switch(transport, found, bundle, scratch, probe):
+def switch(transport, found, bundle, scratch, probe, authorization):
     rid = bundle.commit[:12] + "-" + bundle.digest[:12]
-    tool = release.NODE_STAGE + "/node_release.py"
-    stage_tar = release.build_stage(scratch, bundle, release.UPGRADE_TOOLS, {})
+    # Candidate scripts cannot replace the installed node's authorization check.
+    tool = os.path.join(node_release.CURRENT, "deploy", "upgrade", "node_release.py")
+    stage_tar = release.build_stage(scratch, bundle, release.UPGRADE_TOOLS, authorization)
+    remote_archive = os.path.join(os.path.dirname(release.NODE_STAGE), "aukora-stage.tar")
     try:
         transport.run(["rm", "-rf", "--", release.NODE_STAGE], check=False)
-        transport.push(stage_tar, "/root/aukora-stage.tar")
-        transport.run(["tar", "-xf", "/root/aukora-stage.tar", "-C", "/root"])
-        transport.run(["rm", "-f", "--", "/root/aukora-stage.tar"])
+        transport.push(stage_tar, remote_archive)
+        transport.run(["tar", "-xf", remote_archive, "-C", os.path.dirname(release.NODE_STAGE)])
+        transport.run(["rm", "-f", "--", remote_archive])
         transport.push(bundle.tar_path, release.NODE_STAGE + "/release.tar")
         transport.run(["python3", "-B", tool, "stage", "--stage", release.NODE_STAGE])
         done = transport.run(["python3", "-B", tool, "switch", "--id", rid, "--release", bundle.digest,
-                              "--pointer-sha256", found.sha256, "--seq", str(found.seq), "--probe-seconds", str(probe)],
+                              "--pointer", os.path.join(release.NODE_STAGE, "pointer.json"),
+                              "--assertion", os.path.join(release.NODE_STAGE, "assertion.json"),
+                              "--probe-seconds", str(probe)],
                              check=False)
     finally:
-        transport.run(["rm", "-rf", "--", release.NODE_STAGE, "/root/aukora-stage.tar"], check=False)
+        transport.run(["rm", "-rf", "--", release.NODE_STAGE, remote_archive], check=False)
     print(done.stdout.decode("utf-8", "replace").strip())
     if done.returncode != 0 and done.stderr:
         print(done.stderr[-400:].decode("utf-8", "replace").strip(), file=sys.stderr)  # the node's own refusal code
@@ -100,6 +106,10 @@ def main(argv):
     name, options = parse(argv)
     admission = guard.admit("upgrade", name)  # a listed node stops here, before anything else
     found = pointer.verify(options["pointer"], options["assertion"], options["credential"], name)
+    authorization = {"pointer.json": core.read_regular(options["pointer"], 4096, "upgrade"),
+                     "assertion.json": core.read_regular(options["assertion"], 16384, "upgrade")}
+    if core.sha256_hex(authorization["pointer.json"]) != found.sha256:
+        core.refuse("upgrade", "pointer-changed")
     scratch = tempfile.mkdtemp(prefix="aukora-upgrade-")
     try:
         directory = os.path.abspath(options["release"]) if "release" in options else rebuild(found.commit, scratch)
@@ -108,7 +118,7 @@ def main(argv):
             core.refuse("upgrade", "release-mismatch")
         print("upgrade %s to commit %s, release %s, pointer sequence %d" % (name, found.commit[:12], found.release[:12], found.seq))
         if options["dry"]:
-            print("dry run: the pointer is valid and the release matches; no host was contacted")
+            print("dry run: signature preflight and release match; node owner, instance and sequence remain unchecked")
             return 0
         backend = options["on"]
         if backend == "host-lxd":
@@ -126,7 +136,8 @@ def main(argv):
                 transport = lxd.transport_for(runner, name, node_id)
             else:
                 transport = vm.transport_for(runner, name, node_id, state)
-            switch(transport, found, bundle, scratch, options["probe"])
+            pointer.require_live(found)
+            switch(transport, found, bundle, scratch, options["probe"], authorization)
             state.put("release", "%s %s\n" % (bundle.commit, bundle.digest))
         return 0
     finally:

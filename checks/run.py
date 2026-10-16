@@ -106,14 +106,14 @@ DEPLOY_PINS = {
     "deploy/spawn/guard.py": "ca7eb41a9e0ebf9006319ff9644316e9662052f7d509fe4207fc5b2a511a5915",
     "deploy/spawn/host.py": "f7dc95e52b5ceb8d2873fc186e9f8c42db7df95b28f85bd04e07c4c0b8ea9b46",
     "deploy/spawn/lxd.py": "e7a85a22f6f4b0ddd7d97dd4f5b69f63995e85ec4998f0c04462a70f1b362be2",
-    "deploy/spawn/node_install.py": "d4d0f96d4618ba52a09fcf22e37eb3cc2c7302d9870e33f55334bf878567f1b8",
+    "deploy/spawn/node_install.py": "5b477e07ed46fbafa5cf2b4680a989c6587362b30faeb3303c6f720be7d45633",
     "deploy/spawn/release.py": "c59b7b74f77b4a743ace8082bb3ca3151930b992a8cceb43cfc99c8cda915537",
     "deploy/spawn/spawn.py": "32f65c91a2e152317f54940ac679710f72ee6a767e4ffd90aea49cbc2a18d958",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",
     "deploy/spawn/vm.py": "5b9300e19c19f8b106da56ddf35ae4ed66c878b7c8c5ad211bad35eb5f37d232",
-    "deploy/upgrade/node_release.py": "85a38b5def8161b6e65a867cc2330ae6091bf9fd05b9ffb7eb367c3b1571031a",
-    "deploy/upgrade/pointer.py": "22a7a2c40715ac9dda184abcdde3f301a3edaafadadbe023ab92c893c6da6fc9",
-    "deploy/upgrade/upgrade.py": "da14469a6c4549b27e45fa0d01e371d878af98746e4eed638835b1c3ecd3a3c5",
+    "deploy/upgrade/node_release.py": "e616e7599cb252d40014ca58094e3a99ede4e6ca61d16f8287811b050e4c5167",
+    "deploy/upgrade/pointer.py": "2ab318a7fa6426c4289da676f2a81a731e77e433992e76ed519aac171aa778d1",
+    "deploy/upgrade/upgrade.py": "3b87ededc203b315c39ae42945993f1b329c03caac55a2f100caa94c349e8315",
     "deploy/upgrade/upgrade.sh": "7c2175a2233530b0f79fc50baf82fee177e40c89025a6028c141c068f5c73738",
     "scripts/reproduce.sh": "39035311dcfd0d0a9323082df865473bd9764ee355d913218c89a888b5ed12fb",
 }
@@ -129,6 +129,12 @@ CLAIM_PINS = {
     "crates/frontdoor/src/session.rs": "c77beeb6ad784a7a1037fc5a6982cce8669a92816173d8762befe4aa817a4b22",
     "crates/supervisor/src/claim.rs": "cf861ce37adc9418815884813418856989ee374796076f636aa2287db472d6fc",
     "crates/supervisor/src/lib.rs": "81d9f14180c122fb8c8022c0b7188575551441a9ca44f06f158ad237871aed52",
+}
+
+
+# The explicitly requested release-pointer unit test is allowed only at these reviewed bytes.
+RELEASE_POINTER_PINS = {
+    "crates/supervisor/src/release/pointer.rs": "189978661a121cad12c42e45ccdc54bf46ca77ef711e43c6f09dbc961360b41b",
 }
 
 
@@ -213,31 +219,10 @@ def deploy_source_guards():
                    ' core.refuse("upgrade", "release-mismatch")')
     pointer = PythonGuard("deploy/upgrade/pointer.py", "verify")
     pointer.prefix('raw = core.read_regular(pointer_path, 4096, "upgrade")\n'
-                   'document = core.parse_json(raw, "upgrade", 4096)\n'
-                   'core.exact_keys(document, ("schema", "node", "commit", "release", "seq"), "upgrade", "pointer")\n'
-                   'if core.canonical(document) != raw:\n core.refuse("upgrade", "pointer-not-canonical")')
-    pointer.ordered(
-        'if (document["schema"] != POINTER_SCHEMA or document["node"] != node or not core.is_hex(document["commit"], 40)'
-        ' or not core.is_hex(document["release"], 64) or not core.is_int(document["seq"], 1)):\n core.refuse("upgrade", "pointer")',
-        'credential = read_credential(credential_path, node)',
-        'if assertion["schema"] != ASSERTION_SCHEMA or unb64url(assertion["credential_id"], "pointer-assertion") != credential["_id"]:\n'
-        ' core.refuse("upgrade", "pointer-assertion")',
-        'if not isinstance(client, dict) or client.get("type") != "webauthn.get":\n core.refuse("upgrade", "pointer-client-data")',
-        'if client.get("challenge") != challenge(raw) or client.get("origin") != credential["origin"]:\n'
-        ' core.refuse("upgrade", "pointer-client-data")',
-        'if top is not None:\n framed = client.get("crossOrigin") is True and client.get("topOrigin") == top\n'
-        'else:\n framed = client.get("crossOrigin") in (None, False) and "topOrigin" not in client',
-        'if not framed:\n core.refuse("upgrade", "pointer-client-data")',
-        'if len(authenticator) != 37 or authenticator[:32] != hashlib.sha256(credential["rp_id"].encode("ascii")).digest():\n'
-        ' core.refuse("upgrade", "pointer-authenticator")',
-        'if not flags & FLAG_UP or not flags & FLAG_UV or flags & (FLAG_AT | FLAG_ED):\n'
-        ' core.refuse("upgrade", "pointer-authenticator")',
-        'es256_verify(credential["_spki"], authenticator + hashlib.sha256(client_bytes).digest(), signature)',
-        'return Pointer(node, document["commit"], document["release"], document["seq"], core.sha256_hex(raw))')
-    PythonGuard("deploy/upgrade/pointer.py", "challenge").prefix(
-        'return b64url(hashlib.sha256(DOMAIN + b"\\x00" + pointer_bytes).digest())')
-    PythonGuard("deploy/upgrade/pointer.py", "es256_verify").ordered(
-        'if done.returncode != 0 or done.stdout.strip() != b"Verified OK":\n core.refuse("upgrade", "pointer-signature")')
+                   'credential = read_credential(credential_path, node)\n'
+                   'assertion = read_assertion(assertion_path)\n'
+                   'return verify_bytes(raw, assertion, credential, node)')
+    release_pointer_guards()
     PythonGuard("deploy/spawn/spawn.py", "new_claim").prefix(
         'secret = secrets.token_bytes(32)\n'
         'return base64.urlsafe_b64encode(secret).rstrip(b"=").decode("ascii"), hashlib.sha256(secret).hexdigest()')
@@ -251,9 +236,120 @@ def deploy_source_guards():
         'core.atomic_write(CLAIM, (digest + "\\n").encode("ascii"), 0o440, (0, grp.getgrnam(SERVICE_USER).gr_gid))')
 
 
+def release_pointer_guards():
+    """Inspect the shared v2 verifier and the installed node's authorization before its release switch."""
+    path = "deploy/upgrade/node_release.py"
+    pointer = PythonGuard(path, "read_pointer")
+    pointer.prefix('document = core.parse_json(raw, "upgrade", 4096)\n'
+                   'core.exact_keys(document, ("schema", "body"), "upgrade", "pointer")\n'
+                   'if core.canonical(document) != raw:\n core.refuse("upgrade", "pointer-not-canonical")\n'
+        'body = core.exact_keys(document["body"], ("node", "instance", "commit", "release", "seq", "not_after"),'
+        ' "upgrade", "pointer")\n'
+        'if (document["schema"] != POINTER_SCHEMA or body["node"] != node or not core.is_node_name(node)'
+        ' or not core.is_hex(body["instance"], 64) or not core.is_hex(body["commit"], 40)'
+        ' or not core.is_hex(body["release"], 64) or not core.is_int(body["seq"], 1)'
+        ' or not core.is_int(body["not_after"], 1)):\n core.refuse("upgrade", "pointer")\n'
+        'if instance is not None and body["instance"] != instance:\n core.refuse("upgrade", "pointer-instance")\n'
+        'found = Pointer(node, body["instance"], body["commit"], body["release"], body["seq"],'
+        ' body["not_after"], core.sha256_hex(raw))\nrequire_live(found)\nreturn found')
+    PythonGuard(path, "require_live").prefix(
+        'if time.time_ns() // 1_000_000 >= found.not_after:\n core.refuse("upgrade", "pointer-expired")')
+    verifier = PythonGuard(path, "verify_bytes")
+    verifier.prefix('found = read_pointer(raw, node, instance)\n'
+        'if assertion["schema"] != ASSERTION_SCHEMA or unb64url(assertion["credential_id"], "pointer-assertion") != credential["_id"]:\n'
+        ' core.refuse("upgrade", "pointer-assertion")\n'
+        'authenticator = unb64url(assertion["authenticator_data"], "pointer-assertion")\n'
+        'client_bytes = unb64url(assertion["client_data_json"], "pointer-assertion")\n'
+        'signature = unb64url(assertion["signature"], "pointer-assertion")\n'
+        'client = client_data(client_bytes)\n'
+        'if not isinstance(client, dict) or client.get("type") != "webauthn.get":\n core.refuse("upgrade", "pointer-client-data")\n'
+        'if client.get("challenge") != challenge(raw) or client.get("origin") != credential["origin"]:\n'
+        ' core.refuse("upgrade", "pointer-client-data")\n'
+        'top = credential["top_origin"]\n'
+        'if top is not None:\n framed = client.get("crossOrigin") is True and client.get("topOrigin") == top\n'
+        'else:\n framed = ("crossOrigin" not in client or client["crossOrigin"] is False) and "topOrigin" not in client\n'
+        'if not framed:\n core.refuse("upgrade", "pointer-client-data")\n'
+        'if len(authenticator) != 37 or authenticator[:32] != hashlib.sha256(credential["rp_id"].encode("ascii")).digest():\n'
+        ' core.refuse("upgrade", "pointer-authenticator")\n'
+        'flags = authenticator[32]\n'
+        'if not flags & FLAG_UP or not flags & FLAG_UV or flags & (FLAG_AT | FLAG_ED):\n'
+        ' core.refuse("upgrade", "pointer-authenticator")\n'
+        'message = authenticator + hashlib.sha256(client_bytes).digest()\n'
+        'if credential["alg"] == ES256:\n es256_verify(credential["_spki"], message, signature)\n'
+        'elif credential["alg"] == EDDSA:\n ed25519_verify(credential["_spki"], message, signature)\n'
+        'else:\n core.refuse("upgrade", "pointer-key")\nrequire_live(found)\nreturn found')
+    PythonGuard(path, "challenge").prefix(
+        'return b64url(hashlib.sha256(DOMAIN + b"\\x00" + pointer_bytes).digest())')
+    PythonGuard(path, "es256_verify").ordered(
+        'if done.returncode != 0 or done.stdout.strip() != b"Verified OK":\n core.refuse("upgrade", "pointer-signature")')
+    PythonGuard(path, "ed25519_verify").ordered(
+        'if done.returncode != 0:\n core.refuse("upgrade", "pointer-signature")')
+    authorization = PythonGuard(path, "node_authorization")
+    authorization.prefix('raw = core.read_regular(pointer_path, 4096, "upgrade")\n'
+                         'found = read_pointer(raw, config.get("node"), instance)\n'
+                         'expected = core.canonical(vars(found))\n'
+                         'process = subprocess.Popen([binary, "release", "verify-pointer", "--config", NODE_JSON,'
+                         ' "--pointer", pointer_path, "--assertion", assertion_path], stdin=subprocess.PIPE,'
+                         ' stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)')
+    reservation = [node for node in authorization.body if isinstance(node, ast.Try)]
+    if len(reservation) != 1:
+        raise ValueError("node-release: missing installed verifier reservation")
+    authorization.body = reservation[0].body
+    authorization.prefix('ready, _, _ = select.select([process.stdout], [], [], 30)\n'
+                         'if not ready or process.stdout.readline(4097) != expected + b"\\n" or process.poll() is not None:\n'
+                         ' core.refuse("upgrade", "owner-binding")\n'
+                         'yield found\nprocess.stdin.write(b"release\\n")\nprocess.stdin.flush()\nprocess.stdin.close()\n'
+                         'if process.wait(timeout=10) != 0:\n core.refuse("upgrade", "owner-binding")')
+    PythonGuard(path, "trusted_verifier").prefix(
+        'directory, manifest = verified_release(old, active["release"])\n'
+        'if manifest["commit"] != active["commit"]:\n core.refuse("node-release", "not-installed")\n'
+        'binary = os.path.join(directory, "bin", "sovereign")\ninfo = os.lstat(binary)\n'
+        'entry = manifest["files"]["bin/sovereign"]\n'
+        'if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022'
+        ' or info.st_size != entry["bytes"] or core.sha256_file(binary) != entry["sha256"]):\n'
+        ' core.refuse("node-release", "not-installed")\nreturn binary')
+    PythonGuard(path, "switch").prefix(
+        'with switch_lock():\n return authorized_switch(rid, digest, pointer_path, assertion_path, seconds)')
+    switch = PythonGuard(path, "authorized_switch")
+    switch.prefix(
+        'directory, manifest = verified_release(rid, digest)\nactive = read_active()\n'
+        'if active is None:\n core.refuse("node-release", "not-installed")\n'
+        'old = link_id(CURRENT)\n'
+        'if old is None or old != active["id"]:\n core.refuse("node-release", "not-installed")\n'
+        'config = node_config()\ninstance = installation(config.get("node"))\n'
+        'last_seq = read_sequence(instance, active)\n'
+        'binary = os.path.realpath(os.path.join(directory, "bin", "sovereign"))\n'
+        'previous_before = link_id(PREVIOUS)\nflipped = old != rid\n'
+        'verifier = trusted_verifier(old, active)\nrollback_needed = False')
+    attempts = [node for node in switch.body if isinstance(node, ast.Try)]
+    if len(attempts) != 1 or switch.body[len(switch.body) - 3] is not attempts[0]:
+        raise ValueError("node-release: missing encompassing rollback boundary")
+    switch.ordered('rollback_switch(old, previous_before, active, flipped)',
+                   'return "rolled-back" if flipped else "failed"')
+    switch.body = attempts[0].body
+    switch.prefix(
+        'with node_authorization(verifier, pointer_path, assertion_path, config, instance) as found:\n'
+        ' if found.commit != manifest["commit"] or found.release != digest:\n  core.refuse("node-release", "pointer-release")\n'
+        ' if found.seq <= last_seq:\n  core.refuse("node-release", "pointer-replayed")\n'
+        ' require_live(found)\n'
+        ' record = {"schema": "aukora-release-sequence-v1", "instance": instance, "seq": found.seq, "pointer_sha256": found.sha256}\n'
+        ' core.atomic_write(SEQUENCE, core.canonical(record), 0o600)\n rollback_needed = True\n'
+        ' if flipped:\n  point(PREVIOUS, "releases/" + old)\n'
+        '  require_live(found)\n  point(CURRENT, "releases/" + rid)\n'
+        'if flipped:\n apply_units(directory)\nrestart_supervisor()\n'
+        'healthy = probe(config, binary, manifest["files"]["bin/sovereign"]["sha256"], seconds)\n'
+        'if healthy:\n write_active(rid, manifest, digest, found.seq, found.sha256)\n return "switched"')
+    switch.body = attempts[0].handlers
+    if (len(switch.body) != 1 or ast.unparse(switch.body[0].type)
+            != "(core.Refusal, OSError, KeyboardInterrupt, subprocess.SubprocessError)"):
+        raise ValueError("node-release: rollback must cover refusal, interruption and verifier failure")
+    switch.body = switch.body[0].body
+    switch.prefix('if not rollback_needed:\n raise')
+
+
 def no_release_artifacts(paths):
     """Reject pointer/assertion/credential data anywhere in the tracked or untracked source tree."""
-    schemas = {"aukora-release-pointer-v1", "aukora-release-assertion-v1", "aukora-owner-credential-v1"}
+    schemas = {"aukora-release-pointer-v1", "aukora-release-pointer-v2", "aukora-release-assertion-v1", "aukora-owner-credential-v1"}
 
     def contains_artifact(value):
         if isinstance(value, dict):
@@ -766,6 +862,9 @@ for p in files:
     if p in pins:
         continue
     for rule, detail in walls.file_findings(p, (ROOT / p).read_text(errors="replace")):
+        if (rule == "no-test-suites" and p in RELEASE_POINTER_PINS
+                and hashlib.sha256((ROOT / p).read_bytes()).hexdigest() == RELEASE_POINTER_PINS[p]):
+            continue
         fail(rule, detail)
 
 # 12. The compiler walls (checks/walls.py): every crate root forbids unsafe code except the launcher and supervisor,
@@ -805,6 +904,7 @@ deploy_inventory = [p for p in files if p.startswith(("deploy/spawn/", "deploy/u
 deploy_inventory.append("scripts/reproduce.sh")
 check_source_pins("deploy-guard", DEPLOY_PINS, deploy_inventory)
 check_source_pins("deploy-guard", CLAIM_PINS, CLAIM_PINS)
+check_source_pins("deploy-guard", RELEASE_POINTER_PINS, RELEASE_POINTER_PINS)
 try:
     deploy_source_guards()
     claim_source_guards()

@@ -22,6 +22,9 @@ fn main() {
 
 fn run() -> canon::Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if arguments.first().is_some_and(|command| command == "release") {
+        return release::pointer::run(&arguments[1..]);
+    }
     let [command, option, path] = arguments.as_slice() else {
         return Err(canon::Refusal {
             organ: "supervisor",

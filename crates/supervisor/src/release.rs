@@ -2,6 +2,7 @@
 //! Release files remain data until floor and Aura agree on the installed digest.
 
 mod owner;
+pub(crate) mod pointer;
 pub(crate) use owner::ReleaseApproval;
 
 use crate::adapters::HostLedger;

@@ -47,6 +47,37 @@ pub struct Ledger {
 }
 
 impl Ledger {
+    /// Open existing authority without creating, migrating, or changing its rows.
+    /// A later `begin` reserves the writer while checking this verified prefix.
+    pub fn open_existing_authority(path: &Path) -> Result<Self> {
+        let mut connection = rusqlite::Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .map_err(sql)?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(sql)?;
+        connection
+            .execute_batch("PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;")
+            .map_err(sql)?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        crate::schema::validate(&transaction)?;
+        let verified = io::verify(&transaction)?;
+        if verified.frontier.size() == 0 || verified.epoch == 0 {
+            return Err(refusal("owner-binding-missing"));
+        }
+        let data_version = transaction
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(sql)?;
+        transaction.rollback().map_err(sql)?;
+        Ok(Self { connection, verified, data_version })
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         let mut connection = rusqlite::Connection::open_with_flags(
             path,
