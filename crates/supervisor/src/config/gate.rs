@@ -13,8 +13,13 @@ const TARGET_LIMIT: usize = 128;
 
 impl NodeConfig {
     /// Read the host-owned inventory once before the gate receives any request.
+    /// If the entry exists at the initial absence check, the strict read follows:
     /// A missing inventory refuses startup; an explicit empty array disables targets.
+    /// An initially absent entry in a verified directory instead selects no targets.
     pub fn gate_targets(&self) -> Result<Vec<TargetSpec>> {
+        if self.gate_inventory_absent()? {
+            return Ok(Vec::new());
+        }
         let raw = disk::read_host_file(&self.directory.join("gate-targets-v1.json"), 65_536)?;
         let value = canonical(&raw)?;
         exact(&value, &["v", "kind", "node", "targets"])?;
@@ -79,5 +84,18 @@ impl NodeConfig {
             }
         }
         Ok(targets)
+    }
+
+    fn gate_inventory_absent(&self) -> Result<bool> {
+        let directory = disk::open_host_directory(&self.directory)?;
+        match rustix::fs::statat(
+            &directory,
+            "gate-targets-v1.json",
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        ) {
+            Ok(_) => Ok(false),
+            Err(rustix::io::Errno::NOENT) => Ok(true),
+            Err(_) => Err(super::refused("config-unreadable")),
+        }
     }
 }

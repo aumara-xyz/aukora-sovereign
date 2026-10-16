@@ -164,6 +164,7 @@ impl DisplayedCard {
         card: Card,
     ) -> Result<Self> {
         require_action(action)?;
+        validate_stored_content(proposal, action, &card)?;
         if card.risk != proposal.risk
             || card.model_note != prepare_model_note(&proposal.request.model_note)?.displayed
         {
@@ -177,6 +178,43 @@ impl DisplayedCard {
             proposal: Some(card_binding(proposal, action)),
         })
     }
+}
+
+fn validate_stored_content(proposal: &Proposal, action: OwnerOperation, card: &Card) -> Result<()> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let mismatch = || crate::refuse("authorization-mismatch");
+    if Digest32::sha256(&proposal.request.new_bytes) != proposal.new_digest {
+        return Err(mismatch());
+    }
+    let mut bytes = card
+        .from_to
+        .iter()
+        .filter(|(label, _)| label == "new_bytes_b64");
+    let (_, encoded) = bytes.next().ok_or_else(mismatch)?;
+    if bytes.next().is_some()
+        || !matches!(encoded.view(), ValueView::Text(value) if value == STANDARD.encode(&proposal.request.new_bytes))
+    {
+        return Err(mismatch());
+    }
+    let expected_label =
+        if action == OwnerOperation::Apply && proposal.request.target.as_str().starts_with("sites/") {
+            "bundle_sha256"
+        } else {
+            "new_sha256"
+        };
+    let mut digests = card
+        .facts
+        .iter()
+        .filter(|(label, _)| matches!(label.as_str(), "new_sha256" | "bundle_sha256"));
+    let (label, digest) = digests.next().ok_or_else(mismatch)?;
+    if label != expected_label
+        || digests.next().is_some()
+        || !matches!(digest.view(), ValueView::Text(value) if value == proposal.new_digest.to_string())
+    {
+        return Err(mismatch());
+    }
+    Ok(())
 }
 
 pub fn authorization(

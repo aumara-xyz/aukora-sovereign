@@ -54,8 +54,6 @@ impl OwnerRoute {
             (Method::Post, "/api/signin/finish") => Ok(Self::SigninFinish),
             (Method::Get, "/api/approvals") => Ok(Self::Approvals),
             (Method::Post, "/api/approvals/retire/challenge") => Ok(Self::ApprovalRetireChallenge),
-            (Method::Post, "/api/v1/approvals/review") => Ok(Self::ApprovalReviewV1),
-            (Method::Post, "/api/v1/approvals/assertion") => Ok(Self::ApprovalAssertionV1),
             _ => Err(Refusal {
                 organ: "frontdoor",
                 reason: "unknown-route",
@@ -127,7 +125,7 @@ impl GateAssertionMaterial {
     }
 }
 
-/// Versioned endpoints accept exact selectors. The pinned retirement request keeps `id`.
+/// Gate requests accept exact selectors. The pinned retirement request keeps `id`.
 pub fn decode_gate_request(route: OwnerRoute, body: &Value) -> Result<GateRequest> {
     if body.canonical_bytes().len() > crate::ingress::MAX_BODY_BYTES {
         return Err(canon::codes::FRONTDOOR_BODY_INVALID);
