@@ -643,6 +643,10 @@ fn verify_aura_record<T: HealthReadTxn + ?Sized>(
 }
 
 fn signed_owner_epoch(record: &AuthorityRecord) -> Result<Option<u64>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if record.body.get("schema").is_some() {
+        return wrapped_owner_epoch(record);
+    }
     use crate::keys::{exact_fields, field, value_text, value_u64};
     let body = &record.body;
     if record.kind != Kind::AumlokBind || body.get("v").map(value_u64).transpose()? != Some(1) {
@@ -688,6 +692,114 @@ fn signed_owner_epoch(record: &AuthorityRecord) -> Result<Option<u64>> {
         return Err(crate::keys::refuse("health-record-operation"));
     }
     Ok(Some(epoch))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wrapped_owner_epoch(record: &AuthorityRecord) -> Result<Option<u64>> {
+    use aura::record::{AuthorityBodyV1, MembershipTransition};
+    use crate::keys::{field, refuse};
+
+    let wrapper = AuthorityBodyV1::parse(&record.body)?;
+    if record.v != 1
+        || record.algorithm != AlgorithmId::Sha256
+        || wrapper.algorithm != record.algorithm
+        || wrapper.authority != record.authority
+        || record.phase != Phase::Terminal
+        || record.operation.is_none()
+    {
+        return Err(refuse("health-record-format"));
+    }
+    match record.kind {
+        Kind::AumlokEnrol => enrolment_epoch(record, &wrapper.payload).map(Some),
+        Kind::AumlokBind if wrapper.payload.get("membership").is_some() => {
+            let transition = MembershipTransition::parse(field(&wrapper.payload, "membership")?)?;
+            let predecessor = AuthorityVersion {
+                epoch: transition.old.epoch,
+                ..record.authority
+            };
+            if transition.new.epoch != record.authority.epoch
+                || transition.predecessor != predecessor
+                || transition.old.epoch == 0
+            {
+                return Err(refuse("health-record-epoch"));
+            }
+            transition.verify_joint(&transition.old)?;
+            if let Some(value) = wrapper.payload.get("binding") {
+                let binding = aura::storage::owner_binding_from_value(value)?;
+                if binding.epoch != record.authority.epoch
+                    || !transition.new.members.contains(&binding.public_key)
+                {
+                    return Err(refuse("health-record-epoch"));
+                }
+            }
+            Ok(Some(transition.new.epoch))
+        }
+        _ => Ok(None),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn enrolment_epoch(record: &AuthorityRecord, payload: &Value) -> Result<u64> {
+    use crate::keys::{exact_fields, field, parse_version, refuse, value_text, value_u64};
+    use canon::json::ValueView;
+
+    exact_fields(payload, &[
+        "schema", "algorithm", "epoch", "sequence", "previous_hash", "ceremony", "nonce",
+        "session", "subject", "expires_at", "candidate_digest", "ceremony_authority", "owner_id",
+        "user_handle", "backup_eligible", "assertion", "binding",
+    ])?;
+    let binding = aura::storage::owner_binding_from_value(field(payload, "binding")?)?;
+    let ceremony = parse_version(field(payload, "ceremony_authority")?)?;
+    let previous = match field(payload, "previous_hash")?.view() {
+        ValueView::Null => None,
+        ValueView::Text(hash) => Some(Digest32::from_hex(hash)?),
+        _ => return Err(refuse("health-record-format")),
+    };
+    let owner = value_text(field(payload, "owner_id")?)?;
+    if value_text(field(payload, "schema")?)? != "aukora-aumlok-ceremony-finish-v1"
+        || value_text(field(payload, "algorithm")?)? != "sha256"
+        || record.authority.epoch != 1
+        || binding.epoch != 1
+        || value_u64(field(payload, "epoch")?)? != 1
+        || value_u64(field(payload, "sequence")?)? != record.authority.sequence
+        || previous != record.authority.previous_hash
+        || ceremony.epoch != 0
+        || ceremony.sequence > record.authority.sequence
+        || (ceremony.sequence == record.authority.sequence
+            && ceremony.previous_hash != record.authority.previous_hash)
+        || record.at < 0
+        || value_u64(field(payload, "expires_at")?)? <= record.at as u64
+        || owner != record.actor
+        || owner.is_empty()
+        || owner.len() > 256
+        || owner.chars().any(char::is_control)
+        || record.operation.map(|operation| operation.to_string()).as_deref()
+            != Some(value_text(field(payload, "ceremony")?)?)
+        || !matches!(binding.algorithm, AlgorithmId::Ed25519 | AlgorithmId::EcdsaP256Sha256)
+        || !matches!(field(payload, "backup_eligible")?.view(), ValueView::Boolean(_))
+    {
+        return Err(refuse("health-record-epoch"));
+    }
+    aura::record::MembershipSet {
+        epoch: binding.epoch,
+        members: vec![binding.public_key.clone()],
+        required_signers: 1,
+    }
+    .canonical_value()?;
+    canon::ids::SessionId::from_hex(value_text(field(payload, "session")?)?)?;
+    canon::ids::SubjectId::parse(value_text(field(payload, "subject")?)?)?;
+    Digest32::from_hex(value_text(field(payload, "candidate_digest")?)?)?;
+    Digest32::from_hex(value_text(field(payload, "nonce")?)?)?;
+    let user = value_text(field(payload, "user_handle")?)?;
+    if user.is_empty()
+        || user.len() > 128
+        || !user.len().is_multiple_of(2)
+        || !user.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(refuse("health-record-format"));
+    }
+    crate::webauthn::decode_assertion(&field(payload, "assertion")?.canonical_bytes())?;
+    Ok(binding.epoch)
 }
 
 fn membership_epoch(membership: &Value) -> Result<u64> {

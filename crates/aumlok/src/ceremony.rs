@@ -305,6 +305,10 @@ pub fn finish_enrolment<T: CeremonyReadTxn + ?Sized>(
         ExtensionPolicy::None,
     )?;
     credential.binding.sign_counter = observation.counter();
+    if row.authority.epoch != 0 {
+        return Err(refusal("enrolment-closed"));
+    }
+    credential.binding.epoch = 1;
     complete(txn, transaction_id, row, &credential, assertion, now_ms)?;
     Ok(credential)
 }

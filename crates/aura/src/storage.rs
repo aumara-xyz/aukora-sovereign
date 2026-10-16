@@ -505,3 +505,13 @@ pub(crate) fn decode_binding(input: &[u8]) -> Result<OwnerBinding> {
     equal_encoding(input, encode_binding(&binding)?)?;
     Ok(binding)
 }
+
+/// Encode public binding data with the same schema used by the authority index.
+pub fn owner_binding_value(binding: &OwnerBinding) -> Result<Value> {
+    json::parse_strict(&encode_binding(binding)?)
+}
+
+/// Decode the exact storage shape; the returned data grants no authority.
+pub fn owner_binding_from_value(value: &Value) -> Result<OwnerBinding> {
+    decode_binding(&value.canonical_bytes())
+}
