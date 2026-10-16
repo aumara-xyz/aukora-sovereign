@@ -2,7 +2,7 @@
 //! Canonical enrollment receipt fields and bounded stored-data decoders.
 
 use super::*;
-use canon::{alg::PublicKey, ids::CredentialId, json::SafeInteger};
+use canon::json::SafeInteger;
 
 pub(super) fn field<'a>(value: &'a Value, name: &str) -> Result<&'a Value> {
     value.get(name).ok_or(refusal("enrolment-field"))
@@ -88,56 +88,6 @@ fn object(fields: Vec<(&str, Value)>) -> Result<Value> {
     )
 }
 
-fn binding_value(binding: &OwnerBinding) -> Result<Value> {
-    if binding.v != 1
-        || binding.public_key.v != 1
-        || binding.algorithm != binding.public_key.algorithm
-        || binding.public_key.bytes.is_empty()
-    {
-        return Err(refusal("enrolment-binding"));
-    }
-    object(vec![
-        ("v", integer(binding.v.into())?),
-        ("algorithm", string(binding.algorithm.wire_name())?),
-        ("credential", string(hex(binding.credential_id.as_bytes()))?),
-        ("key_version", integer(binding.public_key.v.into())?),
-        (
-            "key_algorithm",
-            string(binding.public_key.algorithm.wire_name())?,
-        ),
-        ("public_key", string(hex(&binding.public_key.bytes))?),
-        ("epoch", integer(binding.epoch)?),
-        ("rp", string(&binding.relying_party)?),
-        ("owner_origin", string(&binding.owner_origin)?),
-        ("top_origin", string(&binding.top_origin)?),
-        ("counter", integer(binding.sign_counter.into())?),
-    ])
-}
-
-pub(super) fn decode_binding(value: &Value) -> Result<OwnerBinding> {
-    let binding = OwnerBinding {
-        v: u16::try_from(number(value, "v")?).map_err(|_| refusal("enrolment-binding"))?,
-        algorithm: AlgorithmId::from_wire(text(value, "algorithm")?)?,
-        credential_id: CredentialId::new(bytes(text(value, "credential")?)?)?,
-        public_key: PublicKey {
-            v: u16::try_from(number(value, "key_version")?)
-                .map_err(|_| refusal("enrolment-binding"))?,
-            algorithm: AlgorithmId::from_wire(text(value, "key_algorithm")?)?,
-            bytes: bytes(text(value, "public_key")?)?,
-        },
-        epoch: number(value, "epoch")?,
-        relying_party: text(value, "rp")?.to_owned(),
-        owner_origin: text(value, "owner_origin")?.to_owned(),
-        top_origin: text(value, "top_origin")?.to_owned(),
-        sign_counter: u32::try_from(number(value, "counter")?)
-            .map_err(|_| refusal("enrolment-binding"))?,
-    };
-    if binding_value(&binding)? != *value {
-        return Err(refusal("enrolment-binding"));
-    }
-    Ok(binding)
-}
-
 pub(super) fn payload(
     request: &CeremonyFinish<'_>,
     authority: AuthorityVersion,
@@ -182,6 +132,9 @@ pub(super) fn payload(
         ("user_handle", string(hex(request.user_handle))?),
         ("backup_eligible", Value::boolean(request.backup_eligible)),
         ("assertion", assertion),
-        ("binding", binding_value(request.binding)?),
+        (
+            "binding",
+            json::parse_strict(&storage::encode_binding(request.binding)?)?,
+        ),
     ])
 }
