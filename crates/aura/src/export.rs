@@ -572,3 +572,5 @@ fn value_end(bytes: &[u8], start: usize) -> Result<usize> {
         Err(BAD)
     }
 }
+pub mod owner;
+pub use owner::{ColdProofV2, OwnerAssertionEvidenceV2, COLD_PROOF_V2_SCHEMA};

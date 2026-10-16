@@ -12,7 +12,7 @@
 //! | `keys/envelope-v1.json` | optional, explicitly requested phrase-only copy of the identity root |
 //! | `keys/backup-v2.json` | the phrase-and-passkey-bound identity root, exactly the backup-v2 bytes |
 //! | `keys/public.json` | `{"schema":"aukora-exit-public-keys-v1","body":{subject,epoch,node,aura_signing_key}}` |
-//! | `receipts.json` | the node's whole signed Aura history, exactly `aukora-aura-cold-proof-v1` |
+//! | `receipts.json` | the node's whole signed Aura history, `aukora-aura-cold-proof-v1` or its v2 assertion wrapper |
 //! | `memory.jsonl` | Kira's tables as `aukora-kira-archive-v1`: a header line, then one line per note |
 //!
 //! `manifest.json` lists every other file as `{name,role,bytes,sha256}` with roles `envelope`,
@@ -55,7 +55,7 @@
 use crate::{
     format::{array, canonical, digest, field, hex32, keys, refusal, text, uint},
     report::{Scope, Verdict, VerificationReport},
-    verify_bundle, BundleInputs, UNSUPPORTED_SCHEMA,
+    verify_bundle_with_owner_pin, BundleInputs, UNSUPPORTED_SCHEMA,
 };
 use canon::{
     json::{Value, ValueView},
@@ -102,7 +102,7 @@ const LAYOUT: [(&str, &str, bool); 5] = [
 pub const NOT_CHECKED: [&str; 5] = [
     "that any note decrypts, or that its key unwraps",
     "that the sealed identity root opens with the owner's phrase or passkey",
-    "passkey signatures over owner approvals and physical effects",
+    "physical effects and non-C5 enrolment ceremony signatures",
     "that the exporting node is the owner's node, unless a key and checkpoint were pinned",
     "that quarantine flags reproduce owner-approved quarantine state",
 ];
@@ -364,6 +364,14 @@ fn scope(clean: bool) -> Scope {
 /// differs from what the history committed to, a note missing, and a forgotten note shown as
 /// remembered each give a finding and no plan.
 pub fn verify_export(inputs: ExportInputs<'_>) -> Result<RestoreReport> {
+    verify_export_with_owner_pin(inputs, None)
+}
+
+/// Verify C5 assertions with a separately retained SEC1 P-256 hex credential key.
+pub fn verify_export_with_owner_pin(
+    inputs: ExportInputs<'_>,
+    owner_key: Option<&[u8]>,
+) -> Result<RestoreReport> {
     let mut names = BTreeSet::new();
     for (name, _) in inputs.files {
         if (*name != MANIFEST && !LAYOUT.iter().any(|(known, _, _)| known == name))
@@ -419,11 +427,14 @@ pub fn verify_export(inputs: ExportInputs<'_>) -> Result<RestoreReport> {
     }
     checks.files = Scope::Checked;
     let receipts = *parts.get(RECEIPTS).ok_or(refusal("restore-file-missing"))?;
-    let mut report = verify_bundle(BundleInputs {
-        bundle: receipts,
-        pinned_key: inputs.pinned_key,
-        checkpoint: inputs.checkpoint,
-    })?;
+    let mut report = verify_bundle_with_owner_pin(
+        BundleInputs {
+            bundle: receipts,
+            pinned_key: inputs.pinned_key,
+            checkpoint: inputs.checkpoint,
+        },
+        owner_key,
+    )?;
     let admissible = |report: &VerificationReport| {
         matches!(report.verdict(), Verdict::Verified | Verdict::Unchecked)
     };
@@ -434,7 +445,9 @@ pub fn verify_export(inputs: ExportInputs<'_>) -> Result<RestoreReport> {
             plan: None,
         });
     }
-    let signing = hex32(text(field(&canonical(receipts)?, "publicKey")?)?)?;
+    let wrapper = canonical(receipts)?;
+    let (cold, _) = crate::owner::unpack(&wrapper)?;
+    let signing = hex32(text(field(cold, "publicKey")?)?)?;
     let mut sealed_ok = true;
     for (name, backup) in [(ENVELOPE, false), (BACKUP, true)] {
         if let Some(bytes) = parts.get(name) {

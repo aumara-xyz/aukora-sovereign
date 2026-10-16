@@ -5,6 +5,8 @@ use canon::{alg::AlgorithmId, Result};
 
 /// The four-key pinned cold bundle schema.
 pub const COLD_PROOF_V1: &str = "aukora-aura-cold-proof-v1";
+/// A closed wrapper retaining v1 alongside complete C5 owner assertions.
+pub const COLD_PROOF_V2: &str = "aukora-aura-cold-proof-v2";
 /// The six-key C3 retained observation schema.
 pub const RETAINED_HEAD_V1: &str = "aukora-aura-retained-head-v1";
 /// The six-key C3 presentation schema.
@@ -15,13 +17,16 @@ pub const PRESENTED_HEAD_V1: &str = "aukora-aura-presented-head-v1";
 pub enum ExportVersion {
     /// Frozen C3 keys; algorithm and epoch are never added to these outer objects.
     ColdProofV1,
+    /// Owner assertion evidence wraps the unchanged v1 ledger proof.
+    ColdProofV2,
 }
 
 impl ExportVersion {
-    /// Recognizes the one frozen schema and refuses every other string.
+    /// Recognizes the two closed schemas and refuses every other string.
     pub fn from_schema(schema: &str) -> Result<Self> {
         match schema {
             COLD_PROOF_V1 => Ok(Self::ColdProofV1),
+            COLD_PROOF_V2 => Ok(Self::ColdProofV2),
             _ => Err(crate::UNSUPPORTED_SCHEMA),
         }
     }
@@ -30,13 +35,14 @@ impl ExportVersion {
     pub const fn schema(self) -> &'static str {
         match self {
             Self::ColdProofV1 => COLD_PROOF_V1,
+            Self::ColdProofV2 => COLD_PROOF_V2,
         }
     }
 
     /// V1 fixes Ed25519 by schema instead of adding an algorithm field to its rows.
     pub const fn signature_algorithm(self) -> AlgorithmId {
         match self {
-            Self::ColdProofV1 => AlgorithmId::Ed25519,
+            Self::ColdProofV1 | Self::ColdProofV2 => AlgorithmId::Ed25519,
         }
     }
 }
@@ -513,6 +519,13 @@ fn detached_event(bytes: &[u8]) -> Result<DetachedEvent> {
 }
 
 pub(crate) fn witness(inputs: crate::WitnessInputs<'_>) -> Result<crate::VerificationReport> {
+    witness_with_owner_pin(inputs, None)
+}
+
+pub(crate) fn witness_with_owner_pin(
+    inputs: crate::WitnessInputs<'_>,
+    owner_key: Option<&[u8]>,
+) -> Result<crate::VerificationReport> {
     let event = detached_event(inputs.event).map_err(|_| refusal("witness-malformed"))?;
     let content = canonical(event.content.as_bytes()).map_err(|_| refusal("witness-malformed"))?;
     if !matches!(content.view(), ValueView::Object(_)) {
@@ -529,7 +542,8 @@ pub(crate) fn witness(inputs: crate::WitnessInputs<'_>) -> Result<crate::Verific
     .map_err(|_| refusal("witness-size"))?;
     let head = crate::consistency::retained(event.content.as_bytes())
         .map_err(|_| refusal("witness-malformed"))?;
-    let bundle = canonical(inputs.export.bundle).map_err(|_| refusal("witness-proof"))?;
+    let wrapper = canonical(inputs.export.bundle).map_err(|_| refusal("witness-proof"))?;
+    let (bundle, _) = crate::owner::unpack(&wrapper).map_err(|_| refusal("witness-proof"))?;
     let rows = field(&bundle, "rows")
         .and_then(array)
         .map_err(|_| refusal("witness-proof"))?;
@@ -562,7 +576,8 @@ pub(crate) fn witness(inputs: crate::WitnessInputs<'_>) -> Result<crate::Verific
         .and_then(hex32)
         .map_err(|_| refusal("witness-proof"))?;
     nostr_binding(binding, &aura_key).map_err(|_| refusal("witness-proof"))?;
-    let report = crate::verify_bundle(inputs.export).map_err(|_| refusal("witness-proof"))?;
+    let report = crate::verify_bundle_with_owner_pin(inputs.export, owner_key)
+        .map_err(|_| refusal("witness-proof"))?;
     let integrity = report.integrity();
     if !matches!(
         report.verdict(),

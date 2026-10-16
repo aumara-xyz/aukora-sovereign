@@ -236,17 +236,20 @@ pub(super) struct Facts {
 }
 
 pub(super) fn facts(bytes: &[u8]) -> Result<Facts> {
-    use aura::export::{ColdProofV1, ExportLimits};
+    use aura::export::{ColdProofV1, ColdProofV2, ExportLimits, COLD_PROOF_V2_SCHEMA};
     use canon::authority::Kind;
-    canonical(bytes)?;
-    let proof = ColdProofV1::parse(
-        bytes,
-        ExportLimits {
-            max_bytes: bytes.len(),
-            max_rows: bytes.len(),
-        },
-    )
-    .map_err(|_| EXIT_FORMAT)?;
+    let value = canonical(bytes)?;
+    let limits = ExportLimits {
+        max_bytes: bytes.len(),
+        max_rows: bytes.len(),
+    };
+    let proof = if text(member(&value, "schema")?)? == COLD_PROOF_V2_SCHEMA {
+        ColdProofV2::parse(bytes, limits)
+            .map_err(|_| EXIT_FORMAT)?
+            .proof
+    } else {
+        ColdProofV1::parse(bytes, limits).map_err(|_| EXIT_FORMAT)?
+    };
     let mut facts = Facts {
         signing_key: Digest32::from_bytes(proof.public_key),
         tip: (proof.head.sequence, proof.head.hash),

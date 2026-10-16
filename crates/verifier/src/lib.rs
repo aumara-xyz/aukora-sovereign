@@ -4,6 +4,7 @@
 
 pub mod consistency;
 pub mod format;
+mod owner;
 pub mod report;
 pub mod restore;
 
@@ -67,7 +68,23 @@ pub struct WitnessInputs<'a> {
 
 /// Verifies the frozen four-key cold export without trusting its embedded observations.
 pub fn verify_bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
-    bundle(inputs)
+    verify_bundle_with_owner_pin(inputs, None)
+}
+
+/// Check retained C5 assertions against an independently obtained SEC1 P-256 hex key.
+pub fn verify_bundle_with_owner_pin(
+    inputs: BundleInputs<'_>,
+    owner_key: Option<&[u8]>,
+) -> Result<VerificationReport> {
+    let value = canonical(inputs.bundle)?;
+    let (inner, _) = owner::unpack(&value)?;
+    let bytes = inner.canonical_bytes();
+    let mut report = bundle(BundleInputs {
+        bundle: &bytes,
+        ..inputs
+    })?;
+    owner::check(&value, owner_key, &mut report);
+    Ok(report)
 }
 
 /// Verifies contiguous signed rows and supplied independent observations.
@@ -78,6 +95,14 @@ pub fn verify_chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
 /// Verifies a detached signed Nostr observation bound by the exported ledger.
 pub fn verify_witness(inputs: WitnessInputs<'_>) -> Result<VerificationReport> {
     format::witness(inputs)
+}
+
+/// Check the witness and retained C5 assertions using separate node and owner pins.
+pub fn verify_witness_with_owner_pin(
+    inputs: WitnessInputs<'_>,
+    owner_key: Option<&[u8]>,
+) -> Result<VerificationReport> {
+    format::witness_with_owner_pin(inputs, owner_key)
 }
 
 use base64::{engine::general_purpose::STANDARD, Engine};

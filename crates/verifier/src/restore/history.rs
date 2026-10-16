@@ -83,7 +83,8 @@ fn demote_row(body: &Value) -> Result<(String, u64)> {
 }
 
 pub(super) fn chain(receipts: &[u8]) -> Result<Chain> {
-    let proof = canonical(receipts)?;
+    let wrapper = canonical(receipts)?;
+    let (proof, _) = crate::owner::unpack(&wrapper)?;
     let mut chain = Chain::default();
     for row in array(field(&proof, "rows")?)? {
         let seq = uint(field(row, "seq")?)?;

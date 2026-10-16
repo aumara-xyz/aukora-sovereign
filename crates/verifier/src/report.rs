@@ -83,10 +83,20 @@ pub struct VerificationReport {
     rows: u64,
     integrity: IntegrityScope,
     observations: ObservationScope,
+    owner_signatures: Scope,
     findings: Vec<Finding>,
 }
 
 impl VerificationReport {
+    /// Exact C5 assertion signatures matched the caller's independently pinned credential key.
+    /// This does not establish enrolment ceremony signatures or physical effects.
+    pub const fn owner_signatures(&self) -> Scope {
+        self.owner_signatures
+    }
+
+    pub(crate) fn owner_signatures_checked(&mut self) {
+        self.owner_signatures = Scope::Checked;
+    }
     /// Overall verification outcome; an embedded head alone never fills missing scope.
     pub const fn verdict(&self) -> Verdict {
         self.verdict
@@ -130,6 +140,7 @@ impl VerificationReport {
                 consistency: Scope::Unchecked,
             },
             findings: Vec::new(),
+            owner_signatures: Scope::Unchecked,
         }
     }
 

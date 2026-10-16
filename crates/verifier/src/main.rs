@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, env, fs::File, io::Read, path::Path, process::E
 use verifier::{BundleInputs, ChainInputs, Scope, Verdict, VerificationReport, WitnessInputs};
 
 const MAX_INPUT_BYTES: u64 = 8 * 1024 * 1024;
-const HELP: &str = "aukora-verify --bundle EXPORT.json [--key KEY.hex] [--checkpoint HEAD.json]\naukora-verify --key KEY.hex --rows ROWS.jsonl [--retained HEAD.json --presented HEAD.json] [--prefix OLD.jsonl] [--checkpoint HEAD.json]\naukora-verify witness EXPORT.json EVENT.json [--key KEY.hex] [--checkpoint HEAD.json]\naukora-verify consistency RETAINED.json PRESENTED.json";
+const HELP: &str = "aukora-verify --bundle EXPORT.json [--key KEY.hex] [--owner-key SEC1.hex] [--checkpoint HEAD.json]\naukora-verify --key KEY.hex --rows ROWS.jsonl [--retained HEAD.json --presented HEAD.json] [--prefix OLD.jsonl] [--checkpoint HEAD.json]\naukora-verify witness EXPORT.json EVENT.json [--key KEY.hex] [--owner-key SEC1.hex] [--checkpoint HEAD.json]\naukora-verify consistency RETAINED.json PRESENTED.json";
 
 type Result<T> = std::result::Result<T, &'static str>;
 
@@ -41,6 +41,7 @@ fn options(args: &[std::ffi::OsString], witness: bool) -> Result<BTreeMap<String
         if ![
             "--bundle",
             "--key",
+            "--owner-key",
             "--rows",
             "--retained",
             "--presented",
@@ -51,7 +52,7 @@ fn options(args: &[std::ffi::OsString], witness: bool) -> Result<BTreeMap<String
             || pair[1].is_empty()
             || pair[1].to_str().is_some_and(|s| s.starts_with("--"))
             || files.contains_key(name)
-            || (witness && !["--key", "--checkpoint"].contains(&name))
+            || (witness && !["--key", "--owner-key", "--checkpoint"].contains(&name))
         {
             return Err("verifier:usage");
         }
@@ -62,11 +63,12 @@ fn options(args: &[std::ffi::OsString], witness: bool) -> Result<BTreeMap<String
     }
     if !witness {
         let valid = if files.contains_key("--bundle") {
-            files
-                .keys()
-                .all(|name| ["--bundle", "--key", "--checkpoint"].contains(&name.as_str()))
+            files.keys().all(|name| {
+                ["--bundle", "--key", "--owner-key", "--checkpoint"].contains(&name.as_str())
+            })
         } else {
-            files.contains_key("--key")
+            !files.contains_key("--owner-key")
+                && files.contains_key("--key")
                 && files.contains_key("--rows")
                 && files.contains_key("--retained") == files.contains_key("--presented")
         };
@@ -113,7 +115,13 @@ fn emit(report: &VerificationReport) {
             finding.code, sequence, finding.exact_location
         );
     }
-    println!("],\"scope\":\"supplied bytes and retained observations; passkey signatures and physical effects independently unchecked\"}}");
+    let passkeys = checked(report.owner_signatures());
+    let scope = if passkeys {
+        "C5 owner approval signatures checked against the independent credential pin; physical effects and non-C5 ceremonies unchecked"
+    } else {
+        "C5 owner approval signatures unchecked: requires retained assertions and --owner-key independent credential pin; physical effects and non-C5 ceremonies unchecked"
+    };
+    println!("],\"owner_signatures\":{passkeys},\"scope\":\"{scope}\"}}");
 }
 
 fn run(args: &[std::ffi::OsString]) -> std::result::Result<u8, String> {
@@ -157,18 +165,21 @@ fn run(args: &[std::ffi::OsString]) -> std::result::Result<u8, String> {
         let files = options(&args[3..], true)?;
         if files
             .keys()
-            .any(|k| !["--key", "--checkpoint"].contains(&k.as_str()))
+            .any(|k| !["--key", "--owner-key", "--checkpoint"].contains(&k.as_str()))
         {
             return Err("verifier:usage".into());
         }
-        let report = verifier::verify_witness(WitnessInputs {
-            export: BundleInputs {
-                bundle: &bundle,
-                pinned_key: files.get("--key").map(Vec::as_slice),
-                checkpoint: files.get("--checkpoint").map(Vec::as_slice),
+        let report = verifier::verify_witness_with_owner_pin(
+            WitnessInputs {
+                export: BundleInputs {
+                    bundle: &bundle,
+                    pinned_key: files.get("--key").map(Vec::as_slice),
+                    checkpoint: files.get("--checkpoint").map(Vec::as_slice),
+                },
+                event: &event,
             },
-            event: &event,
-        })
+            files.get("--owner-key").map(Vec::as_slice),
+        )
         .map_err(|code| code.to_string())?;
         emit(&report);
         return Ok(report.verdict().exit_code());
@@ -178,15 +189,18 @@ fn run(args: &[std::ffi::OsString]) -> std::result::Result<u8, String> {
     let report = if let Some(bundle) = get("--bundle") {
         if files
             .keys()
-            .any(|k| !["--bundle", "--key", "--checkpoint"].contains(&k.as_str()))
+            .any(|k| !["--bundle", "--key", "--owner-key", "--checkpoint"].contains(&k.as_str()))
         {
             return Err("verifier:usage".into());
         }
-        verifier::verify_bundle(BundleInputs {
-            bundle,
-            pinned_key: get("--key"),
-            checkpoint: get("--checkpoint"),
-        })
+        verifier::verify_bundle_with_owner_pin(
+            BundleInputs {
+                bundle,
+                pinned_key: get("--key"),
+                checkpoint: get("--checkpoint"),
+            },
+            get("--owner-key"),
+        )
     } else {
         if files.contains_key("--retained") != files.contains_key("--presented") {
             return Err("verifier:usage".into());

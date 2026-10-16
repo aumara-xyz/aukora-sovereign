@@ -104,7 +104,7 @@ pub const EXIT_REVIVAL: Refusal = refusal("exit-revival");
 pub struct ExitMaterial {
     /// Kira's tables at its verified head, with no receipts inside (they are their own file).
     pub archive: MemoryArchive,
-    /// Aura's canonical `aukora-aura-cold-proof-v1` bytes, signed and complete.
+    /// Aura's canonical `aukora-aura-cold-proof-v2` bytes with retained owner assertions.
     pub receipts: Vec<u8>,
     /// Phrase-only envelope bytes, emitted only by an explicit ExportKeyPolicy choice.
     pub envelope_v1: Vec<u8>,
@@ -293,6 +293,14 @@ where
         return Err(EXIT_NOT_PERMITTED);
     }
     let material = source.gather(txn, context)?;
+    aura::export::ColdProofV2::parse(
+        &material.receipts,
+        aura::export::ExportLimits {
+            max_bytes: material.receipts.len(),
+            max_rows: material.receipts.len(),
+        },
+    )
+    .map_err(|_| EXIT_FORMAT)?;
     let archive = &material.archive;
     archive.validate()?;
     if archive.owner != context.owner_subject

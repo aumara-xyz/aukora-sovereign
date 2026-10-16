@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Cold Aura verification over supplied files, with no node or relay access.
 
-Ed25519 uses PyNaCl; BIP340 uses coincurve when detached Nostr evidence
-is present. Missing providers refuse verification. Neither provider is fetched.
+Ed25519 uses PyNaCl; BIP340 uses coincurve; ES256 uses cryptography.
+Missing providers refuse verification. No provider is fetched.
 """
 
 import argparse
@@ -17,6 +17,7 @@ import stat
 import sys
 
 COLD_PROOF_V1 = "aukora-aura-cold-proof-v1"
+COLD_PROOF_V2 = "aukora-aura-cold-proof-v2"
 RETAINED_HEAD_V1 = "aukora-aura-retained-head-v1"
 PRESENTED_HEAD_V1 = "aukora-aura-presented-head-v1"
 LEAF_CONVENTION = "rfc6962-leaf-sha256-0x00-prefixed-v1"
@@ -31,7 +32,6 @@ KINDS = frozenset((
 ).split())
 ROW_KEYS = frozenset("seq prev hash sig at kind actor op phase body".split())
 
-
 class Refusal(ValueError):
     """Stable refusal data, optionally locating a row in supplied observations."""
 
@@ -41,37 +41,255 @@ class Refusal(ValueError):
         self.sequence = sequence
         self.exact_location = exact_location
 
-
 def _require(condition, reason, sequence=None, exact=True):
     if not condition:
         raise Refusal("verifier:" + reason, sequence, exact)
 
-
 def export_version(schema: str):
-    _require(schema == COLD_PROOF_V1, "unsupported-schema")
-    return COLD_PROOF_V1
+    _require(schema in (COLD_PROOF_V1, COLD_PROOF_V2), "unsupported-schema")
+    return schema
 
+def _cold(value):
+    _require(isinstance(value, dict), "bundle-format")
+    export_version(value.get("schema"))
+    if value["schema"] == COLD_PROOF_V1:
+        _require(set(value) == {"schema", "publicKey", "head", "rows"}, "bundle-format")
+        return value, None
+    body = value.get("body")
+    _require(set(value) == {"schema", "body"} and isinstance(body, dict)
+             and set(body) == {"proof", "owner_assertions"}
+             and isinstance(body["owner_assertions"], list), "bundle-format")
+    proof = body["proof"]
+    _require(isinstance(proof, dict) and proof.get("schema") == COLD_PROOF_V1, "bundle-format")
+    return _cold(proof)[0], body["owner_assertions"]
 
+def _owner_key(raw):
+    try:
+        value = raw.decode("ascii")
+    except (AttributeError, UnicodeError):
+        raise Refusal("verifier:owner-key-encoding") from None
+    key = _hex(value.removesuffix("\n"), 65, "owner-key-encoding")
+    _require(key[0] == 4, "owner-key-encoding")
+    return key
+
+def _standard(value, limit):
+    _require(isinstance(value, str) and len(value) <= 4 * ((limit + 2) // 3), "owner-proof-format")
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        raise Refusal("verifier:owner-proof-format") from None
+    _require(len(raw) <= limit and base64.b64encode(raw).decode("ascii") == value, "owner-proof-format")
+    return raw
+
+def _client_data(raw):
+    def check(value, depth=0):
+        if isinstance(value, (dict, list)):
+            _require(depth < 512, "owner-proof-invalid")
+            for item in (list(value) + list(value.values()) if isinstance(value, dict) else value):
+                check(item, depth + 1)
+        elif isinstance(value, str):
+            _require(all(not 0xD800 <= ord(char) <= 0xDFFF for char in value), "owner-proof-invalid")
+        elif type(value) in (int, float):
+            _require(abs(value) <= MAX_SAFE_INTEGER, "owner-proof-invalid")
+    try:
+        value = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_object, parse_constant=_forbidden_number)
+        _require(isinstance(value, dict), "owner-proof-invalid")
+        check(value)
+        return value
+    except (ValueError, UnicodeError, RecursionError):
+        raise Refusal("verifier:owner-proof-invalid") from None
+
+def _owner_assertion(entry, row, rows, pinned):
+    binding, proof = entry["binding"], entry["proof"]
+    _require(isinstance(binding, dict) and set(binding) == {
+        "schema", "v", "algorithm", "credential", "key", "epoch", "relying_party", "owner_origin", "top_origin", "counter"}
+        and binding["schema"] == "aukora-aura-owner-binding-storage-v1", "owner-proof-format")
+    _require(isinstance(proof, dict) and set(proof) == {"authorization", "credential", "authenticator_data",
+        "client_data_json", "signed_bytes", "public_keys", "signatures"}, "owner-proof-format")
+    auth = _authorization(proof["authorization"])
+    _require(set(auth) == set("v node subject op proposal target base_sha256 new_sha256 cell display_sha256 challenge expires_at epoch operation".split()),
+             "owner-proof-format")
+    _require(type(binding["v"]) is int and binding["v"] == 1 and binding["algorithm"] == "ecdsa-p256-sha256"
+             and type(binding["epoch"]) is int and binding["epoch"] == auth["epoch"]
+             and type(binding["counter"]) is int and 0 <= binding["counter"] <= 0xffffffff, "owner-proof-invalid")
+    key = binding["key"]
+    signatures = proof["signatures"]
+    _require(isinstance(signatures, dict) and set(signatures) == {"v", "components"}
+             and type(signatures["v"]) is int and signatures["v"] == 1
+             and isinstance(signatures["components"], list) and len(signatures["components"]) == 1, "owner-proof-format")
+    signature = signatures["components"][0]
+    for component in (key, signature):
+        _require(isinstance(component, dict) and set(component) == {"v", "algorithm", "bytes"}
+                 and type(component["v"]) is int and component["v"] == 1
+                 and component["algorithm"] == binding["algorithm"], "owner-proof-format")
+    _require(_same(proof["public_keys"], [key]), "owner-proof-invalid")
+    public = _standard(key["bytes"], 65)
+    _require(len(public) == 65 and public[0] == 4 or len(public) == 33 and public[0] in (2, 3), "owner-proof-invalid")
+    credential = _standard(binding["credential"], 1024)
+    _require(bool(credential) and proof["credential"] == base64.urlsafe_b64encode(credential).decode("ascii").rstrip("="),
+             "owner-proof-invalid")
+    for field in ("relying_party", "owner_origin", "top_origin"):
+        _require(isinstance(binding[field], str) and bool(binding[field]), "owner-proof-invalid")
+    authenticator = _standard(proof["authenticator_data"], 37)
+    client = _standard(proof["client_data_json"], 16_384)
+    sig = _standard(signature["bytes"], 128)
+    _require(len(authenticator) == 37 and authenticator[32] in (5, 13, 29)
+             and authenticator[:32] == _sha(binding["relying_party"].encode("utf-8")), "owner-proof-invalid")
+    counter = int.from_bytes(authenticator[33:], "big")
+    _require(binding["counter"] == 0 or counter > binding["counter"], "owner-counter-replay")
+    fields = _client_data(client)
+    challenge = base64.urlsafe_b64encode(_sha(b"aukora:owner-authorization:v1\0" + _bytes(auth))).decode("ascii").rstrip("=")
+    _require(all(fields.get(name) == expected for name, expected in (
+        ("type", "webauthn.get"), ("challenge", challenge), ("origin", binding["owner_origin"]),
+        ("topOrigin", binding["top_origin"]))) and fields.get("crossOrigin") is True, "owner-proof-invalid")
+    signed = authenticator + _sha(client)
+    _require(_standard(proof["signed_bytes"], 69) == signed and bool(sig), "owner-proof-invalid")
+    _owner_row(row, rows, auth, proof)
+    try:
+        from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    except ImportError:
+        raise Refusal("verifier:crypto-unavailable") from None
+    try:
+        verification_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public)
+        normalized = verification_key.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+        _require(pinned is None or normalized == pinned, "owner-key-mismatch")
+        verification_key.verify(sig, signed, ec.ECDSA(hashes.SHA256()))
+    except Refusal:
+        raise
+    except UnsupportedAlgorithm:
+        raise Refusal("verifier:crypto-unavailable") from None
+    except (InvalidSignature, ValueError):
+        raise Refusal("verifier:owner-signature") from None
+    return normalized, counter
+
+def _owner_assertions(rows, entries, owner_key):
+    pinned = None if owner_key is None else _owner_key(owner_key)
+    if entries is None:
+        return False
+    for row in rows:
+        _owner_standing(rows, row)
+    expected = [row for row in rows if _owner_required(row)]
+    _require(len(entries) == len(expected), "owner-assertions-coverage")
+    counters, approvals, challenges = {}, set(), set()
+    for entry, row in zip(entries, expected):
+        number = row["seq"]
+        try:
+            _require(isinstance(entry, dict) and set(entry) == {"sequence", "binding", "proof"}
+                     and type(entry["sequence"]) is int and entry["sequence"] == number, "owner-assertions-coverage")
+            credential, counter = _owner_assertion(entry, row, rows, pinned)
+            approval = _sha(_bytes(entry["proof"]["authorization"]))
+            _require(approval not in approvals and entry["proof"]["authorization"]["challenge"] not in challenges, "owner-proof-replay")
+            approvals.add(approval); challenges.add(entry["proof"]["authorization"]["challenge"])
+            previous = counters.get(credential, 0)
+            _require(entry["binding"]["counter"] >= previous and (previous == 0 or counter > previous), "owner-counter-replay")
+            counters[credential] = counter
+        except Refusal as error:
+            if error.sequence is None:
+                error.sequence = number
+            raise
+        except (ValueError, TypeError, KeyError):
+            raise Refusal("verifier:owner-proof-format", number) from None
+    return pinned is not None and bool(entries)
+
+def _owner_standing(rows, row):
+    if row["kind"] != "gate.consume":
+        return
+    body = _owner_payload(row)
+    _require("standing_permission" not in body, "owner-standing-format")
+    if "standing" not in body:
+        return
+    reference = body["standing"]
+    _require(isinstance(reference, dict) and set(reference) == {
+        "permission", "permission_proposal", "permission_digest", "proposal", "operation", "use_number"}, "owner-standing-format")
+    _require(row["phase"] == "settle" and row["actor"] == "owner" and body.get("state") == "consumed"
+             and _size(reference["use_number"]) and reference["use_number"] > 0
+             and all(reference[field] == body.get(field) for field in ("proposal", "operation"))
+             and _sha(_bytes(reference)).hex() == body.get("consumed_approval"), "owner-proof-context")
+    grants = [grant for grant in rows[:row["seq"] - 1] if grant["kind"] == "gate.apply" and grant["op"] == reference["permission"]]
+    _require(len(grants) == 1, "owner-proof-context")
+    grant, permission = grants[0], _owner_payload(grants[0])
+    _require(_owner_required(grant) and grant["phase"] == "terminal" and grant["actor"] == "owner"
+             and permission.get("state") == "applied" and permission.get("proposal") == reference["permission_proposal"]
+             and permission.get("new_sha256") == reference["permission_digest"]
+             and grant["body"].get("epoch") == row["body"].get("epoch")
+             and "epoch" in row["body"], "owner-proof-context")
+
+def _owner_payload(row):
+    body = row["body"]
+    if body.get("schema") != "aukora-aura-authority-body-v1":
+        return body
+    _require(set(body) == {"schema", "algorithm", "epoch", "sequence", "previous_hash", "payload"}
+             and body["algorithm"] == "sha256" and type(body["sequence"]) is int
+             and body["sequence"] == row["seq"] and body["previous_hash"] == row["prev"]
+             and _size(body["epoch"]) and isinstance(body["payload"], dict), "owner-proof-context")
+    return body["payload"]
+
+def _owner_required(row):
+    payload = _owner_payload(row)
+    return (row["kind"] == "gate.consume" and not {"standing", "standing_permission"} & set(payload)
+            or row["kind"] in ("gate.retire", "floor.advance")
+            or row["kind"] == "gate.apply" and payload.get("target") == "gate/permission"
+            or row["kind"] == "aumlok.bind" and payload.get("schema") not in (
+                "aukora-aumlok-initial-binding-v2", "aukora-aumlok-envelope-refresh-v2"))
+
+def _owner_row(row, rows, auth, proof):
+    body, payload = row["body"], _owner_payload(row)
+    _require(0 <= row["at"] < auth["expires_at"], "owner-proof-context")
+    if "authorization" in payload:
+        _require(payload is body and auth["op"] in ("apply", "release", "grant", "permission"), "owner-proof-context")
+        _require(row["kind"] == "gate.consume" and row["phase"] == "settle" and _same(payload["authorization"], auth)
+                 and row["op"] == auth["proposal"] and payload.get("proof_hex") == _bytes(proof).hex()
+                 and payload.get("proof_sha256") == _sha(_bytes(proof)).hex()
+                 and payload.get("authorization_sha256") == _sha(b"aukora:owner-authorization:v1\0" + _bytes(auth)).hex(),
+                 "owner-proof-context")
+        return
+    _require(body.get("schema") == "aukora-aura-authority-body-v1"
+             and body["epoch"] == auth["epoch"] + int(row["kind"] == "aumlok.bind" and "membership" in payload)
+             and row["actor"] == (auth["subject"] if row["kind"] in ("aumlok.bind", "floor.advance") else "owner"), "owner-proof-context")
+    proposals = [_owner_payload(prior) for prior in rows[:row["seq"] - 1]
+                 if prior["kind"] == "gate.propose" and prior["phase"] == "intent" and prior["op"] == row["op"]]
+    _require(len(proposals) == 1 and all(proposals[0].get(field) == auth[field]
+             for field in ("proposal", "target", "operation")), "owner-proof-context")
+    digest = _sha(_bytes(auth)).hex()
+    if row["kind"] in ("gate.consume", "gate.retire", "gate.apply"):
+        action, phase, state = {"gate.consume": ("apply", "settle", "consumed"),
+            "gate.retire": ("retire", "terminal", "retired"), "gate.apply": ("permission", "terminal", "applied")}[row["kind"]]
+        _require(auth["op"] == action and row["phase"] == phase and payload.get("state") == state
+                 and payload.get("consumed_approval") == digest
+                 and all(payload.get(field) == auth[field] for field in ("proposal", "target", "operation", "new_sha256"))
+                 and ("base_sha256" not in payload or payload["base_sha256"] == auth["base_sha256"]), "owner-proof-context")
+    elif row["kind"] == "floor.advance":
+        floor = payload.get("floor")
+        _require(row["phase"] == "terminal" and auth["op"] == "release" and auth["target"] == "release"
+                 and set(payload) == {"schema", "floor", "proposal", "authorization_sha256"}
+                 and payload.get("schema") == "aukora-floor-advance-v1" and payload.get("proposal") == auth["proposal"]
+                 and payload.get("authorization_sha256") == digest and isinstance(floor, dict)
+                 and floor.get("record") == auth["new_sha256"] and type(floor.get("signer_epoch")) is int
+                 and floor["signer_epoch"] == auth["epoch"], "owner-proof-context")
+    else:
+        domains = ("", "aukora:aura-membership:v1", "aukora:aumlok-key-binding:v1", "aukora:aumlok-person-nostr-binding:v1",
+                   "aukora:aumlok-delegation:v1", "aukora:aumlok-device-binding:v1",
+                   "aukora:aumlok-device-revocation:v1", "aukora:aumlok-device-approval:v1")
+        _require(row["kind"] == "aumlok.bind" and row["phase"] == "terminal" and auth["op"] == "permission"
+                 and any(_sha((domain.encode("ascii") + b"\0" if domain else b"") + _bytes(payload)).hex()
+                         == auth["new_sha256"] for domain in domains), "owner-proof-context")
 def _integer(token):
     _require(re.fullmatch(r"0|-?[1-9][0-9]*", token) is not None, "json-integer")
     _require(len(token) <= 17, "json-integer-range")
     number = int(token)
     _require(abs(number) <= MAX_SAFE_INTEGER, "json-integer-range")
     return number
-
-
 def _forbidden_number(_token):
     raise Refusal("verifier:json-number")
-
-
 def _object(pairs):
     result = {}
     for key, value in pairs:
         _require(key not in result, "json-duplicate-key")
         result[key] = value
     return result
-
-
 def _validate(value, depth=0):
     if isinstance(value, (dict, list)):
         _require(depth < 64, "json-depth")
@@ -84,8 +302,6 @@ def _validate(value, depth=0):
         _require(abs(value) <= MAX_SAFE_INTEGER, "json-integer-range")
     else:
         _require(value is None or type(value) is bool, "json-value")
-
-
 def _canonical(value):
     if isinstance(value, dict):
         keys = sorted(value, key=lambda key: key.encode("utf-16-be"))
@@ -93,16 +309,10 @@ def _canonical(value):
     if isinstance(value, list):
         return "[" + ",".join(_canonical(item) for item in value) + "]"
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-
-
 def _bytes(value):
     return _canonical(value).encode("utf-8")
-
-
 def _same(left, right):
     return _bytes(left) == _bytes(right)
-
-
 def _parse(raw, canonical=False):
     _require(isinstance(raw, bytes), "expected-bytes")
     _require(len(raw) <= MAX_INPUT, "input-too-large")
@@ -119,25 +329,15 @@ def _parse(raw, canonical=False):
         raise
     except (ValueError, UnicodeError, RecursionError):
         raise Refusal("verifier:json") from None
-
-
 def _hex(value, size=32, reason="bad-digest"):
     _require(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{%d}" % (size * 2), value) is not None, reason)
     return bytes.fromhex(value)
-
-
 def _size(value):
     return type(value) is int and 0 <= value <= MAX_SAFE_INTEGER
-
-
 def _sha(raw):
     return hashlib.sha256(raw).digest()
-
-
 def _node(left, right):
     return _sha(b"\x01" + left + right)
-
-
 def _root(leaves):
     if not leaves:
         return _sha(b"")
@@ -145,8 +345,6 @@ def _root(leaves):
         return leaves[0]
     cut = 1 << ((len(leaves) - 1).bit_length() - 1)
     return _node(_root(leaves[:cut]), _root(leaves[cut:]))
-
-
 def _checked_key(key):
     try:
         from nacl.bindings import crypto_core_ed25519_is_valid_point
@@ -154,8 +352,6 @@ def _checked_key(key):
         raise Refusal("verifier:crypto-unavailable") from None
     _require(crypto_core_ed25519_is_valid_point(key), "key-weak")
     return key
-
-
 def _key(raw):
     if isinstance(raw, str):
         raw = raw.encode("ascii")
@@ -167,8 +363,6 @@ def _key(raw):
     if text.endswith("\n"):
         text = text[:-1]
     return _checked_key(_hex(text, reason="key-encoding"))
-
-
 def _ed25519(key, message, text):
     try:
         from nacl.bindings import crypto_core_ed25519_is_valid_point, crypto_sign_open
@@ -184,8 +378,6 @@ def _ed25519(key, message, text):
         _require(crypto_sign_open(signature + message, key) == message, "signature")
     except (ValueError, TypeError, binascii.Error, BadSignatureError):
         raise Refusal("verifier:signature") from None
-
-
 def _schnorr(key, message, signature, reason):
     try:
         from coincurve import PublicKeyXOnly
@@ -197,8 +389,6 @@ def _schnorr(key, message, signature, reason):
     except (ValueError, TypeError):
         valid = False
     _require(valid, reason)
-
-
 def _head(value):
     columns = {"schema", "leafConvention", "sequence", "hash", "treeSize", "root"}
     _require(isinstance(value, dict) and set(value) == columns, "retained-format")
@@ -208,15 +398,11 @@ def _head(value):
     _hex(value["hash"])
     _hex(value["root"])
     return value
-
-
 def _anchor(head, rows, leaves):
     count = head["treeSize"]
     _require(count <= len(rows), "shorter-than-checkpoint", len(rows) + 1)
     _require(rows[count - 1]["hash"] == head["hash"] and _root(leaves[:count]).hex() == head["root"],
              "checkpoint-mismatch", count, False)
-
-
 def _reference(rows, reference, before, kind, operation):
     _require(isinstance(reference, dict), "gate-evidence")
     number = reference.get("seq")
@@ -227,8 +413,6 @@ def _reference(rows, reference, before, kind, operation):
     for alias, field in (("ledger_seq", "seq"), ("ledger_hash", "hash")):
         _require(alias not in reference or _same(reference[alias], found[field]), "gate-evidence")
     return found
-
-
 def _authorization(value, current=True):
     required = {"v", "node", "subject", "op", "proposal", "target", "base_sha256", "new_sha256",
                 "cell", "display_sha256", "challenge", "expires_at"}
@@ -271,8 +455,6 @@ def _authorization(value, current=True):
     _require("pubkey_fp" not in value or isinstance(value.get("gate"), str)
              and value["pubkey_fp"] == value["gate"][:16], "gate-evidence")
     return value
-
-
 def _card(auth, card):
     _require(isinstance(card, dict) and set(card) == {"v", "risk", "says", "facts", "from_to", "model_note"}, "gate-evidence")
     _require(type(card["v"]) is int and card["v"] == 1 and card["risk"] in ("routine", "critical")
@@ -300,8 +482,6 @@ def _card(auth, card):
         _require(re.fullmatch(rb"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", key) is not None
                  and len(key) + len(_bytes(arguments["value"])) <= 65_536
                  and _sha(new[:-1]).hex() == cell["input_sha256"], "cell-effect")
-
-
 def _consume(rows, row):
     _require(row["phase"] == "settle", "gate-evidence")
     body = row["body"]
@@ -335,9 +515,6 @@ def _consume(rows, row):
     if standing:
         _standing(rows, row, row["at"], row["seq"])
     return auth, True
-
-
-
 def _permission(raw):
     value = _parse(raw, canonical=True)
     columns = {"v", "mode", "targets", "kinds", "max_count", "expires_at", "nonce"}
@@ -362,8 +539,6 @@ def _permission(raw):
                  and not protected.intersection(re.split(r"[/._-]", lower))
                  and lower.rsplit(".", 1)[-1] not in extensions, "standing-permission")
     return value
-
-
 def _standing(rows, consumed, at, before):
     body, auth = consumed["body"], consumed["body"]["authorization"]
     reference = body.get("standing_permission")
@@ -413,7 +588,6 @@ def _standing(rows, consumed, at, before):
     base = change["base"]
     _require(base is None or isinstance(base, str) and len(base.encode("utf-8")) <= 65_536, "standing-scope")
     return reference["authorization_sha256"]
-
 def _gate(rows, row):
     if row["kind"] == "gate.consume":
         return _consume(rows, row)[1]
@@ -442,8 +616,6 @@ def _gate(rows, row):
         _require(receipt.get("standing_permission") is None, "gate-evidence")
     _require(authority.get("authorization_id") == digest and authority.get("authorization_sha256") == digest, "gate-evidence")
     return semantic
-
-
 def _npub(key):
     alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
     bits = int.from_bytes(key, "big") << 4
@@ -458,8 +630,6 @@ def _npub(key):
     checksum ^= 1
     suffix = [(checksum >> shift) & 31 for shift in range(25, -1, -5)]
     return "npub1" + "".join(alphabet[value] for value in data + suffix)
-
-
 def _nostr_binding(row, aura_key):
     body = row["body"]
     expected = {"schema", "node", "agent", "aura_key", "statement_sha256", "node_sig", "agent_sig"}
@@ -477,8 +647,6 @@ def _nostr_binding(row, aura_key):
     _require(digest == _hex(body["statement_sha256"], reason="hex"), "nostr-statement")
     for role in public:
         _schnorr(public[role], digest, body[role + "_sig"], "nostr-" + role + "-signature")
-
-
 def _walk(rows, key):
     _require(isinstance(rows, list), "bundle-rows")
     previous, leaves, terminals, semantic, bindings = AURA_DOMAIN, [], {}, True, 0
@@ -531,8 +699,6 @@ def _walk(rows, key):
             except (ValueError, TypeError, KeyError):
                 raise Refusal("verifier:gate-evidence", row["seq"]) from None
     return leaves, semantic and all(count == 1 for count in terminals.values())
-
-
 def _report(count, *, identity=False, covering=False, consistency=False, semantic=True, tree_root=True, findings=None):
     missing = list(findings or [])
     for checked, code in ((identity, "identity-no-pinned-key"), (covering, "completeness-no-covering-checkpoint"),
@@ -543,12 +709,8 @@ def _report(count, *, identity=False, covering=False, consistency=False, semanti
             "integrity": {"signatures": True, "chain": True, "tree_root": tree_root, "owner_bindings": semantic},
             "observations": {"pinned_identity": identity, "covering_checkpoint": covering, "consistency": consistency},
             "findings": missing}
-
-
-def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None):
-    value = _parse(bundle, canonical=True)
-    _require(isinstance(value, dict) and set(value) == {"schema", "publicKey", "head", "rows"}, "bundle-format")
-    export_version(value["schema"])
+def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
+    value, assertions = _cold(_parse(bundle, canonical=True))
     key = _checked_key(_hex(value["publicKey"]))
     if pinned_key is not None:
         _require(_key(pinned_key) == key, "bundle-key-mismatch")
@@ -562,9 +724,14 @@ def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None):
         retained = _head(_parse(checkpoint))
         _anchor(retained, rows, leaves)
         covering = retained["treeSize"] == len(rows)
-    return _report(len(rows), identity=pinned_key is not None, covering=covering, semantic=semantic)
-
-
+    owner_checked = _owner_assertions(rows, assertions, owner_key)
+    findings = [] if owner_checked or assertions is None and owner_key is None else [{"code": "verifier:" + (
+        "owner-assertions-unavailable" if not assertions else "owner-no-pinned-key"),
+        "sequence": None, "exact_location": True}]
+    report = _report(len(rows), identity=pinned_key is not None, covering=covering,
+                     semantic=semantic, findings=findings)
+    report["owner_signatures"] = owner_checked
+    return report
 def _proof_result(old, new):
     m, n = old["treeSize"], new["treeSize"]
     if m > n:
@@ -604,8 +771,6 @@ def _proof_result(old, new):
     if left == first:
         return "APPEND_ONLY", "valid-append-only-extension"
     return ("UNDETERMINED", "power-of-two-prefix-not-independently-derivable") if power_two else ("OBSERVATION_CONFLICT", "consistency-prefix-mismatch")
-
-
 def verify_consistency(retained: bytes, presented: bytes):
     old, new = _head(_parse(retained)), _parse(presented)
     _require(isinstance(new, dict) and set(new) == {"schema", "leafConvention", "treeSize", "root", "retainedTreeSize", "proofFromPrevious"}
@@ -616,8 +781,6 @@ def verify_consistency(retained: bytes, presented: bytes):
     _hex(new["root"])
     verdict, reason = _proof_result(old, new)
     return {"verdict": verdict, "retained_size": old["treeSize"], "presented_size": new["treeSize"], "reason": "verifier:" + reason}
-
-
 def _rows(raw):
     _require(isinstance(raw, bytes) and len(raw) <= MAX_INPUT, "input-too-large")
     _require(bool(raw) and b"\r" not in raw, "rows-format")
@@ -633,8 +796,6 @@ def _rows(raw):
                 error.sequence = number
             raise
     return values
-
-
 def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
                  presented=None, retained_rows=None, checkpoint=None):
     values = _rows(rows)
@@ -666,8 +827,6 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
         covering = covering or kept["treeSize"] == len(values)
         anchored = anchored or kept["treeSize"] == len(values)
     return _report(len(values), identity=True, covering=covering, consistency=consistent, semantic=semantic, tree_root=anchored, findings=findings)
-
-
 def _event_value(raw):
     _require(len(raw) <= 65_536, "witness-malformed")
     event = _parse(raw)
@@ -682,9 +841,6 @@ def _event_value(raw):
     _schnorr(public, digest, event["sig"], "witness-signature")
     _require(event["kind"] == 30078 and event["tags"] == [["d", "aukora-aura-head"]], "witness-malformed")
     return event
-
-
-
 def _event(raw):
     try:
         return _event_value(raw)
@@ -694,9 +850,7 @@ def _event(raw):
         raise Refusal("verifier:witness-malformed") from None
     except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         raise Refusal("verifier:witness-malformed") from None
-
-
-def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=None):
+def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
     signed = _event(event)
     try:
         observed = _parse(signed["content"].encode("utf-8"), canonical=True)
@@ -711,7 +865,7 @@ def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=N
     except Refusal:
         raise Refusal("verifier:witness-malformed") from None
     try:
-        value = _parse(bundle, canonical=True)
+        value, _ = _cold(_parse(bundle, canonical=True))
         _require(isinstance(value, dict) and isinstance(value.get("rows"), list), "witness-proof")
     except Refusal:
         raise Refusal("verifier:witness-proof") from None
@@ -723,7 +877,7 @@ def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=N
         raise Refusal("verifier:witness-binding") from None
     _require(_hex(signed["pubkey"]) == signer, "witness-signer")
     try:
-        report = verify_bundle(bundle, pinned_key=pinned_key, checkpoint=checkpoint)
+        report = verify_bundle(bundle, pinned_key=pinned_key, checkpoint=checkpoint, owner_key=owner_key)
     except Refusal as error:
         if error.code == "verifier:crypto-unavailable":
             raise
@@ -736,8 +890,6 @@ def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=N
                       error.sequence, error.exact_location) from None
     report["witness"] = {"prefix": observed["treeSize"], "proof": len(value["rows"]), "signature": True, "binding": True}
     return report
-
-
 def _read(path, limit=MAX_INPUT):
     flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
@@ -756,20 +908,18 @@ def _read(path, limit=MAX_INPUT):
         return b"".join(chunks)
     finally:
         os.close(descriptor)
-
-
 def _render(report):
     print(report["verdict"] + " rows=1.." + str(report["rows"]))
     for finding in report["findings"]:
         print("UNCHECKED " + finding["code"])
     if "witness" in report:
         print("WITNESS verified prefix=" + str(report["witness"]["prefix"]) + " proof=" + str(report["witness"]["proof"]))
-    print("SCOPE supplied bytes and observations; passkey signatures, occurrence, human identity and physical effects are independently unchecked")
+    print("PASSKEY " + ("VERIFIED C5 owner approval signatures against independently pinned credential key"
+                       if report.get("owner_signatures") else "UNCHECKED; supply a v2 export and --owner-key PIN.hex"))
+    print("SCOPE supplied bytes and observations; occurrence, human identity and physical effects are independently unchecked")
     return 0 if report["verdict"] == "VERIFIED" else 1
-
-
 def _failure(error):
-    if error.code == "verifier:bundle-key-mismatch":
+    if error.code in ("verifier:bundle-key-mismatch", "verifier:owner-key-mismatch", "verifier:owner-signature"):
         print("FORGED " + error.code)
         return 2
     if error.sequence is not None and error.code in {"verifier:signature", "verifier:nostr-node-signature", "verifier:nostr-agent-signature"}:
@@ -788,14 +938,12 @@ def _failure(error):
     print("UNCHECKED " + error.code)
     return 1 if error.code == "verifier:crypto-unavailable" else 64
 
-
 class _Arguments(argparse.ArgumentParser):
     def __init__(self, **options):
         super().__init__(allow_abbrev=False, **options)
 
     def error(self, _message):
         raise Refusal("verifier:usage")
-
 
 def main(arguments):
     try:
@@ -808,10 +956,12 @@ def main(arguments):
             parser.add_argument("event")
             parser.add_argument("--key")
             parser.add_argument("--checkpoint")
+            parser.add_argument("--owner-key", help="independently retained uncompressed P-256 SEC1 public key in lowercase hex")
             args = parser.parse_args(arguments[1:])
             return _render(verify_witness(_read(args.bundle), _read(args.event, 65_536),
                            pinned_key=_read(args.key) if args.key else None,
-                           checkpoint=_read(args.checkpoint) if args.checkpoint else None))
+                           checkpoint=_read(args.checkpoint) if args.checkpoint else None,
+                           owner_key=_read(args.owner_key, 131) if args.owner_key else None))
         if arguments and (arguments[0] == "chain" or "--rows" in arguments):
             parser = _Arguments(prog="verify.py chain")
             parser.add_argument("rows" if arguments[0] == "chain" else "--rows", **({} if arguments[0] == "chain" else {"required": True}))
@@ -828,9 +978,11 @@ def main(arguments):
             parser.add_argument("--bundle", required=True)
             parser.add_argument("--key")
             parser.add_argument("--checkpoint")
+            parser.add_argument("--owner-key", help="independently retained uncompressed P-256 SEC1 public key in lowercase hex")
             args = parser.parse_args(arguments)
             return _render(verify_bundle(_read(args.bundle), pinned_key=_read(args.key) if args.key else None,
-                                         checkpoint=_read(args.checkpoint) if args.checkpoint else None))
+                                         checkpoint=_read(args.checkpoint) if args.checkpoint else None,
+                                         owner_key=_read(args.owner_key, 131) if args.owner_key else None))
         if arguments and arguments[0] == "consistency":
             arguments = arguments[1:]
         _require(len(arguments) == 2 and all(not arg.startswith("--") for arg in arguments), "usage")
@@ -842,7 +994,6 @@ def main(arguments):
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         print("UNCHECKED verifier:malformed-or-unreadable")
         return 64
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
