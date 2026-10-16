@@ -142,6 +142,21 @@ impl FloorService {
         outcome
     }
 
+    /// Bind the release transition to the supervisor's verified installed bytes
+    /// before any counter, challenge, floor or Aura mutation.
+    pub fn advance_installed(
+        &mut self,
+        transaction: &mut aura::LedgerTxn<'_>,
+        proof: VerifiedProof,
+        proposed: &ReleaseOrder,
+        installed: Digest32,
+    ) -> Result<AuthorityRecord> {
+        if proposed.digest != installed {
+            return Err(refuse("installed-release-mismatch"));
+        }
+        self.advance(transaction, proof, proposed)
+    }
+
     /// Row 65/110: verify exact Release action in a transaction with no prior append,
     /// reject any spent proposal or authorization, then stage floor and high-water
     /// persistence with the signed floor.advance record. No filesystem effect is

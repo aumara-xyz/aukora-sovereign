@@ -3,9 +3,9 @@
 
 use crate::adapters::HostLedger;
 use canon::{
-    authority::AuthorityTxn,
+    authority::{AuthorityRecord, AuthorityTxn, OwnerAssertion, OwnerOperation, VerifiedProof},
     digest::Digest32,
-    ids::NodeId,
+    ids::{NodeId, ProposalId},
     json::{self, Value, ValueView},
     Result,
 };
@@ -125,6 +125,50 @@ impl ReleaseFiles {
             }
             Ok(())
         })
+    }
+
+    /// Consume a release assertion only for this verified, running release. The
+    /// caller supplies the assertion, not a pointer hash or an approval receipt.
+    pub fn advance_approved(
+        &self,
+        proposal: ProposalId,
+        assertion: OwnerAssertion,
+        order: &floor::ReleaseOrder,
+    ) -> Result<AuthorityRecord> {
+        if order.digest != self.release_digest {
+            return Err(refuse("release-approval-mismatch"));
+        }
+        let mut floor = floor::service::FloorService::open(&self.floor_directory)?;
+        self.ledger
+            .transaction(|transaction| floor.reconcile(transaction))?;
+        let record = self.ledger.transaction(|transaction| {
+            if floor.snapshot()?.floor.digest == self.release_digest {
+                return Err(refuse("release-already-approved"));
+            }
+            let proof =
+                VerifiedProof::verify(transaction, &proposal, OwnerOperation::Release, assertion)?;
+            floor.advance_installed(transaction, proof, order, self.release_digest)
+        })?;
+        // The floor stage is not readable until a fresh transaction authenticates
+        // its committed receipt.
+        self.ledger
+            .transaction(|transaction| floor.reconcile(transaction))?;
+        self.ledger.transaction(|transaction| {
+            floor.probe_release_guard(transaction)?;
+            let installed = floor.snapshot()?;
+            if installed.floor.digest != self.release_digest
+                || installed.floor.record != order.record
+                || installed.floor.signer_epoch != order.signer_epoch
+                || installed.floor.ledger_seq != order.ledger_seq
+                || installed.floor.signer_key_sha256 != order.signer_key_sha256
+                || installed.floor.ledger_hash != order.ledger_hash
+                || installed.authority != record.authority
+            {
+                return Err(refuse("release-approval-mismatch"));
+            }
+            Ok(())
+        })?;
+        Ok(record)
     }
 
     /// An absent first floor may come only from the verified install before claim.
