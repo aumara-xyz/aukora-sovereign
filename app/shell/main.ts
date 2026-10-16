@@ -6,7 +6,8 @@ import { FACE_CATALOG } from '../faces/catalog.js';
 import type { FaceManifest } from '../faces/catalog.js';
 import { TriPane } from './layout.js';
 import type { PaneState } from './layout.js';
-import { APP_OPEN } from './weights.js';
+import { APP_OPEN, LANES, PANE_WEIGHTS } from './weights.js';
+import type { LaneId } from './weights.js';
 import { OwnerFrame } from './owner-frame.js';
 import type { OwnerNotice, OwnerRoute } from './owner-frame.js';
 
@@ -39,10 +40,19 @@ interface FaceSlot {
   handle: PluginHandle | null;
 }
 
+const PHONE_ICONS: Readonly<Record<LaneId, string>> = { threads: 'threads', surface: 'surface', menu: 'apps' };
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag);
   if (className) element.className = className;
   if (text) element.textContent = text;
+  return element;
+}
+
+function button(text: string, click: () => void, className = ''): HTMLButtonElement {
+  const element = el('button', className, text);
+  element.type = 'button';
+  element.addEventListener('click', click);
   return element;
 }
 
@@ -53,12 +63,6 @@ function iconButton(iconName: string, text: string, click: () => void, className
   element.append(icon(iconName), el('span', 'entry-title', text));
   element.addEventListener('click', click);
   return element;
-}
-
-function laneHeading(iconName: string, title: string): HTMLElement {
-  const heading = el('header', 'lane-heading');
-  heading.append(icon(iconName), el('h2', '', title));
-  return heading;
 }
 
 function setActive(element: HTMLElement, active: boolean): void {
@@ -94,33 +98,56 @@ export function mountShell(options: ShellOptions): ShellController {
     }
   };
   const faceSlots = new Map<string, FaceSlot>();
+  const phoneButtons = new Map<LaneId, HTMLButtonElement>();
   let selected = '';
   let selectedWorkspace = 'threads';
   let disposed = false;
 
+  const phone = el('nav', 'phone-tabs');
+  phone.setAttribute('aria-label', COPY.phoneTabs as string);
+  for (const lane of LANES) {
+    const item = iconButton(PHONE_ICONS[lane], COPY.laneTabs[lane], () => layout.showPhoneLane(lane), 'phone-tab');
+    phoneButtons.set(lane, item);
+    phone.append(item);
+  }
+  const layoutLabel = el('label', 'layout-label', COPY.lanes as string);
+  layoutLabel.htmlFor = 'pane-composition';
+  const picker = el('select', 'layout-picker');
+  picker.id = 'pane-composition';
+  picker.setAttribute('aria-label', COPY.lanesPicker as string);
+  for (const weights of PANE_WEIGHTS) {
+    const option = el('option', '', weights.join(' · '));
+    option.value = weights.join('-');
+    picker.append(option);
+  }
+  picker.addEventListener('change', () => {
+    const weights = PANE_WEIGHTS.find(value => value.join('-') === picker.value);
+    if (weights) layout.setWeights(weights);
+  });
   const syncControls = (state: PaneState): void => {
     root.dataset.phone = String(state.phone);
+    picker.value = state.weights.join('-');
+    for (const [lane, item] of phoneButtons) item.setAttribute('aria-pressed', String(lane === state.phoneLane));
   };
   syncControls(layout.state);
   const unobserveLayout = layout.observe(syncControls);
-  const workspaceHeading = laneHeading('threads', COPY.threadsHeading as string);
+  bar.append(layoutLabel, picker, phone);
+
+  const workspaceHeading = el('h2', 'lane-heading', COPY.threadsHeading as string);
+  const workspaceTabs = el('nav', 'workspace-tabs');
+  workspaceTabs.setAttribute('aria-label', COPY.threadsHeading as string);
   const threadStack = el('div', 'face-stack');
-  layout.lanes.threads.append(workspaceHeading, threadStack);
-  const surfaceHeading = laneHeading('surface', COPY.laneTabs.surface);
+  layout.lanes.threads.append(workspaceHeading, workspaceTabs, threadStack);
   const surfacePrompt = el('p', 'surface-status', COPY.emptySurface as string);
   const surfaceStack = el('div', 'face-stack');
-  layout.lanes.surface.append(surfaceHeading, surfacePrompt, surfaceStack);
-  const menuContent = el('div', 'menu-content');
-  layout.lanes.menu.append(laneHeading('apps', COPY.laneTabs.menu), menuContent);
+  layout.lanes.surface.append(surfacePrompt, surfaceStack);
   const menuGroups = new Map<string, HTMLElement>();
-  for (const [section, title] of [
-    ['workspace', COPY.threadsHeading], ['aukora_apps', COPY.appsHeading], ['system', COPY.systemHeading],
-  ] as const) {
+  for (const [section, title] of [['aukora_apps', COPY.appsHeading], ['system', COPY.systemHeading]] as const) {
     const group = el('nav', 'menu-group');
     group.setAttribute('aria-label', title as string);
     group.append(el('h2', '', title as string));
     menuGroups.set(section, group);
-    menuContent.append(group);
+    layout.lanes.menu.append(group);
   }
 
   const openFace = (id: string): void => {
@@ -135,7 +162,6 @@ export function mountShell(options: ShellOptions): ShellController {
       slot.button.setAttribute('aria-pressed', String(active));
     }
     surfacePrompt.hidden = selected !== '';
-    if (!workspace) surfaceHeading.querySelector('h2')!.textContent = chosen.manifest.title;
     if (workspace) layout.reveal('threads');
     else {
       // Reveal a hidden desktop surface without replacing a visible lane's chosen width.
@@ -162,10 +188,11 @@ export function mountShell(options: ShellOptions): ShellController {
     status.setAttribute('role', 'status');
     element.append(status);
     const item = iconButton(manifest.id, manifest.title, () => openFace(manifest.id), 'menu-entry');
-    menuGroups.get(manifest.menu.section)!.append(item);
     if (manifest.menu.section === 'workspace') {
+      workspaceTabs.append(item);
       threadStack.append(element);
     } else {
+      menuGroups.get(manifest.menu.section)!.append(item);
       surfaceStack.append(element);
     }
     const slot: FaceSlot = { manifest, element, status, button: item, handle: null };
@@ -195,18 +222,14 @@ export function mountShell(options: ShellOptions): ShellController {
     const state = organism.status(manifest.id);
     if (state) refresh(state);
   }
-  for (const [iconName, label, route] of [
-    ['owner', 'Sign in', '/passkey'],
-    ['aumlok', COPY.ownerPasskey, '/passkey'],
-    ['identity', COPY.ownerPhrase, '/phrase'],
-  ] as const) {
-    const control = iconButton(iconName, label as string, () => {
+  for (const [label, route] of [[COPY.ownerPasskey, '/passkey'], [COPY.ownerPhrase, '/phrase']] as const) {
+    const control = button(label as string, () => {
       if (!owner) throw new Error('shell:owner-unavailable');
       void openOwner(route === '/phrase' ? options.phraseRoute?.() ?? route : route).catch(() => {});
-    }, 'menu-entry owner-entry');
+    }, 'owner-entry');
     control.disabled = !owner;
     if (!owner) control.title = COPY.ownerUnavailable as string;
-    menuGroups.get('system')!.append(control);
+    bar.append(control);
   }
   const approvalsEntry = iconButton('owner', 'Approvals (0)', () => options.openApprovals?.(), 'menu-entry approvals-entry');
   approvalsEntry.disabled = true;

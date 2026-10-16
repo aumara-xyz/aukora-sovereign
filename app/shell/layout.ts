@@ -3,7 +3,7 @@
 // is inert and invisible, never removed or moved, so what a hidden lane holds (its frames and their state) stays in
 // the page. A lane that has the whole frame keeps its content at two thirds, centred, with no exception for any app.
 // On a phone one lane shows at a time, full width, and the chosen composition is kept for when the screen widens.
-import { COPY, TOKENS, icon } from '../design/index.js';
+import { COPY, TOKENS } from '../design/index.js';
 import { BALANCED, LANES, cycle, soleLane, validWeights, wholeFrameLane } from './weights.js';
 import type { Corner, LaneId, PaneWeights } from './weights.js';
 
@@ -30,15 +30,6 @@ const CORNER_COPY: Readonly<Record<Corner, keyof typeof COPY.corners>> = {
   'centre-right': 'centreRight',
   right: 'right',
 };
-const CORNER_LANE: Readonly<Record<Corner, LaneId>> = {
-  left: 'threads', 'centre-left': 'surface', 'centre-right': 'surface', right: 'menu',
-};
-const PHONE_DESTINATION: Readonly<Record<Corner, LaneId>> = {
-  left: 'surface', 'centre-left': 'threads', 'centre-right': 'menu', right: 'surface',
-};
-const LANE_ICON: Readonly<Record<LaneId, string>> = {
-  threads: 'threads', surface: 'surface', menu: 'apps',
-};
 
 export class TriPane {
   readonly element: HTMLElement;
@@ -50,7 +41,6 @@ export class TriPane {
   #narrow: MediaQueryList;
   #change: () => void;
   #observers = new Set<(state: PaneState) => void>();
-  #corners = new Map<Corner, HTMLButtonElement>();
   #disposed = false;
 
   constructor(parent: HTMLElement) {
@@ -101,18 +91,8 @@ export class TriPane {
     this.#render();
   }
 
-  /** A phone steps to its neighbour; desktop edges retain the chosen resize cycle. */
+  /** Use one lane edge, as the corner buttons do. */
   cycle(corner: Corner): void {
-    if (!Object.hasOwn(CORNER_LANE, corner)) throw new Error('shell:unknown-corner');
-    if (this.phone) {
-      if (CORNER_LANE[corner] !== this.#phoneLane) return;
-      const destination = PHONE_DESTINATION[corner];
-      const back = LANE_CORNERS[destination].find(edge => PHONE_DESTINATION[edge] === this.#phoneLane);
-      if (!back) throw new Error('shell:unknown-corner');
-      this.#phoneLane = destination;
-      this.#render(back);
-      return;
-    }
     this.#weights = cycle(this.#weights, corner);
     this.#render();
   }
@@ -137,18 +117,9 @@ export class TriPane {
     control.type = 'button';
     control.className = 'corner';
     control.dataset.corner = corner;
+    control.setAttribute('aria-label', COPY.corners[CORNER_COPY[corner]]);
     control.addEventListener('click', () => this.cycle(corner));
-    this.#corners.set(corner, control);
     return control;
-  }
-
-  #destination(corner: Corner, state: PaneState): LaneId | null {
-    if (state.shown[LANES.indexOf(CORNER_LANE[corner])] === 0) return null;
-    if (state.phone) return PHONE_DESTINATION[corner];
-    const next = cycle(state.weights, corner);
-    const grown = LANES.filter((_lane, index) => next[index]! > state.weights[index]!);
-    if (grown.length !== 1) throw new Error('shell:invalid-weights');
-    return grown[0]!;
   }
 
   #state(): PaneState {
@@ -161,11 +132,9 @@ export class TriPane {
     });
   }
 
-  #render(focusCorner?: Corner): void {
+  #render(): void {
     if (this.#disposed) return;
     const state = this.#state();
-    const focused = document.activeElement;
-    const displaced = LANES.some((id, index) => state.shown[index] === 0 && this.#sections[id].contains(focused));
     this.element.dataset.phone = String(state.phone);
     this.element.dataset.layout = state.shown.join('-');
     // The two-thirds measure belongs to a lane that has the whole frame on a screen wide enough to share it.
@@ -177,21 +146,6 @@ export class TriPane {
       section.inert = !active;
       section.setAttribute('aria-hidden', String(!active));
     });
-    for (const [corner, control] of this.#corners) {
-      const destination = this.#destination(corner, state);
-      control.hidden = destination === null;
-      if (destination === null) continue;
-      control.dataset.destination = destination;
-      const label = state.phone ? COPY.laneTabs[destination]
-        : `${COPY.corners[CORNER_COPY[corner]]} · ${COPY.laneTabs[destination]}`;
-      control.setAttribute('aria-label', label);
-      control.title = label;
-      control.replaceChildren(icon(LANE_ICON[destination]));
-    }
-    if (displaced) {
-      const lane = LANES[state.shown.indexOf(Math.max(...state.shown))]!;
-      this.#corners.get(focusCorner ?? LANE_CORNERS[lane][0]!)!.focus({ preventScroll: true });
-    }
     for (const observer of [...this.#observers]) observer(state);
   }
 

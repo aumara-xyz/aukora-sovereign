@@ -101,10 +101,7 @@ export class OwnerFrame {
     close.addEventListener('click', dismiss);
     dialog.addEventListener('cancel', dismiss);
     window.addEventListener('message', onMessage);
-    const actions = document.createElement('div');
-    actions.className = 'action-row';
-    actions.append(close);
-    bar.append(title, actions);
+    bar.append(title, close);
     dialog.append(bar, frame);
     document.body.append(dialog);
     this.#dialog = dialog;
