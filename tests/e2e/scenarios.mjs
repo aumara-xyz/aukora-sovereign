@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from 'node:crypto';
-
-const APPS = ['Auma Lingwa', 'Auma Live', 'Zeta Harp', 'Human Graph', 'Media', 'Memory', 'Messages', 'Documents'];
-const SYSTEM = ['AUMLOK', 'Identity', 'Aura Coherence', 'General', 'Models', 'Plugins', 'Agent presets', 'Archived sessions'];
+import { servedApp } from './served-app.mjs';
+import { shellSecurity, sessionSecurity } from './security.mjs';
 
 function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
-function sameList(c, id, actual, expected) {
-  c.require(id, Array.isArray(actual) && actual.length === expected.length);
-  expected.forEach((value, index) => c.same(`${id}-${index}`, actual[index], value));
-}
 async function unchanged(c, id, prompt) {
   const before = await c.digest(`${id}-before`, `${prompt} Enter the independently measured target digest before the attempt.`);
   await c.witness(`${id}-attempt`, 'Perform the named hostile attempt on this disposable acceptance node. Observe the refusal and inspect the actual target afterward; a queued proposal is not an effect.');
@@ -38,22 +33,32 @@ export async function m1(c) {
   c.same('m1-shell-status', response.status, 200);
   c.require('m1-shell-html', (response.headers.get('content-type') ?? '').includes('text/html'));
   c.require('m1-shell-root', response.body.toString('utf8').includes('id="aukora-shell"'));
-  sameList(c, 'm1-app-lock-keys', Object.keys(c.appLock ?? {}).sort(), ['aukora_apps', 'schema', 'system']);
-  c.same('m1-app-lock-schema', c.appLock?.schema, 'aukora-app-lock-v1');
-  sameList(c, 'm1-app-lock-apps', c.appLock.aukora_apps, APPS);
-  sameList(c, 'm1-app-lock-system', c.appLock.system, SYSTEM);
+  shellSecurity(c, response);
+  const { copy, manifests } = await servedApp(c, response);
   await c.witness('m1-fresh-bootstrap', `Open ${c.shell.href} in Peter's actual browser on this fresh unclaimed acceptance node. Independently confirm no previous owner binding or claim, and that the agent has not started. Existing sign-in or a prior ceremony does not satisfy a fresh-node claim.`);
-  await c.witness('m1-claim-passkey-phrase', 'Use this fresh node issued one-time claim fragment, then perform real passkey enrolment and the seven-word binding ceremony inside the shell-created owner frame. Observe the bound state. Never enter the phrase, claim secret or credential private material into this runner.');
+  await c.witness('m1-claim-passkey-phrase', 'In browser developer tools preserve the Network history for response-header inspection later. Use this fresh node issued one-time claim fragment, then perform real passkey enrolment and the seven-word binding ceremony inside the shell-created owner frame. Observe the bound state, then sign in with the passkey and complete the shell handoff. Never enter the phrase, claim secret or credential private material into this runner.');
   await c.witness('m1-release-popup', 'Observe the release approval opening automatically inside the app. The owner approves its exact displayed release bytes with the real passkey; observe the running release admission afterward.');
   const approved = await c.digest('m1-approved-release', 'Enter the release digest the owner actually approved.');
   const running = await c.digest('m1-running-release', 'Independently inspect the loaded installed release and enter its digest. A checkout revision or installation record alone is insufficient.');
   c.same('m1-release-matches', approved, running);
   await c.witness('m1-spatial-browser', `After binding and release admission, observe the signed-in Spatial app on ${c.shell.href} with Threads, App, and Apps and System lanes. HTTP 200 alone is insufficient.`);
-  for (const [section, titles] of [['AUKORA APPS', APPS], ['SYSTEM', SYSTEM]]) {
-    for (const [index, title] of titles.entries()) {
-      const id = `m1-${section === 'SYSTEM' ? 'system' : 'app'}-${index}`;
-      await c.witness(id, `Find ${title} visibly registered under ${section}. Open it from that menu and inspect the actual rendered face and its purpose. A hidden entry, blank frame, waiting plugin, generic placeholder, or failed startup does not satisfy this observation. A documented unavailable backend may be labelled plainly inside a functioning face.`);
-      await c.text(`${id}-heading`, `Enter the actual visible heading in the opened ${title} face. The menu title and internal heading may differ.`);
+  await sessionSecurity(c);
+  for (const [key, description] of [
+    ['threadsHeading', 'Threads lane heading'],
+    ['appsHeading', 'Apps menu section heading'],
+    ['systemHeading', 'System menu section heading'],
+  ]) {
+    c.same(`m1-${key}-copy`, await c.text(`m1-${key.toLowerCase()}-heading`, `Enter the actual visible ${description}.`), copy[key]);
+  }
+  for (const [section, label] of [['aukora_apps', copy.appsHeading], ['system', copy.systemHeading]]) {
+    const entries = manifests.filter(face => face.menu.section === section).sort((a, b) => a.menu.order - b.menu.order);
+    for (const [index, face] of entries.entries()) {
+      const { title } = face;
+      const id = `m1-${section === 'system' ? 'system' : 'app'}-${index}`;
+      await c.witness(id, `Find ${title} visibly registered under ${label}. Open it from that menu and inspect the actual rendered face and its purpose. A hidden entry, blank frame, waiting plugin, generic placeholder, or failed startup does not satisfy this observation. A documented unavailable backend may be labelled plainly inside a functioning face.`);
+      // The design copy contains shell labels; Lingwa's face uses its own h1.
+      const heading = face.id === 'lingwa' ? 'Auma · Lingwa' : title;
+      c.same(`${id}-heading-copy`, await c.text(`${id}-heading`, `Enter the actual visible main heading inside the opened ${title} face.`), heading);
     }
   }
   await c.witness('m1-frame-boundary', 'Observe that the passkey and phrase panes are framed by the root shell, not opened by a face or redirected to a second page. No phrase or credential material appears in the shell or Auma conversation.');

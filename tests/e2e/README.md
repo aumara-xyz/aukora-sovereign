@@ -30,6 +30,13 @@ observations. They are not cryptographic evidence or authorization. The final
 line reports the limits of automated checks; Peter still accepts the milestone.
 No results, logs, receipts, secrets or other evidence files are written.
 
+M1 reads the app lock, all 18 face manifests and their entry assets from the node.
+Shell headings must match the design copy; each face's main heading must match
+its registered title, with Lingwa's distinct `Auma · Lingwa` heading. The runner
+checks served CSP and HSTS headers. The owner inspects the real sign-in and shell
+handoff responses and enters only cookie attributes, never cookie values. Keep
+the browser Network history through the ceremonies for these observations.
+
 M1 rechecks the supplied post-merge findings and requires the complete archive
 issue 46 inventory. That inventory is not present in this checkout. `--findings`
 selects an operator-supplied JSON object with exactly `schema`, `source`, `ids`:

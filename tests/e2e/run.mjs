@@ -175,8 +175,11 @@ class Context {
     let value;
     try { value = strictJSON(response.body); } catch { fail(`${id}-json`); }
     this.require(`${id}-object`, value !== null && typeof value === 'object' && !Array.isArray(value));
-    // The code is pinned; HTTP refusal envelopes have no universal frozen schema.
-    // Accept the code object or the C4 refusal envelope, without guessing an error string.
+    if (Object.hasOwn(value, 'error')) {
+      this.same(`${id}-error-keys`, Object.keys(value).join(','), 'error');
+      this.same(`${id}-code`, value.error, expected);
+      return;
+    }
     if (value.kind === 'refusal') {
       this.same(`${id}-envelope-keys`, Object.keys(value).sort().join(','), 'body,id,kind,v');
       this.same(`${id}-envelope-version`, value.v, 1);
@@ -312,7 +315,6 @@ try {
   const { mode, flags } = argumentsOf(process.argv.slice(2));
   if (!process.stdin.isTTY || !process.stdout.isTTY) fail('interactive-terminal-required');
   context = new Context(flags);
-  context.appLock = strictJSON(await readFile(resolve(repoRoot, 'app/APP-LOCK.json')));
   process.stdout.write(`${mode.toUpperCase()}: installed-node guided acceptance; no approval is automated.\n`);
   const browserState = mode === 'm1' ? 'fresh unclaimed bootstrap browser' : 'signed-in browser';
   await context.witness('installed-release', `Inspect the actual serving process, loaded executable, deployment approval, asset manifest and ${browserState} on ${context.shell.origin}. Independently measure the loaded and served release commit and confirm it matches the deployment approval; do not infer it from this checkout. M1 performs the owner release ceremony later. Stop if the process is not serving or these observations disagree.`);
