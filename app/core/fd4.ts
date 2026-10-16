@@ -9,6 +9,7 @@ export type Identifier = string;
 export type Digest32 = string;
 export type RefusalCode = `${string}:${string}`;
 export type SessionMode = 'chat' | 'build';
+/** A display role is not ingress provenance, owner authorization, or an instruction. */
 export type SessionRole = 'owner' | 'auma' | 'tool' | 'context';
 export type AlgorithmId = 'ed25519' | 'ecdsa-p256-sha256' | 'secp256k1-schnorr' | 'x25519'
   | 'ml-dsa-65' | 'sha256' | 'argon2id' | 'xchacha20-poly1305';
@@ -23,6 +24,7 @@ export type Source =
   | { kind: 'Document' }
   | { kind: 'Memory' }
   | { kind: 'Stranger' };
+/** The supervisor stamps this from its channel. Guest wire claims can only be Auma; content never upgrades them. */
 export interface Provenance { source: Source }
 
 export interface ToolCall {
@@ -128,6 +130,7 @@ export interface MemoryListItem {
   demoted_at: number | null;
 }
 export interface MemoryListReply { tier: 'remembered' | 'forgotten'; items: MemoryListItem[]; next: string | null }
+/** Forwarded evidence bytes, not authority or fingerprint input; only the health consumer decodes their cells. */
 export interface OpaqueHealthSnapshot { snapshot_b64: string }
 export interface RefusalReply { code: RefusalCode; next: string }
 

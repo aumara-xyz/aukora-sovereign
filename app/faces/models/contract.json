@@ -1,6 +1,6 @@
 {
   "schema": "aukora-models-face-v1",
-  "service": "body.settings.models",
+  "service": "broker.model.report",
   "reply": {
     "keys": "exactly grant, key, last_reply, model; any other key or type refuses the reply",
     "model": "null, or exactly name and source; name is a model name as the broker accepts one: 1..256 printable ASCII characters, no space, nothing shaped like a provider key (sk-)",

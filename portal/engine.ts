@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AttemptStore, ContextExchange, CopresenceEngine, ExchangeMethod, PersonNostrKeys, PersonNostrKeysForReceipt, PortalExchange, PortalObservation, ReceiptVerdict } from "./contracts.js";
+import type { AttemptStore, ContextExchange, CopresenceEngine, ExchangeMethod, PersonNostrKeys, PersonNostrKeysForReceipt, PortalExchange, PortalObservation, ReceiptVerdict, RelationshipBloomDigest } from "./contracts.js";
 import { checkAbort, digest, domain, encode, hex, integer, object, parse, refuse, sign, string, text, unhex, verify, type Json } from "./bytes.js";
 import { IndexedAttempts, ticket } from "./attempts.js";
-import { pairingDigest, type PentoraPairingDigest } from "./bloom/derive.js";
+import { copyPersonNostrKey, pairingDigest, type PentoraPairingDigest } from "./bloom/derive.js";
 import { context, contextDigest, core, coreDigest, frameDigest, FRAME_SCHEMA, intentAckDigest, nonceCommitment, participant, RECEIPT_SCHEMA, same, transcript, validateFrame, type Channels, type Context, type Core, type Frame, type Layers, type Packet, type Participant } from "./wire.js";
 
 export type ChannelRequest = { readonly context: Context; readonly side: "A" | "B"; readonly nonceA: string; readonly nonceB: string };
@@ -20,9 +20,24 @@ export type BrowserEngineOptions = {
 };
 const cleanupSignal = (): AbortSignal => new AbortController().signal;
 const now = (): number => Math.floor(Date.now() / 1000);
-const result: ReceiptVerdict = { verdict: "CONSISTENT_CLAIMED", positionSource: "SELF_REPORTED_UNVERIFIABLE" };
+const result: ReceiptVerdict = Object.freeze({ accepted: true, code: null });
 function code(error: unknown): `copresence:${string}` {
-  return error instanceof Error && /^copresence:[a-z0-9-]+$/.test(error.message) ? error.message as `copresence:${string}` : "copresence:invalid-input";
+  return error instanceof Error && /^copresence:[A-Za-z0-9_-]+$/.test(error.message) ? error.message as `copresence:${string}` : "copresence:invalid-input";
+}
+
+function receiptVerdict(value: ReceiptVerdict): ReceiptVerdict {
+  if (!value || typeof value !== "object") refuse("receipt-verdict");
+  if (value.accepted === true && value.code === null) {
+    if (value.position === undefined) return result;
+    if (!value.position || value.position.verdict !== "CONSISTENT_CLAIMED"
+      || value.position.positionSource !== "SELF_REPORTED_UNVERIFIABLE") refuse("receipt-verdict");
+    return { accepted: true, code: null, position: { verdict: "CONSISTENT_CLAIMED", positionSource: "SELF_REPORTED_UNVERIFIABLE" } };
+  }
+  if (value.accepted === false && typeof value.code === "string" && /^copresence:[A-Za-z0-9_-]+$/.test(value.code)
+    && (value.verdict === "SUSPICIOUS" || value.verdict === "UNDETERMINED")) {
+    return { accepted: false, code: value.code, verdict: value.verdict };
+  }
+  refuse("receipt-verdict");
 }
 
 export class BrowserCopresenceEngine implements CopresenceEngine {
@@ -54,12 +69,12 @@ export class BrowserCopresenceEngine implements CopresenceEngine {
     checkAbort(signal);
     const id = await this.options.attempts.reserve("optical", signal);
     try {
-      const verdict = await this.options.legacyVerifier(bytes.slice(), approved?.slice() ?? null, signal);
-      await this.options.attempts.finish(id, verdict.verdict === "CONSISTENT_CLAIMED" ? "bloom" : "refused", cleanupSignal());
+      const verdict = receiptVerdict(await this.options.legacyVerifier(bytes.slice(), approved?.slice() ?? null, signal));
+      await this.options.attempts.finish(id, verdict.accepted ? "bloom" : "refused", cleanupSignal());
       return verdict;
     } catch (error) {
       await this.options.attempts.finish(id, "refused", cleanupSignal());
-      return { verdict: "SUSPICIOUS", code: code(error) };
+      return { accepted: false, verdict: "SUSPICIOUS", code: code(error) };
     }
   }
   async verifyContextReceipt(bytes: Uint8Array, approved: Uint8Array | null, signal: AbortSignal): Promise<ReceiptVerdict> {
@@ -72,7 +87,7 @@ export class BrowserCopresenceEngine implements CopresenceEngine {
       return result;
     } catch (error) {
       await this.options.attempts.finish(id, "refused", cleanupSignal());
-      return { verdict: "SUSPICIOUS", code: code(error) };
+      return { accepted: false, verdict: "SUSPICIOUS", code: code(error) };
     }
   }
 }
@@ -121,7 +136,7 @@ class BrowserExchange implements PortalExchange {
   private ownReveal: Uint8Array | null = null;
   private input: Core | null = null;
   private receipt: Uint8Array | null = null;
-  private bloom: Uint8Array | null = null;
+  private bloom: RelationshipBloomDigest | null = null;
   private personKeys: PersonNostrKeys | null = null;
   private phase: PortalObservation["phase"] = "FACE";
   private verdict: ReceiptVerdict | null = null;
@@ -239,8 +254,8 @@ class BrowserExchange implements PortalExchange {
   }
   private observation(): PortalObservation {
     return { phase: this.phase, attemptId: this.exchange.attemptId, method: this.exchange.method,
-      frameBytes: this.current?.slice() ?? null, bloomDigest: this.bloom?.slice() ?? null,
-      personNostrKeys: this.personKeys ? { local: this.personKeys.local?.slice() ?? null, peer: this.personKeys.peer?.slice() ?? null } : null,
+      frameBytes: this.current?.slice() ?? null, bloomDigest: this.bloom ? { domain: this.bloom.domain, bytes: this.bloom.bytes.slice() } : null,
+      personNostrKeys: this.personKeys ? { local: this.personKeys.local ? copyPersonNostrKey(this.personKeys.local) : null, peer: this.personKeys.peer ? copyPersonNostrKey(this.personKeys.peer) : null } : null,
       verdict: this.verdict, receiptBytes: this.receipt?.slice() ?? null };
   }
   private async resolveBloom(receipt: Uint8Array): Promise<void> {
@@ -249,9 +264,7 @@ class BrowserExchange implements PortalExchange {
     try {
       const keys = this.options.personNostrKeys?.(receipt.slice());
       if (!keys || keys.local === null || keys.peer === null) return;
-      if (!(keys.local instanceof Uint8Array) || keys.local.length !== 32
-        || !(keys.peer instanceof Uint8Array) || keys.peer.length !== 32) return;
-      const local = keys.local.slice(), peer = keys.peer.slice();
+      const local = copyPersonNostrKey(keys.local), peer = copyPersonNostrKey(keys.peer);
       this.personKeys = { local, peer };
       const bloom = await pairingDigest(local, peer, this.options.pentora);
       if (this.stopped) return;
@@ -269,7 +282,7 @@ class BrowserExchange implements PortalExchange {
     if (this.stopped) return;
     this.phase = "REFUSED"; this.current = null;
     this.bloom = null; this.personKeys = null;
-    this.verdict = { verdict: "SUSPICIOUS", code: code(error) }; this.emit(); this.stop();
+    this.verdict = { accepted: false, verdict: "SUSPICIOUS", code: code(error) }; this.emit(); this.stop();
   }
   private async packet(fields: { [key: string]: Json }, at = now()): Promise<Uint8Array> {
     checkAbort(this.controller.signal);

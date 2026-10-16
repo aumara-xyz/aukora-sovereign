@@ -1,9 +1,9 @@
 {
   "id": "models",
   "title": "Models",
-  "organ": "body",
+  "organ": "broker",
   "requires": [
-    "body"
+    "broker"
   ],
   "menu": {
     "section": "system",
@@ -11,9 +11,9 @@
   },
   "surface": "./faces/models/index.html",
   "capabilities": {
-    "body": {
+    "broker": {
       "methods": [
-        "settings.models"
+        "model.report"
       ],
       "topics": []
     }

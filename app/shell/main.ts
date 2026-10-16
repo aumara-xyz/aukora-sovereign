@@ -192,13 +192,14 @@ export function mountShell(options: ShellOptions): ShellController {
     const slot: FaceSlot = { manifest, element, status, button: item, handle: null };
     faceSlots.set(manifest.id, slot);
     const entry = new URL(manifest.surface, appRoot);
-    if (entry.origin !== location.origin || !entry.pathname.startsWith(appRoot.pathname + 'faces/')
+    if (manifest.surface !== `./faces/${manifest.id}/index.html` || entry.origin !== location.origin
+      || entry.pathname !== appRoot.pathname + `faces/${manifest.id}/index.html`
       || entry.search || entry.hash) throw new Error('shell:face-entry');
     slot.handle = organism.install({
       id: manifest.id,
       requires: manifest.requires,
       menu: { title: manifest.title, ...manifest.menu },
-      surface: { kind: 'frame', entry: manifest.surface },
+      surface: { kind: 'frame', entry: `./faces/${manifest.id}/index.html` },
       setup(context) {
         const frame = el('iframe', 'face-frame');
         frame.title = manifest.title;
@@ -208,7 +209,8 @@ export function mountShell(options: ShellOptions): ShellController {
         for (const name of manifest.requires) services.set(name, context.service<RpcService>(name));
         context.effect(hostFace({ frame, pluginId: manifest.id, capabilities: manifest.capabilities, services, signal: context.signal }));
         frame.src = entry.href;
-        context.mount(element, frame);
+        element.append(frame);
+        context.effect(() => frame.remove());
       },
     });
     const state = organism.status(manifest.id);

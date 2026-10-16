@@ -324,9 +324,9 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
   {
     "id": "models",
     "title": "Models",
-    "organ": "body",
+    "organ": "broker",
     "requires": [
-      "body"
+      "broker"
     ],
     "menu": {
       "section": "system",
@@ -334,9 +334,9 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
     },
     "surface": "./faces/models/index.html",
     "capabilities": {
-      "body": {
+      "broker": {
         "methods": [
-          "settings.models"
+          "model.report"
         ],
         "topics": []
       }

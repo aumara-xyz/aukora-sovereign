@@ -15,7 +15,7 @@ export function mountModels(host: FaceHost): void {
     const view = createModelsView(stage);
     return {
       every: REFRESH_MS,
-      read: async signal => parseModels(await client.call("body", "settings.models", {}, { signal })),
+      read: async signal => parseModels(await client.call("broker", "model.report", {}, { signal })),
       show: (report, at) => view.show(report, at),
       fail: reason => view.unavailable(reason),
     };

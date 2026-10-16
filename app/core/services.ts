@@ -10,8 +10,9 @@ import type { DataTransport } from './transport.js';
 const COMMANDS = new Set(['session.create', 'session.open', 'session.list', 'chat.turn', 'model.cancel']);
 const READS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
   body: Object.freeze({
-    'settings.general': 'general', 'settings.models': 'models', 'settings.presets': 'presets',
+    'settings.general': 'general', 'settings.presets': 'presets',
   }),
+  broker: Object.freeze({ 'model.report': 'models' }),
   network: Object.freeze({
     'contacts.list': 'messages', 'messages.list': 'messages', 'refusals.counts': 'messages',
   }),
@@ -81,6 +82,10 @@ export function createServices(
         }
         const face = Object.hasOwn(methods, method) ? methods[method] : undefined;
         if (!face) throw new Error('app:capability-denied');
+        // The frozen face-read route dispatches this legacy name to the broker's model report.
+        if (service === 'broker' && method === 'model.report') {
+          return transport.read(face, 'body', 'settings.models', params, context.signal);
+        }
         return transport.read(face, service, method, params, context.signal);
       },
       subscribe(topic, params, emit, context) {

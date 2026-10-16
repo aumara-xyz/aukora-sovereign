@@ -26,7 +26,7 @@
     "rotation_ms": 1000,
     "network_during_exchange": false,
     "relay_broadcast": "manual opt-in after exchange only",
-    "bloom": "visual relationship evidence only",
+    "bloom": "visual only; pentora.bloom.v1 root of the two person-nostr x-only public keys sorted bytewise, then pentora.display.v1 expansion; absent until both person bindings exist; receipt hashes, node ids and device keys refuse",
     "authority": "none"
   },
   "intent": {
@@ -38,7 +38,7 @@
   "verdict_table": {
     "owner": "worker-18",
     "file": "portal/verdict-table.v1.json",
-    "requirement": "expected v0 outcomes reference pinned fixture hashes; conductor pins this table before implementation is enabled",
+    "requirement": "expected v0 outcomes reference pinned fixture hashes; conductor pins this table before implementation is enabled; acceptance is accepted plus code (null on success); a position assessment is separate and absent for non-location receipts",
     "claimed_label": "CONSISTENT_CLAIMED",
     "position_source": "SELF_REPORTED_UNVERIFIABLE",
     "confidence_percentages": false

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { CONTEXT_CORE_DOMAIN, PORTAL_LABELS, type ExchangeMethod, type PortalExchange, type PortalPage, type PortalServices } from "./contracts.js";
+import { CONTEXT_CORE_DOMAIN, PORTAL_LABELS, type ExchangeMethod, type PortalExchange, type PortalPage, type PortalServices, type RelationshipBloomDisplayDigest } from "./contracts.js";
 import { checkAbort, hex, utf8 } from "./bytes.js";
 
 // The pinned fixture text has exactly one trailing LF removed.
@@ -24,6 +24,7 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
       const root = element("section"); root.className = "copresence-portal";
       const title = element("h1", "Point and Bloom"), description = element("p", "Face the two screens toward each other. Use the same context on both devices.");
       const evidence = element("p", PORTAL_LABELS.evidence), claimed = element("p", PORTAL_LABELS.claimed);
+      claimed.hidden = true;
       const context = element("textarea"); context.maxLength = 2048; context.value = "Meet in person"; context.rows = 2;
       const method = element("select");
       for (const [value, label] of [["optical", "Screens"], ["optical-audio", "Screens and sound"], ["optical-audio-motion", "Screens, sound and motion"]]) {
@@ -63,7 +64,7 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
         active = session;
         services.optical.clear();
         method.disabled = context.disabled = intent.disabled = true; start.disabled = true; stop.disabled = false;
-        download.hidden = true; digest.textContent = ""; phase.value = "FACE";
+        download.hidden = true; claimed.hidden = true; digest.textContent = ""; phase.value = "FACE";
         if (receiptUrl) { URL.revokeObjectURL(receiptUrl); receiptUrl = null; }
         const selected = method.value as ExchangeMethod;
         const contextBytes = utf8.encode(context.value), approvedText = intent.checked ? utf8.encode(APPROVED_TEXT) : null;
@@ -84,6 +85,12 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
               if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
             }
             if (observation.phase === "BLOOM" && observation.receiptBytes) {
+              if (observation.verdict?.accepted !== true || observation.verdict.code !== null) {
+                phase.value = "copresence:receipt-verdict";
+                void finish(session, "refused"); active = null; release(session); services.optical.clear(); resetControls(); return;
+              }
+              claimed.hidden = observation.verdict.position?.verdict !== "CONSISTENT_CLAIMED"
+                || observation.verdict.position.positionSource !== "SELF_REPORTED_UNVERIFIABLE";
               if (receiptUrl) {
                 if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
                 return;
@@ -105,12 +112,12 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                     if (active === session) { active = null; release(session); resetControls(); }
                   }, 10000);
                 }
-                let displayDigest: Uint8Array | null = null;
+                let displayDigest: RelationshipBloomDisplayDigest | null = null;
                 let displayUnavailable = false;
                 try { displayDigest = await services.optical.showBloom(observation.personNostrKeys, session.controller.signal); }
                 catch { displayUnavailable = true; }
                 if (active !== session || disposed) return;
-                digest.textContent = displayDigest ? `${PORTAL_LABELS.bloom}: ${hex(displayDigest)}`
+                digest.textContent = displayDigest ? `${PORTAL_LABELS.bloom}: ${hex(displayDigest.bytes)}`
                   : displayUnavailable ? `${PORTAL_LABELS.bloom}: unavailable.`
                   : `${PORTAL_LABELS.bloom}: nothing shown; both person keys are required.`;
               }).catch(error => {
@@ -119,7 +126,7 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                 active = null; release(session); services.optical.clear(); download.hidden = true; resetControls();
               }).finally(() => { session.publishing = false; });
             } else if (observation.phase === "REFUSED") {
-              phase.value = observation.verdict && "code" in observation.verdict ? observation.verdict.code : "copresence:refused";
+              phase.value = observation.verdict?.accepted === false ? observation.verdict.code : "copresence:refused";
               void finish(session, "refused"); active = null; release(session); services.optical.clear(); resetControls();
             }
           });

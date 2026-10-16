@@ -3,7 +3,7 @@
 export type Dispose = () => void | Promise<void>;
 export type PluginState = 'waiting' | 'starting' | 'active' | 'stopping' | 'failed' | 'disposed';
 export interface PluginMenu { title: string; section: string; order: number }
-export interface PluginSurface { kind: 'frame'; entry: string }
+export interface PluginSurface { kind: 'frame'; entry: `./faces/${string}/index.html` }
 export interface PluginDescriptor {
   id: string;
   requires: readonly string[];
@@ -18,14 +18,51 @@ export interface PluginContext {
   provide<T>(name: string, value: T): Dispose;
   effect(cleanup: Dispose): Dispose;
   listen(target: EventTarget, type: string, listener: EventListener, options?: AddEventListenerOptions): Dispose;
+  /** Mounts an inert owned copy, without the source's listeners, shadow roots, or later mutations. */
   mount(parent: Node, child: Node): Dispose;
 }
 export interface PluginStatus { id: string; state: PluginState; missing: readonly string[]; error: string | null }
 export interface PluginHandle { readonly id: string; dispose(): Promise<void> }
 
 const NAME = /^[a-z][a-z0-9._:-]{0,127}$/;
+const MOUNT_TAG = /^(?:div|section|article|main|header|footer|nav|aside|span|p|strong|em|b|i|small|code|pre|blockquote|h[1-6]|ul|ol|li|dl|dt|dd|table|thead|tbody|tfoot|tr|th|td|caption|button|label|br|hr)$/;
 function checkName(name: string): void {
   if (typeof name !== 'string' || !NAME.test(name)) throw new Error('app:invalid-name');
+}
+
+/** Only inert HTML and text may be mounted through a plugin context. Frame hosts belong to the shell. */
+function checkMount(node: Node, document: Document): void {
+  if (node.ownerDocument !== document) throw new Error('app:foreign-node');
+  if (node.nodeType === Node.TEXT_NODE) return;
+  if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) {
+    throw new Error('app:invalid-mount');
+  }
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    const element = node as Element;
+    if (element.namespaceURI !== 'http://www.w3.org/1999/xhtml' || !MOUNT_TAG.test(element.localName)
+      || element.shadowRoot !== null) throw new Error('app:invalid-mount');
+    for (const attribute of element.attributes) {
+      if (attribute.namespaceURI !== null
+        || !/^(?:class|id|title|role|hidden|tabindex|type|disabled|aria-[a-z-]+|data-[a-z0-9-]+)$/.test(attribute.name)) {
+        throw new Error('app:invalid-mount');
+      }
+    }
+    if (element.localName === 'button' && element.getAttribute('type') !== 'button') {
+      throw new Error('app:invalid-mount');
+    }
+  }
+  for (const child of node.childNodes) checkMount(child, document);
+}
+
+function copyMount(node: Node, document: Document): Node {
+  if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent ?? '');
+  const result = node.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+    ? document.createDocumentFragment() : document.createElement((node as Element).localName);
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    for (const attribute of (node as Element).attributes) (result as Element).setAttribute(attribute.name, attribute.value);
+  }
+  for (const child of node.childNodes) result.appendChild(copyMount(child, document));
+  return result;
 }
 interface ServiceSlot { value: unknown; owner: Lifetime | null }
 interface PluginRecord {
@@ -94,8 +131,8 @@ function freezeDescriptor(input: PluginDescriptor): PluginDescriptor {
     throw new Error('app:invalid-menu');
   }
   const surface = input.surface;
-  if (surface !== null && (!surface || surface.kind !== 'frame' || typeof surface.entry !== 'string'
-    || !surface.entry || /[\u0000-\u0020\u007f]/.test(surface.entry))) throw new Error('app:invalid-surface');
+  if (surface !== null && (!surface || surface.kind !== 'frame' || !/^[a-z][a-z0-9-]*$/.test(input.id)
+    || surface.entry !== `./faces/${input.id}/index.html`)) throw new Error('app:invalid-surface');
   return Object.freeze({
     id: input.id, requires: Object.freeze([...new Set(input.requires)]), setup: input.setup,
     menu: menu === null ? null : Object.freeze({ title: menu.title, section: menu.section, order: menu.order }),
@@ -309,8 +346,14 @@ export class Organism {
       mount: (parent: Node, child: Node) => {
         live();
         if (child.parentNode !== null) throw new Error('app:already-mounted');
-        parent.appendChild(child);
-        return lifetime.own(() => { child.parentNode?.removeChild(child); });
+        if (parent.ownerDocument !== document || parent.nodeType !== Node.ELEMENT_NODE
+          || (parent as Element).namespaceURI !== 'http://www.w3.org/1999/xhtml'
+          || !MOUNT_TAG.test((parent as Element).localName)) throw new Error('app:foreign-node');
+        checkMount(child, document);
+        const owned = copyMount(child, document);
+        const mounted = owned.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? [...owned.childNodes] : [owned];
+        parent.appendChild(owned);
+        return lifetime.own(() => { for (const node of mounted) node.parentNode?.removeChild(node); });
       },
     });
     this.#notify(record);

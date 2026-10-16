@@ -135,7 +135,7 @@ export function mountJoiningExchange(host: HTMLElement, preparedExchange: Prepar
     }
     if (observation.phase === "REFUSED") {
       const verdict = observation.verdict;
-      if (!verdict || !("code" in verdict) || !/^copresence:[a-z0-9-]+$/.test(verdict.code)) {
+      if (verdict?.accepted !== false || !/^copresence:[A-Za-z0-9_-]+$/.test(verdict.code)) {
         refuse("joining-optical-refused");
       }
       throw new Error(verdict.code);
@@ -149,8 +149,7 @@ export function mountJoiningExchange(host: HTMLElement, preparedExchange: Prepar
       if (observation.receiptBytes !== null) refuse("joining-observation");
       return;
     }
-    if (observation.verdict?.verdict !== "CONSISTENT_CLAIMED"
-      || observation.verdict.positionSource !== "SELF_REPORTED_UNVERIFIABLE") {
+    if (observation.verdict?.accepted !== true || observation.verdict.code !== null) {
       refuse("joining-optical-verdict");
     }
     const receipt = bytes(observation.receiptBytes);

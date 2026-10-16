@@ -2,7 +2,7 @@
 // The app build: erasable TypeScript turned into ES modules, the design data checked against its pins, the face
 // catalog checked against the face manifests, WebAssembly built from canon, pentora and aumlok,
 // and a release manifest listing every byte. `node app/build.mjs --pin-design` rewrites design-lock.json instead.
-// `--pin-captures 3673b98` indexes a supplied complete capture directory and updates only its two pins.
+// `--pin-captures 3673b98` indexes supplied captures and pins their bytes and index in the design lock.
 import { execFileSync } from 'node:child_process';
 import { stripTypeScriptTypes } from 'node:module';
 import { createHash } from 'node:crypto';
@@ -22,7 +22,8 @@ const sourceTrees = [
   ['app/theme', true], ['ui/owner', true], ['portal', false],
 ];
 const extension = /\.(ts|js|mjs|html|css|json|svg|png|webp|jpg|jpeg|woff2?)$/;
-const dataFile = /\.(json|png|webp|woff2?)$/;
+const dataFile = /\.(json|svg|png|webp|jpg|jpeg|woff2?)$/;
+const designPath = /^[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*\.(json|svg|png|webp|jpg|jpeg|woff2?)$/;
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const portable = path => path.split(sep).join('/');
 const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
@@ -171,7 +172,7 @@ async function designFiles(folder = 'app/design', files = []) {
   for (const entry of (await readdir(join(repository, folder), { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1)) {
     const name = `${folder}/${entry.name}`;
     if (entry.isSymbolicLink()) throw new Error('app:asset-link');
-    if (entry.isDirectory() && entry.name !== 'captures') await designFiles(name, files);
+    if (entry.isDirectory()) await designFiles(name, files);
     else if (entry.isFile() && dataFile.test(entry.name) && entry.name !== 'design-lock.json') files.push(name.slice('app/design/'.length));
   }
   return files;
@@ -317,23 +318,41 @@ async function verifyCaptures(captures, manifests) {
 }
 
 async function verifyDesign(manifests, captureCandidate) {
-  const lock = await readJson(join(app, 'design', 'design-lock.json'));
+  const lockBytes = await readFile(join(app, 'design', 'design-lock.json'));
+  const lock = JSON.parse(lockBytes.toString('utf8'));
   if (lock.schema !== 'aukora-design-lock-v1' || !Array.isArray(lock.assets)) throw new Error('app:design-lock');
   const seen = new Set();
+  const pinned = new Map([['design-lock.json', sha256(lockBytes)]]);
+  const verifiedBytes = new Map();
   for (const asset of lock.assets) {
-    if (!/^[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*\.(json|png|webp|woff2?)$/.test(asset.path) || !/^[0-9a-f]{64}$/.test(asset.sha256)
+    if (!designPath.test(asset.path) || !/^[0-9a-f]{64}$/.test(asset.sha256)
       || seen.has(asset.path)) throw new Error('app:design-lock');
     seen.add(asset.path);
     const info = await present(join(app, 'design', asset.path));
     if (!info || !info.isFile() || info.isSymbolicLink()) throw new Error(`app:design-unpinned ${asset.path}`);
-    if (sha256(await readFile(join(app, 'design', asset.path))) !== asset.sha256) throw new Error(`app:design-digest ${asset.path}`);
+    const bytes = await readFile(join(app, 'design', asset.path));
+    if (sha256(bytes) !== asset.sha256) throw new Error(`app:design-digest ${asset.path}`);
+    pinned.set(asset.path, asset.sha256);
+    if (asset.path.endsWith('.json')) verifiedBytes.set(asset.path, bytes);
   }
   for (const required of ['tokens.json', 'fonts.json', 'icons.json', 'copy.json', 'captures.json']) {
     if (!seen.has(required)) throw new Error('app:design-unpinned');
   }
-  for (const path of await designFiles()) if (!seen.has(path)) throw new Error(`app:design-unpinned ${path}`);
+  for (const path of await designFiles()) {
+    if (!seen.has(path) && !(captureCandidate && path.startsWith('captures/'))) {
+      throw new Error(`app:design-unpinned ${path}`);
+    }
+  }
   const design = {};
-  for (const name of ['tokens', 'fonts', 'icons', 'copy', 'captures']) design[name] = await readJson(join(app, 'design', `${name}.json`));
+  for (const name of ['tokens', 'fonts', 'icons', 'copy', 'captures']) {
+    design[name] = JSON.parse(verifiedBytes.get(`${name}.json`).toString('utf8'));
+  }
+  const bundled = design.fonts.bundled;
+  if (design.fonts.schema !== 'aukora-design-fonts-v1' || !Array.isArray(bundled)
+    || new Set(bundled).size !== bundled.length || bundled.some(path => typeof path !== 'string'
+      || !designPath.test(path) || !/\.woff2?$/.test(path) || !seen.has(path))) {
+    throw new Error('app:design-fonts');
+  }
   const wanted = [...manifests.map(value => value.id), 'threads', 'surface', 'apps', 'system', 'close', 'owner'];
   const paths = design.icons.paths ?? {};
   if (design.icons.schema !== 'aukora-design-icons-v1' || !seen.has(design.icons.brand?.mark)
@@ -347,7 +366,12 @@ async function verifyDesign(manifests, captureCandidate) {
   }
   if (design.copy.schema !== 'aukora-design-copy-v1' || missing.length) throw new Error(`app:design-copy ${missing.join(',')}`);
   const captures = await verifyCaptures(captureCandidate ?? design.captures, manifests);
-  return { css: tokensCss(design.tokens, design.fonts), captures };
+  if (!captureCandidate) {
+    for (const file of design.captures.files) {
+      if (pinned.get(file.path) !== file.sha256) throw new Error(`app:design-unpinned ${file.path}`);
+    }
+  }
+  return { css: tokensCss(design.tokens, design.fonts), captures, pinned };
 }
 
 // The operator supplies the build attribution; image bytes alone cannot prove it.
@@ -394,7 +418,10 @@ async function pinCaptures(referenceBuild) {
   await verifyDesign(manifests, candidate);
   const bytes = JSON.stringify(candidate, null, 2) + '\n';
   const lock = await readJson(join(directory, 'design-lock.json'));
+  if (lock.assets.some(asset => asset.path.startsWith('captures/'))) throw new Error('app:design-captures already-pinned');
   lock.assets = lock.assets.map(asset => asset.path === 'captures.json' ? { ...asset, sha256: sha256(bytes) } : asset);
+  lock.assets.push(...files.map(({ path, sha256 }) => ({ path, sha256 })));
+  lock.assets.sort(byPath);
   const pending = [];
   try {
     for (const [name, text] of [['captures.json', bytes], ['design-lock.json', JSON.stringify(lock, null, 2) + '\n']]) {
@@ -467,8 +494,7 @@ async function build() {
   await verifyAppLock(manifests);
   const design = await verifyDesign(manifests);
   if (design.captures.status !== 'complete') {
-    process.stderr.write(`Warning: design captures are ${design.captures.status}; `
-      + `missing ${design.captures.missing}/${design.captures.total}; this release is not design-complete.\n`);
+    throw new Error(`app:design-captures-incomplete missing ${design.captures.missing}/${design.captures.total}`);
   }
   const catalog = await verifiedCatalog(manifests);
   for (const path of [staging, destination]) {
@@ -487,6 +513,10 @@ async function build() {
     if (!info.isFile() || info.isSymbolicLink()) throw new Error('app:asset-link');
     const path = source.endsWith('.ts') ? source.slice(0, -3) + '.js' : source;
     let result = await readFile(sourcePath);
+    if (source.startsWith('app/design/') && dataFile.test(source)) {
+      const name = source.slice('app/design/'.length);
+      if (design.pinned.get(name) !== sha256(result)) throw new Error(`app:design-digest ${name}`);
+    }
     if (source.endsWith('.ts')) {
       try { result = Buffer.from(emitModule(source === 'app/faces/catalog.ts' ? catalog : result.toString('utf8'))); }
       catch (error) { syntax.push(`${source}: ${String(error.message).split('\n')[0]}`); continue; }
@@ -498,6 +528,9 @@ async function build() {
     files.push({ path, bytes: result });
   }
   if (syntax.length) throw new Error(`app:syntax\n  ${syntax.join('\n  ')}`);
+  for (const name of design.pinned.keys()) {
+    if (!outputs.has(`app/design/${name}`)) throw new Error(`app:design-unpinned ${name}`);
+  }
   for (const path of ['app/design/tokens.css', 'ui/owner/tokens.css']) {
     if (outputs.has(path)) throw new Error('app:asset-collision');
     outputs.add(path);

@@ -9,6 +9,8 @@ import { mountThreads } from "./threads/view.js";
 export interface FaceAdapters {
   readonly health?: HealthDecoder;
   readonly pentora?: PentoraExpansion;
+  /** Global geometry indices for the presentation overlay, separate from snapshot evidence. */
+  readonly repairing?: ReadonlySet<number>;
 }
 
 export function refusalText(error: unknown): string {
@@ -61,6 +63,7 @@ function headBytes(value: JsonValue): Uint8Array {
 
 async function coherence(root: HTMLElement, client: FaceClient, adapters: FaceAdapters, signal: AbortSignal) {
   const views = createCoherenceViews(root);
+  const repairing = adapters.repairing ?? new Set<number>();
   let headVersion = 0;
   let headTimer: number | undefined;
   let pendingHead: Uint8Array | undefined;
@@ -82,7 +85,7 @@ async function coherence(root: HTMLElement, client: FaceClient, adapters: FaceAd
     if (signal.aborted) return;
     try {
       if (!adapters.health) throw new Error("coherence:health-decoder-unavailable");
-      views.health(opaqueBytes(value), adapters.health);
+      views.health(opaqueBytes(value), adapters.health, repairing);
     } catch (error) { views.clearHealth(`Unavailable · ${refusalText(error)}`); }
   };
   const fingerprint = (value: JsonValue) => {

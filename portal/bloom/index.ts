@@ -2,9 +2,9 @@
 // The relationship bloom: the shared Pentora of a pairing, a picture and nothing more. The panel
 // gives it a canvas and a label of its own, apart from the node fingerprint and the health map, and
 // nothing here reads either. It proves no meeting, carries no consent and grants no authority.
-import { BLOOM_LABEL, IDENTITY_BYTES, hexOf, pairingExpansion, refuse } from "./derive.js";
+import { BLOOM_LABEL, copyPersonNostrKey, hexOf, pairingExpansion, refuse } from "./derive.js";
 import type { PairingExpansion, PentoraPairingExpansion } from "./derive.js";
-import type { PersonNostrKeys } from "../contracts.js";
+import type { PersonNostrKeys, PersonNostrPublicKey, RelationshipBloomDisplayDigest } from "../contracts.js";
 import { bloomGeometry } from "./geometry.js";
 import { BLOOM_MS, BLOOM_SIZE, paintBloom } from "./paint.js";
 
@@ -30,7 +30,7 @@ export interface BloomView {
   /** Receipt and commitment-only calls clear the view and refuse. */
   show(digest: Uint8Array): void;
   /** Draw two person-nostr x-only public keys through Rust, or remain empty if either is unknown. */
-  showPairing(first: Uint8Array | null, second: Uint8Array | null): Promise<void>;
+  showPairing(first: PersonNostrPublicKey | null, second: PersonNostrPublicKey | null): Promise<void>;
   clear(): void;
   dispose(): void;
 }
@@ -165,8 +165,8 @@ const views = new WeakMap<HTMLCanvasElement, { view: BloomView; pentora: Pentora
 /** Draw a pair of person keys with the host's Rust adapter, one view for each canvas. */
 export function drawPersonRelationshipBloom(
   canvas: HTMLCanvasElement,
-  firstPersonKey: Uint8Array | null,
-  secondPersonKey: Uint8Array | null,
+  firstPersonKey: PersonNostrPublicKey | null,
+  secondPersonKey: PersonNostrPublicKey | null,
   pentora: PentoraPairingExpansion,
 ): Promise<void> {
   let entry = views.get(canvas);
@@ -186,7 +186,7 @@ export async function drawRelationshipBloom(
   keys: PersonNostrKeys | null,
   pentora: PentoraExpansion,
   signal?: AbortSignal,
-): Promise<Uint8Array | null> {
+): Promise<RelationshipBloomDisplayDigest | null> {
   pendingDraws.get(canvas)?.();
   views.get(canvas)?.view.dispose();
   views.delete(canvas);
@@ -201,7 +201,7 @@ export async function drawRelationshipBloom(
   if (typeof keys !== "object" || !("local" in keys) || !("peer" in keys)) refuse("identity-invalid");
   const { local, peer } = keys;
   for (const key of [local, peer]) {
-    if (key !== null && (!(key instanceof Uint8Array) || key.length !== IDENTITY_BYTES)) refuse("identity-invalid");
+    if (key !== null) copyPersonNostrKey(key);
   }
   if (local === null || peer === null) return null;
   if (!context) refuse("canvas-unavailable");
@@ -209,7 +209,7 @@ export async function drawRelationshipBloom(
   canvas.style.imageRendering = "auto";
   canvas.setAttribute("role", "img");
 
-  return new Promise<Uint8Array | null>((resolve, reject) => {
+  return new Promise<RelationshipBloomDisplayDigest | null>((resolve, reject) => {
     let finished = false;
     const cleanup = (): boolean => {
       if (finished) return false;
@@ -238,7 +238,7 @@ export async function drawRelationshipBloom(
         const digest = expansion.digest.slice();
         canvas.setAttribute("aria-label", `${BLOOM_LABEL}. ${describe(expansion.trits)}. Digest ${hexOf(digest)}.`);
         canvas.hidden = false;
-        if (cleanup()) resolve(digest);
+        if (cleanup()) resolve({ domain: "pentora.display.v1", source: "person-nostr-pairing", bytes: digest });
       } catch (error) { fail(error); }
     }, fail);
   });

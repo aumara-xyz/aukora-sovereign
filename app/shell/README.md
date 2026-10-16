@@ -21,6 +21,6 @@ the command cannot determine the source application from pixels. Do not use imag
 Pinning refuses missing combinations, extra files, symlinks, duplicate combinations, existing capture pins,
 and invalid PNG/WebP container headers, boundaries or dimensions. PNG chunk CRCs are checked; animated WebP
 is refused. Each image is limited to 64 MiB. These are container checks, not a pixel decoder or proof of origin.
-The command validates the current design lock and all 136 images before writing `captures.json` and its
-`design-lock.json` digest. It does not compile or activate a release. An interruption between the two pin
-replacements leaves a digest mismatch, which release assembly refuses.
+The command validates the current design lock and all 136 images before writing `captures.json` and adding
+its digest and each image's path and digest to `design-lock.json`. It does not compile or activate a release.
+An interruption between the two pin replacements leaves a digest mismatch, which release assembly refuses.

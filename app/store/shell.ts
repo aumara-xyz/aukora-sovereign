@@ -143,7 +143,7 @@ export function attachStore(options: StoreShellOptions): StoreAttachment {
         appSurface.setAttribute('aria-label', manifest.body.name);
         const handle = organism.install({
           id, requires: [], menu: { title: manifest.body.name, section: 'aukora_apps', order: 1_000 },
-          surface: { kind: 'frame', entry: entry.href },
+          surface: null,
           setup(context) {
             context.effect(() => lease.dispose());
             context.effect(navigation.register(id, manifest.body.name, appSurface, () => reveal(id)));
@@ -158,7 +158,8 @@ export function attachStore(options: StoreShellOptions): StoreAttachment {
               app: { methods, topics: [] },
             }, services: new Map([['app', scoped]]), signal: context.signal }));
             appFrame.src = entry.href;
-            context.mount(appSurface, appFrame);
+            appSurface.append(appFrame);
+            context.effect(() => appFrame.remove());
           },
         });
         transferred = true;
@@ -182,7 +183,7 @@ export function attachStore(options: StoreShellOptions): StoreAttachment {
   if (storeEntry.origin !== location.origin || storeEntry.search || storeEntry.hash) fail('invalid-store-entry');
   const storeHandle = organism.install({
     id: 'store', requires: [], menu: { title: 'App store', section: 'system', order: 1_000 },
-    surface: { kind: 'frame', entry: storeEntry.href },
+    surface: null,
     setup(context) {
       context.effect(() => storeService.dispose());
       context.effect(navigation.register('store', 'App store', surface, () => reveal('store')));
@@ -191,7 +192,8 @@ export function attachStore(options: StoreShellOptions): StoreAttachment {
         store: { methods: ['catalog.search', 'install.propose', 'installed.list', 'installed.open'], topics: [] },
       }, services: new Map([['store', storeService]]), signal: context.signal }));
       storeFrame.src = storeEntry.href;
-      context.mount(surface, storeFrame);
+      surface.append(storeFrame);
+      context.effect(() => storeFrame.remove());
     },
   });
   handles.add(storeHandle);

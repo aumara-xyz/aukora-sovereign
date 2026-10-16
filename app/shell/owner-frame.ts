@@ -11,8 +11,7 @@ export function validOwnerRoute(route: string): route is OwnerRoute {
 
 function trustedOrigin(value: string): string {
   const url = new URL(value);
-  const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if ((url.protocol !== 'https:' && !local) || url.origin === location.origin || url.username || url.password
+  if (url.protocol !== 'https:' || url.origin === location.origin || url.username || url.password
     || url.pathname !== '/' || url.search || url.hash) throw new Error('shell:owner-origin');
   return url.origin;
 }

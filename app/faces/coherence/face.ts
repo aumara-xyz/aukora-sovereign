@@ -30,6 +30,7 @@ export async function mountCoherence(
   host: FaceHost,
   loadPentora: (signal: AbortSignal) => Promise<PentoraModule>,
   loadHealthDecoder: (signal: AbortSignal) => Promise<HealthDecoder>,
+  repairing: ReadonlySet<number> = new Set<number>(),
 ): Promise<void> {
   const { root, client, signal } = host;
   const lede = document.createElement("p");
@@ -68,7 +69,7 @@ export async function mountCoherence(
       try {
         const bytes = snapshotBytes(value);
         const decoder = await health;
-        if (!live.aborted && current === healthGeneration) views.health(bytes, decoder);
+        if (!live.aborted && current === healthGeneration) views.health(bytes, decoder, repairing);
       } catch (error) {
         if (!live.aborted && current === healthGeneration) views.clearHealth(`Unavailable · ${refusalText(error)}`);
       }

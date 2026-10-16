@@ -12,7 +12,7 @@
       "failed": "solid red disc crossed out"
     },
     "corners": "drawn as diamonds; a corner is verified only when both of its organs confirmed",
-    "repairing": "separate presentation set adds a shimmering ring; never changes the evidence cell or v1 snapshot keys; static ring under reduced motion",
+    "repairing": "mountCoherence's separate ReadonlySet of global geometry indices, or FaceAdapters.repairing for mountFace, reaches every health render and adds a shimmering ring; never changes the evidence cell or v1 snapshot keys; static ring under reduced motion; an absent presentation source supplies an empty set",
     "text_equivalent": "a table of cell counts per organ and a list of every cell that is not verified",
     "unavailable": "cleared canvas with an explicit unavailable label"
   },
