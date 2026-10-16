@@ -8,6 +8,8 @@ use base64::{
 };
 use canon::authority::{OwnerAssertion, OwnerAuthorization, OwnerBinding, OwnerOperation};
 
+mod retained;
+
 pub const COLD_PROOF_V2_SCHEMA: &str = "aukora-aura-cold-proof-v2";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,7 +66,9 @@ impl ColdProofV2 {
         let mut supplied = std::collections::BTreeSet::new();
         let mut approvals = std::collections::BTreeSet::new();
         let mut challenges = std::collections::BTreeSet::new();
+        let mut counters = retained::CounterHistory::default();
         for entry in &self.owner_assertions {
+            let entry = retained::with_counter_floor(entry, &counters)?;
             if entry.sequence <= previous {
                 return Err(BAD);
             }
@@ -74,7 +78,9 @@ impl ColdProofV2 {
                 .get(usize::try_from(entry.sequence - 1).map_err(|_| BAD)?)
                 .ok_or(BAD)?;
             entry.verify(row)?;
+            retained::remember_signed_counter(&entry, &mut counters)?;
             let authorization = entry.authorization()?;
+            retained::proposal(&self.proof.rows, row, &authorization)?;
             if !approvals.insert(Digest32::sha256(&authorization.canonical_bytes()?))
                 || !challenges.insert((
                     entry.binding.credential_id.clone(),
@@ -318,6 +324,15 @@ fn link(row: &RowV1, auth: &OwnerAuthorization, approval: Digest32) -> Result<()
     }
     let epoch_change = row.kind == Kind::AumlokBind && payload.get("membership").is_some();
     let epoch = auth.epoch.checked_add(u64::from(epoch_change)).ok_or(BAD)?;
+    let epoch = if row.kind == Kind::AumlokBind {
+        canon::authority::verify_retained_binding_payload(
+            payload,
+            auth,
+            &row.operation.ok_or(BAD)?,
+        )?
+    } else {
+        epoch
+    };
     if wrapper.authority.epoch != epoch {
         return Err(BAD);
     }
@@ -375,8 +390,10 @@ fn link(row: &RowV1, auth: &OwnerAuthorization, approval: Digest32) -> Result<()
             for domain in [
                 crate::record::MEMBERSHIP_DOMAIN,
                 "aukora:aumlok-key-binding:v1",
+                "aukora:aumlok-key-revocation:v1",
                 "aukora:aumlok-person-nostr-binding:v1",
                 "aukora:aumlok-delegation:v1",
+                "aukora:aumlok-delegation-revocation:v1",
                 "aukora:aumlok-device-binding:v1",
                 "aukora:aumlok-device-revocation:v1",
                 "aukora:aumlok-device-approval:v1",

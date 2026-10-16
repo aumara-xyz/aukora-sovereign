@@ -69,13 +69,14 @@ fn check_all(
     let mut approvals = std::collections::BTreeSet::new();
     let mut challenges = std::collections::BTreeSet::new();
     let mut counters = std::collections::BTreeMap::new();
+    let mut credentials = std::collections::BTreeMap::new();
     let mut last_sequence = 0;
     for entry in entries {
         keys(entry, &["sequence", "binding", "proof"])?;
         let seq = uint(field(entry, "sequence")?)?;
         require(seq > last_sequence && required.contains(&seq) && seen.insert(seq))?;
         last_sequence = seq;
-        let binding = binding(field(entry, "binding")?)?;
+        let mut binding = binding(field(entry, "binding")?)?;
         let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(&binding.public_key.bytes)
             .map_err(|_| refusal("owner-key"))?;
         let point = key.to_sec1_point(false);
@@ -90,6 +91,10 @@ fn check_all(
         require(challenges.insert(authorization.challenge.to_string()))?;
         link::verify(rows, entry, &authorization)?;
         let credential_key = point.as_bytes().to_vec();
+        let credential = binding.credential_id.as_bytes().to_vec();
+        if let Some(previous_key) = credentials.get(&credential) {
+            require(previous_key == &credential_key)?;
+        }
         let counter = u32::from_be_bytes(
             assertion
                 .authenticator_data
@@ -98,16 +103,18 @@ fn check_all(
                 .try_into()
                 .map_err(|_| refusal("owner-proof"))?,
         );
-        if let Some((previous_seq, previous_counter)) = counters.get(&credential_key) {
-            require(seq > *previous_seq && binding.sign_counter >= *previous_counter)?;
-        }
-        counters.insert(credential_key, (seq, counter));
+        binding.sign_counter = 0;
         canon::authority::verify_retained_owner_assertion(
             binding,
             authorization,
             assertion,
             signature,
         )?;
+        if let Some(previous_counter) = counters.get(&credential_key) {
+            require(counter > *previous_counter)?;
+        }
+        counters.insert(credential_key.clone(), counter);
+        credentials.insert(credential, credential_key);
     }
     require(seen == required)?;
     if entries.is_empty() {

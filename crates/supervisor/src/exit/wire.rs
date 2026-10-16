@@ -241,7 +241,7 @@ pub(super) fn facts(bytes: &[u8]) -> Result<Facts> {
     let value = canonical(bytes)?;
     let limits = ExportLimits {
         max_bytes: bytes.len(),
-        max_rows: bytes.len(),
+        max_rows: super::RECEIPTS_ROW_LIMIT,
     };
     let proof = if text(member(&value, "schema")?)? == COLD_PROOF_V2_SCHEMA {
         ColdProofV2::parse(bytes, limits)

@@ -58,9 +58,11 @@ pub const EXIT_SCHEMA: &str = "aukora-member-exit-v1";
 /// The exact `Export` permission scope that authorizes an export; there is no wildcard.
 pub const EXIT_SCOPE: &str = "member-exit";
 /// The longest `receipts.json` the stranger verifier reads: its input cap, shared with
-/// `aukora-verify --bundle`. A longer history is still exported whole and restores normally, but
-/// the verifier refuses it until that cap is raised.
+/// `aukora-verify --bundle`. A larger byte stream within `RECEIPTS_ROW_LIMIT` can still be
+/// exported and restored, but the stranger verifier refuses it until its byte cap is raised.
 pub const RECEIPTS_READER_LIMIT: usize = 8_388_608;
+/// Maximum history rows accepted by member-exit export and restore.
+pub const RECEIPTS_ROW_LIMIT: usize = 65_536;
 /// The `schema` of `keys/public.json`.
 pub const PUBLIC_KEYS_SCHEMA: &str = "aukora-exit-public-keys-v1";
 /// File names of an export.
@@ -297,7 +299,7 @@ where
         &material.receipts,
         aura::export::ExportLimits {
             max_bytes: material.receipts.len(),
-            max_rows: material.receipts.len(),
+            max_rows: RECEIPTS_ROW_LIMIT,
         },
     )
     .map_err(|_| EXIT_FORMAT)?;

@@ -2,7 +2,7 @@
 //! Retained assertions commit to a specific direct owner operation in the ledger.
 
 use crate::format::{digest, field, hex32, keys, refusal, text, uint};
-use canon::{authority::OwnerAuthorization, json::Value, Result};
+use canon::{authority::OwnerAuthorization, ids::OperationId, json::Value, Result};
 
 const WRAPPER: &str = "aukora-aura-authority-body-v1";
 
@@ -149,8 +149,16 @@ pub(super) fn verify(rows: &[Value], entry: &Value, auth: &OwnerAuthorization) -
     let wrapper = field(row, "body")?;
     require(label(wrapper, "schema")? == WRAPPER)?;
     let epoch = uint(field(wrapper, "epoch")?)?;
-    let changes_epoch = kind == "aumlok.bind" && body.get("membership").is_some();
-    require(auth.epoch.checked_add(u64::from(changes_epoch)) == Some(epoch))?;
+    let expected_epoch = if kind == "aumlok.bind" {
+        canon::authority::verify_retained_binding_payload(
+            body,
+            auth,
+            &OperationId::from_hex(label(row, "op")?)?,
+        )?
+    } else {
+        auth.epoch
+    };
+    require(expected_epoch == epoch)?;
     require(
         label(row, "actor")?
             == if matches!(kind, "aumlok.bind" | "floor.advance") {
@@ -205,7 +213,6 @@ pub(super) fn verify(rows: &[Value], entry: &Value, auth: &OwnerAuthorization) -
         }
         "aumlok.bind" => {
             require(auth.op.wire_name() == "permission" && label(row, "phase")? == "terminal")?;
-            approved_payload(body, auth)?;
         }
         _ => return Err(refusal("owner-assertion-operation")),
     }
@@ -230,31 +237,6 @@ fn proposal(rows: &[Value], consumed: &Value, auth: &Value) -> Result<()> {
         found += 1;
     }
     require(found == 1)
-}
-
-fn approved_payload(body: &Value, auth: &OwnerAuthorization) -> Result<()> {
-    let bytes = body.canonical_bytes();
-    let expected = auth.new_sha256.as_bytes();
-    if digest(&bytes) == *expected {
-        return Ok(());
-    }
-    for domain in [
-        "aukora:aura-membership:v1",
-        "aukora:aumlok-key-binding:v1",
-        "aukora:aumlok-person-nostr-binding:v1",
-        "aukora:aumlok-delegation:v1",
-        "aukora:aumlok-device-binding:v1",
-        "aukora:aumlok-device-revocation:v1",
-        "aukora:aumlok-device-approval:v1",
-    ] {
-        let mut signed = domain.as_bytes().to_vec();
-        signed.push(0);
-        signed.extend_from_slice(&bytes);
-        if digest(&signed) == *expected {
-            return Ok(());
-        }
-    }
-    Err(refusal("owner-assertion-link"))
 }
 
 fn legacy(row: &Value, body: &Value, entry: &Value, auth: &Value, bytes: &[u8]) -> Result<()> {

@@ -5,6 +5,7 @@ pub mod ceremony;
 mod codec;
 pub mod pending;
 mod proof;
+mod retained_binding;
 mod standing;
 use crate::{
     alg::{AlgorithmId, PublicKey, Signature, Signatures},
@@ -14,6 +15,7 @@ use crate::{
     Result,
 };
 pub use proof::{verify_ceremony_client_data, verify_retained_owner_assertion};
+pub use retained_binding::verify_retained_binding_payload;
 pub use standing::{StandingUseContext, VerifiedStandingUse};
 /// Rollback context attached to each authority-bearing record.
 /// Sequence is gap-free and in 1..=2^53-1. `None` is valid only at sequence 1 and
