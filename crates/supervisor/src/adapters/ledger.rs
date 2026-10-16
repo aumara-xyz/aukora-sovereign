@@ -53,6 +53,15 @@ impl GateLedger<'_> {
     }
 }
 impl HostLedger {
+    /// Borrow the host connection for observations while retaining its writer lock.
+    pub fn with_read_ledger<T>(
+        &self,
+        operation: impl FnOnce(&aura::Ledger) -> Result<T>,
+    ) -> Result<T> {
+        let ledger = self.ledger.lock().map_err(|_| codes::SUPERVISOR_NOT_READY)?;
+        operation(&ledger)
+    }
+
     pub fn open(
         path: &Path,
         signer: Arc<dyn aura::RecordSigner + Send + Sync>,

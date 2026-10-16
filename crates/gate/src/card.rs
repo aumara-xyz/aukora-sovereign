@@ -157,6 +157,28 @@ pub fn operation_digest(node: NodeId, proposal: &Proposal) -> Result<OperationDi
     crate::proposal::content_digest(node, &proposal.request)
 }
 
+impl DisplayedCard {
+    pub(crate) fn from_stored_review(
+        proposal: &Proposal,
+        action: OwnerOperation,
+        card: Card,
+    ) -> Result<Self> {
+        require_action(action)?;
+        if card.risk != proposal.risk
+            || card.model_note != prepare_model_note(&proposal.request.model_note)?.displayed
+        {
+            return Err(crate::refuse("authorization-mismatch"));
+        }
+        let canonical = card.canonical_bytes()?;
+        Ok(Self {
+            digest: Digest32::sha256(&canonical),
+            card,
+            canonical,
+            proposal: Some(card_binding(proposal, action)),
+        })
+    }
+}
+
 pub fn authorization(
     proposal: &Proposal,
     action: OwnerOperation,

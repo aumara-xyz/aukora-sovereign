@@ -2,6 +2,7 @@
 //! Decode deployment inputs without treating their observations as owner authority.
 
 mod disk;
+mod gate;
 
 use canon::{
     digest::Digest32,

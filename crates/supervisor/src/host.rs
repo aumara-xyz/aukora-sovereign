@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Host composition for the deployed supervisor entry point.
 
+mod owner_gate;
+
 use crate::{
     adapters::{HostClock, HostLedger},
     config::NodeConfig,
@@ -39,6 +41,7 @@ pub struct Host {
     data: crate::data::HostData,
     faces: crate::faces::host::HostFaces,
     approvals: crate::approvals::ApprovalFeed,
+    gate: Arc<crate::adapters::GateAdapter>,
     runtime_refusal: Mutex<Option<canon::Refusal>>,
 }
 struct Assets {
@@ -115,6 +118,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         },
         ledger.clone(),
     )?);
+    gate.configure_targets(config.gate_targets()?)?;
     let broker = Arc::new(crate::adapters::BrokerAdapter::new(
         ledger.clone(),
         Arc::new(broker::keystore::KeyInbox::new()),
@@ -159,6 +163,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         broker.clone(),
     )
     .with_network(network);
+    let owner_gate = gate.clone();
     let runtime = Arc::new(crate::adapters::runtime::RuntimeAdapter::new(
         crate::adapters::runtime::RuntimeOrgans {
             ledger: ledger.clone(),
@@ -184,6 +189,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
             &config.state_root.join("aura.sqlite3"),
         )?),
         approvals: crate::approvals::ApprovalFeed::new(ledger.clone()),
+        gate: owner_gate,
         config,
         state,
         ledger,
@@ -299,6 +305,12 @@ impl Host {
                 route,
                 now()?,
                 |session| {
+                    if frontdoor::owner_origin::is_gate_route(route) {
+                        let frontdoor::session::OwnerSession::Bound(session) = session else {
+                            return Err(codes::AUMLOK_BINDING_REQUIRED);
+                        };
+                        return self.owner_gate_request(&session, route, request.body());
+                    }
                     if route == OwnerRoute::Approvals {
                         let frontdoor::session::OwnerSession::Bound(session) = session else {
                             return Err(codes::AUMLOK_BINDING_REQUIRED);
@@ -328,6 +340,9 @@ impl Host {
                     subject,
                     now()?,
                 )?;
+            }
+            if frontdoor::owner_origin::is_gate_route(route) {
+                return owner_gate::owner_gate_response(result.body);
             }
             return json_response(result.body);
         }

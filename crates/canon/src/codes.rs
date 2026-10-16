@@ -28,6 +28,17 @@ macro_rules! registry {
 }
 
 registry! {
+    GATE_CONSUMPTION_UNCOMMITTED => ("gate", "consumption-uncommitted", "The exact owner approval consumption has not been durably committed before its effect."),
+    SUPERVISOR_GATE_TARGETS_VERSION => ("supervisor", "gate-targets-version", "The configured gate target manifest has an unsupported version."),
+    SUPERVISOR_GATE_TARGETS_NODE => ("supervisor", "gate-targets-node", "The configured gate target manifest names another node."),
+    SUPERVISOR_GATE_TARGETS_LIMIT => ("supervisor", "gate-targets-limit", "The configured gate target manifest exceeds its target limit."),
+    SUPERVISOR_GATE_TARGETS_NAME => ("supervisor", "gate-targets-name", "A configured gate target name is invalid or repeated."),
+    SUPERVISOR_GATE_TARGETS_CLASS => ("supervisor", "gate-targets-class", "The configured target class is unsupported."),
+    SUPERVISOR_GATE_TARGETS_RISK => ("supervisor", "gate-targets-risk", "The configured target risk is unsupported."),
+    SUPERVISOR_GATE_TARGETS_SIZE => ("supervisor", "gate-targets-size", "The configured target byte limit is invalid."),
+    FRONTDOOR_APPROVAL_OPERATION_INVALID => ("frontdoor", "approval-operation-invalid", "The owner approval endpoint does not support this operation."),
+    FRONTDOOR_APPROVAL_ASSERTION_INVALID => ("frontdoor", "approval-assertion-invalid", "Owner assertion fields or binary bounds do not match the versioned approval route."),
+    FRONTDOOR_APPROVAL_REVIEW_INVALID => ("frontdoor", "approval-review-invalid", "The gate review card or authorization bytes do not match their exact commitments."),
     SUPERVISOR_GATE_SCOPE_UNAVAILABLE => ("supervisor", "gate-scope-unavailable", "The gate cannot enforce the host principal scope in its authority transaction."),
     BROKER_STREAMING_UNAVAILABLE => ("broker", "streaming-unavailable", "The host has no model streaming adapter; no stream reservation was admitted."),
     BROKER_GRANT_PROJECTION_UNAVAILABLE => ("broker", "grant-projection-unavailable", "Retained broker history has no available active-grant projection."),

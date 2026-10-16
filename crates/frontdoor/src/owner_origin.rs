@@ -6,7 +6,15 @@ use crate::{
     session::BoundSession,
     tls::{CaddyBoundary, Origin},
 };
-use canon::{ids::ProposalId, json::Value, Refusal, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use canon::{
+    alg::{AlgorithmId, Signature},
+    authority::{OwnerAssertion, OwnerAuthorization, OwnerOperation},
+    digest::Digest32,
+    ids::{CredentialId, ProposalId},
+    json::{Value, ValueView},
+    Refusal, Result,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OwnerRoute {
@@ -21,6 +29,8 @@ pub enum OwnerRoute {
     SigninFinish,
     Approvals,
     ApprovalRetireChallenge,
+    ApprovalReviewV1,
+    ApprovalAssertionV1,
 }
 
 impl OwnerRoute {
@@ -44,11 +54,280 @@ impl OwnerRoute {
             (Method::Post, "/api/signin/finish") => Ok(Self::SigninFinish),
             (Method::Get, "/api/approvals") => Ok(Self::Approvals),
             (Method::Post, "/api/approvals/retire/challenge") => Ok(Self::ApprovalRetireChallenge),
+            (Method::Post, "/api/v1/approvals/review") => Ok(Self::ApprovalReviewV1),
+            (Method::Post, "/api/v1/approvals/assertion") => Ok(Self::ApprovalAssertionV1),
             _ => Err(Refusal {
                 organ: "frontdoor",
                 reason: "unknown-route",
             }),
         }
+    }
+}
+
+/// Gate routes require a live bound owner session before decoding or dispatch.
+pub fn is_gate_route(route: OwnerRoute) -> bool {
+    matches!(
+        route,
+        OwnerRoute::ApprovalReviewV1
+            | OwnerRoute::ApprovalAssertionV1
+            | OwnerRoute::ApprovalRetireChallenge
+    )
+}
+
+/// Client selectors and raw passkey material; no client authorization or card is admitted.
+pub enum GateRequest {
+    Review {
+        proposal: ProposalId,
+        action: OwnerOperation,
+    },
+    Assertion {
+        proposal: ProposalId,
+        action: OwnerOperation,
+        assertion: GateAssertionMaterial,
+    },
+}
+
+/// Owner-only review responses include escaped before/after text and base64 target bytes.
+pub const MAX_GATE_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Original signed bytes from the owner's browser, bounded but not yet verified.
+pub struct GateAssertionMaterial {
+    credential_id: CredentialId,
+    authenticator_data: Vec<u8>,
+    client_data_json: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+impl GateAssertionMaterial {
+    pub fn credential_id(&self) -> &CredentialId {
+        &self.credential_id
+    }
+
+    /// The host reads this algorithm from the credential's current ledger binding.
+    /// Gate verifies that binding again while consuming the assertion.
+    pub fn into_owner_assertion(self, algorithm: AlgorithmId) -> Result<OwnerAssertion> {
+        if !matches!(
+            algorithm,
+            AlgorithmId::Ed25519 | AlgorithmId::EcdsaP256Sha256
+        ) {
+            return Err(canon::codes::ALG_UNSUPPORTED);
+        }
+        Ok(OwnerAssertion {
+            v: 1,
+            algorithm,
+            credential_id: self.credential_id,
+            authenticator_data: self.authenticator_data,
+            client_data_json: self.client_data_json,
+            signature: Signature {
+                v: 1,
+                algorithm,
+                bytes: self.signature,
+            },
+        })
+    }
+}
+
+/// Versioned endpoints accept exact selectors. The pinned retirement request keeps `id`.
+pub fn decode_gate_request(route: OwnerRoute, body: &Value) -> Result<GateRequest> {
+    if body.canonical_bytes().len() > crate::ingress::MAX_BODY_BYTES {
+        return Err(canon::codes::FRONTDOOR_BODY_INVALID);
+    }
+    if route == OwnerRoute::ApprovalRetireChallenge {
+        gate_keys(body, &["id"])?;
+        return Ok(GateRequest::Review {
+            proposal: ProposalId::from_hex(gate_text(body, "id")?)
+                .map_err(|_| canon::codes::FRONTDOOR_BODY_INVALID)?,
+            action: OwnerOperation::Retire,
+        });
+    }
+    match route {
+        OwnerRoute::ApprovalReviewV1 => gate_keys(body, &["proposal_id", "op"]),
+        OwnerRoute::ApprovalAssertionV1 => gate_keys(body, &["proposal_id", "op", "assertion"]),
+        _ => return Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE),
+    }?;
+    let proposal = ProposalId::from_hex(gate_text(body, "proposal_id")?)
+        .map_err(|_| canon::codes::FRONTDOOR_BODY_INVALID)?;
+    let action = match gate_text(body, "op")? {
+        "apply" => OwnerOperation::Apply,
+        "retire" => OwnerOperation::Retire,
+        _ => return Err(canon::codes::FRONTDOOR_APPROVAL_OPERATION_INVALID),
+    };
+    if route == OwnerRoute::ApprovalReviewV1 {
+        Ok(GateRequest::Review { proposal, action })
+    } else {
+        Ok(GateRequest::Assertion {
+            proposal,
+            action,
+            assertion: gate_assertion(gate_field(body, "assertion")?)
+                .map_err(|_| canon::codes::FRONTDOOR_APPROVAL_ASSERTION_INVALID)?,
+        })
+    }
+}
+
+fn gate_assertion(value: &Value) -> Result<GateAssertionMaterial> {
+    gate_keys(
+        value,
+        &[
+            "kind",
+            "credential_id",
+            "client_data_json",
+            "authenticator_data",
+            "signature",
+            "user_handle",
+        ],
+    )?;
+    if gate_text(value, "kind")? != "passkey" {
+        return Err(canon::codes::FRONTDOOR_APPROVAL_ASSERTION_INVALID);
+    }
+    if !matches!(gate_field(value, "user_handle")?.view(), ValueView::Null) {
+        gate_binary(value, "user_handle", 1, 64)?;
+    }
+    Ok(GateAssertionMaterial {
+        credential_id: CredentialId::new(gate_binary(value, "credential_id", 1, 1_024)?)?,
+        authenticator_data: gate_binary(value, "authenticator_data", 37, 4_096)?,
+        client_data_json: gate_binary(value, "client_data_json", 1, 16_384)?,
+        signature: gate_binary(value, "signature", 1, 128)?,
+    })
+}
+
+fn gate_binary(value: &Value, key: &str, min: usize, max: usize) -> Result<Vec<u8>> {
+    let text = gate_text(value, key)?;
+    if text.len() > max.div_ceil(3) * 4 {
+        return Err(canon::codes::FRONTDOOR_APPROVAL_ASSERTION_INVALID);
+    }
+    let bytes = URL_SAFE_NO_PAD
+        .decode(text)
+        .map_err(|_| canon::codes::FRONTDOOR_APPROVAL_ASSERTION_INVALID)?;
+    if !(min..=max).contains(&bytes.len()) || URL_SAFE_NO_PAD.encode(&bytes) != text {
+        return Err(canon::codes::FRONTDOOR_APPROVAL_ASSERTION_INVALID);
+    }
+    Ok(bytes)
+}
+
+/// The response preserves the C5 and C6 bytes as UTF-8 strings inside a new wrapper.
+pub fn encode_gate_review(
+    proposal: ProposalId,
+    authorization: &OwnerAuthorization,
+    authorization_bytes: &[u8],
+    card_bytes: &[u8],
+) -> Result<Value> {
+    let invalid = canon::codes::FRONTDOOR_APPROVAL_REVIEW_INVALID;
+    if card_bytes.len() > 1024 * 1024
+        || authorization_bytes.len() > 16_384
+        || authorization.proposal != proposal
+        || authorization.canonical_bytes()? != authorization_bytes
+        || Digest32::sha256(card_bytes) != authorization.display_sha256
+    {
+        return Err(invalid);
+    }
+    let card = canon::json::parse_strict(card_bytes).map_err(|_| invalid)?;
+    if card.canonical_bytes() != card_bytes || validate_gate_card(&card).is_err() {
+        return Err(invalid);
+    }
+    let mut challenge = canon::domain::OWNER_AUTHORIZATION_DOMAIN
+        .as_bytes()
+        .to_vec();
+    challenge.push(0);
+    challenge.extend_from_slice(authorization_bytes);
+    let response = Value::object(vec![
+        (
+            "schema".into(),
+            Value::text("aukora-owner-review-v1".into())?,
+        ),
+        ("proposal_id".into(), Value::text(proposal.to_string())?),
+        (
+            "card".into(),
+            Value::text(String::from_utf8(card_bytes.to_vec()).map_err(|_| invalid)?)?,
+        ),
+        (
+            "authorization".into(),
+            Value::text(String::from_utf8(authorization_bytes.to_vec()).map_err(|_| invalid)?)?,
+        ),
+        (
+            "challenge".into(),
+            Value::text(URL_SAFE_NO_PAD.encode(Digest32::sha256(&challenge).as_bytes()))?,
+        ),
+    ])?;
+    if response.canonical_bytes().len() > MAX_GATE_RESPONSE_BYTES {
+        return Err(canon::codes::FRONTDOOR_RESPONSE_TOO_LARGE);
+    }
+    Ok(response)
+}
+
+fn validate_gate_card(card: &Value) -> Result<()> {
+    gate_keys(
+        card,
+        &["v", "risk", "says", "facts", "from_to", "model_note"],
+    )?;
+    if !matches!(gate_field(card, "v")?.view(), ValueView::Integer(v) if v.get() == 1)
+        || !matches!(gate_text(card, "risk")?, "routine" | "critical")
+        || gate_text(card, "says")?
+            .chars()
+            .any(|c| matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+        || !matches!(gate_field(card, "from_to")?.view(), ValueView::Object(_))
+    {
+        return Err(canon::codes::FRONTDOOR_APPROVAL_REVIEW_INVALID);
+    }
+    gate_text(card, "model_note")?;
+    let ValueView::Array(facts) = gate_field(card, "facts")?.view() else {
+        return Err(canon::codes::FRONTDOOR_APPROVAL_REVIEW_INVALID);
+    };
+    for row in facts {
+        match row.view() {
+            ValueView::Array(fields)
+                if fields.len() == 2 && matches!(fields[0].view(), ValueView::Text(_)) => {}
+            _ => return Err(canon::codes::FRONTDOOR_APPROVAL_REVIEW_INVALID),
+        }
+    }
+    Ok(())
+}
+
+/// The terminal outcome remains data; it never carries an authority capability.
+pub fn encode_gate_outcome(outcome: &canon::fd3_payloads::Outcome) -> Result<Value> {
+    use canon::fd3_payloads::OutcomeState;
+    let state = match outcome.state {
+        OutcomeState::Applied => "applied",
+        OutcomeState::Refused => "refused",
+        OutcomeState::Expired => "expired",
+        OutcomeState::Retired => "retired",
+        OutcomeState::Incomplete => "incomplete",
+        OutcomeState::Failed => "failed",
+        OutcomeState::Conflict => "conflict",
+        OutcomeState::Unknown => "unknown",
+    };
+    Value::object(vec![
+        (
+            "schema".into(),
+            Value::text("aukora-owner-outcome-v1".into())?,
+        ),
+        (
+            "proposal_id".into(),
+            Value::text(outcome.proposal_id.to_string())?,
+        ),
+        ("state".into(), Value::text(state.into())?),
+    ])
+}
+
+fn gate_keys(value: &Value, expected: &[&str]) -> Result<()> {
+    match value.view() {
+        ValueView::Object(fields)
+            if fields.len() == expected.len()
+                && expected.iter().all(|key| value.get(key).is_some()) =>
+        {
+            Ok(())
+        }
+        _ => Err(canon::codes::FRONTDOOR_BODY_INVALID),
+    }
+}
+
+fn gate_field<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
+    value.get(key).ok_or(canon::codes::FRONTDOOR_BODY_INVALID)
+}
+
+fn gate_text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
+    match gate_field(value, key)?.view() {
+        ValueView::Text(text) => Ok(text),
+        _ => Err(canon::codes::FRONTDOOR_BODY_INVALID),
     }
 }
 
@@ -290,9 +569,12 @@ pub fn dispatch_ceremony<S: crate::session::SessionStore>(
     let route = OwnerRoute::resolve(HostRole::Owner, request.method(), request.path())?;
     match route {
         OwnerRoute::SigninStart => identity.ceremony(context, route, None, request.body().clone()),
-        OwnerRoute::Claim | OwnerRoute::SigninFinish | OwnerRoute::Approvals => {
-            Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE)
-        }
+        OwnerRoute::Claim
+        | OwnerRoute::SigninFinish
+        | OwnerRoute::Approvals
+        | OwnerRoute::ApprovalRetireChallenge
+        | OwnerRoute::ApprovalReviewV1
+        | OwnerRoute::ApprovalAssertionV1 => Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE),
         _ => crate::session::with_owner_session(
             sessions,
             request

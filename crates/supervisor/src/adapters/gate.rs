@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! A single gate worker retains the target writer lock and recovery state.
+//! One target writer executes gate transitions on the host's scoped ledger.
 
 use super::HostLedger;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use canon::{
-    authority::{BaseDigest, OwnerAssertion, OwnerOperation},
+    authority::{AuthorityTxn, BaseDigest, OwnerAssertion, OwnerOperation},
     codes,
     fd3_payloads::{Accepted, Outcome, OutcomeState, Propose, Read, ReadReply},
     frame::FrameId,
@@ -14,8 +14,8 @@ use canon::{
 use gate::{
     proposal::{ProposalRequest, SuggestionOrder},
     recovery::NoInjection,
-    service::{Gate, GateConfig},
-    target::{ConfinedStore, TargetId, TargetStore},
+    service::{scoped::ScopedGate, GateConfig},
+    target::{ConfinedStore, TargetId, TargetSpec, TargetStore},
 };
 use std::{
     fs::File,
@@ -27,14 +27,53 @@ use supervisor::{
     services::{GateService, OwnerReview, ServiceFuture},
 };
 
-type Job = Box<dyn for<'a> FnOnce(&mut Gate<'a, ConfinedStore>) + Send>;
+type Job = Box<dyn FnOnce(&mut Worker) + Send>;
+
+struct Worker {
+    directory: File,
+    config: GateConfig,
+    gate: Option<ScopedGate<ConfinedStore>>,
+    ledger: Arc<HostLedger>,
+}
+
+impl Worker {
+    fn configure(&mut self, targets: Vec<TargetSpec>) -> Result<()> {
+        if self.gate.is_some() {
+            return Err(codes::SUPERVISOR_STATE);
+        }
+        let mut config = self.config.clone();
+        config.targets = targets;
+        let directory = self
+            .directory
+            .try_clone()
+            .map_err(|_| codes::SUPERVISOR_STATE)?;
+        let store = ConfinedStore::open(directory, config.targets.clone())?;
+        let mut gate = ScopedGate::new(store, config)?;
+        self.ledger.transaction(|txn| {
+            let sweep = gate.recover(txn, &mut NoInjection)?;
+            if !sweep.blocked.is_empty() {
+                return Err(codes::GATE_RECOVERY_BLOCKED);
+            }
+            Ok(())
+        })?;
+        self.gate = Some(gate);
+        Ok(())
+    }
+
+    fn gate(&mut self) -> Result<&mut ScopedGate<ConfinedStore>> {
+        self.gate.as_mut().ok_or(codes::SUPERVISOR_NOT_READY)
+    }
+}
+
 pub struct GateAdapter {
     sender: mpsc::SyncSender<Job>,
     ledger: Arc<HostLedger>,
 }
+
 impl GateAdapter {
+    /// Uses only the supplied host ledger; the path argument retains startup compatibility.
     pub fn start(
-        path: PathBuf,
+        _: PathBuf,
         directory: File,
         config: GateConfig,
         ledger: Arc<HostLedger>,
@@ -45,24 +84,24 @@ impl GateAdapter {
         std::thread::Builder::new()
             .name("sovereign-gate".into())
             .spawn(move || {
-                let opened = host.serialize_gate(|| {
-                    let store = ConfinedStore::open(directory, config.targets.clone())?;
-                    Gate::open(aura::Ledger::open(&path)?, store, config, host.services())
-                });
-                let mut gate = match opened {
-                    Ok(gate) => {
-                        if ready_send.send(Ok(())).is_err() {
-                            return;
-                        }
-                        gate
-                    }
-                    Err(error) => {
-                        let _ = ready_send.send(Err(error));
-                        return;
-                    }
+                let targets = config.targets.clone();
+                let mut worker = Worker {
+                    directory,
+                    config,
+                    gate: None,
+                    ledger: host,
                 };
+                let ready = if targets.is_empty() {
+                    Ok(())
+                } else {
+                    worker.configure(targets)
+                };
+                let failed = ready.is_err();
+                if ready_send.send(ready).is_err() || failed {
+                    return;
+                }
                 while let Ok(job) = jobs.recv() {
-                    job(&mut gate);
+                    job(&mut worker);
                 }
             })
             .map_err(|_| codes::SUPERVISOR_NOT_READY)?;
@@ -71,26 +110,50 @@ impl GateAdapter {
             .map_err(|_| codes::SUPERVISOR_NOT_READY)??;
         Ok(Self { sender, ledger })
     }
+
+    /// Empty startup configuration admits no jobs until the host supplies its targets.
+    /// Configuration and the recovery sweep finish before owner or guest ingress starts.
+    pub fn configure_targets(&self, targets: Vec<TargetSpec>) -> Result<()> {
+        let (send, receive) = mpsc::sync_channel(1);
+        self.sender
+            .try_send(Box::new(move |worker| {
+                let _ = send.send(worker.configure(targets));
+            }))
+            .map_err(|_| codes::SUPERVISOR_NOT_READY)?;
+        receive.recv().map_err(|_| codes::SUPERVISOR_NOT_READY)?
+    }
+
     pub fn observe_health(
         &self,
         context: gate::health::ObservationContext,
     ) -> ServiceFuture<'_, Vec<canon::health::HealthEvidence>> {
+        self.submit(move |gate, host| {
+            host.with_read_ledger(|ledger| {
+                Ok(gate::health::health(
+                    gate::health::ObservationSources {
+                        ledger,
+                        configuration: gate.config(),
+                        targets: gate.target_store(),
+                    },
+                    context,
+                ))
+            })
+        })
+    }
+
+    fn submit<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(&mut ScopedGate<ConfinedStore>, &HostLedger) -> Result<T>
+            + Send
+            + 'static,
+    ) -> ServiceFuture<'_, T> {
         let host = Arc::clone(&self.ledger);
         let (send, receive) = tokio::sync::oneshot::channel();
         let queued = self
             .sender
-            .try_send(Box::new(move |gate| {
-                let evidence = host.serialize_gate(|| {
-                    Ok(gate::health::health(
-                        gate::health::ObservationSources {
-                            ledger: gate.ledger(),
-                            configuration: gate.config(),
-                            targets: gate.target_store(),
-                        },
-                        context,
-                    ))
-                });
-                let _ = send.send(evidence);
+            .try_send(Box::new(move |worker| {
+                let result = worker.gate().and_then(|gate| operation(gate, &host));
+                let _ = send.send(result);
             }))
             .map_err(|_| codes::SUPERVISOR_NOT_READY);
         Box::pin(async move {
@@ -98,48 +161,8 @@ impl GateAdapter {
             receive.await.map_err(|_| codes::SUPERVISOR_NOT_READY)?
         })
     }
-    fn submit<T: Send + 'static>(
-        &self,
-        scope: PrincipalScope,
-        operation: impl for<'a> FnOnce(
-                &mut Gate<'a, ConfinedStore>,
-                &mut super::ledger::GateLedger<'_>,
-            ) -> Result<T>
-            + Send
-            + 'static,
-    ) -> ServiceFuture<'_, T> {
-        let host = Arc::clone(&self.ledger);
-        let (send, receive) = tokio::sync::oneshot::channel();
-        let job: Job = Box::new(move |gate| {
-            let result = host.gate_scoped(scope, |ledger| operation(gate, ledger));
-            let _ = send.send(result);
-        });
-        let queued = self
-            .sender
-            .try_send(job)
-            .map_err(|_| codes::SUPERVISOR_NOT_READY);
-        Box::pin(async move {
-            queued?;
-            receive.await.map_err(|_| codes::SUPERVISOR_NOT_READY)?
-        })
-    }
-    fn refuse_unscoped_authority<T>(
-        &self,
-        scope: PrincipalScope,
-        proposal: ProposalId,
-        action: OwnerOperation,
-    ) -> Result<T> {
-        match action {
-            OwnerOperation::Apply | OwnerOperation::Retire => (),
-            _ => return Err(codes::GATE_UNSUPPORTED_OPERATION),
-        }
-        self.ledger.scoped(scope, |txn| {
-            require_proposal_scope(txn, proposal, scope)?;
-            // Gate starts its own transaction; it cannot join this scope check.
-            Err(codes::SUPERVISOR_GATE_SCOPE_UNAVAILABLE)
-        })
-    }
 }
+
 impl GateService for GateAdapter {
     fn propose_site<'a>(
         &'a self,
@@ -147,56 +170,68 @@ impl GateService for GateAdapter {
         _: &'a FrameId,
         request: canon::fd3_payloads::sites::SiteProposal,
     ) -> ServiceFuture<'a, Accepted> {
-        self.submit(scope, move |gate, _| {
-            let proposal = gate.propose(
-                gate::target::sites::proposal_request(&request)?,
-                &mut NoInjection,
-            )?;
-            if proposal.authority.epoch != scope.epoch {
-                return Err(codes::AUMLOK_BINDING_REQUIRED);
-            }
-            Ok(Accepted {
-                proposal_id: proposal.id,
+        self.submit(move |gate, host| {
+            host.scoped(scope, |txn| {
+                let proposal = gate.propose(
+                    txn,
+                    gate::target::sites::proposal_request(&request)?,
+                    &mut NoInjection,
+                )?;
+                Ok(Accepted {
+                    proposal_id: proposal.id,
+                })
             })
         })
     }
+
     fn propose<'a>(
         &'a self,
         scope: PrincipalScope,
         _: &'a FrameId,
         request: Propose,
     ) -> ServiceFuture<'a, Accepted> {
-        self.submit(scope, move |gate, _| {
+        self.submit(move |gate, host| {
             let bytes = request.replacement_bytes()?;
-            let proposal = gate.propose(
-                ProposalRequest {
-                    target: TargetId::new(request.target)?,
-                    base: BaseDigest::Present(request.base_sha256),
-                    new_bytes: bytes,
-                    model_note: request.note,
-                    cell: request.cell,
-                    new_evidence: None,
-                    suggestion: SuggestionOrder::Single,
-                },
-                &mut NoInjection,
-            )?;
-            if proposal.authority.epoch != scope.epoch {
-                return Err(codes::AUMLOK_BINDING_REQUIRED);
-            }
-            Ok(Accepted {
-                proposal_id: proposal.id,
+            host.scoped(scope, |txn| {
+                let proposal = gate.propose(
+                    txn,
+                    ProposalRequest {
+                        target: TargetId::new(request.target)?,
+                        base: BaseDigest::Present(request.base_sha256),
+                        new_bytes: bytes,
+                        model_note: request.note,
+                        cell: request.cell,
+                        new_evidence: None,
+                        suggestion: SuggestionOrder::Single,
+                    },
+                    &mut NoInjection,
+                )?;
+                Ok(Accepted {
+                    proposal_id: proposal.id,
+                })
             })
         })
     }
+
     fn read(&self, scope: PrincipalScope, request: Read) -> ServiceFuture<'_, ReadReply> {
-        self.submit(scope, move |gate, ledger| {
-            ledger.transaction(|_| {
+        self.submit(move |gate, host| {
+            host.scoped(scope, |_| {
                 let observed = gate
                     .target_store()
                     .observe(&TargetId::new(request.target.clone())?)?;
                 let bytes = observed.bytes.ok_or(codes::GATE_BLOB_MISSING)?;
                 let digest = match observed.digest {
-                    BaseDigest::Present(digest) => digest,
+                    BaseDigest::Present(digest)
+                        if canon::digest::Digest32::sha256(&bytes) == digest =>
+                    {
+                        digest
+                    }
+                    BaseDigest::Present(_) => {
+                        return Err(canon::Refusal {
+                            organ: "gate",
+                            reason: "observation-digest",
+                        })
+                    }
                     BaseDigest::Absent => return Err(codes::GATE_BLOB_MISSING),
                 };
                 Ok(ReadReply {
@@ -207,39 +242,87 @@ impl GateService for GateAdapter {
             })
         })
     }
+
     fn outcome(
         &self,
         scope: PrincipalScope,
         proposal: ProposalId,
     ) -> ServiceFuture<'_, Option<Outcome>> {
-        Box::pin(async move {
-            self.ledger.scoped(scope, |txn| {
-                let stored = txn.proposal(&proposal)?;
-                if stored.authority.epoch != scope.epoch {
-                    return Err(codes::AUMLOK_BINDING_REQUIRED);
-                }
-                Ok(stored_outcome(proposal, stored.status))
+        self.submit(move |_, host| {
+            host.scoped(scope, |txn| {
+                require_proposal_scope(txn, proposal, scope)?;
+                Ok(stored_outcome(proposal, txn.proposal(&proposal)?.status))
             })
         })
     }
+
     fn review(
         &self,
         scope: PrincipalScope,
         proposal: ProposalId,
         action: OwnerOperation,
     ) -> ServiceFuture<'_, OwnerReview> {
-        Box::pin(async move { self.refuse_unscoped_authority(scope, proposal, action) })
+        self.submit(move |gate, host| {
+            host.scoped(scope, |txn| {
+                require_proposal_scope(txn, proposal, scope)?;
+                let review = gate.review(txn, proposal, action, &mut NoInjection)?;
+                let authorization = txn.rebuild_authorization(&proposal, action)?;
+                if review.authorization_bytes != authorization.canonical_bytes()?
+                    || review.card.digest() != authorization.display_sha256
+                {
+                    return Err(codes::SUPERVISOR_STATE);
+                }
+                Ok(OwnerReview {
+                    proposal_id: proposal,
+                    authorization,
+                    authorization_bytes: review.authorization_bytes,
+                    card_bytes: review.card.canonical_bytes().to_vec(),
+                })
+            })
+        })
     }
+
     fn owner_assertion(
         &self,
         scope: PrincipalScope,
         proposal: ProposalId,
         action: OwnerOperation,
-        _assertion: OwnerAssertion,
+        assertion: OwnerAssertion,
     ) -> ServiceFuture<'_, Outcome> {
-        Box::pin(async move { self.refuse_unscoped_authority(scope, proposal, action) })
+        self.submit(move |gate, host| {
+            let result = match action {
+                OwnerOperation::Apply => {
+                    let consumed = host.scoped(scope, |txn| {
+                        require_proposal_scope(txn, proposal, scope)?;
+                        gate.consume_apply(txn, proposal, assertion, &mut NoInjection)
+                    })?;
+                    host.scoped(scope, |txn| {
+                        gate.effect_once(txn, consumed, &mut NoInjection)
+                    })?
+                }
+                OwnerOperation::Retire => host.scoped(scope, |txn| {
+                    require_proposal_scope(txn, proposal, scope)?;
+                    gate.retire(txn, proposal, assertion, &mut NoInjection)
+                })?,
+                _ => return Err(codes::GATE_UNSUPPORTED_OPERATION),
+            };
+            let state = match result.state {
+                gate::proposal::ProposalState::Applied => OutcomeState::Applied,
+                gate::proposal::ProposalState::Retired => OutcomeState::Retired,
+                gate::proposal::ProposalState::Incomplete => OutcomeState::Incomplete,
+                gate::proposal::ProposalState::Failed => OutcomeState::Failed,
+                gate::proposal::ProposalState::Conflict => OutcomeState::Conflict,
+                gate::proposal::ProposalState::Unknown => OutcomeState::Unknown,
+                _ => return Err(codes::SUPERVISOR_STATE),
+            };
+            Ok(Outcome {
+                proposal_id: result.proposal,
+                state,
+            })
+        })
     }
 }
+
 fn require_proposal_scope(
     txn: &aura::LedgerTxn<'_>,
     proposal: ProposalId,
@@ -250,6 +333,7 @@ fn require_proposal_scope(
     }
     Ok(())
 }
+
 fn stored_outcome(
     proposal_id: ProposalId,
     status: aura::storage::ProposalStatus,

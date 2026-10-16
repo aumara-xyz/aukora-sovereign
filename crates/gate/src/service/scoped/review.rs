@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Review cards are committed with the exact rebuilt C5 authorization.
+
+use super::*;
+
+impl<S: TargetStore> ScopedGate<S> {
+    pub fn review(
+        &mut self,
+        txn: &mut LedgerTxn<'_>,
+        id: ProposalId,
+        action: OwnerOperation,
+        crash: &mut dyn CrashInjector,
+    ) -> Result<OwnerReview> {
+        crash.at(CrashPoint::BeforeReview)?;
+        if !matches!(action, OwnerOperation::Apply | OwnerOperation::Retire) {
+            return Err(crate::refuse("unsupported-operation"));
+        }
+        let proposal = load(txn, id)?;
+        self.validate(&proposal, action == OwnerOperation::Apply)?;
+        if action == OwnerOperation::Retire {
+            proposal.state.require_retirable()?;
+        }
+        pending(txn, &proposal)?;
+        let before = self.observe(&proposal.request.target)?;
+        if action == OwnerOperation::Apply && before.digest != proposal.request.base {
+            return Err(crate::refuse("stale-base"));
+        }
+        if let Some(stored) = txn.read_live_review(id, action)? {
+            let card = DisplayedCard::from_stored_review(&proposal, action, stored.card)?;
+            let authorization = card::authorization(
+                &proposal,
+                action,
+                &card,
+                CeremonyContext {
+                    node: self.config.node,
+                    subject: txn.gate_owner_subject()?,
+                    epoch: txn.current_version()?.epoch,
+                    challenge: stored.authorization.challenge,
+                    expires_at_ms: stored.authorization.expires_at,
+                },
+            )?;
+            if authorization != stored.authorization {
+                return Err(crate::refuse("authorization-mismatch"));
+            }
+            crash.at(CrashPoint::AfterReview)?;
+            return Ok(OwnerReview {
+                proposal: id,
+                action,
+                authorization_bytes: authorization.canonical_bytes()?,
+                passkey_challenge: card::passkey_challenge(&authorization)?,
+                card,
+            });
+        }
+        let facts = if action == OwnerOperation::Apply
+            && proposal.request.target.as_str().starts_with("sites/")
+        {
+            site_facts(&self.config, &proposal)?
+        } else {
+            content_facts(&proposal, action, &before)?
+        };
+        let card = card::build_card(&proposal, action, facts)?;
+        let at = now(txn)?;
+        let auth = card::authorization(
+            &proposal,
+            action,
+            &card,
+            CeremonyContext {
+                node: self.config.node,
+                subject: txn.gate_owner_subject()?,
+                epoch: txn.current_version()?.epoch,
+                challenge: AuthorizationChallenge::from_bytes(random()?),
+                expires_at_ms: deadline(at, self.config.ceremony_lifetime_ms)?
+                    .min(proposal.expires_at_ms),
+            },
+        )?;
+        let authorization_bytes = auth.canonical_bytes()?;
+        let passkey_challenge = card::passkey_challenge(&auth)?;
+        txn.stage_authorization(aura::storage::StagedAuthorization {
+            authorization: auth,
+            card: card.card().clone(),
+        })?;
+        let row = lifecycle(
+            txn,
+            &proposal,
+            LifecycleKind::GateReview,
+            Phase::Settle,
+            at,
+            object(vec![
+                ("proposal", text(id)?),
+                ("action", text(action.wire_name())?),
+                ("display_sha256", text(card.digest())?),
+                ("authorization_sha256", text(hash(&authorization_bytes))?),
+            ])?,
+        )?;
+        txn.append_lifecycle(row)?;
+        crash.at(CrashPoint::AfterReview)?;
+        Ok(OwnerReview {
+            proposal: id,
+            action,
+            card,
+            authorization_bytes,
+            passkey_challenge,
+        })
+    }
+}
+
+fn content_facts(
+    proposal: &Proposal,
+    action: OwnerOperation,
+    before: &TargetObservation,
+) -> Result<ReviewFacts> {
+    let mut facts = ReviewFacts {
+        says: match action {
+            OwnerOperation::Apply => "Replace the target with the displayed bytes.",
+            OwnerOperation::Retire => "Retire this proposal without applying its bytes.",
+            _ => return Err(crate::refuse("unsupported-operation")),
+        }
+        .into(),
+        facts: vec![
+            ("target".into(), text(proposal.request.target.as_str())?),
+            ("base_sha256".into(), base_value(proposal.request.base)?),
+            ("new_sha256".into(), text(proposal.new_digest)?),
+        ],
+        from_to: vec![
+            ("base_sha256".into(), base_value(proposal.request.base)?),
+            (
+                "new_bytes_b64".into(),
+                text(encode_bytes(&proposal.request.new_bytes))?,
+            ),
+        ],
+    };
+    if let Some(cell) = proposal.request.cell {
+        facts.facts.push((
+            "cell".into(),
+            object(vec![
+                ("module_sha256", text(cell.module_sha256)?),
+                ("input_sha256", text(cell.input_sha256)?),
+                ("effect_sha256", text(cell.effect_sha256)?),
+            ])?,
+        ));
+    }
+    if let Some(bytes) = &before.bytes {
+        if let Ok(value) = std::str::from_utf8(bytes) {
+            facts.from_to.push(("before".into(), text(value)?));
+        }
+    }
+    if let Ok(value) = std::str::from_utf8(&proposal.request.new_bytes) {
+        facts.from_to.push(("after".into(), text(value)?));
+    }
+    Ok(facts)
+}
+
+fn site_facts(config: &GateConfig, proposal: &Proposal) -> Result<ReviewFacts> {
+    let bundle = crate::target::sites::validate(config, proposal)?;
+    Ok(ReviewFacts {
+        says: "Publish this exact website bundle at the displayed address.".into(),
+        facts: vec![
+            (
+                "address".into(),
+                text(format!("https://{}/", bundle.host()))?,
+            ),
+            ("target".into(), text(proposal.request.target.as_str())?),
+            ("bundle_sha256".into(), text(bundle.digest())?),
+            (
+                "isolation".into(),
+                text("Separate host; no cookies or WebAuthn; framing refused.")?,
+            ),
+        ],
+        from_to: vec![
+            ("base_sha256".into(), base_value(proposal.request.base)?),
+            (
+                "new_bytes_b64".into(),
+                text(encode_bytes(&proposal.request.new_bytes))?,
+            ),
+        ],
+    })
+}

@@ -254,3 +254,60 @@ pub(super) fn field<'a>(value: &'a Value, name: &str) -> Option<&'a str> {
 fn unsigned(value: i64) -> Result<u64> {
     u64::try_from(value).map_err(|_| refusal("integer-range"))
 }
+
+impl LedgerTxn<'_> {
+    /// Return the exact retained card only while its stored challenge remains live.
+    pub fn read_live_review(
+        &self,
+        id: ProposalId,
+        action: OwnerOperation,
+    ) -> Result<Option<StagedAuthorization>> {
+        self.active()?;
+        let card: Option<Vec<u8>> = self.transaction.query_row(
+            "SELECT card FROM authority_challenges WHERE proposal=?1 AND action=?2",
+            params![id.to_string(), action.wire_name()],
+            |row| row.get(0),
+        ).optional().map_err(sql)?;
+        let Some(bytes) = card else {
+            return Ok(None);
+        };
+        let authorization = self.authorization(&id, action)?;
+        self.check_review_commitment(&authorization)?;
+        Ok(Some(StagedAuthorization {
+            authorization,
+            card: storage::decode_card(&bytes)?,
+        }))
+    }
+
+    fn check_review_commitment(&self, auth: &OwnerAuthorization) -> Result<()> {
+        let proposal = self.proposal(&auth.proposal)?;
+        let mut statement = self.transaction.prepare(
+            "SELECT seq FROM aura WHERE op=?1 AND kind='gate.review' ORDER BY seq DESC",
+        ).map_err(sql)?;
+        let mut cursor = statement.query([proposal.operation.to_string()]).map_err(sql)?;
+        while let Some(row) = cursor.next().map_err(sql)? {
+            let sequence = unsigned(row.get(0).map_err(sql)?)?;
+            let record = self.floor_record_at_sequence(sequence)?
+                .ok_or(refusal("authorization-mismatch"))?;
+            let body = gate_payload(&record.body);
+            if field(body, "action") != Some(auth.op.wire_name()) {
+                continue;
+            }
+            if record.kind != canon::authority::Kind::GateReview
+                || record.phase != canon::authority::Phase::Settle
+                || record.actor != "gate"
+                || record.operation != Some(proposal.operation)
+                || record.authority.epoch != auth.epoch
+                || record.authority.sequence <= proposal.authority.sequence
+                || field(body, "proposal") != Some(auth.proposal.to_string().as_str())
+                || field(body, "display_sha256") != Some(auth.display_sha256.to_string().as_str())
+                || field(body, "authorization_sha256")
+                    != Some(Digest32::sha256(&auth.canonical_bytes()?).to_string().as_str())
+            {
+                return Err(refusal("authorization-mismatch"));
+            }
+            return Ok(());
+        }
+        Err(refusal("authorization-mismatch"))
+    }
+}
