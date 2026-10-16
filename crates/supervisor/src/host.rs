@@ -66,12 +66,6 @@ impl crate::adapters::runtime::ReleaseAdmission for Mutex<Assets> {
 pub async fn serve(config: NodeConfig) -> Result<()> {
     let _egress = config.load_egress()?;
     let boundary = config.boundary()?;
-    let identity_path = config.state_root.join("node-identity-v1");
-    let existing_identity = match std::fs::symlink_metadata(identity_path) {
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(_) => return Err(codes::SUPERVISOR_STATE),
-    };
     let state = HostState::open(&config.state_root, &config.node)?;
     let ledger = HostLedger::open(
         &config.state_root.join("aura.sqlite3"),
@@ -88,12 +82,6 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
             .join("sessions-v1.json"),
     ) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if existing_identity {
-                return Err(canon::Refusal {
-                    organ: "supervisor",
-                    reason: "sessions-missing",
-                });
-            }
             DurableSessions::initialize(descriptor, state.node, boundary.shell, boundary.owner)?;
         }
         Ok(_) => {

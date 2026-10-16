@@ -194,14 +194,14 @@ impl ReleaseSource for ReleaseFiles {
 }
 
 fn unclaimed_sessions(
-    directory: &File,
+    sessions_dir: &File,
     node: NodeId,
     shell_origin: &str,
     owner_origin: &str,
 ) -> Result<File> {
     let flags = OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
     let lock: File = openat(
-        directory,
+        sessions_dir,
         "sessions.lock",
         flags | OFlags::RDWR,
         Mode::empty(),
@@ -212,7 +212,7 @@ fn unclaimed_sessions(
     flock(&lock, FlockOperation::NonBlockingLockExclusive)
         .map_err(|_| refuse("genesis-session-lock"))?;
     let state: File = openat(
-        directory,
+        sessions_dir,
         "sessions-v1.json",
         flags | OFlags::RDONLY,
         Mode::empty(),
