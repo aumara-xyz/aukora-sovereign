@@ -398,6 +398,11 @@ def main(argv):
     if os.path.isdir("/etc/cloud/cloud.cfg.d"):
         core.atomic_write("/etc/cloud/cloud.cfg.d/99-aukora-hosts.cfg", b"manage_etc_hosts: false\n", 0o644)
     core.atomic_write(release.NODE_JSON, node_config(node, cage_id), 0o640, (0, gid))
+    # The supervisor refuses to start without an explicit gate target inventory; a new node starts with none, so the
+    # gate refuses every change until a later, passkey-approved release adds targets.
+    core.atomic_write(os.path.join(release.CONFIG, "gate-targets-v1.json"),
+                      core.canonical({"kind": "aukora-gate-targets-v1", "node": node["name"], "targets": [], "v": 1}),
+                      0o640, (0, gid))
     release.apply_units(os.path.join(release.RELEASES, rid))
     if mode == "vm":
         configure_caddy(node)
