@@ -279,6 +279,67 @@ impl LedgerTxn<'_> {
         }))
     }
 
+    /// Commit a Release review without consuming its passkey challenge.
+    pub fn append_release_review(
+        &mut self,
+        review: LifecycleRecord,
+    ) -> Result<canon::authority::AuthorityRecord> {
+        self.mutate(|ledger| {
+            use canon::authority::{Kind, LifecycleKind, PendingAuthorityRecord, Phase};
+
+            if review.kind != LifecycleKind::GateReview
+                || review.phase != Phase::Settle
+                || review.actor != "gate"
+            {
+                return Err(refusal("lifecycle-phase"));
+            }
+            let body = gate_payload(&review.body);
+            let ValueView::Object(fields) = body.view() else {
+                return Err(refusal("review-commitment"));
+            };
+            if fields.len() != 4 || field(body, "action") != Some("release") {
+                return Err(refusal("review-action"));
+            }
+            let proposal_id = ProposalId::from_hex(
+                field(body, "proposal").ok_or(refusal("lifecycle-proposal"))?,
+            )?;
+            let proposal = ledger.proposal(&proposal_id)?;
+            let source = ledger.record_at(proposal.authority)?;
+            if proposal.status != ProposalStatus::Pending
+                || proposal.operation != review.operation
+                || proposal.target != "release"
+                || proposal.actor != "supervisor"
+                || proposal.cell.is_some()
+                || proposal.risk != canon::authority::CardRisk::Critical
+                || source.kind != Kind::GatePropose
+                || source.phase != Phase::Intent
+                || source.actor != "supervisor"
+                || source.operation != Some(proposal.operation)
+                || ledger.gate_terminal(&proposal.operation)?.is_some()
+            {
+                return Err(refusal("lifecycle-proposal"));
+            }
+            let auth = ledger.authorization(&proposal_id, OwnerOperation::Release)?;
+            if field(body, "display_sha256") != Some(auth.display_sha256.to_string().as_str())
+                || field(body, "authorization_sha256")
+                    != Some(Digest32::sha256(&auth.canonical_bytes()?).to_string().as_str())
+            {
+                return Err(refusal("review-commitment"));
+            }
+            ledger.write_record(PendingAuthorityRecord {
+                v: review.v,
+                algorithm: review.algorithm,
+                authority: review.authority,
+                at: review.at,
+                kind: Kind::GateReview,
+                actor: review.actor,
+                operation: Some(review.operation),
+                phase: Phase::Settle,
+                body: review.body,
+            })
+        })
+    }
+
     fn check_review_commitment(&self, auth: &OwnerAuthorization) -> Result<()> {
         let proposal = self.proposal(&auth.proposal)?;
         let mut statement = self.transaction.prepare(
@@ -309,5 +370,72 @@ impl LedgerTxn<'_> {
             return Ok(());
         }
         Err(refusal("authorization-mismatch"))
+    }
+}
+
+impl LedgerTxn<'_> {
+    /// Keep a live release review, or remove only its expired, unspent challenge.
+    pub fn read_or_expire_release_review(
+        &mut self,
+        id: ProposalId,
+    ) -> Result<Option<StagedAuthorization>> {
+        self.mutate(|this| {
+            let proposal = this.proposal(&id)?;
+            if proposal.target != "release"
+                || proposal.status != ProposalStatus::Pending
+                || proposal.authority.epoch != this.current_version()?.epoch
+                || this.gate_terminal(&proposal.operation)?.is_some()
+            {
+                return Err(refusal("authorization-mismatch"));
+            }
+            let consumed: i64 = this.transaction.query_row(
+                "SELECT count(*) FROM authority_consumptions WHERE proposal=?1 OR operation=?2",
+                params![id.to_string(), proposal.operation.to_string()],
+                |row| row.get(0),
+            ).map_err(sql)?;
+            if consumed != 0 {
+                return Err(refusal("challenge-spent"));
+            }
+            let row: Option<(Vec<u8>, Vec<u8>, String, i64)> = this.transaction.query_row(
+                "SELECT body,card,challenge,spent FROM authority_challenges WHERE proposal=?1 AND action='release'",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).optional().map_err(sql)?;
+            let Some((bytes, card_bytes, challenge, spent)) = row else {
+                return Ok(None);
+            };
+            let authorization = storage::decode_authorization(&bytes)?;
+            let card = storage::decode_card(&card_bytes)?;
+            this.match_authorization(&authorization, &proposal)?;
+            if authorization.proposal != id
+                || authorization.op != OwnerOperation::Release
+                || authorization.subject != this.gate_owner_subject()?
+                || authorization.challenge.to_string() != challenge
+                || authorization.display_sha256 != Digest32::sha256(&card_bytes)
+                || card.risk != proposal.risk
+                || card.model_note != proposal.model_note
+            {
+                return Err(refusal("authorization-mismatch"));
+            }
+            let approval = Digest32::sha256(&bytes).to_string();
+            if spent != 0
+                || this.counters.contains_key(&approval)
+                || this.consumptions.contains(&approval)
+            {
+                return Err(refusal("challenge-spent"));
+            }
+            this.check_review_commitment(&authorization)?;
+            if this.services.clock.now_ms()? < authorization.expires_at {
+                return Ok(Some(StagedAuthorization { authorization, card }));
+            }
+            let removed = this.transaction.execute(
+                "DELETE FROM authority_challenges WHERE proposal=?1 AND action='release' AND challenge=?2 AND body=?3 AND card=?4 AND spent=0",
+                params![id.to_string(), challenge, bytes, card_bytes],
+            ).map_err(sql)?;
+            if removed != 1 {
+                return Err(refusal("authorization-mismatch"));
+            }
+            Ok(None)
+        })
     }
 }

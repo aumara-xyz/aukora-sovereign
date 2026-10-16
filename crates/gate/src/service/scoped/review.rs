@@ -12,22 +12,53 @@ impl<S: TargetStore> ScopedGate<S> {
         crash: &mut dyn CrashInjector,
     ) -> Result<OwnerReview> {
         crash.at(CrashPoint::BeforeReview)?;
-        if !matches!(action, OwnerOperation::Apply | OwnerOperation::Retire) {
+        if !matches!(
+            action,
+            OwnerOperation::Apply | OwnerOperation::Retire | OwnerOperation::Release
+        ) {
             return Err(crate::refuse("unsupported-operation"));
         }
         let proposal = load(txn, id)?;
-        self.validate(&proposal, action == OwnerOperation::Apply)?;
+        let release = proposal.request.target.as_str() == "release";
+        if release {
+            validate_content(self.config.node, &proposal)?;
+            release::validate_origin(txn, &proposal)?;
+            if action == OwnerOperation::Apply {
+                return Err(crate::refuse("unsupported-operation"));
+            }
+        } else {
+            if action == OwnerOperation::Release {
+                return Err(crate::refuse("unsupported-operation"));
+            }
+            self.validate(&proposal, action == OwnerOperation::Apply)?;
+        }
         if action == OwnerOperation::Retire {
             proposal.state.require_retirable()?;
         }
         pending(txn, &proposal)?;
-        let before = self.observe(&proposal.request.target)?;
+        let before = if release {
+            TargetObservation {
+                digest: proposal.request.base,
+                bytes: None,
+            }
+        } else {
+            self.observe(&proposal.request.target)?
+        };
         if action == OwnerOperation::Apply && before.digest != proposal.request.base {
             return Err(crate::refuse("stale-base"));
         }
-        if let Some(stored) = txn.read_live_review(id, action)? {
-            let card = DisplayedCard::from_stored_review(&proposal, action, stored.card)?;
-            let authorization = card::authorization(
+        let stored_review = if action == OwnerOperation::Release {
+            txn.read_or_expire_release_review(id)?
+        } else {
+            txn.read_live_review(id, action)?
+        };
+        if let Some(stored) = stored_review {
+            let card = if action == OwnerOperation::Release {
+                card::restore_release_card(&proposal, stored.card)?
+            } else {
+                DisplayedCard::from_stored_review(&proposal, action, stored.card)?
+            };
+            let authorization = review_authorization(
                 &proposal,
                 action,
                 &card,
@@ -51,16 +82,22 @@ impl<S: TargetStore> ScopedGate<S> {
                 card,
             });
         }
-        let facts = if action == OwnerOperation::Apply
+        let facts = if action == OwnerOperation::Release {
+            release::release_facts(&proposal)?
+        } else if action == OwnerOperation::Apply
             && proposal.request.target.as_str().starts_with("sites/")
         {
             site_facts(&self.config, &proposal)?
         } else {
             content_facts(&proposal, action, &before)?
         };
-        let card = card::build_card(&proposal, action, facts)?;
+        let card = if action == OwnerOperation::Release {
+            card::build_release_card(&proposal, facts)?
+        } else {
+            card::build_card(&proposal, action, facts)?
+        };
         let at = now(txn)?;
-        let auth = card::authorization(
+        let auth = review_authorization(
             &proposal,
             action,
             &card,
@@ -92,7 +129,11 @@ impl<S: TargetStore> ScopedGate<S> {
                 ("authorization_sha256", text(hash(&authorization_bytes))?),
             ])?,
         )?;
-        txn.append_lifecycle(row)?;
+        if action == OwnerOperation::Release {
+            txn.append_release_review(row)?;
+        } else {
+            txn.append_lifecycle(row)?;
+        }
         crash.at(CrashPoint::AfterReview)?;
         Ok(OwnerReview {
             proposal: id,
@@ -101,6 +142,19 @@ impl<S: TargetStore> ScopedGate<S> {
             authorization_bytes,
             passkey_challenge,
         })
+    }
+}
+
+fn review_authorization(
+    proposal: &Proposal,
+    action: OwnerOperation,
+    card: &DisplayedCard,
+    context: CeremonyContext,
+) -> Result<canon::authority::OwnerAuthorization> {
+    if action == OwnerOperation::Release {
+        card::release_authorization(proposal, card, context)
+    } else {
+        card::authorization(proposal, action, card, context)
     }
 }
 

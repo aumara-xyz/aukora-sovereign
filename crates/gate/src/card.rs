@@ -294,6 +294,34 @@ fn require_action(action: OwnerOperation) -> Result<()> {
     }
 }
 
+pub(crate) fn build_release_card(proposal: &Proposal, facts: ReviewFacts) -> Result<DisplayedCard> {
+    let mut card = build_card(proposal, OwnerOperation::Apply, facts)?;
+    card.proposal = Some(card_binding(proposal, OwnerOperation::Release));
+    Ok(card)
+}
+
+pub(crate) fn restore_release_card(proposal: &Proposal, stored: Card) -> Result<DisplayedCard> {
+    let mut card = DisplayedCard::from_stored_review(proposal, OwnerOperation::Apply, stored)?;
+    card.proposal = Some(card_binding(proposal, OwnerOperation::Release));
+    Ok(card)
+}
+
+pub(crate) fn release_authorization(
+    proposal: &Proposal,
+    card: &DisplayedCard,
+    context: CeremonyContext,
+) -> Result<OwnerAuthorization> {
+    if card.proposal != Some(card_binding(proposal, OwnerOperation::Release)) {
+        return Err(crate::refuse("authorization-mismatch"));
+    }
+    let mut checked = card.clone();
+    checked.proposal = Some(card_binding(proposal, OwnerOperation::Apply));
+    let mut auth = authorization(proposal, OwnerOperation::Apply, &checked, context)?;
+    auth.op = OwnerOperation::Release;
+    auth.canonical_bytes()?;
+    Ok(auth)
+}
+
 fn card_binding(
     proposal: &Proposal,
     action: OwnerOperation,

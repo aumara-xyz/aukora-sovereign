@@ -11,6 +11,7 @@ use canon::{
 };
 use rusqlite::{params, OptionalExtension};
 use std::collections::{BTreeMap, BTreeSet};
+mod genesis;
 
 const INSTALL_STATE: &str = "aukora-floor-install-state-v1";
 const INSTALL_RECORD: &str = "aukora-floor-install-v1";
@@ -153,11 +154,13 @@ impl LedgerTxn<'_> {
             release_pointer(&proposal.new_bytes,hash(floor,"digest")?)?;
             let source = this.record_at(authority_for_sequence(this,positive(floor,"ledger_seq")?)?)?;
             let payload = super::gate_payload(&source.body);
+            if !genesis::release_proposal_source(current.as_ref(), &next, &source, &proposal)? {
             if source.hash != hash(floor,"ledger_hash")? || source.authority.epoch != positive(floor,"signer_epoch")?
                 || !matches!(source.kind,Kind::GateApply|Kind::GateRecover) || source.phase != Phase::Terminal
                 || field_text(payload,"target")? != "release" || field_text(payload,"state")? != "applied"
                 || hash(payload,"new_sha256")? != auth.new_sha256 || source.authority.sequence >= next_context.sequence {
                 return Err(refusal("floor-ordering"));
+            }
             }
             let keys = this.services.signer.public_keys()?;
             let ed_keys = keys.iter().filter(|key|key.algorithm==AlgorithmId::Ed25519).collect::<Vec<_>>();

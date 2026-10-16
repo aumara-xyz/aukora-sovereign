@@ -37,6 +37,7 @@ impl ApprovalFeed {
         if self.ledger.binding()? != BindingState::Bound(scope) {
             return Err(codes::AUMLOK_BINDING_REQUIRED);
         }
+        self.ledger.ensure_release_proposal(scope)?;
         let mut channels = self.channels.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
         channels.retain(|_, channel| channel.expires > now);
         if !channels.contains_key(&record.token_digest) && channels.len() >= 64 {

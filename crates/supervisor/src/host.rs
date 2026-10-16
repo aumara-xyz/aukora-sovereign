@@ -113,6 +113,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         &config.shell_origin,
         &config.owner_origin,
     )?;
+    source.configure_owner_approval(state.node)?;
     let measured = RuntimeMeasurement {
         binary_sha256: source.binary_digest,
         shell_manifest_sha256: source.manifest_digest(),
@@ -136,6 +137,9 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         ledger.clone(),
     )?);
     gate.configure_targets(config.gate_targets()?)?;
+    if let BindingState::Bound(scope) = ledger.binding()? {
+        ledger.ensure_release_proposal(scope)?;
+    }
     let broker = Arc::new(crate::adapters::BrokerAdapter::new(
         ledger.clone(),
         Arc::new(broker::keystore::KeyInbox::new()),
@@ -587,6 +591,12 @@ impl Host {
                     subject,
                     now()?,
                 )?;
+                if binding == frontdoor::session::BindingState::Bound {
+                    self.ledger.ensure_release_proposal(PrincipalScope {
+                        subject: subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
+                        epoch,
+                    })?;
+                }
             }
             if frontdoor::owner_origin::is_gate_route(route) {
                 return owner_gate::owner_gate_response(result.body);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Host-owned adapters pass typed requests to organs without guest descriptors.
 
+pub mod approval;
 pub mod approvals;
 pub mod broker;
 pub mod gate;

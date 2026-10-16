@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Release files remain data until floor and Aura agree on the installed digest.
 
+mod owner;
+pub(crate) use owner::ReleaseApproval;
+
 use crate::adapters::HostLedger;
 use canon::{
     authority::{AuthorityRecord, AuthorityTxn, OwnerAssertion, OwnerOperation, VerifiedProof},

@@ -4,6 +4,7 @@
 use super::*;
 
 mod recovery;
+mod release;
 mod review;
 
 /// The caller commits each transition and supplies a new transaction for effects.
@@ -23,6 +24,15 @@ pub struct ConsumedApply {
 /// Consumption and its effect must be committed in separate transactions.
 pub fn commit_transition(txn: LedgerTxn<'_>, crash: &mut dyn CrashInjector) -> Result<()> {
     super::commit(txn, crash)
+}
+
+pub fn validate_installed_release(
+    txn: &LedgerTxn<'_>,
+    node: NodeId,
+    proposal: &Proposal,
+) -> Result<()> {
+    validate_content(node, proposal)?;
+    release::validate_origin(txn, proposal)
 }
 
 impl<S: TargetStore> ScopedGate<S> {
@@ -56,6 +66,9 @@ impl<S: TargetStore> ScopedGate<S> {
     ) -> Result<Proposal> {
         crash.at(CrashPoint::BeforeProposal)?;
         let spec = self.spec(&request.target)?;
+        if spec.class == TargetClass::Release || request.target.as_str() == "release" {
+            return Err(crate::refuse("unsupported-operation"));
+        }
         if request.new_bytes.len() > spec.max_bytes
             || request.new_bytes.len() > 65_536
             || request.model_note.len() > 8_192

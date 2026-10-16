@@ -168,6 +168,7 @@ pub fn decode_gate_request(route: OwnerRoute, body: &Value) -> Result<GateReques
     let action = match gate_text(body, "op")? {
         "apply" => OwnerOperation::Apply,
         "retire" => OwnerOperation::Retire,
+        "release" => OwnerOperation::Release,
         _ => return Err(canon::codes::FRONTDOOR_APPROVAL_OPERATION_INVALID),
     };
     if route == OwnerRoute::ApprovalReviewV1 {

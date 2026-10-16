@@ -32,6 +32,7 @@ impl aura::TrustedClock for HostClock {
 
 pub struct HostLedger {
     ledger: Mutex<aura::Ledger>,
+    pub(super) release_approval: Mutex<Option<crate::release::ReleaseApproval>>,
     pub signer: Arc<dyn aura::RecordSigner + Send + Sync>,
     pub clock: Arc<dyn aura::TrustedClock + Send + Sync>,
 }
@@ -69,6 +70,7 @@ impl HostLedger {
     ) -> Result<Self> {
         Ok(Self {
             ledger: Mutex::new(aura::Ledger::open(path)?),
+            release_approval: Mutex::new(None),
             signer,
             clock,
         })

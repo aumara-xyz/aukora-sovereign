@@ -265,6 +265,13 @@ impl GateService for GateAdapter {
         self.submit(move |gate, host| {
             host.scoped(scope, |txn| {
                 require_proposal_scope(txn, proposal, scope)?;
+                let action = if action == OwnerOperation::Apply
+                    && txn.proposal(&proposal)?.target == "release"
+                {
+                    OwnerOperation::Release
+                } else {
+                    action
+                };
                 let review = gate.review(txn, proposal, action, &mut NoInjection)?;
                 let authorization = txn.rebuild_authorization(&proposal, action)?;
                 if review.authorization_bytes != authorization.canonical_bytes()?
@@ -304,6 +311,9 @@ impl GateService for GateAdapter {
                     require_proposal_scope(txn, proposal, scope)?;
                     gate.retire(txn, proposal, assertion, &mut NoInjection)
                 })?,
+                OwnerOperation::Release => {
+                    host.approve_release(scope, proposal, assertion)?
+                }
                 _ => return Err(codes::GATE_UNSUPPORTED_OPERATION),
             };
             let state = match result.state {

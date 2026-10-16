@@ -2,6 +2,7 @@
 //! Protected persistence contracts. A path or a successful order check is not authority.
 
 mod store;
+mod genesis;
 
 use crate::{
     advance_floor, refuse, state::CredentialHighWater, ProtectedState, ReleaseOrder, Result,
@@ -255,6 +256,10 @@ impl FloorService {
         {
             return Err(refuse("approval-spent"));
         }
+        let source = transaction
+            .floor_record_at_sequence(proposed.ledger_seq)?
+            .ok_or_else(|| refuse("ordering-evidence"))?;
+        if !genesis::release_proposal_source(current.as_ref(), proposed, &source, &proposal)? {
         // Ordering evidence must be a retained terminal, never a caller's claimed hash.
         let source = transaction
             .floor_record_at_sequence(proposed.ledger_seq)?
@@ -270,6 +275,7 @@ impl FloorService {
             || field_text(source_body, "new_sha256") != Some(proposed.record.to_string().as_str())
         {
             return Err(refuse("ordering-evidence"));
+        }
         }
         let signing_keys = transaction.floor_signing_keys()?;
         let ed25519: Vec<_> = signing_keys
