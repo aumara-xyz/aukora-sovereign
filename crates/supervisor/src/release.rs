@@ -3,12 +3,14 @@
 
 use crate::adapters::HostLedger;
 use canon::{
+    authority::AuthorityTxn,
     digest::Digest32,
+    ids::NodeId,
     json::{self, Value, ValueView},
     Result,
 };
 use frontdoor::assets::{ReleaseCandidate, ReleaseSource};
-use rustix::fs::{open, openat, Mode, OFlags};
+use rustix::fs::{flock, open, openat, FlockOperation, Mode, OFlags};
 use std::{
     fs::File,
     io::Read,
@@ -125,6 +127,47 @@ impl ReleaseFiles {
         })
     }
 
+    /// An absent first floor may come only from the verified install before claim.
+    pub fn initialize_floor(
+        &self,
+        sessions: &File,
+        node: NodeId,
+        shell_origin: &str,
+        owner_origin: &str,
+    ) -> Result<()> {
+        let mut floor = floor::service::FloorService::open(&self.floor_directory)?;
+        match self
+            .ledger
+            .transaction(|transaction| floor.reconcile(transaction))
+        {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if error
+                    == (canon::Refusal {
+                        organ: "floor",
+                        reason: "absent",
+                    }) => {}
+            Err(error) => return Err(error),
+        }
+        let _claim_lock = unclaimed_sessions(sessions, node, shell_origin, owner_origin)?;
+        let installed = read(&self.directory, ".verified", 65)?;
+        if installed != format!("{}\n", self.release_digest).as_bytes() {
+            return Err(refuse("release-not-verified"));
+        }
+        self.ledger.transaction(|transaction| {
+            if transaction.pending_owner_credential()?.is_some()
+                || transaction.bound_owner_identity()?.is_some()
+            {
+                return Err(refuse("genesis-owner-present"));
+            }
+            floor.initialize_from_install(transaction, self.release_digest)?;
+            Ok(())
+        })?;
+        self.ledger
+            .transaction(|transaction| floor.reconcile(transaction))?;
+        Ok(())
+    }
+
     pub fn manifest_digest(&self) -> Digest32 {
         self.manifest_digest
     }
@@ -147,6 +190,74 @@ impl ReleaseSource for ReleaseFiles {
 
     fn read_exact_asset(&mut self, path: &str, maximum: usize) -> Result<Vec<u8>> {
         read(&self.directory, &format!("www/{path}"), maximum)
+    }
+}
+
+fn unclaimed_sessions(
+    directory: &File,
+    node: NodeId,
+    shell_origin: &str,
+    owner_origin: &str,
+) -> Result<File> {
+    let flags = OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
+    let lock: File = openat(
+        directory,
+        "sessions.lock",
+        flags | OFlags::RDWR,
+        Mode::empty(),
+    )
+    .map_err(|_| refuse("genesis-session-lock"))?
+    .into();
+    private_session_file(&lock)?;
+    flock(&lock, FlockOperation::NonBlockingLockExclusive)
+        .map_err(|_| refuse("genesis-session-lock"))?;
+    let state: File = openat(
+        directory,
+        "sessions-v1.json",
+        flags | OFlags::RDONLY,
+        Mode::empty(),
+    )
+    .map_err(|_| refuse("genesis-session-state"))?
+    .into();
+    private_session_file(&state)?;
+    let mut bytes = Vec::new();
+    state
+        .take(2_097_153)
+        .read_to_end(&mut bytes)
+        .map_err(|_| refuse("genesis-session-state"))?;
+    if bytes.len() > 2_097_152 {
+        return Err(refuse("genesis-session-state"));
+    }
+    let state = json::parse_strict(&bytes).map_err(|_| refuse("genesis-session-state"))?;
+    exact_keys(
+        &state,
+        &[
+            "format", "node", "shell", "owner", "epoch", "binding", "subject", "records",
+        ],
+    )
+    .map_err(|_| refuse("genesis-session-state"))?;
+    if text(&state, "format")? != "frontdoor-sessions-v1"
+        || text(&state, "node")? != node.to_string()
+        || text(&state, "shell")? != shell_origin
+        || text(&state, "owner")? != owner_origin
+        || text(&state, "binding")? != "unclaimed"
+        || !matches!(state.get("epoch").map(Value::view), Some(ValueView::Integer(epoch)) if epoch.get() == 0)
+        || !matches!(state.get("subject").map(Value::view), Some(ValueView::Null))
+        || !matches!(state.get("records").map(Value::view), Some(ValueView::Array(records)) if records.is_empty())
+    {
+        return Err(refuse("genesis-claim-spent"));
+    }
+    Ok(lock)
+}
+
+fn private_session_file(file: &File) -> Result<()> {
+    let metadata = file
+        .metadata()
+        .map_err(|_| refuse("genesis-session-state"))?;
+    if metadata.is_file() && metadata.nlink() == 1 && metadata.mode() & 0o077 == 0 {
+        Ok(())
+    } else {
+        Err(refuse("genesis-session-state"))
     }
 }
 

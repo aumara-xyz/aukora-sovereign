@@ -31,7 +31,7 @@ pub struct FloorService {
 
 impl FloorService {
     /// Row 65: open through safe no-follow directory descriptors, lock, validate owner,
-    /// permissions and bounded bytes. An empty store awaits a proven release advance.
+    /// permissions and bounded bytes. An empty store awaits an authorized transition.
     pub fn open(directory: &Path) -> Result<Self> {
         let service = Self {
             store: store::Store::open(directory)?,
@@ -58,10 +58,88 @@ impl FloorService {
     /// Success reports consistency with authenticated Aura rows; it grants no authority.
     pub fn probe_release_guard(&self, transaction: &aura::LedgerTxn<'_>) -> Result<()> {
         let state = self.snapshot()?;
-        if transaction.floor_state()?.as_deref() != Some(state.canonical_bytes()?.as_slice()) {
+        if transaction.floor_recovery_state()?.as_deref()
+            != Some(state.canonical_bytes()?.as_slice())
+        {
             return Err(refuse("ledger-state-mismatch"));
         }
         check_history(transaction, &state)
+    }
+
+    /// Record the verified install before claim. The supervisor holds the claim-store
+    /// lock; Aura independently refuses any owner or earlier floor in its transaction.
+    pub fn initialize_from_install(
+        &mut self,
+        transaction: &mut aura::LedgerTxn<'_>,
+        digest: Digest32,
+    ) -> Result<AuthorityRecord> {
+        if self.unstaged_state()?.is_some() || transaction.floor_recovery_state()?.is_some() {
+            return Err(refuse("install-floor-exists"));
+        }
+        let (authority, at, signer_key_sha256) = transaction.floor_install_context()?;
+        let record = PendingAuthorityRecord {
+            v: 1,
+            algorithm: AlgorithmId::Sha256,
+            authority,
+            at,
+            kind: Kind::BootFacts,
+            actor: "supervisor".into(),
+            operation: None,
+            phase: Phase::Fact,
+            body: aura::record::AuthorityBodyV1 {
+                algorithm: AlgorithmId::Sha256,
+                authority,
+                payload: object(vec![
+                    ("schema", text("aukora-floor-install-v1")?),
+                    ("origin", text("install")?),
+                    ("owner", Value::null()),
+                    ("digest", text(digest)?),
+                ])?,
+            }
+            .canonical_value()?,
+        };
+        let head = expected_hash(&record)?;
+        let state = ProtectedState {
+            schema: crate::state::INSTALL_STATE_SCHEMA.into(),
+            algorithm: AlgorithmId::Sha256,
+            authority,
+            floor: crate::Floor {
+                digest,
+                record: digest,
+                signer_epoch: 0,
+                ledger_seq: authority.sequence,
+                signer_key_sha256,
+                ledger_hash: head,
+                history: Vec::new(),
+            },
+            high_water: crate::HighWater {
+                highest_epoch: 0,
+                highest_sequence: authority.sequence,
+                head,
+                credentials: Vec::new(),
+                spent: Vec::new(),
+            },
+        };
+        let next_bytes = state.canonical_bytes()?;
+        let stage = Stage {
+            transaction: transaction.transaction_id(),
+            previous: None,
+            state,
+        };
+        let stage_bytes = stage.bytes()?;
+        let outcome = (|| {
+            self.store.write_new(PENDING_FILE, &stage_bytes)?;
+            let appended = transaction.stage_install_floor(&next_bytes, record)?;
+            check_receipt(&appended, &stage.state)?;
+            self.publish_state(None, &next_bytes)?;
+            Ok(appended)
+        })();
+        if outcome.is_err() {
+            transaction.abort_floor_transition()?;
+            self.restore_state(None, &next_bytes)?;
+            self.store.discard_stage(&stage_bytes)?;
+        }
+        outcome
     }
 
     /// Row 65/110: verify exact Release action in a transaction with no prior append,
@@ -157,7 +235,7 @@ impl FloorService {
             let prior = transaction.record_at(current.authority)?;
             check_receipt(&prior, current)?;
         }
-        let floor = advance_floor(current.as_ref().map(|state| &state.floor), proposed)?;
+        let floor = successor_floor(current.as_ref(), proposed)?;
         let context = transaction.authority_append_context(&proof)?;
         if context.operation_id != proposal.operation
             || context.authority.epoch != auth.epoch
@@ -342,6 +420,14 @@ impl FloorService {
 }
 
 fn check_successor(current: Option<&ProtectedState>, next: &ProtectedState) -> Result<()> {
+    next.validate()?;
+    if next.is_install_genesis() {
+        return if current.is_none() {
+            Ok(())
+        } else {
+            Err(refuse("stage-conflict"))
+        };
+    }
     let retained = match current {
         Some(current) => {
             current.high_water.validate_successor(&next.high_water)?;
@@ -354,12 +440,30 @@ fn check_successor(current: Option<&ProtectedState>, next: &ProtectedState) -> R
             0
         }
     };
-    if advance_floor(current.map(|state| &state.floor), &release_order(next))? != next.floor
+    if successor_floor(current, &release_order(next))? != next.floor
         || next.high_water.spent.len() != retained + 1
     {
         return Err(refuse("stage-conflict"));
     }
     Ok(())
+}
+
+fn successor_floor(
+    current: Option<&ProtectedState>,
+    proposed: &ReleaseOrder,
+) -> Result<crate::Floor> {
+    if let Some(install) = current.filter(|state| state.is_install_genesis()) {
+        install.validate()?;
+        if proposed.ledger_seq <= install.floor.ledger_seq {
+            return Err(refuse("high-water-predecessor"));
+        }
+        let mut next = advance_floor(None, proposed)?;
+        if next.digest != install.floor.digest {
+            next.history.push(install.floor.digest);
+        }
+        return Ok(next);
+    }
+    advance_floor(current.map(|state| &state.floor), proposed)
 }
 
 fn check_history(transaction: &aura::LedgerTxn<'_>, state: &ProtectedState) -> Result<()> {
@@ -388,6 +492,29 @@ fn check_history(transaction: &aura::LedgerTxn<'_>, state: &ProtectedState) -> R
 
 fn check_aborted(transaction: &aura::LedgerTxn<'_>, stage: &Stage) -> Result<()> {
     let authority = stage.state.authority;
+    if stage.state.is_install_genesis() {
+        let next = transaction.current_version()?;
+        let predecessor = if authority.sequence == 1 {
+            None
+        } else {
+            Some(
+                transaction
+                    .floor_record_at_sequence(authority.sequence - 1)?
+                    .ok_or_else(|| refuse("recovery-ledger-mismatch"))?
+                    .hash,
+            )
+        };
+        if stage.previous.is_some()
+            || next.sequence < authority.sequence
+            || predecessor != authority.previous_hash
+            || transaction
+                .floor_record_at_sequence(authority.sequence)?
+                .is_some_and(|row| row.hash == stage.state.high_water.head)
+        {
+            return Err(refuse("recovery-ledger-mismatch"));
+        }
+        return Ok(());
+    }
     let spent = stage
         .state
         .high_water
@@ -483,6 +610,28 @@ fn expected_hash(record: &PendingAuthorityRecord) -> Result<Digest32> {
 
 fn check_receipt(record: &AuthorityRecord, state: &ProtectedState) -> Result<()> {
     let body = payload(&record.body)?;
+    if state.is_install_genesis() {
+        state.validate()?;
+        let expected = object(vec![
+            ("schema", text("aukora-floor-install-v1")?),
+            ("origin", text("install")?),
+            ("owner", Value::null()),
+            ("digest", text(state.floor.digest)?),
+        ])?;
+        if record.v != 1
+            || record.algorithm != AlgorithmId::Sha256
+            || record.authority != state.authority
+            || record.hash != state.high_water.head
+            || record.kind != Kind::BootFacts
+            || record.phase != Phase::Fact
+            || record.operation.is_some()
+            || record.actor != "supervisor"
+            || body != &expected
+        {
+            return Err(refuse("receipt-mismatch"));
+        }
+        return Ok(());
+    }
     let spent = state
         .high_water
         .spent

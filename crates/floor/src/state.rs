@@ -13,6 +13,7 @@ use canon::{
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STATE_SCHEMA: &str = "aukora-floor-state-v2";
+pub const INSTALL_STATE_SCHEMA: &str = "aukora-floor-install-state-v1";
 pub const STATE_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,6 +112,16 @@ impl HighWater {
 
     /// Validate retained identities without treating their presence as authorization.
     pub fn validate(&self) -> Result<()> {
+        if self.highest_epoch == 0 {
+            return if positive(self.highest_sequence)
+                && self.credentials.is_empty()
+                && self.spent.is_empty()
+            {
+                Ok(())
+            } else {
+                Err(refuse("high-water-malformed"))
+            };
+        }
         if !positive(self.highest_epoch)
             || !positive(self.highest_sequence)
             || self.credentials.is_empty()
@@ -137,7 +148,8 @@ impl HighWater {
         let mut current_spent = false;
         for spent in &self.spent {
             validate_authority(spent.authority)?;
-            if !signature_algorithm(spent.algorithm)
+            if !positive(spent.authority.epoch)
+                || !signature_algorithm(spent.algorithm)
                 || spent.authority.epoch > self.highest_epoch
                 || spent.authority.sequence > self.highest_sequence
                 || !operations.insert(spent.operation)
@@ -201,14 +213,19 @@ impl ProtectedState {
             &value,
             &["schema", "algorithm", "authority", "floor", "high_water"],
         )?;
-        if text(field(&value, "schema")?)? != STATE_SCHEMA {
+        let schema = text(field(&value, "schema")?)?;
+        if ![STATE_SCHEMA, INSTALL_STATE_SCHEMA].contains(&schema) {
             return Err(refuse("migration-required"));
         }
         let state = Self {
-            schema: STATE_SCHEMA.to_owned(),
+            schema: schema.to_owned(),
             algorithm: algorithm(field(&value, "algorithm")?)?,
             authority: read_authority(field(&value, "authority")?)?,
-            floor: Floor::parse(&field(&value, "floor")?.canonical_bytes())?,
+            floor: if schema == INSTALL_STATE_SCHEMA {
+                read_install_floor(field(&value, "floor")?)?
+            } else {
+                Floor::parse(&field(&value, "floor")?.canonical_bytes())?
+            },
             high_water: read_high_water(field(&value, "high_water")?)?,
         };
         state.validate()?;
@@ -217,7 +234,7 @@ impl ProtectedState {
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
-        let floor = json::parse_strict(&self.floor.canonical_bytes()?)?;
+        let floor = self.floor_value()?;
         let value = object(vec![
             ("schema", string(&self.schema)?),
             ("algorithm", string(self.algorithm.wire_name())?),
@@ -234,6 +251,23 @@ impl ProtectedState {
 
     /// Check the wrapper and retained floor agree; this does not verify a signature.
     pub fn validate(&self) -> Result<()> {
+        if self.is_install_genesis() {
+            validate_authority(self.authority)?;
+            self.high_water.validate()?;
+            if self.algorithm != AlgorithmId::Sha256
+                || self.authority.epoch != 0
+                || self.high_water.highest_epoch != 0
+                || self.high_water.highest_sequence != self.authority.sequence
+                || self.floor.signer_epoch != 0
+                || self.floor.ledger_seq != self.authority.sequence
+                || self.floor.ledger_hash != self.high_water.head
+                || self.floor.record != self.floor.digest
+                || !self.floor.history.is_empty()
+            {
+                return Err(refuse("install-state-malformed"));
+            }
+            return Ok(());
+        }
         if self.schema != STATE_SCHEMA {
             return Err(refuse("migration-required"));
         }
@@ -243,7 +277,8 @@ impl ProtectedState {
         self.floor.validate()?;
         validate_authority(self.authority)?;
         self.high_water.validate()?;
-        if self.authority.epoch != self.high_water.highest_epoch
+        if !positive(self.authority.epoch)
+            || self.authority.epoch != self.high_water.highest_epoch
             || self.authority.sequence != self.high_water.highest_sequence
             || self.floor.signer_epoch > self.authority.epoch
             || self.floor.ledger_seq > self.authority.sequence
@@ -257,6 +292,55 @@ impl ProtectedState {
         }
         Ok(())
     }
+
+    pub fn is_install_genesis(&self) -> bool {
+        self.schema == INSTALL_STATE_SCHEMA
+    }
+
+    pub(crate) fn floor_value(&self) -> Result<Value> {
+        if !self.is_install_genesis() {
+            return json::parse_strict(&self.floor.canonical_bytes()?);
+        }
+        object(vec![
+            ("digest", string(&self.floor.digest.to_string())?),
+            ("record", string(&self.floor.record.to_string())?),
+            ("signer_epoch", integer(self.floor.signer_epoch)?),
+            ("ledger_seq", integer(self.floor.ledger_seq)?),
+            (
+                "signer_key_sha256",
+                string(&self.floor.signer_key_sha256.to_string())?,
+            ),
+            ("ledger_hash", string(&self.floor.ledger_hash.to_string())?),
+            ("history", Value::array(Vec::new())?),
+        ])
+    }
+}
+
+fn read_install_floor(value: &Value) -> Result<Floor> {
+    exact(
+        value,
+        &[
+            "digest",
+            "record",
+            "signer_epoch",
+            "ledger_seq",
+            "signer_key_sha256",
+            "ledger_hash",
+            "history",
+        ],
+    )?;
+    if !array(field(value, "history")?)?.is_empty() {
+        return Err(refuse("install-state-malformed"));
+    }
+    Ok(Floor {
+        digest: digest(field(value, "digest")?)?,
+        record: digest(field(value, "record")?)?,
+        signer_epoch: number(field(value, "signer_epoch")?)?,
+        ledger_seq: number(field(value, "ledger_seq")?)?,
+        signer_key_sha256: digest(field(value, "signer_key_sha256")?)?,
+        ledger_hash: digest(field(value, "ledger_hash")?)?,
+        history: Vec::new(),
+    })
 }
 
 /// Reserved row 111 interface. No implementation or clone-resistance claim is shipped.
@@ -276,7 +360,7 @@ fn signature_algorithm(value: AlgorithmId) -> bool {
 }
 
 fn validate_authority(value: AuthorityVersion) -> Result<()> {
-    if !positive(value.epoch)
+    if value.epoch > json::MAX_SAFE_INTEGER as u64
         || !positive(value.sequence)
         || (value.sequence == 1) != value.previous_hash.is_none()
     {

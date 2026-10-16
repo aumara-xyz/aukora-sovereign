@@ -1,18 +1,109 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Release state is persisted only with its consumed proof and matching signed row.
+//! Install genesis and owner-approved releases share signed transactional storage.
 
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use canon::{
     alg::AlgorithmId,
-    authority::{Kind, OwnerOperation, Phase},
+    authority::{Kind, OwnerOperation, PendingAuthorityRecord, Phase},
     ids::ProposalId,
     json::{self, Value, ValueView},
 };
 use rusqlite::{params, OptionalExtension};
 use std::collections::{BTreeMap, BTreeSet};
 
+const INSTALL_STATE: &str = "aukora-floor-install-state-v1";
+const INSTALL_RECORD: &str = "aukora-floor-install-v1";
+
 impl LedgerTxn<'_> {
+    /// An install context exists only before any owner or previous release floor.
+    pub fn floor_install_context(&self) -> Result<(AuthorityVersion, i64, Digest32)> {
+        self.active()?;
+        if self.state.epoch != 0
+            || self.state.next()? != self.retained.next()?
+            || self.transaction.total_changes() != self.observation_start_changes
+            || !self.counters.is_empty()
+            || !self.consumptions.is_empty()
+            || self.floor_obligation.is_some()
+            || self.target_observation.is_some()
+            || self.floor_state()?.is_some()
+        {
+            return Err(refusal("floor-install-context"));
+        }
+        let occupied: bool = self.transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM authority_bindings) OR EXISTS(SELECT 1 FROM aura WHERE kind IN ('aumlok.enrol','aumlok.bind','floor.advance'))",
+            [], |row| row.get(0),
+        ).map_err(sql)?;
+        if occupied {
+            return Err(refusal("floor-install-owner"));
+        }
+        let mut statement = self
+            .transaction
+            .prepare("SELECT seq FROM aura WHERE kind='boot.facts' ORDER BY seq")
+            .map_err(sql)?;
+        let sequences = statement
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(sql)?;
+        for sequence in sequences {
+            let sequence = u64::try_from(sequence.map_err(sql)?)
+                .map_err(|_| refusal("floor-install-history"))?;
+            let record = io::record_at(&self.transaction, sequence)?;
+            if super::gate_payload(&record.body)
+                .get("schema")
+                .is_some_and(|value| matches!(value.view(), ValueView::Text(INSTALL_RECORD)))
+            {
+                return Err(refusal("floor-install-repeated"));
+            }
+        }
+        let keys = self.services.signer.public_keys()?;
+        let keys = keys
+            .iter()
+            .filter(|key| key.algorithm == AlgorithmId::Ed25519)
+            .collect::<Vec<_>>();
+        if keys.len() != 1 {
+            return Err(refusal("floor-signer"));
+        }
+        Ok((
+            self.current_version()?,
+            self.services.clock.now_ms()?,
+            Digest32::sha256(&keys[0].bytes),
+        ))
+    }
+
+    /// Persist the first install floor and its signed receipt in this transaction.
+    pub fn stage_install_floor(
+        &mut self,
+        next_state_bytes: &[u8],
+        pending: PendingAuthorityRecord,
+    ) -> Result<AuthorityRecord> {
+        self.mutate(|this| {
+            let (context, _, signer) = this.floor_install_context()?;
+            let next = state(next_state_bytes)?;
+            let floor = member(&next, "floor")?;
+            if field_text(&next, "schema")? != INSTALL_STATE
+                || authority(member(&next, "authority")?)? != context
+                || hash(floor, "signer_key_sha256")? != signer
+                || pending.authority != context
+                || pending.kind != Kind::BootFacts
+                || pending.phase != Phase::Fact
+                || pending.operation.is_some()
+                || pending.actor != "supervisor"
+            {
+                return Err(refusal("floor-install-context"));
+            }
+            check_install_payload(super::gate_payload(&pending.body), hash(floor, "digest")?)?;
+            let record = this.write_record(pending)?;
+            check_install_record(&record, &next, signer)?;
+            this.transaction
+                .execute(
+                    "INSERT INTO authority_floor(id,state) VALUES(1,?1)",
+                    [next_state_bytes],
+                )
+                .map_err(sql)?;
+            Ok(record)
+        })
+    }
+
     pub fn floor_state(&self) -> Result<Option<Vec<u8>>> {
         self.active()?;
         self.transaction
@@ -122,6 +213,46 @@ impl LedgerTxn<'_> {
         let high = member(value, "high_water")?;
         let context = authority(member(value, "authority")?)?;
         let head = self.record_at(context)?;
+        if field_text(value, "schema")? == INSTALL_STATE {
+            let prior_owner: bool = self.transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM aura WHERE seq<?1 AND kind IN ('aumlok.enrol','aumlok.bind')) OR EXISTS(SELECT 1 FROM aura WHERE kind='floor.advance')",
+                [i64::try_from(context.sequence).map_err(|_| refusal("floor-context"))?],
+                |row| row.get(0),
+            ).map_err(sql)?;
+            if prior_owner {
+                return Err(refusal("floor-install-history"));
+            }
+            let mut statement = self
+                .transaction
+                .prepare("SELECT seq FROM aura WHERE seq!=?1 AND kind='boot.facts' ORDER BY seq")
+                .map_err(sql)?;
+            let sequences = statement
+                .query_map(
+                    [i64::try_from(context.sequence).map_err(|_| refusal("floor-context"))?],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(sql)?;
+            for sequence in sequences {
+                let sequence = u64::try_from(sequence.map_err(sql)?)
+                    .map_err(|_| refusal("floor-install-history"))?;
+                let record = io::record_at(&self.transaction, sequence)?;
+                if super::gate_payload(&record.body)
+                    .get("schema")
+                    .is_some_and(|value| matches!(value.view(), ValueView::Text(INSTALL_RECORD)))
+                {
+                    return Err(refusal("floor-install-history"));
+                }
+            }
+            let keys = self.services.signer.public_keys()?;
+            let keys = keys
+                .iter()
+                .filter(|key| key.algorithm == AlgorithmId::Ed25519)
+                .collect::<Vec<_>>();
+            if keys.len() != 1 {
+                return Err(refusal("floor-signer"));
+            }
+            return check_install_record(&head, value, Digest32::sha256(&keys[0].bytes));
+        }
         if head.hash != hash(high, "head")?
             || member(super::gate_payload(&head.body), "floor")? != member(value, "floor")?
         {
@@ -147,6 +278,37 @@ impl LedgerTxn<'_> {
 fn authority_for_sequence(transaction: &LedgerTxn<'_>, sequence: u64) -> Result<AuthorityVersion> {
     Ok(io::record_at(&transaction.transaction, sequence)?.authority)
 }
+
+fn check_install_payload(payload: &Value, digest: Digest32) -> Result<()> {
+    exact(payload, &["schema", "origin", "owner", "digest"])?;
+    if field_text(payload, "schema")? != INSTALL_RECORD
+        || field_text(payload, "origin")? != "install"
+        || !matches!(member(payload, "owner")?.view(), ValueView::Null)
+        || hash(payload, "digest")? != digest
+    {
+        return Err(refusal("floor-install-record"));
+    }
+    Ok(())
+}
+
+fn check_install_record(record: &AuthorityRecord, state: &Value, signer: Digest32) -> Result<()> {
+    let context = authority(member(state, "authority")?)?;
+    let floor = member(state, "floor")?;
+    if record.kind != Kind::BootFacts
+        || record.phase != Phase::Fact
+        || record.actor != "supervisor"
+        || record.operation.is_some()
+        || record.authority != context
+        || context.epoch != 0
+        || record.hash != hash(floor, "ledger_hash")?
+        || record.hash != hash(member(state, "high_water")?, "head")?
+        || hash(floor, "signer_key_sha256")? != signer
+    {
+        return Err(refusal("floor-install-record"));
+    }
+    check_install_payload(super::gate_payload(&record.body), hash(floor, "digest")?)
+}
+
 fn member<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
     value.get(key).ok_or(refusal("floor-format"))
 }
@@ -196,7 +358,7 @@ fn exact(value: &Value, keys: &[&str]) -> Result<()> {
 fn authority(value: &Value) -> Result<AuthorityVersion> {
     exact(value, &["epoch", "sequence", "previous_hash"])?;
     let context = AuthorityVersion {
-        epoch: positive(value, "epoch")?,
+        epoch: number(value, "epoch")?,
         sequence: positive(value, "sequence")?,
         previous_hash: match member(value, "previous_hash")?.view() {
             ValueView::Null => None,
@@ -227,12 +389,16 @@ fn state(bytes: &[u8]) -> Result<Value> {
         &value,
         &["schema", "algorithm", "authority", "floor", "high_water"],
     )?;
-    if field_text(&value, "schema")? != "aukora-floor-state-v2"
+    let install = field_text(&value, "schema")? == INSTALL_STATE;
+    if (!install && field_text(&value, "schema")? != "aukora-floor-state-v2")
         || field_text(&value, "algorithm")? != "sha256"
     {
         return Err(refusal("floor-schema"));
     }
     let context = authority(member(&value, "authority")?)?;
+    if (context.epoch == 0) != install {
+        return Err(refusal("floor-context"));
+    }
     let floor = member(&value, "floor")?;
     exact(
         floor,
@@ -250,7 +416,8 @@ fn state(bytes: &[u8]) -> Result<Value> {
     for key in ["record", "signer_key_sha256", "ledger_hash"] {
         hash(floor, key)?;
     }
-    if positive(floor, "signer_epoch")? > context.epoch
+    if number(floor, "signer_epoch")? > context.epoch
+        || (!install && number(floor, "signer_epoch")? == 0)
         || positive(floor, "ledger_seq")? > context.sequence
     {
         return Err(refusal("floor-context"));
@@ -277,12 +444,24 @@ fn state(bytes: &[u8]) -> Result<Value> {
             "spent",
         ],
     )?;
-    if positive(high, "highest_epoch")? != context.epoch
+    if number(high, "highest_epoch")? != context.epoch
         || positive(high, "highest_sequence")? != context.sequence
     {
         return Err(refusal("floor-context"));
     }
     hash(high, "head")?;
+    if install {
+        if positive(floor, "ledger_seq")? != context.sequence
+            || hash(floor, "ledger_hash")? != hash(high, "head")?
+            || hash(floor, "record")? != digest
+            || !history.is_empty()
+            || !array(high, "credentials")?.is_empty()
+            || !array(high, "spent")?.is_empty()
+        {
+            return Err(refusal("floor-install-state"));
+        }
+        return Ok(value);
+    }
     let mut identities = BTreeSet::new();
     let mut current = false;
     for credential in array(high, "credentials")? {
@@ -335,7 +514,8 @@ fn state(bytes: &[u8]) -> Result<Value> {
         let op = OperationId::from_hex(field_text(spent, "operation")?)?;
         let proposal = ProposalId::from_hex(field_text(spent, "proposal")?)?;
         let approval = hash(spent, "authorization_sha256")?;
-        if at.epoch > context.epoch
+        if at.epoch == 0
+            || at.epoch > context.epoch
             || at.sequence > context.sequence
             || !operations.insert(op)
             || !proposals.insert(proposal)
@@ -439,7 +619,7 @@ fn check_successor(
         return Err(refusal("floor-credential-proof"));
     }
     if let Some(old) = old_high {
-        if context.epoch < positive(old, "highest_epoch")?
+        if context.epoch < number(old, "highest_epoch")?
             || context.sequence <= positive(old, "highest_sequence")?
             || hash(high, "head")? == hash(old, "head")?
         {
@@ -455,7 +635,7 @@ fn check_successor(
     let mut history = Vec::new();
     if let Some(current) = current {
         let old = member(current, "floor")?;
-        let old_order = (positive(old, "signer_epoch")?, positive(old, "ledger_seq")?);
+        let old_order = (number(old, "signer_epoch")?, positive(old, "ledger_seq")?);
         let new_order = (
             positive(floor, "signer_epoch")?,
             positive(floor, "ledger_seq")?,
@@ -544,14 +724,22 @@ impl LedgerTxn<'_> {
         let mut statement = self.transaction.prepare(
             "SELECT approval,proposal,operation,epoch,sequence,previous_hash,action,appended,proof,credential FROM authority_consumptions WHERE approval=?1 OR proposal=?2 OR operation=?3",
         ).map_err(sql)?;
-        let mut rows = statement.query(params![
-            approval.to_string(), proposal.to_string(), operation.to_string()
-        ]).map_err(sql)?;
+        let mut rows = statement
+            .query(params![
+                approval.to_string(),
+                proposal.to_string(),
+                operation.to_string()
+            ])
+            .map_err(sql)?;
         let Some(row) = rows.next().map_err(sql)? else {
-            let spent: i64 = self.transaction.query_row(
-                "SELECT count(*) FROM authority_challenges WHERE proposal=?1 AND spent=1",
-                [proposal.to_string()], |row| row.get(0),
-            ).map_err(sql)?;
+            let spent: i64 = self
+                .transaction
+                .query_row(
+                    "SELECT count(*) FROM authority_challenges WHERE proposal=?1 AND spent=1",
+                    [proposal.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql)?;
             if spent != 0 {
                 return Err(refusal("floor-consumption"));
             }
@@ -563,7 +751,9 @@ impl LedgerTxn<'_> {
                 .map_err(|_| refusal("floor-consumption"))?,
             sequence: u64::try_from(row.get::<_, i64>(4).map_err(sql)?)
                 .map_err(|_| refusal("floor-consumption"))?,
-            previous_hash: previous.map(|value| Digest32::from_hex(&value)).transpose()?,
+            previous_hash: previous
+                .map(|value| Digest32::from_hex(&value))
+                .transpose()?,
         };
         let proof_bytes: Vec<u8> = row.get(8).map_err(sql)?;
         let credential: String = row.get(9).map_err(sql)?;
