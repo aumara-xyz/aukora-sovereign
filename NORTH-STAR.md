@@ -46,6 +46,21 @@ the cage.
   - No worker ever writes that pointer.
 - **References are pinned by repository ID and commit**, never by name or folder. This repository is ID 1420432858.
 
+## One system: the phone is AUKORA Light, the desktop is the node (Peter, 2026-10-16)
+
+"The phone system should only be messaging and an AI assistant eventually. If you want to build and do all the
+other stuff, then you need to be on your Sovereign node on your desktop." The two are one system, not two apps.
+- **Phone: AUKORA Light** (aumara-xyz/aukora-light), his installed PWA: messaging, and later Auma as his assistant.
+  Its lane-corner navigation is the phone format.
+- **Desktop: the Sovereign node.** Building, approvals, apps and everything else. Its shell speaks the same design
+  language (the same tokens, icons, corners; no tab bar in corner zones).
+- **One person.** One root, one person-nostr key, on both. Peter's own node is bound to the identity he already
+  has in Light ("bind with my existing words"), never to a fresh root. Test nodes stay throwaway.
+- **They talk.** The phone reaches the node through Light's members-only relay with NIP-17 wraps; the node dials
+  out, so no open ports. Whether the phone may approve node changes with a person-nostr signature, and for which
+  risk levels, is Peter's decision (an authority question under the Golden Boundary).
+- Only data crosses between the repos unless Peter says yes.
+
 ## What Peter watches, in order (only Peter says "done")
 1. **M1, his fresh node.** One link opens the Spatial app, rewritten whole, in its tri-pane. He claims the node with
    his passkey and phrase. The release approval pops up inside the app.
