@@ -2,7 +2,7 @@
 //! Nonce consumption and signed terminal checks share one borrowed transaction.
 
 use super::*;
-use canon::alg::PublicKey;
+use canon::alg::{AlgorithmId, PublicKey};
 use canon::authority::ceremony::{CeremonyFinish, CeremonyKind};
 use canon::authority::{AuthorityRecord, Kind};
 use canon::json::Value;
@@ -224,7 +224,9 @@ fn transition(tx: &Transaction<'_>, row: &CeremonySnapshot, next: &str, now_ms: 
 }
 
 fn record_body(request: &CeremonyFinish<'_>, authority: AuthorityVersion) -> Result<Value> {
-    let binding = request.binding;
+    let binding = aura::storage::owner_binding_value(request.binding)?;
+    let binding: serde_json::Value = serde_json::from_slice(&binding.canonical_bytes())
+        .map_err(|_| refusal("ceremony-data-invalid"))?;
     let assertion: serde_json::Value = serde_json::from_slice(request.assertion_json)
         .map_err(|_| refusal("ceremony-data-invalid"))?;
     let body = serde_json::json!({
@@ -241,19 +243,15 @@ fn record_body(request: &CeremonyFinish<'_>, authority: AuthorityVersion) -> Res
         },
         "owner_id": request.owner_id, "user_handle": hex::encode(request.user_handle),
         "backup_eligible": request.backup_eligible, "assertion": assertion,
-        "binding": {
-            "v": binding.v, "algorithm": binding.algorithm.wire_name(),
-            "credential": hex::encode(binding.credential_id.as_bytes()),
-            "key_version": binding.public_key.v,
-            "key_algorithm": binding.public_key.algorithm.wire_name(),
-            "public_key": hex::encode(&binding.public_key.bytes),
-            "epoch": binding.epoch, "rp": binding.relying_party,
-            "owner_origin": binding.owner_origin, "top_origin": binding.top_origin,
-            "counter": binding.sign_counter,
-        },
+        "binding": binding,
     });
     let bytes = serde_json::to_vec(&body).map_err(|_| refusal("ceremony-data-invalid"))?;
-    canon::json::parse_strict(&bytes)
+    aura::record::AuthorityBodyV1 {
+        algorithm: AlgorithmId::Sha256,
+        authority,
+        payload: canon::json::parse_strict(&bytes)?,
+    }
+    .canonical_value()
 }
 
 struct Rollback<'a> {
