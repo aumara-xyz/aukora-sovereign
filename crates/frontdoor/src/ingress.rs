@@ -49,6 +49,7 @@ pub struct AdmittedRequest {
     pub(crate) body: Value,
     role: HostRole,
     cookie: Option<zeroize::Zeroizing<Vec<u8>>>,
+    client: Option<std::net::IpAddr>,
 }
 
 impl std::fmt::Debug for AdmittedRequest {
@@ -82,6 +83,10 @@ impl AdmittedRequest {
     /// The selected host's bearer; authentication still requires the durable store.
     pub fn cookie(&self) -> Option<&[u8]> {
         self.cookie.as_ref().map(|cookie| cookie.as_slice())
+    }
+    /// Rate-limit identity from the configured proxy's client address, or its peer.
+    pub fn client(&self) -> Option<std::net::IpAddr> {
+        self.client
     }
 }
 
@@ -117,6 +122,7 @@ pub fn admit(input: RequestInput) -> Result<AdmittedRequest> {
         body,
         role: input.transport.role(),
         cookie,
+        client: None,
     })
 }
 
@@ -139,9 +145,13 @@ fn request_metadata(input: &RequestInput) -> Result<Option<zeroize::Zeroizing<Ve
     {
         return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
     }
+    let same_origin_required = input.method == Method::Post
+        || (role == HostRole::Shell
+            && input.method == Method::Get
+            && input.path == crate::fd4::DATA_PATH);
     if input.fetch_sites.len() > 1
         || input.fetch_sites.first().is_some_and(|value| {
-            if input.method == Method::Post {
+            if same_origin_required {
                 value != "same-origin"
             } else {
                 !(matches!(value.as_str(), "same-origin" | "same-site" | "none")
@@ -150,7 +160,7 @@ fn request_metadata(input: &RequestInput) -> Result<Option<zeroize::Zeroizing<Ve
                         && value == "cross-site"))
             }
         })
-        || (input.method == Method::Post && input.fetch_sites.len() != 1)
+        || (same_origin_required && input.fetch_sites.len() != 1)
     {
         return Err(codes::FRONTDOOR_FETCH_SITE_REFUSED);
     }
@@ -205,15 +215,26 @@ fn json_content_type(text: &str) -> bool {
 }
 
 fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
-    if headers.len() > 1 {
+    let bearer_headers = headers.iter().filter(|header| {
+        header.split(';').any(|part| {
+            let part = part.trim();
+            let name = part.split_once('=').map_or(part, |(name, _)| name);
+            !is_handoff_cookie(name)
+        })
+    });
+    if bearer_headers.count() > 1 {
         return Err(codes::FRONTDOOR_SESSION_REQUIRED);
     }
     let mut selected = None;
     let mut names = std::collections::BTreeSet::new();
     for header in headers {
         for part in header.split(';') {
+            let part = part.trim();
+            let name = part.split_once('=').map_or(part, |(name, _)| name);
+            if is_handoff_cookie(name) {
+                continue;
+            }
             let (name, value) = part
-                .trim()
                 .split_once('=')
                 .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
             if name.is_empty()
@@ -241,6 +262,15 @@ fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zero
         }
     }
     Ok(selected)
+}
+
+fn is_handoff_cookie(name: &str) -> bool {
+    matches!(
+        name,
+        crate::fd4::HANDOFF_PENDING_COOKIE
+            | crate::fd4::HANDOFF_CORRELATION_COOKIE
+            | crate::fd4::HANDOFF_OWNER_COOKIE
+    )
 }
 
 /// Owner APIs stay on the owner host; shell APIs are documents and the data bridge only.
@@ -412,6 +442,21 @@ impl HttpIngress {
             .map_or("/", |path| path.as_str())
             .to_owned();
         validate_path(&path)?;
+        let client = if transport.role() == HostRole::Shell
+            && method == Method::Post
+            && path == crate::fd4::DATA_PATH
+        {
+            let forwarded = header_values(&parts.headers, "x-forwarded-for")?;
+            Some(match forwarded.as_slice() {
+                [] => peer,
+                [address] => address
+                    .parse::<std::net::IpAddr>()
+                    .map_err(|_| codes::FRONTDOOR_BODY_INVALID)?,
+                _ => return Err(codes::FRONTDOOR_BODY_INVALID),
+            })
+        } else {
+            None
+        };
         let owner_navigation = if transport.role() == HostRole::Owner
             && path == "/"
             && matches!(method, Method::Get | Method::Head)
@@ -498,7 +543,8 @@ impl HttpIngress {
             return Err(codes::FRONTDOOR_BODY_INVALID);
         }
         input.body = bytes;
-        let request = admit(input)?;
+        let mut request = admit(input)?;
+        request.client = client;
         Ok((request, owner_navigation))
     }
 }
@@ -663,9 +709,19 @@ impl HttpIngress {
             }
             admission.request.path = path.to_owned();
         }
-        let pending = handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_PENDING_COOKIE)?;
-        let correlation = handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_CORRELATION_COOKIE)?;
-        let owner_pending = handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_OWNER_COOKIE)?;
+        let strict_handoff = handoff_path.is_some()
+            || admission.owner_navigation.is_some()
+            || (admission.request.role == HostRole::Owner
+                && admission.request.path == "/api/signin/finish");
+        let (pending, correlation, owner_pending) = if strict_handoff {
+            (
+                handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_PENDING_COOKIE)?,
+                handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_CORRELATION_COOKIE)?,
+                handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_OWNER_COOKIE)?,
+            )
+        } else {
+            (None, None, None)
+        };
         if pending.is_some() && admission.request.role != HostRole::Shell {
             return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
         }

@@ -247,12 +247,23 @@ pub const HANDOFF_CORRELATION_COOKIE: &str = "__Secure-aukora-handoff";
 pub const HANDOFF_OWNER_COOKIE: &str = "__Host-aukora-owner-handoff";
 pub const HANDOFF_LIFETIME_MS: u64 = 300_000;
 const MAX_HANDOFFS: usize = 256;
+const HANDOFF_NAVIGATION_LIFETIME_MS: u64 = 2 * HANDOFF_LIFETIME_MS;
+const HANDOFF_COOKIE_LIFETIME_MS: u64 = 3 * HANDOFF_LIFETIME_MS;
+const PREPARE_BURST: u64 = 8;
+const PREPARE_REFILL_MS: u64 = 5_000;
+const MAX_PREPARE_CLIENTS: usize = 1024;
+
+struct PrepareBucket {
+    tokens: u64,
+    refilled_at_ms: u64,
+}
 
 struct PendingHandoff {
     pending: canon::digest::Digest32,
     reference: canon::digest::Digest32,
     owner_pending: Option<canon::digest::Digest32>,
     shell: crate::tls::Origin,
+    prepared_order: u64,
     expires_at_ms: u64,
     grant: Option<crate::ingress::ShellSessionGrant>,
 }
@@ -268,6 +279,8 @@ pub struct HandoffPrepared {
 #[derive(Default)]
 pub struct ShellHandoffs {
     pending: std::collections::BTreeMap<canon::digest::Digest32, PendingHandoff>,
+    prepare_clients: std::collections::BTreeMap<std::net::IpAddr, PrepareBucket>,
+    next_order: u64,
 }
 
 impl ShellHandoffs {
@@ -287,25 +300,44 @@ impl ShellHandoffs {
         {
             return Err(canon::codes::FRONTDOOR_COOKIE_HOST_REFUSED);
         }
-        let expires_at_ms = now_ms
-            .checked_add(HANDOFF_LIFETIME_MS)
-            .filter(|time| *time <= canon::json::MAX_SAFE_INTEGER as u64)
-            .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+        let expires_at_ms = handoff_deadline(now_ms, HANDOFF_LIFETIME_MS)?;
+        let prepared_order = self
+            .next_order
+            .checked_add(1)
+            .ok_or(canon::codes::FRONTDOOR_OVERLOADED)?;
+        self.limit_prepare(
+            request.client().ok_or(canon::codes::FRONTDOOR_OVERLOADED)?,
+            now_ms,
+        )?;
         self.pending.retain(|_, handoff| {
-            handoff.expires_at_ms > now_ms && Some(handoff.pending) != previous
+            handoff.expires_at_ms > now_ms
+                && (Some(handoff.pending) != previous || handoff.grant.is_some())
         });
         if self.pending.len() >= MAX_HANDOFFS {
-            return Err(canon::codes::FRONTDOOR_OVERLOADED);
+            let oldest = self
+                .pending
+                .iter()
+                .filter(|(_, handoff)| handoff.grant.is_none())
+                .min_by_key(|(_, handoff)| handoff.prepared_order)
+                .map(|(key, _)| *key)
+                .ok_or(canon::codes::FRONTDOOR_OVERLOADED)?;
+            self.pending.remove(&oldest);
         }
         let pending = crate::session::SessionBearer::generate()?;
         let correlation = crate::session::SessionBearer::generate()?;
         let reference = crate::session::SessionBearer::generate()?.digest();
         let cookies = [
-            handoff_cookie_header(HANDOFF_PENDING_COOKIE, &pending, None)?,
+            handoff_cookie_header(
+                HANDOFF_PENDING_COOKIE,
+                &pending,
+                None,
+                HANDOFF_COOKIE_LIFETIME_MS,
+            )?,
             handoff_cookie_header(
                 HANDOFF_CORRELATION_COOKIE,
                 &correlation,
                 Some(boundary.shell.host()),
+                HANDOFF_COOKIE_LIFETIME_MS,
             )?,
         ];
         if self.pending.contains_key(&correlation.digest())
@@ -323,10 +355,12 @@ impl ShellHandoffs {
                 reference,
                 owner_pending: None,
                 shell: boundary.shell.clone(),
+                prepared_order,
                 expires_at_ms,
                 grant: None,
             },
         );
+        self.next_order = prepared_order;
         Ok(HandoffPrepared { cookies, reference })
     }
 
@@ -341,6 +375,7 @@ impl ShellHandoffs {
     ) -> Result<String> {
         let context = navigation.context();
         context.validate()?;
+        let expires_at_ms = handoff_deadline(now_ms, HANDOFF_NAVIGATION_LIFETIME_MS)?;
         let handoff = self
             .pending
             .get_mut(&correlation)
@@ -354,9 +389,33 @@ impl ShellHandoffs {
             })
             .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
         let owner = crate::session::SessionBearer::generate()?;
-        let cookie = handoff_cookie_header(HANDOFF_OWNER_COOKIE, &owner, None)?;
+        let cookie = handoff_cookie_header(
+            HANDOFF_OWNER_COOKIE,
+            &owner,
+            None,
+            HANDOFF_NAVIGATION_LIFETIME_MS,
+        )?;
         handoff.owner_pending = Some(owner.digest());
+        handoff.expires_at_ms = expires_at_ms;
         Ok(cookie)
+    }
+
+    /// Check the rendezvous before consuming a sign-in assertion; the caller retains its lock.
+    pub fn validate_authorization(
+        &self,
+        correlation: canon::digest::Digest32,
+        owner_pending: canon::digest::Digest32,
+        now_ms: u64,
+    ) -> Result<()> {
+        self.pending
+            .get(&correlation)
+            .filter(|handoff| {
+                handoff.expires_at_ms > now_ms
+                    && handoff.owner_pending == Some(owner_pending)
+                    && handoff.grant.is_none()
+            })
+            .map(|_| ())
+            .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)
     }
 
     /// Call only after successful passkey sign-in and durable owner-session insertion.
@@ -367,14 +426,10 @@ impl ShellHandoffs {
         grant: crate::ingress::ShellSessionGrant,
         now_ms: u64,
     ) -> Result<()> {
+        self.validate_authorization(correlation, owner_pending, now_ms)?;
         let handoff = self
             .pending
             .get_mut(&correlation)
-            .filter(|handoff| {
-                handoff.expires_at_ms > now_ms
-                    && handoff.owner_pending == Some(owner_pending)
-                    && handoff.grant.is_none()
-            })
             .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
         handoff.grant = Some(grant);
         Ok(())
@@ -420,6 +475,45 @@ impl ShellHandoffs {
             ),
         ])
     }
+
+    fn limit_prepare(&mut self, client: std::net::IpAddr, now_ms: u64) -> Result<()> {
+        self.prepare_clients.retain(|_, bucket| {
+            now_ms.saturating_sub(bucket.refilled_at_ms) < PREPARE_BURST * PREPARE_REFILL_MS
+        });
+        if !self.prepare_clients.contains_key(&client)
+            && self.prepare_clients.len() >= MAX_PREPARE_CLIENTS
+        {
+            if let Some(oldest) = self
+                .prepare_clients
+                .iter()
+                .min_by_key(|(_, bucket)| bucket.refilled_at_ms)
+                .map(|(client, _)| *client)
+            {
+                self.prepare_clients.remove(&oldest);
+            }
+        }
+        let bucket = self.prepare_clients.entry(client).or_insert(PrepareBucket {
+            tokens: PREPARE_BURST,
+            refilled_at_ms: now_ms,
+        });
+        let refill = now_ms.saturating_sub(bucket.refilled_at_ms) / PREPARE_REFILL_MS;
+        if refill > 0 {
+            bucket.tokens = (bucket.tokens + refill).min(PREPARE_BURST);
+            bucket.refilled_at_ms += refill * PREPARE_REFILL_MS;
+        }
+        if bucket.tokens == 0 {
+            return Err(canon::codes::FRONTDOOR_OVERLOADED);
+        }
+        bucket.tokens -= 1;
+        Ok(())
+    }
+}
+
+fn handoff_deadline(now_ms: u64, lifetime_ms: u64) -> Result<u64> {
+    now_ms
+        .checked_add(lifetime_ms)
+        .filter(|time| *time <= canon::json::MAX_SAFE_INTEGER as u64)
+        .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)
 }
 
 fn handoff_request(request: &crate::ingress::AdmittedRequest, path: &str) -> Result<()> {
@@ -439,6 +533,7 @@ fn handoff_cookie_header(
     name: &str,
     bearer: &crate::session::SessionBearer,
     domain: Option<&str>,
+    lifetime_ms: u64,
 ) -> Result<String> {
     let token = std::str::from_utf8(bearer.as_bytes())
         .map_err(|_| canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
@@ -448,6 +543,6 @@ fn handoff_cookie_header(
     Ok(format!(
         "{name}={token}; {}{domain}; Max-Age={}",
         crate::session::COOKIE_ATTRIBUTES,
-        HANDOFF_LIFETIME_MS / 1000,
+        lifetime_ms / 1000,
     ))
 }

@@ -43,6 +43,10 @@ if (root) {
       notice.hidden = false;
       notice.dataset.source = 'connection';
     };
+    const showSessionError = (error: unknown) => {
+      if (error instanceof Error && error.message === 'frontdoor:session-required') return;
+      show(error);
+    };
     const exchange = async (step: 'prepare' | 'complete') => {
       const reply = objectData(await handoff.request(`/api/data/handoff/${step}`, {}, lifetime.signal));
       if (step === 'prepare') {
@@ -86,7 +90,7 @@ if (root) {
             approvals?.refresh();
             if (connecting) await connecting.catch(() => {});
             await activate();
-          }).catch(show);
+          }).catch(showSessionError);
         } else if (notice.kind === 'refusal') show(new Error(notice.code));
       },
     });
@@ -106,9 +110,7 @@ if (root) {
       lifetime.abort(); handoff.dispose(); transport?.dispose();
       void shell.dispose();
     }, { once: true });
-    if (!claim) void activate().catch(error => {
-      if (!(error instanceof Error) || error.message !== 'frontdoor:session-required') show(error);
-    });
+    if (!claim) void activate().catch(showSessionError);
     if (claim) void shell.openOwner('/claim', claim).catch(show);
   }
   catch (error) {

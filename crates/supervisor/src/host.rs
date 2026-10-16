@@ -299,11 +299,12 @@ impl Host {
         }
         if request.role() == HostRole::Owner && request.path() == "/api/signin/finish" {
             let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;
-            return self.signin(
-                request,
-                route,
-                admitted.correlation.zip(admitted.owner_pending),
-            );
+            let handoff = match (admitted.correlation, admitted.owner_pending) {
+                (Some(correlation), Some(owner_pending)) => Some((correlation, owner_pending)),
+                (None, None) => None,
+                _ => return Err(codes::FRONTDOOR_SESSION_REQUIRED),
+            };
+            return self.signin(request, route, handoff);
         }
         if let Some(reference) = admitted.navigation {
             let mut response = self.dispatch(&admitted.admission)?;
@@ -684,10 +685,17 @@ impl Host {
             return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
         }
         let bearer = SessionBearer::generate()?;
+        let mut sessions = self.sessions()?;
+        let mut handoffs = if let Some((correlation, owner_pending)) = handoff {
+            let handoffs = self.handoffs.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+            handoffs.validate_authorization(correlation, owner_pending, now)?;
+            Some(handoffs)
+        } else {
+            None
+        };
         let result = identity.signin_finish(request.body(), now)?;
         let (epoch, binding, subject) =
             result.transition.ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
-        let mut sessions = self.sessions()?;
         sessions.synchronize_binding(epoch, binding, subject)?;
         let scope = if binding == BindingState::Bound {
             SessionScope::OwnerFrame
@@ -723,9 +731,9 @@ impl Host {
                         frontdoor::ingress::ShellSessionGrant::from_owner(&session, &boundary)
                     },
                 )?;
-                self.handoffs
-                    .lock()
-                    .map_err(|_| codes::SUPERVISOR_STATE)?
+                handoffs
+                    .as_mut()
+                    .ok_or(codes::SUPERVISOR_STATE)?
                     .authorize(correlation, owner_pending, grant, now)?;
             }
         }
