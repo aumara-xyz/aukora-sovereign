@@ -18,31 +18,11 @@ export type PortalPhase = "FACE" | "SEENYOU" | "HANDSHAKE" | "BLOOM" | "REFUSED"
 export type ExchangeMethod = "optical" | "optical-audio" | "optical-audio-motion";
 export type RefusalCode = `copresence:${string}`;
 
-export type ClaimedPosition = {
-  readonly verdict: "CONSISTENT_CLAIMED";
-  readonly positionSource: "SELF_REPORTED_UNVERIFIABLE";
-};
-
 export type ReceiptVerdict =
-  | { readonly accepted: true; readonly code: null; readonly position?: ClaimedPosition }
-  | { readonly accepted: false; readonly code: RefusalCode; readonly verdict: "SUSPICIOUS" | "UNDETERMINED" };
-
-export type PersonNostrPublicKey = {
-  readonly role: "person-nostr";
-  readonly encoding: "x-only";
-  readonly bytes: Uint8Array;
-};
-
-export type RelationshipBloomDigest = {
-  readonly domain: "pentora.bloom.v1";
-  readonly bytes: Uint8Array;
-};
-
-export type RelationshipBloomDisplayDigest = {
-  readonly domain: "pentora.display.v1";
-  readonly source: "person-nostr-pairing";
-  readonly bytes: Uint8Array;
-};
+  | { readonly verdict: "CONSISTENT_CLAIMED"; readonly positionSource: "SELF_REPORTED_UNVERIFIABLE" }
+  | { readonly verdict: "SUSPICIOUS"; readonly code: RefusalCode }
+  // A verified receipt may carry no position assessment.
+  | { readonly verdict: "UNDETERMINED"; readonly code: RefusalCode | null };
 
 export type PortalObservation = {
   readonly phase: PortalPhase;
@@ -50,15 +30,15 @@ export type PortalObservation = {
   readonly method: ExchangeMethod;
   readonly frameBytes: Uint8Array | null;
   // Pairing root from both person keys; absent until the host resolves both bindings.
-  readonly bloomDigest: RelationshipBloomDigest | null;
+  readonly bloomDigest: Uint8Array | null;
   readonly personNostrKeys: PersonNostrKeys | null;
   readonly verdict: ReceiptVerdict | null;
   readonly receiptBytes: Uint8Array | null;
 };
 
 export type PersonNostrKeys = {
-  readonly local: PersonNostrPublicKey | null;
-  readonly peer: PersonNostrPublicKey | null;
+  readonly local: Uint8Array | null;
+  readonly peer: Uint8Array | null;
 };
 
 export type PersonNostrKeysForReceipt = (receiptBytes: Uint8Array) => PersonNostrKeys | null;
@@ -91,7 +71,7 @@ export interface CopresenceEngine {
 export interface OpticalSurface {
   showFrame(bytes: Uint8Array): void;
   scan(consume: (bytes: Uint8Array) => void, signal: AbortSignal): Promise<() => void>;
-  showBloom(keys: PersonNostrKeys | null, signal?: AbortSignal): Promise<RelationshipBloomDisplayDigest | null>;
+  showBloom(keys: PersonNostrKeys | null, signal?: AbortSignal): Promise<Uint8Array | null>;
   clear(): void;
 }
 

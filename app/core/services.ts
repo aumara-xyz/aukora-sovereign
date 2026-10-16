@@ -82,7 +82,7 @@ export function createServices(
         }
         const face = Object.hasOwn(methods, method) ? methods[method] : undefined;
         if (!face) throw new Error('app:capability-denied');
-        // The frozen face-read route dispatches this legacy name to the broker's model report.
+        // Alias broker/model.report to the frozen models face-read route: body/settings.models.
         if (service === 'broker' && method === 'model.report') {
           return transport.read(face, 'body', 'settings.models', params, context.signal);
         }

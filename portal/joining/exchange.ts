@@ -4,6 +4,7 @@ import {
 } from "../contracts.js";
 import { APPROVED_TEXT } from "../page.js";
 import { equal } from "../bytes.js";
+import { receiptCode, receiptVerdict } from "../verdict.js";
 import type { JoiningConfiguration, PreparedJoiningExchange } from "./services.js";
 import { live, methodForLayers, refuse } from "./validate.js";
 
@@ -134,11 +135,11 @@ export function mountJoiningExchange(host: HTMLElement, preparedExchange: Prepar
       refuse("joining-observation");
     }
     if (observation.phase === "REFUSED") {
-      const verdict = observation.verdict;
-      if (verdict?.accepted !== false || !/^copresence:[A-Za-z0-9_-]+$/.test(verdict.code)) {
+      const code = receiptCode(receiptVerdict(observation.verdict));
+      if (code === null) {
         refuse("joining-optical-refused");
       }
-      throw new Error(verdict.code);
+      throw new Error(code);
     }
     if (observation.frameBytes !== null) {
       await services!.optical.showFrame(bytes(observation.frameBytes));
@@ -149,7 +150,7 @@ export function mountJoiningExchange(host: HTMLElement, preparedExchange: Prepar
       if (observation.receiptBytes !== null) refuse("joining-observation");
       return;
     }
-    if (observation.verdict?.accepted !== true || observation.verdict.code !== null) {
+    if (receiptCode(receiptVerdict(observation.verdict)) !== null) {
       refuse("joining-optical-verdict");
     }
     const receipt = bytes(observation.receiptBytes);

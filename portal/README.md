@@ -9,11 +9,14 @@ Receipt input stays opaque bytes so the co-presence reader can retain its decima
 coordinates. Legacy `copresence.v0` verification keeps its signed `t_B` core and
 inclusive ten-second window.
 
-`ReceiptVerdict` reports `accepted` and `code` separately from its optional
-`position` assessment. Successful non-location receipts have `accepted: true`
-and `code: null`, without a position label. `CONSISTENT_CLAIMED` and
-`SELF_REPORTED_UNVERIFIABLE` apply only to the separate position assessment.
-The context exchange carries no position and therefore emits no such assessment.
+`ReceiptVerdict` uses the original `verdict`, `code` and `positionSource` fields.
+The `UNDETERMINED` arm also permits `code: null` for a verified receipt without a
+position assessment, matching the pinned genuine and intent receipt outcomes.
+`SUSPICIOUS` and `UNDETERMINED` with a non-null refusal code are refusals.
+`CONSISTENT_CLAIMED` retains `positionSource: "SELF_REPORTED_UNVERIFIABLE"`.
+The context exchange reports `UNDETERMINED` with `code: null`; it makes no position
+claim. `verdict.ts` validates and copies these shapes before receipt publication;
+unknown fields or malformed codes refuse. This changes no receipt wire format.
 
 New exchanges use a separate `copresence.v1` domain and require their own versioned
 schema and pinned vectors before being enabled. Both timestamps, the selected
@@ -37,21 +40,21 @@ the browser never parses decimal legacy receipts with the canonical frame codec.
 Native camera decoding uses `BarcodeDetector`; hosts without it supply `decode`.
 The optional host callback `personNostrKeys(receiptBytes)` resolves the completed
 exchange to `{ local, peer }`: the two people's row-113 person-nostr x-only public
-keys, each `{ role: "person-nostr", encoding: "x-only", bytes }` with 32 raw bytes.
-The host supplies keys from its verified person bindings; a receipt
+keys, each 32 raw bytes. The host supplies keys from its verified person bindings; a receipt
 alone supplies neither. The callback may return null, or null for either key. In
 that case the relationship canvas stays empty and receipt export still works.
-The role and encoding are checked before derivation. Bare byte arrays, node ids,
-device-role keys and receipt digests refuse as person-key inputs.
+The adapter validates the byte lengths, copies and sorts the two keys; key
+provenance belongs to the host. Node ids, device keys and receipt hashes are never
+substituted for person keys.
 
 The engine resolves and copies the two person keys after verifying the receipt.
-Its typed `bloomDigest` observation is the `pentora.bloom.v1` pairing root, never the
+Its `bloomDigest` observation is the `pentora.bloom.v1` pairing root, never the
 receipt core hash; `personNostrKeys` carries the same copied inputs to the page.
 Both remain null when either key is unknown. The digest stays null if its adapter
 is unavailable; display resolution never delays receipt publication. These are
 local session values; no receipt or optical frame gains a field.
-`showBloom` returns a separately typed `pentora.display.v1` digest marked as a
-person-nostr pairing. Both digest types carry bytes under their own domain label.
+`bloomDigest` and `showBloom` retain their byte-array interfaces. `showBloom`
+returns the separate `pentora.display.v1` display digest.
 
 The host supplies `pentora` through `bindPairingPentora` from `bloom/index.ts`.
 That adapter binds Rust's `pentora_pairing_digest` and `pentora_pairing_expand`

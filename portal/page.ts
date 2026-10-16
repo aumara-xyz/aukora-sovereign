@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { CONTEXT_CORE_DOMAIN, PORTAL_LABELS, type ExchangeMethod, type PortalExchange, type PortalPage, type PortalServices, type RelationshipBloomDisplayDigest } from "./contracts.js";
+import { CONTEXT_CORE_DOMAIN, PORTAL_LABELS, type ExchangeMethod, type PortalExchange, type PortalPage, type PortalServices, type ReceiptVerdict } from "./contracts.js";
 import { checkAbort, hex, utf8 } from "./bytes.js";
+import { receiptCode, receiptVerdict } from "./verdict.js";
 
 // The pinned fixture text has exactly one trailing LF removed.
 export const APPROVED_TEXT = "buzz-grant:abababababababababababababababababababababababababababababababab:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
@@ -85,12 +86,13 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
               if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
             }
             if (observation.phase === "BLOOM" && observation.receiptBytes) {
-              if (observation.verdict?.accepted !== true || observation.verdict.code !== null) {
+              let verdict: ReceiptVerdict | null = null;
+              try { verdict = receiptVerdict(observation.verdict); } catch { /* Refused below. */ }
+              if (verdict === null || receiptCode(verdict) !== null) {
                 phase.value = "copresence:receipt-verdict";
                 void finish(session, "refused"); active = null; release(session); services.optical.clear(); resetControls(); return;
               }
-              claimed.hidden = observation.verdict.position?.verdict !== "CONSISTENT_CLAIMED"
-                || observation.verdict.position.positionSource !== "SELF_REPORTED_UNVERIFIABLE";
+              claimed.hidden = verdict.verdict !== "CONSISTENT_CLAIMED";
               if (receiptUrl) {
                 if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
                 return;
@@ -112,12 +114,12 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                     if (active === session) { active = null; release(session); resetControls(); }
                   }, 10000);
                 }
-                let displayDigest: RelationshipBloomDisplayDigest | null = null;
+                let displayDigest: Uint8Array | null = null;
                 let displayUnavailable = false;
                 try { displayDigest = await services.optical.showBloom(observation.personNostrKeys, session.controller.signal); }
                 catch { displayUnavailable = true; }
                 if (active !== session || disposed) return;
-                digest.textContent = displayDigest ? `${PORTAL_LABELS.bloom}: ${hex(displayDigest.bytes)}`
+                digest.textContent = displayDigest ? `${PORTAL_LABELS.bloom}: ${hex(displayDigest)}`
                   : displayUnavailable ? `${PORTAL_LABELS.bloom}: unavailable.`
                   : `${PORTAL_LABELS.bloom}: nothing shown; both person keys are required.`;
               }).catch(error => {
@@ -126,7 +128,8 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                 active = null; release(session); services.optical.clear(); download.hidden = true; resetControls();
               }).finally(() => { session.publishing = false; });
             } else if (observation.phase === "REFUSED") {
-              phase.value = observation.verdict?.accepted === false ? observation.verdict.code : "copresence:refused";
+              try { phase.value = receiptCode(receiptVerdict(observation.verdict)) ?? "copresence:receipt-verdict"; }
+              catch { phase.value = "copresence:receipt-verdict"; }
               void finish(session, "refused"); active = null; release(session); services.optical.clear(); resetControls();
             }
           });
