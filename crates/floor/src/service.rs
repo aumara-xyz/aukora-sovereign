@@ -68,7 +68,8 @@ impl FloorService {
     /// reject any spent proposal or authorization, then stage floor and high-water
     /// persistence with the signed floor.advance record. No filesystem effect is
     /// authorized by the unsigned `ReleaseOrder`. Publication follows append; the
-    /// caller remains responsible for committing Aura.
+    /// caller must commit Aura and reconcile through a fresh transaction before
+    /// snapshots are available. The recovery stage remains until then.
     pub fn advance(
         &mut self,
         transaction: &mut aura::LedgerTxn<'_>,
@@ -234,7 +235,6 @@ impl FloorService {
             let appended = transaction.append(proof, record)?;
             check_receipt(&appended, &stage.state)?;
             self.publish_state(current.as_ref(), &next_bytes)?;
-            self.store.remove(PENDING_FILE)?;
             Ok(appended)
         })();
         if outcome.is_err() {
