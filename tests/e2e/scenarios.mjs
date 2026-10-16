@@ -175,7 +175,7 @@ async function coreLines(c, prefix, label) {
   c.same(`${prefix}-target-exact`, await c.digest(`${prefix}-actual-target`, 'Enter the independently measured live target bytes digest.'), approved);
   c.same(`${prefix}-applied-once`, await c.integer(`${prefix}-effect-count`, 'Enter this operation observed effect count.'), 1);
   c.same(`${prefix}-terminal-once`, await c.integer(`${prefix}-terminal-count`, 'Enter this operation durable terminal row count.'), 1);
-  await c.digest(`${prefix}-retained-head`, 'Enter the independently retained covering Aura head hash.');
+  return await c.digest(`${prefix}-retained-head`, 'Enter the independently retained covering Aura head hash.');
 }
 
 export async function m7(c) {
@@ -185,20 +185,21 @@ export async function m7(c) {
   await c.witness('m7-invite-provision', `Issue a valid 48-hour invite through the owner-approved path. On the deployment page consume it to allocate one fresh independent VM through the guarded provisioner at ${c.peerShell.origin}. Observe the allocation, provenance and conserved allowance; a pre-existing copied node does not qualify.`);
   c.same('m7-peer-shell', (await c.http(c.peerShell, '/')).status, 200);
   await c.witness('m7-copresence-joining', `The new owner completes the joining co-presence ceremony with their own two devices, then phrase and real passkey at ${c.peerShell.origin}. Inspect the signed receipt, fixed method, intent acknowledgement, nonce and both timestamps; a remote pairing is never labelled met in person.`);
-  await c.witness('m7-peer-installed-release', `Inspect node B actual serving process, loaded executable and served asset manifest. Observe that each belongs to the owner-approved installed commit ${c.flags.release}; its checkout or installation record alone is insufficient.`);
+  await c.witness('m7-peer-installed-release', 'Inspect node B actual serving process, loaded executable and served asset manifest. Independently measure their installed commit and confirm owner approval; its checkout or installation record alone is insufficient.');
   c.same('m7-peer-release-matches', await c.text('m7-peer-running-release', 'Enter the full commit observed in node B loaded executable and served assets.'), c.flags.release);
   const first = await nodeIdentity(c, 'm7-a');
   const second = await nodeIdentity(c, 'm7-b');
   for (const field of ['node', 'key', 'subject', 'vm']) c.different(`m7-independent-${field}`, first[field], second[field]);
   await c.witness('m7-no-copied-state', 'Independently inspect provisioning: no disk, browser session, key file, binding, grant, proposal, floor or Aura state was copied between these nodes. Each has its own instance and identity.');
-  await coreLines(c, 'm7-a', 'A');
-  await coreLines(c, 'm7-b', 'B');
+  const coveringHeads = new Map();
+  coveringHeads.set('a', await coreLines(c, 'm7-a', 'A'));
+  coveringHeads.set('b', await coreLines(c, 'm7-b', 'B'));
   const exports = [];
   for (const label of ['a', 'b']) {
     const bundle = await relativeFile(c, `m7-${label}-bundle`, `Enter node ${label.toUpperCase()} existing cold bundle relative path.`);
     const key = await relativeFile(c, `m7-${label}-key-file`, `Enter node ${label.toUpperCase()} independently retained public signing-key file relative path.`);
     const checkpoint = await relativeFile(c, `m7-${label}-checkpoint`, `Enter node ${label.toUpperCase()} independently retained covering checkpoint relative path.`);
-    await c.verifier(bundle, key, checkpoint);
+    await c.verifier(bundle, key, checkpoint, 'VERIFIED', coveringHeads.get(label));
     exports.push({ bundle, key, checkpoint });
   }
   for (const [own, other] of [[0, 1], [1, 0]]) {

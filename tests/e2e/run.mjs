@@ -189,7 +189,7 @@ class Context {
     this.same(`${id}-code`, value.code, expected);
   }
 
-  async verifier(bundle, key, checkpoint, expected = 'VERIFIED') {
+  async verifier(bundle, key, checkpoint, expected = 'VERIFIED', expectedHead) {
     const program = await realpath(relativeFile(this.flags.verifier));
     this.require('verifier-not-build-tree', !relative(repoRoot, program).split(sep).includes('target'));
     const metadata = await lstat(program);
@@ -208,9 +208,25 @@ class Context {
     }
     const paths = [bundle, key, checkpoint].map(relativeFile);
     for (const path of paths) this.require('verifier-input-regular', (await lstat(path)).isFile());
+    let checkpointDigest;
+    if (expectedHead !== undefined) {
+      this.require('verifier-expected-head', typeof expectedHead === 'string' && DIGEST.test(expectedHead));
+      this.require('verifier-checkpoint-size', (await lstat(paths[2])).size <= 8_388_608);
+      const bytes = await readFile(paths[2]);
+      this.require('verifier-checkpoint-size', bytes.length <= 8_388_608);
+      const retained = strictJSON(bytes);
+      this.same('verifier-checkpoint-head', retained?.hash, expectedHead);
+      checkpointDigest = sha256(bytes);
+    }
     this.same('verifier-before-exec', sha256(await readFile(program)), actualDigest);
     const result = await command(program, ['--bundle', paths[0], '--key', paths[1], '--checkpoint', paths[2]]);
     this.same('verifier-after-exec', sha256(await readFile(program)), actualDigest);
+    if (checkpointDigest !== undefined) {
+      this.require('verifier-checkpoint-size', (await lstat(paths[2])).size <= 8_388_608);
+      const bytes = await readFile(paths[2]);
+      this.require('verifier-checkpoint-size', bytes.length <= 8_388_608);
+      this.same('verifier-checkpoint-unchanged', sha256(bytes), checkpointDigest);
+    }
     let report;
     try { report = strictJSON(result.stdout); } catch { fail('verifier-output'); }
     this.same('verifier-verdict', report.verdict, expected);
@@ -299,7 +315,7 @@ try {
   context.appLock = strictJSON(await readFile(resolve(repoRoot, 'app/APP-LOCK.json')));
   process.stdout.write(`${mode.toUpperCase()}: installed-node guided acceptance; no approval is automated.\n`);
   const browserState = mode === 'm1' ? 'fresh unclaimed bootstrap browser' : 'signed-in browser';
-  await context.witness('installed-release', `Inspect the actual serving process, loaded executable, deployment approval, asset manifest and ${browserState} on ${context.shell.origin}. Confirm all refer to approved commit ${flags.release}; do not infer it from this checkout. M1 performs the owner release ceremony later. Stop if the process is not serving or the release differs.`);
+  await context.witness('installed-release', `Inspect the actual serving process, loaded executable, deployment approval, asset manifest and ${browserState} on ${context.shell.origin}. Independently measure the loaded and served release commit and confirm it matches the deployment approval; do not infer it from this checkout. M1 performs the owner release ceremony later. Stop if the process is not serving or these observations disagree.`);
   context.same('running-release', await context.text('running-release', 'Enter the full commit observed in the loaded process/release and served assets:'), flags.release);
   await modes[mode](context);
   process.stdout.write(`${mode.toUpperCase()}: OBSERVATIONS COMPLETE; automatic comparisons=${context.automatic}, human attestations=${context.manual}. Human attestations and exports do not independently prove physical effects. Peter's milestone acceptance remains required.\n`);

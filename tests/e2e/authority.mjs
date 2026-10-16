@@ -129,14 +129,14 @@ function crashCases() {
   const proofStages = ["AfterProof", "AfterCounter", "AfterConsumption", "AfterAppend", "BeforeCommit"];
   add("proposal", ["BeforeProposal", "BeforeCommit"], "absent", 0, 0,
     "No proposal has yet committed. Track the original attempt only; do not count a newly created retry as that original operation.");
-  add("proposal", ["AfterCommit", "AfterProposal"], "failed", 0, 0,
-    "The proposal committed but remains unconsumed and unexpired; startup recovery must terminate it without applying it.");
+  add("proposal", ["AfterCommit", "AfterProposal"], "pending", 0, 0,
+    "The proposal committed but remains unconsumed and unexpired; startup recovery must preserve it and its target reservation without applying it.");
   for (const action of ["apply", "retire"]) {
-    add(`review-${action}`, ["BeforeReview", ...commits, "AfterReview"], "failed", 0, 0,
+    add(`review-${action}`, ["BeforeReview", ...commits, "AfterReview"], "pending", 0, 0,
       `Review a fresh unexpired pending proposal for ${action}; startup recovery must not turn a displayed card into approval.`);
   }
-  add("apply-consume", proofStages, "failed", 0, 0,
-    "Use a genuine Apply assertion. Crash in the consumption transaction, before it commits; startup recovery terminates the still-unconsumed proposal.");
+  add("apply-consume", proofStages, "pending", 0, 0,
+    "Use a genuine Apply assertion. Crash in the consumption transaction, before it commits; startup recovery preserves the still-unconsumed, unexpired proposal and its reservation.");
   add("apply-consume", ["AfterCommit"], "failed", 0, 1,
     "Crash after the consumption transaction commits and before effect execution; the target still equals its base.");
   add("apply-effect", ["BeforeEffect"], "failed", 0, 1,
@@ -145,20 +145,20 @@ function crashCases() {
     "Use a successful replacement fixture. The exact new bytes reached the target once, but the apply terminal transaction has not committed.");
   add("apply-effect", ["AfterCommit"], "applied", 1, 1,
     "Crash after the successful effect's apply terminal transaction commits, rather than the earlier consumption commit.");
-  add("retire", ["BeforeRetire", ...proofStages], "failed", 0, 0,
-    "Use a genuine Retire assertion for an unexpired pending proposal. The retirement transaction has not committed; startup recovery terminates the original proposal as failed.");
+  add("retire", ["BeforeRetire", ...proofStages], "pending", 0, 0,
+    "Use a genuine Retire assertion for an unexpired pending proposal. The retirement transaction has not committed; startup recovery preserves the original pending proposal and its reservation.");
   add("retire", ["AfterCommit", "AfterRetire"], "retired", 0, 1,
     "The genuine retirement transaction has committed. Its consumed assertion and retirement receipt must remain durable.");
   add("expire", ["BeforeExpire", ...terminals, "AfterExpire"], "expired", 0, 0,
     "Prepare an already expired, unconsumed proposal. Expiry and startup recovery both terminate it without an effect.");
-  add("decline", ["BeforeDecline", "BeforeTerminal", "AfterTerminal", "BeforeCommit"], "failed", 0, 0,
-    "Prepare an unexpired pending proposal. Its decline transaction is uncommitted when the process dies; startup recovery must fail it without an effect.");
+  add("decline", ["BeforeDecline", "BeforeTerminal", "AfterTerminal", "BeforeCommit"], "pending", 0, 0,
+    "Prepare an unexpired pending proposal. Its decline transaction is uncommitted when the process dies; startup recovery preserves the pending proposal without an effect or terminal row.");
   add("decline", ["AfterCommit", "AfterDecline"], "refused", 0, 0,
     "The decline terminal transaction has committed; recovery must preserve its refused state.");
   add("revoke", ["BeforeRevoke", ...commits, "AfterRevoke"], "revoked", 0, 0,
     "Use a real owner-granted standing permission. After restart, retry its narrowing revocation through the actual route, then observe the same fingerprint revoked. This case creates no theme proposal operation and consumes no new approval.");
   const recoveries = [
-    ["pending", "failed", 0, 0, "An unconsumed, unexpired pending proposal."],
+    ["pending", "pending", 0, 0, "An unconsumed, unexpired pending proposal whose target remains reserved."],
     ["expired", "expired", 0, 0, "An unconsumed proposal whose deadline has passed."],
     ["consumed-base", "failed", 0, 1, "A genuinely consumed Apply approval; the target remains exactly its base."],
     ["consumed-new", "incomplete", 1, 1, "A genuinely consumed Apply approval and one observed successful replacement, with no committed terminal row."],
@@ -168,7 +168,9 @@ function crashCases() {
   for (const [name, state, writes, consumed, fixture] of recoveries) {
     add(`recovery-${name}`, ["BeforeRecovery", "AfterRecovery"], state, writes, consumed,
       `Prepare exactly one relevant operation for this sweep. ${fixture}`);
-    add(`reconcile-${name}`, ["BeforeReconcile", ...terminals, "AfterReconcile"], state, writes, consumed, fixture);
+    const points = state === "pending" ? ["BeforeReconcile", "AfterReconcile"]
+      : ["BeforeReconcile", ...terminals, "AfterReconcile"];
+    add(`reconcile-${name}`, points, state, writes, consumed, fixture);
   }
   add("reconcile-terminal", ["BeforeReconcile", ...commits, "AfterReconcile"], "applied", 1, 1,
     "Prepare a successful Apply operation whose one effect, consumption and applied terminal receipt are already durable. Reconciliation only releases its reservation idempotently.");
@@ -187,18 +189,23 @@ async function crashTwins(c) {
     c.step(id);
     await c.witness(id, `Prepare a fresh disposable installed-node case for ${stage}, at ${point}. ${fixture} Use the real host-side adapter to crash the supervisor at this specific operation/stage occurrence, skipping earlier occurrences of the same enum value. Observe actual process death and restart through the approved route. A returned injected error alone does not count; stop if the adapter cannot target this occurrence. Never fabricate an assertion or alter the release. Count only writes of this case's original operation, including fixture preparation, separately from external conflict writes.`);
     c.same(`${id}-writes-before`, await c.integer(`${id}-writes-before`, "Observed original-operation physical writes before recovery/retry"), writes);
-    await c.witness(`${id}-recovery`, "Allow actual startup recovery, then retry/recover/reconcile the same original operation. Do not re-propose it under a fresh id or hide an unknown/incomplete result. If no proposal committed, confirm its absence. For revocation, complete only the named narrowing retry. Observe the final persisted state and release of any target reservation.");
+    await c.witness(`${id}-recovery`, "Allow actual startup recovery, then recover/reconcile the same original operation without resubmitting an assertion or declining it. Do not re-propose it under a fresh id or hide an unknown/incomplete result. If no proposal committed, confirm its absence. For revocation, complete only the named narrowing retry. Observe the persisted state and target reservation. An unconsumed, unexpired proposal must remain pending and keep its reservation; complete its observations before its deadline. Only terminal cases release their reservations.");
     await exact(c, `${id}-state`, "Observed final persisted state for the original case", state);
     c.same(`${id}-writes-after`, await c.integer(`${id}-writes-after`, "Cumulative original-operation physical writes after recovery/retry"), writes);
     c.same(`${id}-consumptions`, await c.integer(`${id}-consumptions`, "Committed consumptions of the case's approval, excluding earlier fixture grants"), consumed);
-    const completed = await c.integer(`${id}-completed`, "Completed original proposal-operation count; absent attempts and revocation-only cases count zero");
+    if (state === "pending") {
+      const deadline = await c.integer(`${id}-deadline`, "Original proposal expiry time, in supervisor ms", 1);
+      const observedAt = await c.integer(`${id}-observed-at`, "Supervisor time at the final pending-state observation, in ms");
+      c.require(`${id}-unexpired`, observedAt < deadline);
+    }
+    const completed = await c.integer(`${id}-completed`, "Completed original proposal-operation count; pending proposals, absent attempts and revocation-only cases count zero");
     const terminals = await c.integer(`${id}-terminals`, "Terminal rows for those original proposal-operation ids");
-    c.same(`${id}-expected-completed`, completed, ["absent", "revoked"].includes(state) ? 0 : 1);
+    c.same(`${id}-expected-completed`, completed, ["pending", "absent", "revoked"].includes(state) ? 0 : 1);
     c.same(`${id}-terminal-coverage`, terminals, completed);
     await zero(c, `${id}-duplicate-consumptions`, "Duplicate committed consumptions of any one approval");
     await zero(c, `${id}-duplicate-terminals`, "Duplicate terminal rows for any one operation id");
     await zero(c, `${id}-fabricated-success`, "Applied/success reports without the matching observed effect and durable applied receipt");
-    await zero(c, `${id}-stranded-targets`, "Target reservations left blocking a new independently authorized proposal after this original case terminated");
+    c.same(`${id}-target-reservations`, await c.integer(`${id}-target-reservations`, "Observed target reservations held by this original proposal after recovery/reconciliation"), state === "pending" ? 1 : 0);
   }
 }
 
