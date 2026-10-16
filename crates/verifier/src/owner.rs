@@ -76,7 +76,7 @@ fn check_all(
         let seq = uint(field(entry, "sequence")?)?;
         require(seq > last_sequence && required.contains(&seq) && seen.insert(seq))?;
         last_sequence = seq;
-        let mut binding = binding(field(entry, "binding")?)?;
+        let binding = binding(field(entry, "binding")?)?;
         let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(&binding.public_key.bytes)
             .map_err(|_| refusal("owner-key"))?;
         let point = key.to_sec1_point(false);
@@ -103,16 +103,22 @@ fn check_all(
                 .try_into()
                 .map_err(|_| refusal("owner-proof"))?,
         );
-        binding.sign_counter = 0;
+        if binding.sign_counter != 0 && counter <= binding.sign_counter {
+            return Err(refusal("owner-counter-replay"));
+        }
+        if let Some(previous_counter) = counters.get(&credential_key) {
+            if binding.sign_counter < *previous_counter
+                || (*previous_counter != 0 && counter <= *previous_counter)
+            {
+                return Err(refusal("owner-counter-replay"));
+            }
+        }
         canon::authority::verify_retained_owner_assertion(
             binding,
             authorization,
             assertion,
             signature,
         )?;
-        if let Some(previous_counter) = counters.get(&credential_key) {
-            require(counter > *previous_counter)?;
-        }
         counters.insert(credential_key.clone(), counter);
         credentials.insert(credential, credential_key);
     }

@@ -90,8 +90,7 @@ def _owner_assertion(entry, row, rows, pinned):
     _require(isinstance(proof, dict) and set(proof) == {"authorization", "credential", "authenticator_data",
         "client_data_json", "signed_bytes", "public_keys", "signatures"}, "owner-proof-format")
     auth = _authorization(proof["authorization"])
-    _require(set(auth) == set("v node subject op proposal target base_sha256 new_sha256 cell display_sha256 challenge expires_at epoch operation".split()),
-             "owner-proof-format")
+    _require(set(auth) == set("v node subject op proposal target base_sha256 new_sha256 cell display_sha256 challenge expires_at epoch operation".split()), "owner-proof-format")
     _require(type(binding["v"]) is int and binding["v"] == 1 and binding["algorithm"] == "ecdsa-p256-sha256"
              and type(binding["epoch"]) is int and binding["epoch"] == auth["epoch"] and type(binding["counter"]) is int and 0 <= binding["counter"] <= 0xffffffff, "owner-proof-invalid")
     key, signatures = binding["key"], proof["signatures"]
@@ -108,13 +107,13 @@ def _owner_assertion(entry, row, rows, pinned):
     _require(len(public) == 65 and public[0] == 4 or len(public) == 33 and public[0] in (2, 3), "owner-proof-invalid")
     credential = _standard(binding["credential"], 1024)
     _require(bool(credential) and proof["credential"] == base64.urlsafe_b64encode(credential).decode("ascii").rstrip("="), "owner-proof-invalid")
-    _require(all(isinstance(binding[field], str) and bool(binding[field])
-                 for field in ("relying_party", "owner_origin", "top_origin")), "owner-proof-invalid")
+    _require(all(isinstance(binding[field], str) and bool(binding[field]) for field in ("relying_party", "owner_origin", "top_origin")), "owner-proof-invalid")
     authenticator = _standard(proof["authenticator_data"], 37)
     client, sig = _standard(proof["client_data_json"], 16_384), _standard(signature["bytes"], 128)
     _require(len(authenticator) == 37 and authenticator[32] in (5, 13, 29)
              and authenticator[:32] == _sha(binding["relying_party"].encode("utf-8")), "owner-proof-invalid")
     counter = int.from_bytes(authenticator[33:], "big")
+    _require(binding["counter"] == 0 or counter > binding["counter"], "owner-counter-replay")
     fields = _client_data(client)
     challenge = base64.urlsafe_b64encode(_sha(b"aukora:owner-authorization:v1\0" + _bytes(auth))).decode("ascii").rstrip("=")
     _require(all(fields.get(name) == expected for name, expected in (
@@ -160,7 +159,8 @@ def _owner_assertions(rows, entries, owner_key):
             _require(approval not in approvals and entry["proof"]["authorization"]["challenge"] not in challenges, "owner-proof-replay")
             approvals.add(approval); challenges.add(entry["proof"]["authorization"]["challenge"])
             previous = counters.get(credential)
-            _require(previous is None or counter > previous, "owner-counter-replay")
+            _require(previous is None or entry["binding"]["counter"] >= previous
+                     and (previous == 0 and counter == 0 or counter > previous), "owner-counter-replay")
             counters[credential] = counter
         except Refusal as error:
             if error.sequence is None: error.sequence = number
