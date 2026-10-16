@@ -175,7 +175,7 @@ impl Store {
                 "SELECT id FROM aumlok_ceremonies_v2 WHERE purpose='signin' AND state='fresh' AND json_extract(context,'$.credential')=?1 AND json_extract(context,'$.epoch')=?2 ORDER BY issued DESC LIMIT 1",
                 params![context.credential.as_ref().map(|id| URL_SAFE_NO_PAD.encode(id.as_bytes())), i64::try_from(context.authority.epoch).map_err(|_| refusal("ceremony-data-invalid"))?], |row| row.get(0)).optional().map_err(sql)?;
             if let Some(shared) = shared {
-                let found = read(
+                let mut found = read(
                     &tx,
                     &CeremonyId::from_bytes(
                         shared.try_into().map_err(|_| refusal("store-corrupt"))?,
@@ -189,6 +189,17 @@ impl Store {
                 {
                     return Err(refusal("ceremony-context-changed"));
                 }
+                found.issued = now;
+                found.deadline = now + MAX_CEREMONY_MS;
+                found.last_seen = now;
+                let changed = tx.execute(
+                    "UPDATE aumlok_ceremonies_v2 SET deadline=?1,issued=?2,last_seen=?2 WHERE id=?3 AND state='fresh'",
+                    params![found.deadline, now, found.id.as_bytes().as_slice()],
+                )
+                .map_err(sql)?;
+                if changed != 1 {
+                    return Err(refusal("ceremony-state"));
+                }
                 tx.commit().map_err(sql)?;
                 return Ok(found);
             }
@@ -197,7 +208,7 @@ impl Store {
             "SELECT id FROM aumlok_ceremonies_v2 WHERE purpose=?1 AND json_extract(context,'$.session')=?2 AND state IN ('fresh','registered','prepared')",
             params![purpose.wire_name(), context.session.to_string()], |row| row.get(0)).optional().map_err(sql)?;
         if let Some(existing) = existing {
-            let found = read(
+            let mut found = read(
                 &tx,
                 &CeremonyId::from_bytes(existing.try_into().map_err(|_| refusal("store-corrupt"))?),
             )?;
@@ -212,6 +223,12 @@ impl Store {
             {
                 return Err(refusal("ceremony-context-changed"));
             }
+            tx.execute(
+                "UPDATE aumlok_ceremonies_v2 SET last_seen=?1 WHERE id=?2",
+                params![now, found.id.as_bytes().as_slice()],
+            )
+            .map_err(sql)?;
+            found.last_seen = now;
             tx.commit().map_err(sql)?;
             return Ok(found);
         }
@@ -233,13 +250,14 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
-        let row = read(&tx, id)?;
+        let mut row = read(&tx, id)?;
         live(&row, session, now)?;
         tx.execute(
             "UPDATE aumlok_ceremonies_v2 SET last_seen=?1 WHERE id=?2",
             params![now, id.as_bytes().as_slice()],
         )
         .map_err(sql)?;
+        row.last_seen = now;
         tx.commit().map_err(sql)?;
         Ok(row)
     }
@@ -264,7 +282,7 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
-        let row = read(&tx, id)?;
+        let mut row = read(&tx, id)?;
         live(&row, session, now)?;
         if row.purpose != CeremonyPurpose::Enrolment
             || !matches!(row.state.as_str(), "fresh" | "registered")
@@ -293,6 +311,7 @@ impl Store {
                 params![now, id.as_bytes().as_slice()],
             )
             .map_err(sql)?;
+            row.last_seen = now;
             tx.commit().map_err(sql)?;
             return Ok(row);
         }
@@ -327,7 +346,7 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
-        let row = read(&tx, id)?;
+        let mut row = read(&tx, id)?;
         live(&row, session, now)?;
         if !matches!(
             row.purpose,
@@ -346,6 +365,7 @@ impl Store {
                 params![now, id.as_bytes().as_slice()],
             )
             .map_err(sql)?;
+            row.last_seen = now;
             tx.commit().map_err(sql)?;
             return Ok(row);
         }

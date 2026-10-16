@@ -126,6 +126,16 @@ pub struct SessionBearer {
     token: Zeroizing<String>,
 }
 impl SessionBearer {
+    pub fn for_claim(token: &[u8], node: NodeId, origin: &Origin) -> Result<Self> {
+        Ok(Self {
+            token: aumlok::claim::ClaimAdmission::derive_session_secret(
+                token,
+                node,
+                origin.as_str(),
+            )?,
+        })
+    }
+
     pub fn generate() -> Result<Self> {
         let mut entropy = Zeroizing::new([0u8; 32]);
         getrandom::fill(entropy.as_mut()).map_err(|_| FRONTDOOR_SESSION_REQUIRED)?;
@@ -517,7 +527,7 @@ impl DurableSessions {
         apply_binding(&mut state, epoch, binding, subject)?;
         self.save(&state)
     }
-    /// Persist binding metadata and promote only its exact live browser session.
+    /// Rotate enrolment admission and revoke bootstrap sessions when binding completes.
     /// This changes admission metadata; it does not verify or consume owner authority.
     pub fn advance_after_ceremony(
         &mut self,
@@ -526,7 +536,7 @@ impl DurableSessions {
         binding: BindingState,
         subject: Option<SubjectId>,
         now_ms: u64,
-    ) -> Result<()> {
+    ) -> Result<Option<(SessionBearer, u64)>> {
         let _lock = self.lock()?;
         let mut state = self.load()?;
         let current = self.live_record(&state, digest, now_ms)?;
@@ -541,6 +551,21 @@ impl DurableSessions {
             return Err(FRONTDOOR_SESSION_REQUIRED);
         }
         apply_binding(&mut state, epoch, binding, subject)?;
+        if current.scope == SessionScope::BindingOnly && binding == BindingState::Bound {
+            for record in &mut state.records {
+                if record.scope == "binding" && record.epoch == 0 {
+                    record.revoked = true;
+                }
+            }
+            self.save(&state)?;
+            return Ok(None);
+        }
+        let replacement =
+            if current.scope == SessionScope::BindingOnly && binding == BindingState::Enrolled {
+                Some(SessionBearer::generate()?)
+            } else {
+                None
+            };
         let record = state
             .records
             .iter_mut()
@@ -548,14 +573,12 @@ impl DurableSessions {
             .ok_or(FRONTDOOR_SESSION_REQUIRED)?;
         record.subject = state.subject.clone();
         record.epoch = epoch;
-        record.scope = if binding == BindingState::Bound {
-            "owner"
-        } else {
-            "binding"
+        if let Some(bearer) = &replacement {
+            record.digest = bearer.digest().to_string();
         }
-        .to_owned();
         record.revoked = false;
-        self.save(&state)
+        self.save(&state)?;
+        Ok(replacement.map(|bearer| (bearer, current.expires_at_ms)))
     }
     fn insert_record(
         &self,
@@ -826,28 +849,22 @@ fn apply_binding(
 }
 
 impl DurableSessions {
-    /// Open AUMLOK's claim store in this session directory; old admissions cannot bootstrap it.
+    /// Retain the legacy store location without using its contents for admission.
     pub fn open_claim_store(
         &mut self,
         directory: &std::path::Path,
         commitment: &aumlok::claim::HostClaimCommitment,
     ) -> Result<aumlok::claim::SqliteClaimStore> {
-        let _lock = self.lock()?;
-        let state = self.load()?;
-        let bootstrap_allowed = state.epoch == 0
-            && parse_binding(&state.binding)? == BindingState::Unclaimed
-            && state.subject.is_none()
-            && state.records.is_empty();
         aumlok::claim::SqliteClaimStore::open(
             &directory.join("claim-v1.sqlite3"),
             &self.directory,
             self.node,
             commitment,
-            bootstrap_allowed,
+            true,
         )
     }
 
-    /// AUMLOK has durably spent this claim; failure here never reopens it.
+    /// Save retryable admission while AUMLOK holds the unenrolled authority transaction.
     pub fn admit_host_claim(
         &mut self,
         admission: aumlok::claim::ClaimAdmission,
@@ -859,7 +876,14 @@ impl DurableSessions {
         let (node, session_digest, session_origin, expires_at_ms) = admission.into_parts();
         let _lock = self.lock()?;
         let mut state = self.load()?;
-        if parse_binding(&state.binding)? != BindingState::Unclaimed {
+        if node != self.node
+            || state.epoch != 0
+            || state.subject.is_some()
+            || !matches!(
+                parse_binding(&state.binding)?,
+                BindingState::Unclaimed | BindingState::Claimed
+            )
+        {
             return Err(FRONTDOOR_SESSION_REQUIRED);
         }
         let record = SessionRecord {
@@ -873,8 +897,59 @@ impl DurableSessions {
             revoked: false,
         };
         apply_binding(&mut state, 0, BindingState::Claimed, None)?;
+        state.records.retain(|stored| stored.scope != "binding");
         self.insert_record(&mut state, record.clone(), None, now_ms)?;
         self.save(&state)?;
         Ok(record)
     }
+}
+
+/// Reconstruct the same bootstrap bearer on retry; the service checks live host authority.
+pub fn consume_recoverable_claim(
+    service: &mut impl crate::claim::ClaimService,
+    request: &crate::ingress::AdmittedRequest,
+    node: NodeId,
+    now_ms: u64,
+) -> Result<http::Response<Vec<u8>>> {
+    use crate::claim::{decode_claim, ClaimRequest};
+    use canon::{codes, json};
+    let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;
+    if route != OwnerRoute::Claim {
+        return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
+    }
+    let candidate = zeroize::Zeroizing::new(decode_claim(request.body())?);
+    let bearer = SessionBearer::for_claim(candidate.as_slice(), node, request.origin())?;
+    let expiry = now_ms
+        .checked_add(MAX_LIFETIME_MS)
+        .filter(|expiry| *expiry <= json::MAX_SAFE_INTEGER as u64)
+        .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+    let expected = bearer.digest();
+    let record = service.consume_and_create_session(ClaimRequest {
+        token: candidate.to_vec(),
+        node,
+        session_origin: request.origin().clone(),
+        session_digest: expected,
+        expires_at_ms: expiry,
+    })?;
+    if record.node != node
+        || record.token_digest != expected
+        || record.revoked
+        || record.subject.is_some()
+        || record.owner_epoch != 0
+        || record.scope != SessionScope::BindingOnly
+        || record.origin != *request.origin()
+        || record.expires_at_ms != expiry
+    {
+        return Err(codes::FRONTDOOR_SESSION_REQUIRED);
+    }
+    let cookie = bearer.cookie_header(SessionScope::BindingOnly, expiry, now_ms)?;
+    http::Response::builder()
+        .status(http::StatusCode::OK)
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(http::header::CACHE_CONTROL, "no-store")
+        .header(http::header::SET_COOKIE, cookie)
+        .header("x-content-type-options", "nosniff")
+        .header("referrer-policy", "no-referrer")
+        .body(br#"{"ok":true,"state":"claim-open"}"#.to_vec())
+        .map_err(|_| codes::FRONTDOOR_BODY_INVALID)
 }

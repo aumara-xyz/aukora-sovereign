@@ -193,7 +193,11 @@ export function createOnboarding(
       phrase = [];
       screen("phrase", "Seven words", "An anchor, then ROOT · UNITE · RISE.");
       button("Reveal my words", async () => {
-        await prepareBinding();
+        try { await prepareBinding(); }
+        catch (error) {
+          if (error instanceof Error && error.message === "aumlok:enrolment-required") { enrolScreen(); return; }
+          throw error;
+        }
         if (!wasm) {
           const loaded = await loadAumlok(signal);
           if (signal.aborted) { loaded.dispose(); return; }

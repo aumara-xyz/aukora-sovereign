@@ -122,12 +122,12 @@ COVERAGE_PINS = {
     "crates/aura/src/schema.rs": "fa0547b25829ecb36e0a293522138595156b07a623c8c3a99f5c72587de99a51",
 }
 CLAIM_PINS = {
-    "crates/aumlok/src/claim/store.rs": "e58ffb9d5c41e4a2c376682d63242c44b0fd4402876b1fd5dd5c754700c36036",
+    "crates/aumlok/src/claim/store.rs": "35dcd240a7ffc8f8c3b73e2d3c6d7596a98685af1223c2e30a599580db52d54d",
     "crates/aumlok/src/claim.rs": "d29c2f820b70c00b1474f04cb68b37092382085c12e61c42eca6cf3668896389",
     "crates/aumlok/src/lib.rs": "f0252d28a134424a64064351c958d596096c38137ab25c74a2bfde4d4323086b",
     "crates/frontdoor/src/claim.rs": "f85a1b29a5ca44fe21056f1d1c869615ee18ec168bdf86bf6c5011bc28201432",
-    "crates/frontdoor/src/session.rs": "4acdb1e39ef4189ec66bfc7062b6af1422fda82e5641f31c41e14f91d93bba0b",
-    "crates/supervisor/src/claim.rs": "982d3aafdef6fa672f9be43f9794f1ddf67f8cc93f81c52158bdc9f2b849ba44",
+    "crates/frontdoor/src/session.rs": "c77beeb6ad784a7a1037fc5a6982cce8669a92816173d8762befe4aa817a4b22",
+    "crates/supervisor/src/claim.rs": "cf861ce37adc9418815884813418856989ee374796076f636aa2287db472d6fc",
     "crates/supervisor/src/lib.rs": "81d9f14180c122fb8c8022c0b7188575551441a9ca44f06f158ad237871aed52",
 }
 
@@ -340,31 +340,43 @@ def claim_source_guards():
             'let actual = Digest32::sha256(secret.as_slice());',
             'if !bool::from(self.0.as_bytes().ct_eq(actual.as_bytes())) { return Err(AUMLOK_CLAIM_UNKNOWN); }',
             'Ok(())')
-    ordered("crates/supervisor/src/claim.rs", 'pub fn from_host(directory: &File, mut sessions: DurableSessions) -> Result<Self> {',
+    ordered("crates/supervisor/src/claim.rs",
+            'pub fn from_host(directory: &File, mut sessions: DurableSessions, ledger: Arc<dyn ClaimAuthority>,) -> Result<Self> {',
             'let commitment = HostClaimCommitment::from_host(directory)?;',
             'let claims = sessions.open_claim_store(&path, &commitment)?;',
             'impl ClaimService for HostClaimService {',
+            'let commitment = HostClaimCommitment::from_host(&self.directory)?;',
+            'commitment.verify(token.as_slice())?;',
+            'self.ledger.transaction(&mut |authority| {',
+            'if authority.active_owner_passkeys()? != 0 { return Err(codes::AUMLOK_CLAIM_SPENT); }',
             'let admission = self.claims.claim(',
             'self.sessions.admit_host_claim(admission, now_ms)')
-    # AUMLOK spends the claim first, durably and once; only then may frontdoor admit the bootstrap session.
+    # AUMLOK verifies the host commitment and Aura's live unenrolled state inside the authority transaction before frontdoor admits the deterministic bootstrap session.
     ordered("crates/aumlok/src/claim/store.rs",
-            'if retained_spent(&transaction, node, self.commitment)? { return Err(AUMLOK_CLAIM_SPENT); }',
+            'pub fn derive_session_secret(token: &[u8], node: NodeId, origin: &str,) -> Result<Zeroizing<String>> {',
+            'mac.update(b"aukora:claim-session:v1");',
+            'mac.update(node.as_bytes());',
+            'mac.update(origin.as_bytes());',
             'commitment.verify(token)?;',
-            '"UPDATE aumlok_claim_v1 SET spent=1 WHERE id=1 AND spent=0"',
-            'if changed != 1 { return Err(AUMLOK_CLAIM_SPENT); }',
-            'transaction.commit().map_err(|_| AUMLOK_CLAIM_UNKNOWN)?;')
-    ordered("crates/frontdoor/src/session.rs", 'pub fn open_claim_store(',
-            'let bootstrap_allowed = state.epoch == 0 && parse_binding(&state.binding)? == BindingState::Unclaimed'
-            ' && state.subject.is_none() && state.records.is_empty();',
+            'let secret = ClaimAdmission::derive_session_secret(token, node, origin)?;',
+            'if Digest32::sha256(secret.as_bytes()) != session_digest { return Err(AUMLOK_CLAIM_UNKNOWN); }',
+            'if authority.pending_owner_credential()?.is_some() || authority.bound_owner_identity()?.is_some() { return Err(AUMLOK_CLAIM_SPENT); }')
+    ordered("crates/frontdoor/src/session.rs",
+            'pub fn for_claim(token: &[u8], node: NodeId, origin: &Origin) -> Result<Self> {',
+            'aumlok::claim::ClaimAdmission::derive_session_secret(token, node, origin.as_str(),)?',
+            'pub fn open_claim_store(',
             'pub fn admit_host_claim(',
             'if !admission.matches_directory(&self.directory)? { return Err(FRONTDOOR_SESSION_REQUIRED); }',
-            'if parse_binding(&state.binding)? != BindingState::Unclaimed { return Err(FRONTDOOR_SESSION_REQUIRED); }',
+            'if node != self.node || state.epoch != 0 || state.subject.is_some() || !matches!(parse_binding(&state.binding)?, BindingState::Unclaimed | BindingState::Claimed) { return Err(FRONTDOOR_SESSION_REQUIRED); }',
             'scope: SessionScope::BindingOnly,',
             'apply_binding(&mut state, 0, BindingState::Claimed, None)?;',
-            'self.insert_record(&mut state, record.clone(), None, now_ms)?; self.save(&state)?; Ok(record)')
-    ordered("crates/frontdoor/src/claim.rs", 'let token = decode_claim(request.body())?;',
-            'let session = service.consume_and_create_session(ClaimRequest {',
-            'expires_at_ms: expires, })?;', 'let set_cookie = bearer.cookie_header(SessionScope::BindingOnly, expires, now_ms)?;')
+            'state.records.retain(|stored| stored.scope != "binding");',
+            'self.insert_record(&mut state, record.clone(), None, now_ms)?; self.save(&state)?; Ok(record)',
+            'pub fn consume_recoverable_claim(',
+            'let candidate = zeroize::Zeroizing::new(decode_claim(request.body())?);',
+            'let bearer = SessionBearer::for_claim(candidate.as_slice(), node, request.origin())?;',
+            'let record = service.consume_and_create_session(ClaimRequest {',
+            'let cookie = bearer.cookie_header(SessionScope::BindingOnly, expiry, now_ms)?;')
 
 
 # ICANN top-level labels from an offline Public Suffix List snapshot, plus local/reserved suffixes.

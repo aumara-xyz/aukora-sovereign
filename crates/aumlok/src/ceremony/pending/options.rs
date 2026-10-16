@@ -14,6 +14,11 @@ pub fn assertion_material(value: &Value) -> Result<AssertionMaterial> {
 
 impl Snapshot {
     pub fn options(&self) -> Result<Value> {
+        let timeout = self
+            .deadline
+            .checked_sub(self.last_seen)
+            .filter(|remaining| (1..=MAX_CEREMONY_MS).contains(remaining))
+            .ok_or_else(|| refusal("ceremony-expired"))?;
         let challenge = URL_SAFE_NO_PAD.encode(self.challenge()?);
         let credential = self
             .candidate
@@ -27,7 +32,7 @@ impl Snapshot {
                 "user": { "id": URL_SAFE_NO_PAD.encode(&self.context.identity.user_handle),
                     "name": self.context.identity.owner_id, "displayName": "Owner" },
                 "pubKeyCredParams": [{"type":"public-key","alg":-7},{"type":"public-key","alg":-8}],
-                "timeout": MAX_CEREMONY_MS, "attestation": "none",
+                "timeout": timeout, "attestation": "none",
                 "authenticatorSelection": {"residentKey":"required","userVerification":"required"},
                 "excludeCredentials": [], "extensions": {"prf":{}},
             })
@@ -35,7 +40,7 @@ impl Snapshot {
             let credential = credential.ok_or_else(|| refusal("credential-id"))?;
             serde_json::json!({
                 "challenge": challenge, "rpId": self.context.origins.relying_party,
-                "timeout": MAX_CEREMONY_MS, "userVerification": "required",
+                "timeout": timeout, "userVerification": "required",
                 "allowCredentials": [{"type":"public-key","id":URL_SAFE_NO_PAD.encode(credential.as_bytes())}],
             })
         };

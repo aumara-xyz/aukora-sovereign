@@ -7,6 +7,7 @@ use canon::alg::{AlgorithmId, PublicKey};
 use serde::{Deserialize, Serialize};
 
 pub(super) const SCHEMA: &str = r#"
+BEGIN IMMEDIATE;
 CREATE TABLE IF NOT EXISTS aumlok_ceremonies_v2(
  id BLOB PRIMARY KEY CHECK(length(id)=16),
  purpose TEXT NOT NULL CHECK(purpose IN ('enrolment','binding','signin','refresh')),
@@ -30,9 +31,14 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremony_retain_v2 BEFORE DELETE ON aumlok_c
 CREATE TRIGGER IF NOT EXISTS aumlok_ceremony_new_v2 BEFORE INSERT ON aumlok_ceremonies_v2
  WHEN NEW.state!='fresh' OR NEW.candidate IS NOT NULL OR NEW.payload IS NOT NULL
  BEGIN SELECT RAISE(ABORT,'aumlok:ceremony-state'); END;
-CREATE TRIGGER IF NOT EXISTS aumlok_ceremony_forward_v2 BEFORE UPDATE ON aumlok_ceremonies_v2
+DROP TRIGGER IF EXISTS aumlok_ceremony_forward_v2;
+CREATE TRIGGER aumlok_ceremony_forward_v2 BEFORE UPDATE ON aumlok_ceremonies_v2
  WHEN NEW.id IS NOT OLD.id OR NEW.purpose IS NOT OLD.purpose OR NEW.context IS NOT OLD.context
- OR NEW.nonce IS NOT OLD.nonce OR NEW.issued IS NOT OLD.issued OR NEW.deadline IS NOT OLD.deadline
+ OR NEW.nonce IS NOT OLD.nonce
+ OR ((NEW.issued IS NOT OLD.issued OR NEW.deadline IS NOT OLD.deadline)
+ AND NOT(OLD.purpose='signin' AND OLD.state='fresh' AND NEW.state='fresh'
+ AND NEW.issued>=OLD.issued AND NEW.issued=NEW.last_seen AND NEW.issued<OLD.deadline
+ AND NEW.deadline=NEW.issued+300000))
  OR NEW.last_seen<OLD.last_seen
  OR (OLD.candidate IS NOT NULL AND (NEW.candidate IS NOT OLD.candidate OR NEW.candidate_digest IS NOT OLD.candidate_digest))
  OR (OLD.payload IS NOT NULL AND NEW.payload IS NOT OLD.payload)
@@ -41,6 +47,7 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremony_forward_v2 BEFORE UPDATE ON aumlok_
  OR NOT(NEW.state=OLD.state OR (OLD.state='fresh' AND NEW.state IN ('registered','prepared','spent','expired'))
  OR (OLD.state IN ('registered','prepared') AND NEW.state IN ('spent','expired')) OR (OLD.state='spent' AND NEW.state='finished'))
  BEGIN SELECT RAISE(ABORT,'aumlok:ceremony-rewind'); END;
+COMMIT;
 "#;
 
 #[derive(Serialize, Deserialize)]

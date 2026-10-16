@@ -416,7 +416,7 @@ impl ShellHandoffs {
         Ok(cookie)
     }
 
-    /// Check the rendezvous before consuming a sign-in assertion; the caller retains its lock.
+    /// Select a live optional rendezvous while the caller retains its lock.
     pub fn validate_authorization(
         &self,
         correlations: &[canon::digest::Digest32],

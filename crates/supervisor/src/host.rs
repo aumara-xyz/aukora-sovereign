@@ -27,6 +27,17 @@ use supervisor::{
     runtime::{GuestState, RuntimeMeasurement, SupervisorRuntime},
 };
 
+impl supervisor::claim::ClaimAuthority for HostLedger {
+    fn transaction(
+        &self,
+        operation: &mut dyn FnMut(
+            &mut aura::LedgerTxn<'_>,
+        ) -> Result<frontdoor::session::SessionRecord>,
+    ) -> Result<frontdoor::session::SessionRecord> {
+        HostLedger::transaction(self, |authority| operation(authority))
+    }
+}
+
 pub struct Host {
     pub config: NodeConfig,
     pub state: HostState,
@@ -450,20 +461,19 @@ impl Host {
             .claim_service
             .lock()
             .map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?;
-        // Retain the first validated commitment until this host stops.
         if service.is_none() {
             *service = Some(supervisor::claim::HostClaimService::from_host(
                 &self.config.config_directory()?,
                 self.sessions()?,
+                self.ledger.clone(),
             )?);
         }
-        frontdoor::claim::consume_claim(
+        frontdoor::session::consume_recoverable_claim(
             service.as_mut().ok_or(codes::AUMLOK_CLAIM_UNKNOWN)?,
             request,
             self.state.node,
             now()?,
-        )?
-        .into_http_response()
+        )
     }
 
     pub fn listener_started(self: &Arc<Self>) {
@@ -534,19 +544,6 @@ impl Host {
         }
         if request.role() == HostRole::Owner {
             let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;
-            if route == OwnerRoute::Claim {
-                let mut claim = supervisor::claim::HostClaimService::from_host(
-                    &self.config.config_directory()?,
-                    self.sessions()?,
-                )?;
-                return frontdoor::claim::consume_claim(
-                    &mut claim,
-                    request,
-                    self.state.node,
-                    now()?,
-                )?
-                .into_http_response();
-            }
             if matches!(route, OwnerRoute::SigninStart | OwnerRoute::SigninFinish) {
                 return self.signin(request, route, None);
             }
@@ -585,16 +582,27 @@ impl Host {
                     identity.authenticated(route, record, request.body(), now()?)
                 },
             )?;
+            let mut rotated_cookie = None;
             if let Some((epoch, binding, subject)) = result.transition {
-                sessions.advance_after_ceremony(
-                    frontdoor::session::session_digest(
-                        request.cookie().ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
-                    )?,
-                    epoch,
-                    binding,
-                    subject,
-                    now()?,
-                )?;
+                let advanced_at = now()?;
+                rotated_cookie = sessions
+                    .advance_after_ceremony(
+                        frontdoor::session::session_digest(
+                            request.cookie().ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                        )?,
+                        epoch,
+                        binding,
+                        subject,
+                        advanced_at,
+                    )?
+                    .map(|(bearer, expiry)| {
+                        bearer.cookie_header(
+                            frontdoor::session::SessionScope::BindingOnly,
+                            expiry,
+                            advanced_at,
+                        )
+                    })
+                    .transpose()?;
                 if binding == frontdoor::session::BindingState::Bound {
                     // The binding has committed; a release proposal that cannot be raised now must not turn it
                     // into a failure the owner retries into already-bound (SCOUT ad03d28 #3). The poll retries it.
@@ -609,7 +617,16 @@ impl Host {
             if frontdoor::owner_origin::is_gate_route(route) {
                 return owner_gate::owner_gate_response(result.body);
             }
-            return json_response(result.body);
+            let mut response = json_response(result.body)?;
+            if let Some(cookie) = rotated_cookie {
+                response.headers_mut().insert(
+                    http::header::SET_COOKIE,
+                    cookie
+                        .parse()
+                        .map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?,
+                );
+            }
+            return Ok(response);
         }
         if request.path() == frontdoor::api::service_reads::PATH {
             let read = self.with_release(|release| {
@@ -704,13 +721,6 @@ impl Host {
         }
         let bearer = SessionBearer::generate()?;
         let mut sessions = self.sessions()?;
-        let (handoff, mut handoffs) = if let Some((correlations, owner_pending)) = handoff {
-            let handoffs = self.handoffs.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
-            let selected = handoffs.validate_authorization(correlations, owner_pending, now)?;
-            (Some(selected), Some(handoffs))
-        } else {
-            (None, None)
-        };
         let result = identity.signin_finish(request.body(), now)?;
         let (epoch, binding, subject) =
             result.transition.ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
@@ -737,22 +747,25 @@ impl Host {
             now,
         )?;
         if scope == SessionScope::OwnerFrame {
-            if let Some((correlation, owner_pending)) = handoff {
-                let boundary = self.config.boundary()?;
-                let grant = frontdoor::session::with_bound_session(
-                    &mut sessions,
-                    bearer.as_bytes(),
-                    self.state.node,
-                    request.origin(),
-                    now,
-                    |session| {
-                        frontdoor::ingress::ShellSessionGrant::from_owner(&session, &boundary)
-                    },
-                )?;
-                handoffs
-                    .as_mut()
-                    .ok_or(codes::SUPERVISOR_STATE)?
-                    .authorize(correlation, owner_pending, grant, now)?;
+            if let Some((correlations, owner_pending)) = handoff {
+                // An expired rendezvous cannot discard the durable owner session.
+                let _ = (|| -> Result<()> {
+                    let mut handoffs = self.handoffs.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+                    let (correlation, owner_pending) =
+                        handoffs.validate_authorization(correlations, owner_pending, now)?;
+                    let boundary = self.config.boundary()?;
+                    let grant = frontdoor::session::with_bound_session(
+                        &mut sessions,
+                        bearer.as_bytes(),
+                        self.state.node,
+                        request.origin(),
+                        now,
+                        |session| {
+                            frontdoor::ingress::ShellSessionGrant::from_owner(&session, &boundary)
+                        },
+                    )?;
+                    handoffs.authorize(correlation, owner_pending, grant, now)
+                })();
             }
         }
         let mut response = json_response(result.body)?;

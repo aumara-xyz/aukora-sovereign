@@ -12,24 +12,40 @@ use std::{
     io::Read,
     os::unix::fs::MetadataExt,
     path::{Component, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use zeroize::Zeroizing;
 
+pub trait ClaimAuthority: Send + Sync {
+    fn transaction(
+        &self,
+        operation: &mut dyn FnMut(&mut aura::LedgerTxn<'_>) -> Result<SessionRecord>,
+    ) -> Result<SessionRecord>;
+}
+
 pub struct HostClaimService {
-    commitment: HostClaimCommitment,
+    directory: File,
+    ledger: Arc<dyn ClaimAuthority>,
     claims: SqliteClaimStore,
     sessions: DurableSessions,
 }
 
 impl HostClaimService {
     /// The supervisor supplies the node's configuration directory and session store.
-    pub fn from_host(directory: &File, mut sessions: DurableSessions) -> Result<Self> {
+    pub fn from_host(
+        directory: &File,
+        mut sessions: DurableSessions,
+        ledger: Arc<dyn ClaimAuthority>,
+    ) -> Result<Self> {
         let commitment = HostClaimCommitment::from_host(directory)?;
         let path = session_directory(directory)?;
         let claims = sessions.open_claim_store(&path, &commitment)?;
         Ok(Self {
-            commitment,
+            directory: directory
+                .try_clone()
+                .map_err(|_| codes::AUMLOK_CLAIM_UNKNOWN)?,
+            ledger,
             claims,
             sessions,
         })
@@ -43,21 +59,29 @@ impl HostClaimService {
 impl ClaimService for HostClaimService {
     fn consume_and_create_session(&mut self, request: ClaimRequest) -> Result<SessionRecord> {
         let token = Zeroizing::new(request.token);
+        let commitment = HostClaimCommitment::from_host(&self.directory)?;
+        commitment.verify(token.as_slice())?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?
             .as_millis();
         let now_ms = u64::try_from(now_ms).map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?;
-        let admission = self.claims.claim(
-            &self.commitment,
-            token.as_slice(),
-            request.node,
-            request.session_digest,
-            request.session_origin.as_str(),
-            request.expires_at_ms,
-            now_ms,
-        )?;
-        self.sessions.admit_host_claim(admission, now_ms)
+        self.ledger.transaction(&mut |authority| {
+            if authority.active_owner_passkeys()? != 0 {
+                return Err(codes::AUMLOK_CLAIM_SPENT);
+            }
+            let admission = self.claims.claim(
+                &commitment,
+                token.as_slice(),
+                request.node,
+                request.session_digest,
+                request.session_origin.as_str(),
+                request.expires_at_ms,
+                now_ms,
+                authority,
+            )?;
+            self.sessions.admit_host_claim(admission, now_ms)
+        })
     }
 }
 
