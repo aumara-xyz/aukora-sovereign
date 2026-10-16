@@ -554,7 +554,8 @@ Status says how proven each brick's cheat sheet is. Every brick is written fresh
   two model families review every diff once it is on main, and a failed review becomes a fix worker that lands the same
   way. Grok is one family. The other is Codex for authority organs, deploy, scripts and checks, and Muse Spark
   elsewhere. Kimi held that seat until her quota ran out on 2026-10-16. A Muse pass on authority code counts as no
-  verdict.
+  verdict. Grok also sweeps main against this plan and runs the hostile twins on the installed node after each
+  milestone.
 - **The zipper (the conductor runs it as a script):**
   - pushes only a merged tree that compiles and passes the construction checks. Compiling is not testing;
   - runs those build steps in a sandbox that can write only inside the merge copy and has no network;
@@ -570,7 +571,7 @@ Status says how proven each brick's cheat sheet is. Every brick is written fresh
 ## How the work fans out
 **Wave 0, the contracts, before any worker starts.** Main is reset to this plan, the frozen spec, the checks, the
 inventory [127] and an empty skeleton. Seven Codex architects work in parallel: one on canon and frames, one for each of the
-five organs, and one on the app's contract. Kimi and Grok check that it fits together as a whole, and the conductor zips it.
+five organs, and one on the app's contract. The two review families check that it fits together as a whole, and the conductor zips it.
 
 The architects freeze:
 - **The contracts.** C1 to C7 as they are, plus versioned additions:
