@@ -635,10 +635,14 @@ impl<'a> Router<'a> {
                     observe(self.activity());
                     let reply = match dispatched {
                         Ok(reply) => reply,
-                        Err(code) => correlation.frame(Reply::Refusal(RefusalReply {
-                            code,
-                            next: String::new(),
-                        }))?,
+                        Err(code) => {
+                            let code = canon::Refusal::from_code(&code.to_string())
+                                .unwrap_or(codes::SUPERVISOR_STATE);
+                            correlation.frame(Reply::Refusal(RefusalReply {
+                                code,
+                                next: String::new(),
+                            }))?
+                        }
                     };
                     channel.send(&reply).map_err(|e| e.refusal)?;
                 }

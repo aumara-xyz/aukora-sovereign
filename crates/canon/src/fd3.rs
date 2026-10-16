@@ -205,9 +205,10 @@ impl Reply {
 /// Decodes canonical JSON payload bytes after the length-prefixed transport accepts a frame.
 ///
 /// Refusal precedence is observable: check the 65,536-byte budget, C1 strict parse,
-/// exact canonical bytes, envelope object shape, v's type then supported value,
-/// id's type then 1..=64 ASCII `[A-Za-z0-9_-]` bytes, kind's type then known
-/// operation in this direction, v2 provenance, and finally its body. Every object rejects unknown
+/// exact canonical bytes, reject v2 without provenance, envelope object shape,
+/// v's type then supported value, id's type then 1..=64 ASCII `[A-Za-z0-9_-]` bytes,
+/// kind's type then known operation in this direction, v2 provenance, and finally its body.
+/// Object field validation rejects unknown
 /// fields before reporting missing fields. Unknown kinds refuse `frame:unknown-kind`;
 /// unknown versions refuse `frame:unsupported-version`; neither is guessed.
 ///
@@ -408,6 +409,9 @@ fn envelope(
     let v2 = value
         .get("v")
         .is_some_and(|v| matches!(v.view(), ValueView::Integer(n) if n.get() == 2));
+    if v2 && value.get("provenance").is_none() {
+        return Err(codes::FRAME_UNSUPPORTED_VERSION);
+    }
     let required = if v2 {
         &["body", "id", "kind", "provenance", "v"][..]
     } else {

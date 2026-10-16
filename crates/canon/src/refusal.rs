@@ -15,6 +15,21 @@ pub struct Refusal {
 }
 
 impl Refusal {
+    /// Constructs a refusal only when its complete code is in the shared registry.
+    pub fn from_code(code: &str) -> Result<Self> {
+        crate::codes::parse(code)
+    }
+
+    /// Returns the organ or protocol component token.
+    pub const fn organ(&self) -> &'static str {
+        self.organ
+    }
+
+    /// Returns the stable reason token within the organ's namespace.
+    pub const fn reason(&self) -> &'static str {
+        self.reason
+    }
+
     /// Forms an internal code from trusted registry tokens; this does no wire decoding.
     pub(crate) const fn new(organ: &'static str, reason: &'static str) -> Self {
         Self { organ, reason }
