@@ -39,10 +39,12 @@ pub struct Host {
     pub runtime: Arc<crate::adapters::runtime::RuntimeAdapter>,
     pub health: Arc<crate::health::HealthCollector>,
     data: crate::data::HostData,
+    broker: Arc<crate::adapters::BrokerAdapter>,
     faces: crate::faces::host::HostFaces,
     approvals: crate::approvals::ApprovalFeed,
     gate: Arc<crate::adapters::GateAdapter>,
     runtime_refusal: Mutex<Option<canon::Refusal>>,
+    handoffs: Mutex<frontdoor::fd4::ShellHandoffs>,
 }
 struct Assets {
     source: ReleaseFiles,
@@ -176,13 +178,14 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         health.clone(),
         broker.clone(),
     )
-    .with_network(network);
+    .with_network(network)
+    .with_kira(kira.clone());
     let owner_gate = gate.clone();
     let runtime = Arc::new(crate::adapters::runtime::RuntimeAdapter::new(
         crate::adapters::runtime::RuntimeOrgans {
             ledger: ledger.clone(),
             gate,
-            broker,
+            broker: broker.clone(),
             kira,
             cell: Arc::new(supervisor::services::PinnedCellService::new(
                 runner,
@@ -214,10 +217,12 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         runtime,
         health,
         data,
+        broker,
         faces,
         runtime_refusal: Mutex::new(None),
+        handoffs: Mutex::new(frontdoor::fd4::ShellHandoffs::default()),
     });
-    crate::web::serve(host).await
+    crate::web::serve_handoff(host).await
 }
 
 fn require_initial_sessions(transaction: &aura::LedgerTxn<'_>, sessions: &File) -> Result<()> {
@@ -244,6 +249,173 @@ fn require_initial_sessions(transaction: &aura::LedgerTxn<'_>, sessions: &File) 
 }
 
 impl Host {
+    pub fn dispatch_handoff(
+        &self,
+        admitted: &frontdoor::ingress::HandoffAdmission,
+    ) -> Result<http::Response<Vec<u8>>> {
+        let request = admitted.admission.request();
+        if request.path() == frontdoor::fd4::HANDOFF_PREPARE_PATH {
+            self.with_release(|_| Ok(()))?;
+            let prepared = self
+                .handoffs
+                .lock()
+                .map_err(|_| codes::SUPERVISOR_STATE)?
+                .prepare(request, &self.config.boundary()?, admitted.pending, now()?)?;
+            let mut response = handoff_response(&prepared.cookies)?;
+            *response.body_mut() = Value::object(vec![(
+                "reference".into(),
+                Value::text(prepared.reference.to_string())?,
+            )])?
+            .canonical_bytes();
+            return Ok(response);
+        }
+        if request.path() == frontdoor::fd4::HANDOFF_COMPLETE_PATH {
+            self.with_release(|_| Ok(()))?;
+            let mut sessions = self.sessions()?;
+            let cookies = self
+                .handoffs
+                .lock()
+                .map_err(|_| codes::SUPERVISOR_STATE)?
+                .complete(
+                    request,
+                    admitted.pending.ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                    admitted
+                        .correlation
+                        .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                    &mut sessions,
+                    now()?,
+                )?;
+            return handoff_response(&cookies);
+        }
+        if request.role() == HostRole::Owner && request.path() == "/api/signin/finish" {
+            let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;
+            return self.signin(
+                request,
+                route,
+                admitted.correlation.zip(admitted.owner_pending),
+            );
+        }
+        if let Some(reference) = admitted.navigation {
+            let mut response = self.dispatch(&admitted.admission)?;
+            let cookie = self
+                .handoffs
+                .lock()
+                .map_err(|_| codes::SUPERVISOR_STATE)?
+                .owner_navigation(
+                    reference,
+                    admitted
+                        .correlation
+                        .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                    admitted
+                        .admission
+                        .owner_navigation()
+                        .ok_or(codes::FRONTDOOR_ORIGIN_REFUSED)?,
+                    now()?,
+                )?;
+            response.headers_mut().append(
+                http::header::SET_COOKIE,
+                cookie
+                    .parse()
+                    .map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?,
+            );
+            return Ok(response);
+        }
+        self.dispatch(&admitted.admission)
+    }
+    fn data_request(
+        &self,
+        session: &frontdoor::session::BoundSession<'_>,
+        endpoint: frontdoor::fd4::DataEndpoint,
+        body: &Value,
+    ) -> Result<http::Response<Vec<u8>>> {
+        let at = now()?;
+        self.with_release(|_| Ok(()))?;
+        if endpoint == frontdoor::fd4::DataEndpoint::Event {
+            return self
+                .data
+                .dispatch(session, endpoint, &body.canonical_bytes(), at);
+        }
+        canon::frame::decode(&body.canonical_bytes())?;
+        let version = body.get("v").map(Value::view);
+        if matches!(version, Some(canon::json::ValueView::Integer(value)) if value.get() == 3) {
+            return self.service_read(session, body, at);
+        }
+        self.with_release(|_| Ok(()))?;
+        self.data.submit_owner_command(
+            session,
+            &body.canonical_bytes(),
+            at,
+            self.broker.slot.admitted().is_none(),
+        )
+    }
+
+    fn service_read(
+        &self,
+        session: &frontdoor::session::BoundSession<'_>,
+        frame: &Value,
+        at: u64,
+    ) -> Result<http::Response<Vec<u8>>> {
+        let canon::json::ValueView::Object(fields) = frame.view() else {
+            return Err(codes::FRAME_INVALID_FIELD);
+        };
+        let names = ["v", "id", "kind", "provenance", "body"];
+        if fields.len() != names.len()
+            || fields.iter().any(|(key, _)| !names.contains(&key.as_str()))
+        {
+            return Err(codes::FRAME_INVALID_FIELD);
+        }
+        let field = |name| frame.get(name).ok_or(codes::FRAME_INVALID_FIELD);
+        let canon::json::ValueView::Text(id) = field("id")?.view() else {
+            return Err(codes::FRAME_INVALID_ID);
+        };
+        let id = canon::frame::FrameId::new(id.into())?;
+        if !matches!(
+            field("kind")?.view(),
+            canon::json::ValueView::Text("service.read")
+        ) {
+            return Err(codes::FRAME_UNKNOWN_KIND);
+        }
+        let provenance = canon::provenance::Provenance {
+            source: canon::provenance::Source::Owner,
+        };
+        let probe = canon::fd4::encode_command(&canon::frame::Frame {
+            v: canon::fd4::VERSION,
+            id: id.clone(),
+            provenance: provenance.clone(),
+            body: canon::fd4::ChatCommand::HealthSnapshot,
+        })?;
+        let probe = canon::frame::decode(&probe)?;
+        if field("provenance")? != probe.get("provenance").ok_or(codes::FRAME_PROVENANCE)? {
+            return Err(codes::FRAME_PROVENANCE);
+        }
+        let read = self.with_release(|release| {
+            frontdoor::api::service_reads::authorize_data(release, field("body")?)
+        })?;
+        self.data.submit_generated(session, at, |_| {
+            let value = self
+                .faces
+                .dispatch_extended(session, &read, &self.documents)?;
+            self.with_release(|_| Ok(()))?;
+            let reply = Value::object(vec![
+                (
+                    "v".into(),
+                    Value::integer(canon::json::SafeInteger::new(3)?),
+                ),
+                ("id".into(), Value::text(id.as_str().into())?),
+                ("kind".into(), Value::text("service.reply".into())?),
+                ("provenance".into(), field("provenance")?.clone()),
+                (
+                    "body".into(),
+                    Value::object(vec![
+                        ("schema".into(), Value::text("aukora:face-service:v3".into())?),
+                        ("value".into(), value),
+                    ])?,
+                ),
+            ])?;
+            Ok(reply.canonical_bytes())
+        })
+    }
+
     fn consume_host_claim(&self, request: &AdmittedRequest) -> Result<http::Response<Vec<u8>>> {
         if OwnerRoute::resolve(request.role(), request.method(), request.path())?
             != OwnerRoute::Claim
@@ -330,7 +502,7 @@ impl Host {
                 .into_http_response();
             }
             if matches!(route, OwnerRoute::SigninStart | OwnerRoute::SigninFinish) {
-                return self.signin(request, route);
+                return self.signin(request, route, None);
             }
             let mut sessions = self.sessions()?;
             let mut identity = self.identity.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
@@ -414,14 +586,7 @@ impl Host {
                 self.state.node,
                 request.origin(),
                 now()?,
-                |session| {
-                    self.data.dispatch(
-                        &session,
-                        endpoint,
-                        &request.body().canonical_bytes(),
-                        now()?,
-                    )
-                },
+                |session| self.data_request(&session, endpoint, request.body()),
             );
         }
         let endpoint = frontdoor::api::FaceEndpoint::resolve(
@@ -470,6 +635,7 @@ impl Host {
         &self,
         request: &AdmittedRequest,
         route: OwnerRoute,
+        handoff: Option<(canon::digest::Digest32, canon::digest::Digest32)>,
     ) -> Result<http::Response<Vec<u8>>> {
         use frontdoor::session::{BindingState, SessionBearer, SessionRecord, SessionScope};
         let mut identity = self.identity.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
@@ -507,6 +673,25 @@ impl Host {
             },
             now,
         )?;
+        if scope == SessionScope::OwnerFrame {
+            if let Some((correlation, owner_pending)) = handoff {
+                let boundary = self.config.boundary()?;
+                let grant = frontdoor::session::with_bound_session(
+                    &mut sessions,
+                    bearer.as_bytes(),
+                    self.state.node,
+                    request.origin(),
+                    now,
+                    |session| {
+                        frontdoor::ingress::ShellSessionGrant::from_owner(&session, &boundary)
+                    },
+                )?;
+                self.handoffs
+                    .lock()
+                    .map_err(|_| codes::SUPERVISOR_STATE)?
+                    .authorize(correlation, owner_pending, grant, now)?;
+            }
+        }
         let mut response = json_response(result.body)?;
         response.headers_mut().insert(
             http::header::SET_COOKIE,
@@ -589,6 +774,19 @@ impl Host {
             })
             .map_err(|_| codes::SUPERVISOR_STATE)
     }
+}
+
+fn handoff_response(cookies: &[String]) -> Result<http::Response<Vec<u8>>> {
+    let mut response = json_response(Value::object(vec![("ok".into(), Value::boolean(true))])?)?;
+    for cookie in cookies {
+        response.headers_mut().append(
+            http::header::SET_COOKIE,
+            cookie
+                .parse()
+                .map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?,
+        );
+    }
+    Ok(response)
 }
 
 fn image_mime(path: &str) -> Result<&'static str> {

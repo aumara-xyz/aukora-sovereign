@@ -149,3 +149,56 @@ const fn denied() -> Refusal {
         reason: "capability-denied",
     }
 }
+
+/// Authorizes the version 3 FD 4 read body against the approved face inventory.
+/// The host retains its shell session and floor guards while performing the read.
+pub fn authorize_data(release: &ApprovedRelease, value: &Value) -> Result<AuthorizedRead> {
+    let ValueView::Object(fields) = value.view() else {
+        return Err(invalid());
+    };
+    let names = ["schema", "face", "service", "method", "params"];
+    if fields.len() != names.len() || fields.iter().any(|(key, _)| !names.contains(&key.as_str())) {
+        return Err(invalid());
+    }
+    if text(value, "schema")? != "aukora:face-service:v3" {
+        return Err(invalid());
+    }
+    let face = text(value, "face")?;
+    let service = text(value, "service")?;
+    let method = text(value, "method")?;
+    let added = matches!(
+        (face, service, method),
+        ("aumlok", "aumlok", "status")
+            | ("identity", "aumlok", "identity")
+            | ("coherence", "gate-aura", "head")
+    );
+    if !permitted(face, service, method) && !added {
+        return Err(denied());
+    }
+    let expected = format!("app/faces/{face}/index.html");
+    if release
+        .entries()
+        .iter()
+        .filter(|entry| {
+            entry.surface == AssetSurface::Face
+                && entry.kind == AssetKind::Html
+                && entry.path == expected
+        })
+        .count()
+        != 1
+    {
+        return Err(denied());
+    }
+    let params = value.get("params").ok_or_else(invalid)?;
+    if !matches!(params.view(), ValueView::Object(_)) {
+        return Err(invalid());
+    }
+    Ok(AuthorizedRead {
+        face: face.to_owned(),
+        service: service.to_owned(),
+        method: method.to_owned(),
+        params: params.clone(),
+        manifest: release.manifest_sha256(),
+        assets: release.entries().len(),
+    })
+}

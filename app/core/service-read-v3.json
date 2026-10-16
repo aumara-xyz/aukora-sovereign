@@ -1,0 +1,13 @@
+{
+  "schema": "aukora-face-service-v3-vectors",
+  "vectors": [
+    {
+      "name": "contacts-read",
+      "canonical": "{\"body\":{\"face\":\"messages\",\"method\":\"contacts.list\",\"params\":{\"before\":null,\"limit\":100},\"schema\":\"aukora:face-service:v3\",\"service\":\"network\"},\"id\":\"0123456789abcdef0123456789abcdef\",\"kind\":\"service.read\",\"provenance\":{\"source\":\"owner\"},\"v\":3}"
+    },
+    {
+      "name": "empty-contacts-reply",
+      "canonical": "{\"body\":{\"schema\":\"aukora:face-service:v3\",\"value\":{\"items\":[],\"next\":null}},\"id\":\"0123456789abcdef0123456789abcdef\",\"kind\":\"service.reply\",\"provenance\":{\"source\":\"owner\"},\"v\":3}"
+    }
+  ]
+}

@@ -573,3 +573,120 @@ impl ShellSessionGrant {
         Ok(cookie)
     }
 }
+
+/// Admission for the two native handoff operations and their HttpOnly metadata.
+/// Correlation cookies never become a bound session or enter an FD 4 frame.
+pub struct HandoffAdmission {
+    pub admission: HttpAdmission,
+    pub pending: Option<canon::digest::Digest32>,
+    pub correlation: Option<canon::digest::Digest32>,
+    pub owner_pending: Option<canon::digest::Digest32>,
+    pub navigation: Option<canon::digest::Digest32>,
+}
+
+impl HttpIngress {
+    pub async fn admit_incoming_with_handoff(
+        &self,
+        peer: std::net::IpAddr,
+        request: http::Request<hyper::body::Incoming>,
+    ) -> Result<HandoffAdmission> {
+        self.admit_http_with_handoff(peer, request.map(axum::body::Body::new))
+            .await
+    }
+
+    /// Reuses the original TLS, origin, metadata, length, JSON and permit checks.
+    /// The frame locator reuses the exact iframe destination and shell referrer checks.
+    pub async fn admit_http_with_handoff(
+        &self,
+        peer: std::net::IpAddr,
+        mut request: http::Request<axum::body::Body>,
+    ) -> Result<HandoffAdmission> {
+        let original_path = request.uri().path_and_query().map(|path| path.as_str());
+        let handoff_path = match original_path {
+            Some(crate::fd4::HANDOFF_PREPARE_PATH) => Some(crate::fd4::HANDOFF_PREPARE_PATH),
+            Some(crate::fd4::HANDOFF_COMPLETE_PATH) => Some(crate::fd4::HANDOFF_COMPLETE_PATH),
+            _ => None,
+        };
+        let navigation = original_path
+            .and_then(|path| path.strip_prefix("/handoff-v1-"))
+            .map(|reference| {
+                if request.method() != http::Method::GET {
+                    return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
+                }
+                canon::digest::Digest32::from_hex(reference)
+                    .map_err(|_| codes::FRONTDOOR_PATH_REFUSED)
+            })
+            .transpose()?;
+        let cookies = header_values(request.headers(), "cookie")?;
+        if handoff_path.is_some() || navigation.is_some() {
+            if handoff_path.is_some() && request.method() != http::Method::POST {
+                return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
+            }
+            // Preserve any absolute-form authority for the original boundary check.
+            let mut parts = request.uri().clone().into_parts();
+            parts.path_and_query = Some(http::uri::PathAndQuery::from_static(
+                if navigation.is_some() {
+                    "/"
+                } else {
+                    crate::fd4::DATA_PATH
+                },
+            ));
+            *request.uri_mut() =
+                http::Uri::from_parts(parts).map_err(|_| codes::FRONTDOOR_PATH_REFUSED)?;
+        }
+        let mut admission = self.admit_http(peer, request).await?;
+        if navigation.is_some()
+            && (admission.request.role != HostRole::Owner || admission.owner_navigation.is_none())
+        {
+            return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
+        }
+        if let Some(path) = handoff_path {
+            match admission.request.body.view() {
+                ValueView::Object(fields) if fields.is_empty() => {}
+                _ => return Err(codes::FRONTDOOR_BODY_INVALID),
+            }
+            if admission.request.role != HostRole::Shell {
+                return Err(codes::FRONTDOOR_HOST_REFUSED);
+            }
+            admission.request.path = path.to_owned();
+        }
+        let pending = handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_PENDING_COOKIE)?;
+        let correlation = handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_CORRELATION_COOKIE)?;
+        let owner_pending = handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_OWNER_COOKIE)?;
+        if pending.is_some() && admission.request.role != HostRole::Shell {
+            return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+        }
+        if owner_pending.is_some() && admission.request.role != HostRole::Owner {
+            return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+        }
+        Ok(HandoffAdmission {
+            admission,
+            pending,
+            correlation,
+            owner_pending,
+            navigation,
+        })
+    }
+}
+
+fn handoff_cookie_digest(
+    headers: &[String],
+    name: &str,
+) -> Result<Option<canon::digest::Digest32>> {
+    let mut digest = None;
+    for header in headers {
+        for cookie in header.split(';') {
+            let (key, value) = cookie
+                .trim()
+                .split_once('=')
+                .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+            if key == name {
+                if digest.is_some() {
+                    return Err(codes::FRONTDOOR_SESSION_REQUIRED);
+                }
+                digest = Some(crate::session::session_digest(value.as_bytes())?);
+            }
+        }
+    }
+    Ok(digest)
+}

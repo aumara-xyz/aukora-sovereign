@@ -13,6 +13,55 @@ use hyper_util::rt::TokioIo;
 use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::io::AsyncWriteExt;
 
+/// Uses the same bounded HTTP boundary with the server-side owner rendezvous.
+pub async fn serve_handoff(host: Arc<Host>) -> canon::Result<()> {
+    let admission = Arc::new(HttpIngress::new(host.config.boundary()?)?);
+    let listener = tokio::net::TcpListener::bind(host.config.listen)
+        .await.map_err(|_| canon::Refusal { organ: "supervisor", reason: "listen" })?;
+    let capacity = Arc::new(tokio::sync::Semaphore::new(ingress::MAX_CONNECTIONS));
+    host.listener_started();
+    loop {
+        let (socket, address) = listener.accept().await.map_err(|_| codes::SUPERVISOR_STATE)?;
+        let Ok(lease) = capacity.clone().try_acquire_owned() else {
+            refuse_overload(socket).await;
+            continue;
+        };
+        let host = host.clone();
+        let admission = admission.clone();
+        tokio::spawn(async move {
+            let lease = Arc::new(lease);
+            let held = lease.clone();
+            let router = hyper::service::service_fn(move |request| {
+                handle_handoff(host.clone(), admission.clone(), address, request, lease.clone())
+            });
+            let mut http = hyper::server::conn::http1::Builder::new();
+            http.keep_alive(false).max_buf_size(ingress::MAX_HEADER_BYTES);
+            let _completion = tokio::time::timeout(
+                Duration::from_millis(ingress::REQUEST_DEADLINE_MS),
+                http.serve_connection(TokioIo::new(socket), router),
+            ).await;
+            drop(held);
+        });
+    }
+}
+
+async fn handle_handoff(
+    host: Arc<Host>,
+    admission: Arc<HttpIngress>,
+    peer: SocketAddr,
+    request: Request<Incoming>,
+    lease: Arc<tokio::sync::OwnedSemaphorePermit>,
+) -> std::result::Result<Response<Full<Bytes>>, Infallible> {
+    let result = match admission.admit_incoming_with_handoff(peer.ip(), request).await {
+        Ok(request) => tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            host.dispatch_handoff(&request)
+        }).await.unwrap_or(Err(codes::SUPERVISOR_STATE)),
+        Err(refused) => Err(refused),
+    };
+    Ok(result.unwrap_or_else(refusal).map(|body| Full::new(Bytes::from(body))))
+}
+
 pub async fn serve(host: Arc<Host>) -> Result<()> {
     let ingress = Arc::new(HttpIngress::new(host.config.boundary()?)?);
     let listener = tokio::net::TcpListener::bind(host.config.listen)

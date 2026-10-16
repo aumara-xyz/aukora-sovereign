@@ -129,3 +129,79 @@ impl SettingsRead for LiveSettings<'_> {
         }
     }
 }
+
+impl HostFaces {
+    /// Additional read-only views retain the shell session and the binding epoch.
+    pub fn dispatch_extended(
+        &self,
+        session: &BoundSession<'_>,
+        read: &AuthorizedRead,
+        root: &DocumentRoot,
+    ) -> Result<Value> {
+        use super::wire;
+        use canon::authority::{AuthorityTxn, Kind};
+
+        if !matches!(
+            (read.service(), read.method()),
+            ("aumlok", "status" | "identity") | ("gate-aura", "head")
+        ) {
+            return self.dispatch(session, read, root);
+        }
+        wire::exact(read.params(), &[])?;
+        let record = session.record();
+        let scope = PrincipalScope {
+            subject: record.subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
+            epoch: record.owner_epoch,
+        };
+        if record.scope != SessionScope::Shell {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        self.recheck(scope)?;
+        let value = match (read.service(), read.method()) {
+            ("gate-aura", "head") => self.ledger.with_read_ledger(|ledger| {
+                wire::object([("head", wire::text(ledger.retained_head()?.root.to_string())?)])
+            })?,
+            ("aumlok", "status") => return Err(refuse("aumlok-status-unavailable")),
+            ("aumlok", "identity") => self.ledger.scoped(scope, |txn| {
+                let owner = txn
+                    .bound_owner_identity()?
+                    .ok_or(codes::AUMLOK_BINDING_REQUIRED)?;
+                if owner.subject != scope.subject {
+                    return Err(codes::AUMLOK_BINDING_REQUIRED);
+                }
+                let version = txn.current_version()?;
+                for sequence in 1..version.sequence {
+                    let row = txn
+                        .floor_record_at_sequence(sequence)?
+                        .ok_or(codes::AURA_UNVERIFIED)?;
+                    if row.kind == Kind::NostrBind {
+                        return Err(refuse("identity-network-projection-unavailable"));
+                    }
+                }
+                let label = owner.credential.owner_id;
+                if label.trim() != label
+                    || label.is_empty()
+                    || label.chars().count() > 64
+                    || label.chars().any(|character| {
+                        character.is_control()
+                            || matches!(character, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+                                | '\u{2060}'..='\u{2069}' | '\u{feff}')
+                    })
+                {
+                    return Err(refuse("identity-label-invalid"));
+                }
+                wire::object([
+                    ("agent_npub", Value::null()),
+                    ("contact_code", Value::null()),
+                    ("label", wire::text(label)?),
+                    ("node_npub", Value::null()),
+                    ("safety", Value::array(Vec::new())?),
+                    ("subject", wire::text(owner.subject.to_string())?),
+                ])
+            })?,
+            _ => return Err(refuse("face-operation-unknown")),
+        };
+        self.recheck(scope)?;
+        wire::bounded(value)
+    }
+}

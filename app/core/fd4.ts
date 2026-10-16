@@ -165,3 +165,17 @@ export type SessionEvent = { [K in keyof SessionEventBodies]: { kind: K; body: S
 export type Fd4Frame<T extends ChatCommand | SessionEvent> = T & { v: 2; id: string; provenance: Provenance };
 export type ChatCommandFrame = Fd4Frame<ChatCommand>;
 export type SessionEventFrame = Fd4Frame<SessionEvent>;
+
+export const FD4_SERVICE_VERSION = 3;
+export const FD4_SERVICE_SCHEMA = 'aukora:face-service:v3';
+export interface ServiceReadBody {
+  schema: typeof FD4_SERVICE_SCHEMA;
+  face: string;
+  service: string;
+  method: string;
+  params: import('./data.js').JsonValue;
+}
+export interface ServiceReplyBody {
+  schema: typeof FD4_SERVICE_SCHEMA;
+  value: import('./data.js').JsonValue;
+}

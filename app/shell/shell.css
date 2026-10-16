@@ -34,6 +34,21 @@ button:disabled { cursor: default; color: var(--muted); }
 .brand-mark { width: 22px; height: 22px; }
 .brand-name { font-size: var(--type-brand); letter-spacing: var(--tracking-brand); }
 .layout-label { color: var(--muted); font-size: var(--type-small); }
+.shell-connection {
+  position: fixed;
+  right: var(--frame-inset);
+  bottom: var(--frame-inset);
+  z-index: 10;
+  max-width: calc(100% - 2 * var(--frame-inset));
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--violet);
+  border-radius: var(--control-radius);
+  background: var(--layer1);
+  overflow-wrap: anywhere;
+  font-size: var(--type-small);
+}
+.shell-connection::before { content: '◇ '; color: var(--violet); }
 .phone-tabs { display: none; }
 .phone-tab, .menu-entry { display: flex; align-items: center; gap: 10px; }
 .icon { width: 18px; height: 18px; flex: none; }

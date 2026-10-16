@@ -239,3 +239,215 @@ pub struct DataFacts {
     pub refused_payloads: u64,
     pub fatal_closes: u64,
 }
+
+pub const HANDOFF_PREPARE_PATH: &str = "/api/data/handoff/prepare";
+pub const HANDOFF_COMPLETE_PATH: &str = "/api/data/handoff/complete";
+pub const HANDOFF_PENDING_COOKIE: &str = "__Host-aukora-handoff";
+pub const HANDOFF_CORRELATION_COOKIE: &str = "__Secure-aukora-handoff";
+pub const HANDOFF_OWNER_COOKIE: &str = "__Host-aukora-owner-handoff";
+pub const HANDOFF_LIFETIME_MS: u64 = 300_000;
+const MAX_HANDOFFS: usize = 256;
+
+struct PendingHandoff {
+    pending: canon::digest::Digest32,
+    reference: canon::digest::Digest32,
+    owner_pending: Option<canon::digest::Digest32>,
+    shell: crate::tls::Origin,
+    expires_at_ms: u64,
+    grant: Option<crate::ingress::ShellSessionGrant>,
+}
+
+/// The public reference locates a pending exchange; cookies and sign-in authorize it.
+pub struct HandoffPrepared {
+    pub cookies: [String; 2],
+    pub reference: canon::digest::Digest32,
+}
+
+/// Process-local rendezvous; a restart discards pending admission, never creates it.
+/// Cookies are HttpOnly. The shell notice and request body contain no bearer.
+#[derive(Default)]
+pub struct ShellHandoffs {
+    pending: std::collections::BTreeMap<canon::digest::Digest32, PendingHandoff>,
+}
+
+impl ShellHandoffs {
+    /// The domain cookie correlates the configured shell and owner; redemption also
+    /// requires the shell's host-only cookie and a newly verified owner session.
+    pub fn prepare(
+        &mut self,
+        request: &crate::ingress::AdmittedRequest,
+        boundary: &crate::tls::CaddyBoundary,
+        previous: Option<canon::digest::Digest32>,
+        now_ms: u64,
+    ) -> Result<HandoffPrepared> {
+        handoff_request(request, HANDOFF_PREPARE_PATH)?;
+        boundary.validate()?;
+        if request.origin() != &boundary.shell
+            || boundary.owner.host() != format!("owner.{}", boundary.shell.host())
+        {
+            return Err(canon::codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+        }
+        let expires_at_ms = now_ms
+            .checked_add(HANDOFF_LIFETIME_MS)
+            .filter(|time| *time <= canon::json::MAX_SAFE_INTEGER as u64)
+            .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+        self.pending.retain(|_, handoff| {
+            handoff.expires_at_ms > now_ms && Some(handoff.pending) != previous
+        });
+        if self.pending.len() >= MAX_HANDOFFS {
+            return Err(canon::codes::FRONTDOOR_OVERLOADED);
+        }
+        let pending = crate::session::SessionBearer::generate()?;
+        let correlation = crate::session::SessionBearer::generate()?;
+        let reference = crate::session::SessionBearer::generate()?.digest();
+        let cookies = [
+            handoff_cookie_header(HANDOFF_PENDING_COOKIE, &pending, None)?,
+            handoff_cookie_header(
+                HANDOFF_CORRELATION_COOKIE,
+                &correlation,
+                Some(boundary.shell.host()),
+            )?,
+        ];
+        if self.pending.contains_key(&correlation.digest())
+            || self
+                .pending
+                .values()
+                .any(|old| old.pending == pending.digest() || old.reference == reference)
+        {
+            return Err(canon::codes::FRONTDOOR_SESSION_REQUIRED);
+        }
+        self.pending.insert(
+            correlation.digest(),
+            PendingHandoff {
+                pending: pending.digest(),
+                reference,
+                owner_pending: None,
+                shell: boundary.shell.clone(),
+                expires_at_ms,
+                grant: None,
+            },
+        );
+        Ok(HandoffPrepared { cookies, reference })
+    }
+
+    /// Bind the shell-selected public reference to the admitted owner iframe.
+    /// A domain cookie planted by a sibling cannot select a different reference.
+    pub fn owner_navigation(
+        &mut self,
+        reference: canon::digest::Digest32,
+        correlation: canon::digest::Digest32,
+        navigation: &crate::owner_origin::FrameNavigation,
+        now_ms: u64,
+    ) -> Result<String> {
+        let context = navigation.context();
+        context.validate()?;
+        let handoff = self
+            .pending
+            .get_mut(&correlation)
+            .filter(|handoff| {
+                handoff.reference == reference
+                    && handoff.shell == context.expected_top_origin
+                    && context.owner_origin.host() == format!("owner.{}", handoff.shell.host())
+                    && handoff.expires_at_ms > now_ms
+                    && handoff.owner_pending.is_none()
+                    && handoff.grant.is_none()
+            })
+            .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+        let owner = crate::session::SessionBearer::generate()?;
+        let cookie = handoff_cookie_header(HANDOFF_OWNER_COOKIE, &owner, None)?;
+        handoff.owner_pending = Some(owner.digest());
+        Ok(cookie)
+    }
+
+    /// Call only after successful passkey sign-in and durable owner-session insertion.
+    pub fn authorize(
+        &mut self,
+        correlation: canon::digest::Digest32,
+        owner_pending: canon::digest::Digest32,
+        grant: crate::ingress::ShellSessionGrant,
+        now_ms: u64,
+    ) -> Result<()> {
+        let handoff = self
+            .pending
+            .get_mut(&correlation)
+            .filter(|handoff| {
+                handoff.expires_at_ms > now_ms
+                    && handoff.owner_pending == Some(owner_pending)
+                    && handoff.grant.is_none()
+            })
+            .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+        handoff.grant = Some(grant);
+        Ok(())
+    }
+
+    /// Consumes the grant before deriving the shell session. Failed writes cannot retry it.
+    pub fn complete(
+        &mut self,
+        request: &crate::ingress::AdmittedRequest,
+        pending: canon::digest::Digest32,
+        correlation: canon::digest::Digest32,
+        sessions: &mut impl crate::session::SessionStore,
+        now_ms: u64,
+    ) -> Result<[String; 3]> {
+        handoff_request(request, HANDOFF_COMPLETE_PATH)?;
+        let handoff = self
+            .pending
+            .get(&correlation)
+            .filter(|handoff| {
+                handoff.pending == pending
+                    && handoff.shell == *request.origin()
+                    && handoff.expires_at_ms > now_ms
+                    && handoff.grant.is_some()
+            })
+            .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+        let domain = handoff.shell.host().to_owned();
+        let grant = self
+            .pending
+            .remove(&correlation)
+            .and_then(|handoff| handoff.grant)
+            .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+        let session =
+            grant.issue_cookie(sessions, request, now_ms, crate::session::MAX_LIFETIME_MS)?;
+        Ok([
+            session,
+            format!(
+                "{HANDOFF_PENDING_COOKIE}=; {}; Max-Age=0",
+                crate::session::COOKIE_ATTRIBUTES
+            ),
+            format!(
+                "{HANDOFF_CORRELATION_COOKIE}=; {}; Domain={domain}; Max-Age=0",
+                crate::session::COOKIE_ATTRIBUTES
+            ),
+        ])
+    }
+}
+
+fn handoff_request(request: &crate::ingress::AdmittedRequest, path: &str) -> Result<()> {
+    if request.role() != crate::ingress::HostRole::Shell
+        || request.method() != crate::ingress::Method::Post
+        || request.path() != path
+    {
+        return Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE);
+    }
+    match request.body().view() {
+        canon::json::ValueView::Object(fields) if fields.is_empty() => Ok(()),
+        _ => Err(canon::codes::FRONTDOOR_BODY_INVALID),
+    }
+}
+
+fn handoff_cookie_header(
+    name: &str,
+    bearer: &crate::session::SessionBearer,
+    domain: Option<&str>,
+) -> Result<String> {
+    let token = std::str::from_utf8(bearer.as_bytes())
+        .map_err(|_| canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+    let domain = domain
+        .map(|host| format!("; Domain={host}"))
+        .unwrap_or_default();
+    Ok(format!(
+        "{name}={token}; {}{domain}; Max-Age={}",
+        crate::session::COOKIE_ATTRIBUTES,
+        HANDOFF_LIFETIME_MS / 1000,
+    ))
+}

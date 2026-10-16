@@ -2,7 +2,7 @@
 import { COPY } from '../design/index.js';
 
 export type OwnerRoute = '/passkey' | '/phrase' | '/claim' | `/approval/${string}`;
-export type OwnerNotice = { kind: 'closed' | 'complete' } | { kind: 'refusal'; code: string };
+export type OwnerNotice = { kind: 'closed' | 'complete'; route?: OwnerRoute } | { kind: 'refusal'; code: string };
 const protocol = 'aukora.owner.v1';
 
 export function validOwnerRoute(route: string): route is OwnerRoute {
@@ -22,18 +22,31 @@ export class OwnerFrame {
   #dialog: HTMLDialogElement | null = null;
   #close: (() => void) | null = null;
   #notice: (notice: OwnerNotice) => void;
+  #prepare: () => Promise<string | void>;
+  #generation = 0;
+  #preparing: Promise<void> = Promise.resolve();
 
-  constructor(origin: string, notice: (notice: OwnerNotice) => void = () => {}) {
+  constructor(origin: string, notice: (notice: OwnerNotice) => void = () => {}, prepare: () => Promise<string | void> = async () => {}) {
     if (window.top !== window.self) throw new Error('shell:framed-shell');
     this.#origin = trustedOrigin(origin);
     this.#notice = notice;
+    this.#prepare = prepare;
   }
 
   /** A claim token rides in the frame's fragment, which never reaches a server; only `/claim` carries one. */
-  open(route: OwnerRoute, claim = ''): void {
+  async open(route: OwnerRoute, claim = ''): Promise<void> {
     if (!validOwnerRoute(route)) throw new Error('shell:unknown-owner-route');
     if (claim && (route !== '/claim' || !/^[A-Za-z0-9_-]{43}$/.test(claim))) throw new Error('shell:claim-invalid');
     this.close();
+    const generation = this.#generation;
+    const prepared = this.#preparing.then(() => {
+      if (generation !== this.#generation) return;
+      return this.#prepare();
+    });
+    this.#preparing = prepared.then(() => {}, () => {});
+    const reference = await prepared;
+    if (reference !== undefined && !/^[0-9a-f]{64}$/.test(reference)) throw new Error('shell:handoff-refused');
+    if (generation !== this.#generation) return;
     const dialog = document.createElement('dialog');
     dialog.className = 'owner-dialog';
     dialog.setAttribute('aria-label', COPY.ownerTitle as string);
@@ -50,8 +63,8 @@ export class OwnerFrame {
     frame.referrerPolicy = 'origin';
     frame.allow = `publickey-credentials-get ${this.#origin}; publickey-credentials-create ${this.#origin}`;
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-    // The owner host serves its document only at `/`; the route itself travels in the init message.
-    const url = new URL('/', `${this.#origin}/`);
+    // The public reference selects a rendezvous; only HttpOnly cookies and the verified passkey can complete it.
+    const url = new URL(reference ? `/handoff-v1-${reference}` : '/', `${this.#origin}/`);
     if (claim) url.hash = `claim=${claim}`;
     frame.src = url.href;
     let channel: string | null = null;
@@ -68,7 +81,7 @@ export class OwnerFrame {
         if ((data.kind === 'complete' || data.kind === 'closed')
           && Object.keys(data).sort().join(',') === 'channel,kind,protocol') {
           this.close();
-          this.#notice({ kind: data.kind });
+          this.#notice({ kind: data.kind, route });
         } else if (data.kind === 'refusal' && typeof data.code === 'string'
           && /^[a-z][a-z0-9_-]*:[a-z0-9-]+$/.test(data.code)
           && Object.keys(data).sort().join(',') === 'channel,code,kind,protocol') {
@@ -95,6 +108,7 @@ export class OwnerFrame {
   }
 
   close(): void {
+    this.#generation++;
     const close = this.#close;
     this.#close = null;
     this.#dialog = null;

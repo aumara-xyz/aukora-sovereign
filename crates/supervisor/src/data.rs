@@ -172,3 +172,108 @@ fn response(bytes: Vec<u8>) -> Result<http::Response<Vec<u8>>> {
         .body(bytes)
         .map_err(|_| codes::SUPERVISOR_STATE)
 }
+
+impl HostData {
+    /// Reserves a bounded reply slot before a host-owned data operation runs.
+    pub fn submit_generated(
+        &self,
+        session: &BoundSession<'_>,
+        now: u64,
+        generate: impl FnOnce(PrincipalScope) -> Result<Vec<u8>>,
+    ) -> Result<http::Response<Vec<u8>>> {
+        let record = session.record();
+        let scope = PrincipalScope {
+            subject: record.subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
+            epoch: record.owner_epoch,
+        };
+        if record.scope != frontdoor::session::SessionScope::Shell
+            || self.ledger.binding()? != BindingState::Bound(scope)
+        {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        let mut queues = self.queues.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+        queues.retain(|_, queue| queue.expires > now && queue.scope == scope);
+        if !queues.contains_key(&record.token_digest) && queues.len() >= 64 {
+            return Err(canon::Refusal {
+                organ: "supervisor",
+                reason: "queue-full",
+            });
+        }
+        let queue = queues.entry(record.token_digest).or_insert_with(|| Queue {
+            scope,
+            expires: record.expires_at_ms,
+            bytes: 0,
+            events: VecDeque::new(),
+        });
+        if queue.events.len() >= MAX_QUEUED_FRAMES
+            || queue.bytes + canon::frame::MAX_FRAME_BYTES > MAX_QUEUED_BYTES
+        {
+            return Err(canon::Refusal {
+                organ: "supervisor",
+                reason: "queue-full",
+            });
+        }
+        let bytes = generate(scope)?;
+        canon::frame::decode(&bytes)?;
+        if self.ledger.binding()? != BindingState::Bound(scope) {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        queue.bytes += bytes.len();
+        queue.events.push_back(bytes);
+        response(b"{\"ok\":true}".to_vec())
+    }
+
+    /// The authenticated owner receives retained owner entries without upgrading guest provenance.
+    pub fn submit_owner_command(
+        &self,
+        session: &BoundSession<'_>,
+        payload: &[u8],
+        now: u64,
+        no_model: bool,
+    ) -> Result<http::Response<Vec<u8>>> {
+        let ingress = Provenance {
+            source: Source::Owner,
+        };
+        let command = canon::fd4::decode_command(payload, ingress.clone())?;
+        self.submit_generated(session, now, |scope| {
+            let body = tokio::runtime::Handle::try_current()
+                .map_err(|_| codes::SUPERVISOR_NOT_READY)?
+                .block_on(async {
+                    if let ChatCommand::Turn(turn) = &command.body {
+                        let opened = self.sessions.open(
+                            scope,
+                            canon::session::SessionOpen {
+                                session_id: turn.session_id,
+                                after_sequence: turn.expected_sequence,
+                                limit: 1,
+                            },
+                        ).await?;
+                        if opened.summary.sequence != turn.expected_sequence
+                            || opened.summary.mode != turn.mode
+                        {
+                            return Err(codes::SESSION_SEQUENCE);
+                        }
+                        return Ok(SessionEvent::Refusal(canon::fd3_payloads::RefusalReply {
+                            code: if no_model {
+                                codes::BROKER_STREAMING_UNAVAILABLE
+                            } else {
+                                codes::SUPERVISOR_NOT_READY
+                            },
+                            next: if no_model {
+                                "Auma has no model yet. Choose a model in Models."
+                            } else {
+                                "Auma is unavailable because the guest runtime is not connected."
+                            }.into(),
+                        }));
+                    }
+                    self.command(scope, ingress.clone(), command.body).await
+                })?;
+            canon::fd4::encode_event(&Frame {
+                v: canon::fd4::VERSION,
+                id: command.id,
+                provenance: ingress,
+                body,
+            })
+        })
+    }
+}
