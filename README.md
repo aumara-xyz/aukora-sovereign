@@ -25,8 +25,9 @@ which every row answers to. AUKORA Light carries the same file.
   pinned by hash in `checks/pins.json`.
 - **Code goes to main, and main is tested after it lands**: on a fresh node, then attacked by every major AI. Nothing
   goes public before it survives that.
-- **Every change takes the same path:** a Codex worker writes it, Kimi red-teams it, Grok checks it, and the conductor
-  zips it onto main. The worker's clone is deleted at once.
+- **Every change takes the same path:** a Codex worker writes it, the conductor zips it onto main once it compiles and
+  passes the construction checks, and two model families review it on main; a failed review becomes a fix that lands the
+  same way. The worker's clone is deleted at once.
 
 ## Checks
 `scripts/check.sh` runs the construction checks (`checks/run.py`), then `cargo check` on the workspace.

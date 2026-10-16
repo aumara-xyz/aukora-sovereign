@@ -550,12 +550,14 @@ Status says how proven each brick's cheat sheet is. Every brick is written fresh
 - **Codex workers (gpt-6.1-sol, ultra):** 7 architects in wave 0, then 39 workers in wave 1. Each writes its section
   fresh against the frozen contracts, reading the archive and Prime as the cheat sheet. It compiles, and never commits
   or pushes.
-- **Kimi:** red-teams every worker's diff against its rows, looking for drift, gaps and security holes.
-- **Grok:** checks every diff again, as a second family. It also sweeps main against this plan every hour, and runs the
-  hostile twins on the installed node after each milestone.
+- **Review after landing (Peter, 2026-10-15: code goes to main, then main is tested; no review gate before main):**
+  two model families review every diff once it is on main, and a failed review becomes a fix worker that lands the same
+  way. Grok is one family. The other is Codex for authority organs, deploy, scripts and checks, and Muse Spark
+  elsewhere. Kimi held that seat until her quota ran out on 2026-10-16. A Muse pass on authority code counts as no
+  verdict.
 - **The zipper (the conductor runs it as a script):**
-  - merges onto main only diffs that both reviewers passed;
   - pushes only a merged tree that compiles and passes the construction checks. Compiling is not testing;
+  - runs those build steps in a sandbox that can write only inside the merge copy and has no network;
   - deletes the worker's clone and build folder the moment its diff is merged or thrown away.
   - throws away a diff that does not fit and has it re-briefed, never patched;
   - posts the evidence line on the issue, and pushes.
@@ -682,7 +684,7 @@ writes it itself.
    - adds an unplanned crate, folder or codec;
    - opens a socket the contracts do not name;
    - breaks a machine rule.
-4. **Each reviewer answers one question first.** Kimi and Grok each ask: does this diff do exactly its rows, nothing
+4. **Each reviewer answers one question first.** Both review families ask: does this diff do exactly its rows, nothing
    more and nothing less? That includes stubs that report "verified" and tools hidden inside allowed files.
 5. **The zipper never patches a diff.** It throws it away and re-briefs. It pushes only a merged tree that compiles and
    passes the construction checks, so one bad diff cannot turn main red overnight.
