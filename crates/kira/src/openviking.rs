@@ -10,6 +10,8 @@ use core::mem::size_of;
 use std::collections::BTreeSet;
 
 pub const MAX_CANDIDATES: usize = 50;
+/// Scores encode `(cosine + 1) / 2`; 0.7 therefore requires cosine >= 0.4.
+pub const SEMANTIC_RELEVANCE_FLOOR: f64 = 0.7;
 pub const MAX_INDEX_BATCH_DOCUMENTS: usize = 128;
 pub const MAX_INDEX_BATCH_BYTES: usize = 65_536;
 
@@ -113,6 +115,10 @@ impl Candidate {
 
     pub const fn score(&self) -> f64 {
         self.score
+    }
+
+    pub fn is_relevant(&self) -> bool {
+        self.score >= SEMANTIC_RELEVANCE_FLOOR
     }
 }
 
@@ -334,10 +340,8 @@ pub trait OpenViking {
 }
 
 /// Returns ranked candidates from an index whose head and model stay unchanged.
-/// Success is neither C4 `found` nor `empty`: an empty candidate list is a semantic
-/// miss, which `MemoryRecallService::recall` keeps `undetermined`. Each hit remains a
-/// candidate until recall checks its retained ciphertext, authenticated Aura
-/// citation, active-note membership, and current-principal disclose permission.
+/// Recall applies the relevance floor and an independent lexical search after
+/// authenticating the retained notes. No score grants disclosure permission.
 pub fn recall_candidates(
     index: &mut dyn OpenViking,
     embedder: &mut dyn LocalEmbedder,
@@ -361,6 +365,9 @@ pub fn recall_candidates(
     }
     if reply.candidates.len() > limit {
         return Err(SemanticError::Response);
+    }
+    if before.eligible_notes != 0 && reply.candidates.is_empty() {
+        return Err(SemanticError::IndexIncomplete);
     }
     let after = index.index_state()?;
     after.require_complete(pin)?;

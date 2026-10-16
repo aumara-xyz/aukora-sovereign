@@ -20,6 +20,11 @@ use crate::{
 };
 
 pub const MAX_RECALL_ITEMS: usize = 100;
+const MAX_LEXICAL_NOTES: usize = 4_096;
+const MAX_LEXICAL_BYTES: usize = 16 * 1_024 * 1_024;
+const LEXICAL_RELEVANCE_FLOOR: f64 = 0.6;
+const RECENCY_WINDOW_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+const RECENCY_BONUS: f64 = 0.1;
 
 /// These fields describe the read, never authorize a later disclosure.
 /// An undetermined reply with permission_sequence zero has no verified disclosure;
@@ -170,7 +175,8 @@ impl CitedRecall {
 /// candidate: re-read its retained ciphertext, authenticate it, compare its save
 /// commitment and exclude demoted/quarantined notes. Index/model/head mismatch,
 /// authentication failure or incomplete coverage yields undetermined without text.
-/// A semantic miss alone never proves empty. No read raises a note's confidence.
+/// Empty requires a complete index and authenticated lexical scan with no match
+/// above either relevance floor. No read raises a note's confidence.
 pub trait MemoryRecallService {
     fn recall<T: AuthorityTxn + ?Sized, P: MemoryPermissions, A: AuraAnchors>(
         &mut self,
@@ -212,7 +218,7 @@ use canon::{
     fd3_payloads::{MemoryListItem, MemoryTier},
     json::{SafeInteger, Value, MAX_SAFE_INTEGER},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl<L: MemoryLedger> MemoryRecallService for SqliteMemory<'_, L> {
     fn recall<T: AuthorityTxn + ?Sized, P: MemoryPermissions, A: AuraAnchors>(
@@ -267,12 +273,15 @@ impl<L: MemoryLedger> MemoryRecallService for SqliteMemory<'_, L> {
         if active.is_empty() {
             return finish(CitedRecall::empty());
         }
+        if active.len() > MAX_LEXICAL_NOTES {
+            return finish(CitedRecall::undetermined(RecallGap::IncompleteIndex));
+        }
         let candidates = match recall_candidates(
             index,
             embedder,
             snapshot.anchor.head,
             &request.query,
-            usize::from(request.limit).min(crate::openviking::MAX_CANDIDATES),
+            crate::openviking::MAX_CANDIDATES,
         ) {
             Ok(reply) => reply,
             Err(error) => return finish(CitedRecall::undetermined(error.into())),
@@ -282,16 +291,18 @@ impl<L: MemoryLedger> MemoryRecallService for SqliteMemory<'_, L> {
         {
             return finish(CitedRecall::undetermined(RecallGap::IncompleteIndex));
         }
-        if candidates.candidates().is_empty() {
-            return finish(CitedRecall::undetermined(RecallGap::SemanticMiss));
-        }
-        let mut seen = BTreeSet::new();
-        let mut items = Vec::new();
+        let mut semantic = BTreeMap::new();
         for candidate in candidates.candidates() {
             let id = candidate.note_id();
-            if !seen.insert(id) || !active.contains(id) {
+            if semantic.insert(id, candidate).is_some() || !active.contains(id) {
                 return finish(CitedRecall::undetermined(RecallGap::Integrity));
             }
+        }
+        let query_terms = lexical_terms(&request.query);
+        let mut matches = Vec::new();
+        let mut scanned_bytes = 0usize;
+        let mut newest_at = 0;
+        for id in &active {
             let Some(note) = snapshot.notes.get(id) else {
                 return finish(CitedRecall::undetermined(RecallGap::Integrity));
             };
@@ -308,14 +319,45 @@ impl<L: MemoryLedger> MemoryRecallService for SqliteMemory<'_, L> {
             {
                 return finish(CitedRecall::undetermined(RecallGap::Integrity));
             }
-            items.push(CitedMemory::new(
+            let statement = payload.content.statement();
+            scanned_bytes = match scanned_bytes.checked_add(statement.len()) {
+                Some(bytes) if bytes <= MAX_LEXICAL_BYTES => bytes,
+                _ => return finish(CitedRecall::undetermined(RecallGap::IncompleteIndex)),
+            };
+            newest_at = newest_at.max(note.at_ms);
+            let lexical = lexical_score(&query_terms, statement);
+            let semantic = semantic.get(id).filter(|candidate| candidate.is_relevant());
+            if semantic.is_none() && lexical < LEXICAL_RELEVANCE_FLOOR {
+                continue;
+            }
+            let relevance = semantic.map_or(lexical, |candidate| candidate.score().max(lexical));
+            let item = CitedMemory::new(
                 id.clone(),
-                payload.content.statement().to_owned(),
+                statement.to_owned(),
                 note.receipt.cite_seq,
                 payload.origin,
-            )?);
+            )?;
+            matches.push(RankedMemory {
+                item,
+                relevance,
+                at_ms: note.at_ms,
+            });
         }
-        // Every ranked hit is authenticated before frame-size truncation.
+        if matches.is_empty() {
+            return finish(CitedRecall::empty());
+        }
+        matches.sort_by(|a, b| {
+            b.rank(newest_at)
+                .total_cmp(&a.rank(newest_at))
+                .then_with(|| b.item.item.cite_seq.cmp(&a.item.item.cite_seq))
+                .then_with(|| a.item.item.note_id.cmp(&b.item.item.note_id))
+        });
+        let mut items: Vec<_> = matches
+            .into_iter()
+            .take(usize::from(request.limit))
+            .map(|entry| entry.item)
+            .collect();
+        // Every active note is authenticated before result or frame truncation.
         loop {
             let result = CitedRecall::found(items.clone())?;
             if recall_frame(request_id, &result)?.len() <= canon::frame::MAX_FRAME_BYTES {
@@ -431,6 +473,43 @@ impl<L: MemoryLedger> MemoryRecallService for SqliteMemory<'_, L> {
         }
         Ok(reply)
     }
+}
+
+struct RankedMemory {
+    item: CitedMemory,
+    relevance: f64,
+    at_ms: u64,
+}
+
+impl RankedMemory {
+    fn rank(&self, newest_at: u64) -> f64 {
+        let age = newest_at.saturating_sub(self.at_ms) as f64;
+        self.relevance + RECENCY_BONUS / (1.0 + age / RECENCY_WINDOW_MS as f64)
+    }
+}
+
+fn lexical_terms(text: &str) -> BTreeSet<String> {
+    const STOP_WORDS: &[&str] = &[
+        "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can", "could", "did",
+        "do", "does", "for", "from", "had", "has", "have", "how", "i", "if", "in", "is", "it",
+        "its", "me", "my", "of", "on", "or", "our", "please", "remember", "said", "say", "tell",
+        "that", "the", "their", "them", "there", "these", "they", "this", "those", "to", "us",
+        "was", "we", "were", "what", "when", "where", "which", "who", "why", "will", "with",
+        "would", "you", "your",
+    ];
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .map(str::to_lowercase)
+        .filter(|term| !STOP_WORDS.contains(&term.as_str()))
+        .collect()
+}
+
+fn lexical_score(query: &BTreeSet<String>, statement: &str) -> f64 {
+    if query.is_empty() {
+        return 0.0;
+    }
+    let terms = lexical_terms(statement);
+    query.intersection(&terms).count() as f64 / query.len() as f64
 }
 
 fn disclosure<T: AuthorityTxn + ?Sized, P: MemoryPermissions>(
@@ -725,11 +804,6 @@ where
     } else if bound {
         measured.receipt = Checked;
     }
-    let active = snapshot
-        .notes
-        .values()
-        .filter(|note| note.demotion.is_none() && !note.quarantined)
-        .count();
     match reply.result {
         RecallResult::Found => {
             if reply.items.is_empty()
@@ -783,7 +857,7 @@ where
             measured.citations = measured.permissions;
         }
         RecallResult::Empty => {
-            if active != 0 || !reply.items.is_empty() || reply.gap.is_some() || sentinel {
+            if !reply.items.is_empty() || reply.gap.is_some() || sentinel {
                 return RecallObservation::unavailable(Violation);
             }
             if bound && disclosure_expected == Some(true) {
