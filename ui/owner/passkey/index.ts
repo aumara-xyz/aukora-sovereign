@@ -215,6 +215,7 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
     const stop = () => lifetime.abort();
     context.signal.addEventListener("abort", stop, { once: true });
     const title = document.createElement("h2");
+    title.tabIndex = -1;
     const detail = document.createElement("p");
     const status = document.createElement("p");
     status.setAttribute("role", "status");
@@ -237,6 +238,7 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
         detail.textContent = "The owner service confirmed this ceremony.";
         action.hidden = true;
         status.textContent = "Complete.";
+        title.focus();
         context.complete();
       } else if (next.kind === "register") {
         title.textContent = "Create your owner passkey";
@@ -252,6 +254,7 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
         action.disabled = false;
         status.textContent = "Ready for your passkey.";
       } else throw new Error("aumlok:ceremony-kind");
+      if (next.kind !== "complete") title.focus();
     }
 
     const invoke = async (): Promise<void> => {
@@ -282,18 +285,21 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
           }
           status.textContent = refusal(error);
           action.disabled = false;
+          action.focus();
         }
       } finally { busy = false; }
     };
     action.addEventListener("click", invoke);
     title.textContent = "Owner passkey";
     status.textContent = "Resuming the owner ceremony.";
+    title.focus();
     void ceremonies.current(lifetime.signal).then(show).catch(error => {
       if (!lifetime.signal.aborted) {
         step = undefined;
         action.textContent = "Resume ceremony";
         action.disabled = false;
         status.textContent = refusal(error);
+        action.focus();
       }
     });
     return () => {

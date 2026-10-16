@@ -6,6 +6,7 @@ interface Options {
   signal: AbortSignal;
   ownerBusy(): boolean;
   openOwner(route: Route): Promise<void>;
+  pending(count: number): void;
   session(bound: boolean): void;
   refusal(error: unknown): void;
 }
@@ -85,6 +86,16 @@ export class ApprovalWatch {
     if (!this.#inFlight && this.#timer === undefined) void this.#poll();
   }
 
+  forget(id: string): void { this.#shown.delete(id); }
+
+  reopen(): void {
+    if (this.#disposed) return;
+    this.#shown.clear();
+    if (this.#timer !== undefined) clearTimeout(this.#timer);
+    this.#timer = undefined;
+    this.refresh();
+  }
+
   async #poll(): Promise<void> {
     if (this.#disposed || this.#inFlight) return;
     this.#inFlight = true;
@@ -96,6 +107,7 @@ export class ApprovalWatch {
       if (this.#sequence !== null && next.sequence < this.#sequence) throw new Error('shell:approval-sequence-rollback');
       this.#options.session(true);
       this.#sequence = next.sequence;
+      this.#options.pending(next.ids.length);
       const present = new Set(next.ids);
       for (const id of this.#shown) if (!present.has(id)) this.#shown.delete(id);
       if (!this.#options.ownerBusy()) {
@@ -111,6 +123,7 @@ export class ApprovalWatch {
       if (sessionMissing) {
         this.#shown.clear();
         this.#sequence = null;
+        this.#options.pending(0);
         this.#options.session(false);
       } else if (!(error instanceof Error) || error.message !== 'supervisor:approval-poll-not-due') {
         this.#options.refusal(error);

@@ -81,7 +81,11 @@ if (root) {
       root, ownerOrigin: ownerOrigin(), servicesPendingText: 'Sign in',
       prepareOwner: () => exchange('prepare'),
       phraseRoute: () => bound ? '/phrase/refresh' : '/phrase',
+      openApprovals: () => approvals?.reopen(),
       onOwnerNotice: notice => {
+        if (notice.kind === 'closed' && notice.route?.startsWith('/approval/')) {
+          approvals?.forget(notice.route.slice('/approval/'.length));
+        }
         if (notice.kind === 'closed' || notice.kind === 'complete') approvals?.refresh();
         if (notice.kind === 'complete') {
           if (notice.route?.startsWith('/approval/') || notice.route === '/phrase/refresh' || notice.route === '/witness') return;
@@ -98,6 +102,7 @@ if (root) {
       signal: lifetime.signal,
       ownerBusy: () => shell.ownerBusy,
       openOwner: route => shell.openOwner(route),
+      pending: count => shell.setApprovalsPending(count),
       session: signedIn => {
         bound = signedIn;
         if (signedIn && notice.dataset.source === 'approvals') notice.hidden = true;

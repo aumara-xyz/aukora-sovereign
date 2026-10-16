@@ -56,10 +56,11 @@ export class OwnerFrame {
     if (generation !== this.#generation) return;
     const dialog = document.createElement('dialog');
     dialog.className = 'owner-dialog';
-    dialog.setAttribute('aria-label', COPY.ownerTitle as string);
+    dialog.setAttribute('aria-labelledby', 'owner-ceremony-title');
     const bar = document.createElement('div');
     bar.className = 'owner-toolbar';
     const title = document.createElement('strong');
+    title.id = 'owner-ceremony-title';
     title.textContent = COPY.ownerTitle as string;
     const close = document.createElement('button');
     close.type = 'button';
@@ -111,7 +112,7 @@ export class OwnerFrame {
       dialog.close();
       dialog.remove();
     };
-    try { dialog.showModal(); }
+    try { dialog.showModal(); frame.focus({ preventScroll: true }); }
     catch (error) { this.close(); throw error; }
   }
 

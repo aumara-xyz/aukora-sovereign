@@ -36,6 +36,7 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
       || location.origin !== config.ownerOrigin) throw new Error("owner:frame-required");
     const lifetime = new AbortController();
     const signal = lifetime.signal;
+    let stepLifetime = new AbortController();
     let wasm: Awaited<ReturnType<typeof loadAumlok>> | undefined;
     let bound: Current | undefined;
     let words: string[] = [];
@@ -45,21 +46,27 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
     let replacement: RecordValue | undefined;
     const panel = node("section", "", "onboarding phrase-pane");
     const title = node("h2", "Refresh your seven words");
+    title.tabIndex = -1;
     const content = node("div", "", "owner-content");
     const controls = node("div", "", "owner-controls");
     const status = node("p", "", "owner-status");
     status.setAttribute("role", "status");
     panel.append(title, content, controls, status);
     context.host.replaceChildren(panel);
+    title.focus({ preventScroll: true });
     const passkey = createPasskeyService({ ...config, ceremonies: {
       async current() { throw new Error("owner:unknown-operation"); },
       async advance() { throw new Error("owner:unknown-operation"); },
     } });
 
     function live(): void { signal.throwIfAborted(); }
-    function clear(): void {
+    function clear(heading = title.textContent ?? ""): void {
+      stepLifetime.abort();
+      stepLifetime = new AbortController();
       fields.forEach(field => { field.value = ""; }); fields = [];
       content.replaceChildren(); controls.replaceChildren(); status.textContent = "";
+      title.textContent = heading;
+      title.focus({ preventScroll: true });
     }
     async function run(action: () => Promise<void> | void): Promise<void> {
       if (busy || signal.aborted) return;
@@ -93,10 +100,10 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
       unlock();
     }
     function unlock(): void {
-      clear(); title.textContent = "Your current seven words";
-      const entry = phraseInputs(signal);
+      clear("Your current seven words");
+      const entry = phraseInputs(stepLifetime.signal);
       fields = entry.inputs;
-      content.append(entry.element, node("p", "never type these words into an AI", "phrase-warning"));
+      content.append(entry.element, node("p", "Never type these words into an AI.", "phrase-warning"));
       button("Unlock locally", async () => {
         if (!wasm || !bound) throw new Error("aumlok:phrase-locked");
         let entered = fields.map(field => field.value.trim()).join(" ");
@@ -106,7 +113,7 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
         finally { entered = ""; }
         exact(result, ["subject"]);
         if (result.subject !== bound.subject) throw new Error("aumlok:refresh-corrupt");
-        clear(); title.textContent = "Choose new words";
+        clear("Choose new words");
         button("Reveal replacement", () => {
           if (!wasm || !bound) throw new Error("aumlok:phrase-locked");
           const draft = wasm.call({ op: "refresh_prepare", ceremony: bound.ceremony });
@@ -117,17 +124,18 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
       });
     }
     function reveal(): void {
-      clear(); title.textContent = "Keep these seven words";
-      content.append(renderPhrase(words), node("p", "never type these words into an AI", "phrase-warning"));
+      clear("Keep these seven words");
+      content.append(node("p", "Build a story in your own head that walks through these seven words, in order.", "owner-detail"),
+        renderPhrase(words, stepLifetime.signal), node("p", "Never type these words into an AI.", "phrase-warning"));
       button("Continue", confirm);
     }
     function confirm(): void {
-      clear(); title.textContent = "Your new words, once more";
-      const entry = phraseInputs(signal);
+      clear("Your new words, once more");
+      const entry = phraseInputs(stepLifetime.signal);
       fields = entry.inputs;
-      const acknowledgement = phraseAcknowledgement(signal, true);
-      content.append(entry.element, node("p", "never type these words into an AI", "phrase-warning"), acknowledgement.element);
-      const approve = button("Refresh with passkey", async () => {
+      const acknowledgement = phraseAcknowledgement(stepLifetime.signal, true);
+      content.append(entry.element, node("p", "Never type these words into an AI.", "phrase-warning"), acknowledgement.element);
+      const approve = button("Refresh with Touch ID / passkey", async () => {
         if (!acknowledgement.checked() || !bound || !wasm || submitted) throw new Error("aumlok:refresh-input");
         const wrong: number[] = [];
         fields.forEach((field, at) => {
@@ -150,7 +158,7 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
     }
 
     function pending(message: string): void {
-      clear(); title.textContent = "Check your refresh";
+      clear("Check your refresh");
       status.textContent = message;
       button("Check refresh", checkRefresh);
     }
@@ -208,6 +216,7 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
     function dispose(): void {
       if (signal.aborted) return;
       lifetime.abort(); words.fill(""); words = [];
+      stepLifetime.abort();
       replacement = undefined;
       fields.forEach(field => { field.value = ""; }); fields = [];
       try { wasm?.call({ op: "refresh_discard" }); } finally { wasm?.dispose(); wasm = undefined; }

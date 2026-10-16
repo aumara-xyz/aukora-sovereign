@@ -7,6 +7,7 @@ import type { Authorization } from "./codec.js";
 import { renderAuthorization, renderCard } from "./render.js";
 import { createApprovalTransport } from "./transport.js";
 import type { ApprovalServiceOptions } from "./transport.js";
+import { ownerIcon } from "../icons.js";
 
 export interface SupervisorApprovalActions {
   submitAuthorization(proposalId: string, action: Authorization["op"], assertion: Uint8Array, signal: AbortSignal): Promise<void>;
@@ -64,6 +65,7 @@ export class ApprovalCards implements ApprovalPaneService {
       status.setAttribute("role", "alert");
       status.textContent = failure(error);
       retry.hidden = false;
+      retry.focus();
     };
 
     const load = async (): Promise<void> => {
@@ -98,14 +100,19 @@ export class ApprovalCards implements ApprovalPaneService {
       cardView.insertBefore(digest, cardView.children[2]);
       const authorize = document.createElement("button");
       authorize.type = "button";
-      const labels = { apply: "Approve with passkey", retire: "Retire with passkey", release: "Approve release",
+      const labels = { apply: "Approve", retire: "Retire", release: "Approve release",
         grant: "Approve grant", permission: "Approve permission" };
-      authorize.textContent = labels[auth.op];
+      const actionLabel = document.createElement("span");
+      actionLabel.textContent = labels[auth.op];
+      const passkeyCue = document.createElement("small");
+      passkeyCue.textContent = "Touch ID / passkey";
+      authorize.append(ownerIcon("owner"), actionLabel, passkeyCue);
       const controls = document.createElement("div");
       controls.className = "approval-actions";
       controls.append(authorize);
       review.append(cardView, renderAuthorization(document, auth), controls);
       status.textContent = "Review the exact bytes, then use your passkey.";
+      cardView.querySelector<HTMLElement>(".approval-summary")?.focus();
       authorize.addEventListener("click", () => {
         if (started || signal.aborted) return;
         started = true;

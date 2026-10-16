@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+export {};
+
 const BANDS = ["ROOT", "UNITE", "RISE"] as const;
 
 function make<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", className = ""): HTMLElementTagNameMap[K] {
@@ -21,7 +23,8 @@ function bandContainer(anchor: HTMLElement, rows: readonly HTMLElement[]): HTMLE
   return result;
 }
 
-export function renderPhrase(words: readonly string[]): HTMLElement {
+export function renderPhrase(words: readonly string[], signal: AbortSignal): HTMLElement {
+  signal.throwIfAborted();
   if (words.length !== 7 || !/^[a-z]{6}$/.test(words[0])
     || words.slice(1).some((word, at) => !/^[a-z]+$/.test(word) || word[0] !== words[0][at])) {
     throw new Error("aumlok:phrase-invalid");
@@ -37,10 +40,33 @@ export function renderPhrase(words: readonly string[]): HTMLElement {
   anchor.append(make("h3", "ANCHOR", "word-label"), boxes);
   const rows = words.slice(1).map((word, index) => {
     const row = make("div", "", "word-tile");
-    row.append(make("span", String(index + 2), "word-number"), make("strong", word));
+    const initial = make("span", word[0].toUpperCase(), "word-initial");
+    initial.setAttribute("aria-hidden", "true");
+    row.append(initial, make("strong", word));
+    row.setAttribute("aria-label", `Word ${index + 2}: ${word}`);
     return row;
   });
-  return bandContainer(anchor, rows);
+  const result = bandContainer(anchor, rows);
+  result.classList.add("phrase-display");
+  for (const event of ["copy", "cut", "dragstart"] as const) {
+    result.addEventListener(event, action => action.preventDefault(), { signal });
+  }
+  const fit = (): void => {
+    if (signal.aborted || !result.isConnected) return;
+    for (const row of rows) {
+      const word = row.querySelector("strong");
+      if (!word) continue;
+      word.style.removeProperty("font-size");
+      if (word.clientWidth === 0 || word.scrollWidth <= word.clientWidth) continue;
+      const size = Number.parseFloat(getComputedStyle(word).fontSize);
+      word.style.fontSize = `${size * word.clientWidth / word.scrollWidth}px`;
+    }
+  };
+  const observer = new ResizeObserver(fit);
+  rows.forEach(row => observer.observe(row));
+  signal.addEventListener("abort", () => observer.disconnect(), { once: true });
+  void document.fonts.ready.then(fit);
+  return result;
 }
 
 export function phraseInputs(signal: AbortSignal): { element: HTMLElement; inputs: HTMLInputElement[] } {
@@ -48,7 +74,8 @@ export function phraseInputs(signal: AbortSignal): { element: HTMLElement; input
   const rows = Array.from({ length: 7 }, (_, index) => {
     const label = make("label", `Word ${index + 1}`, "owner-input");
     const field = make("input");
-    field.type = "password";
+    field.type = "text";
+    field.className = "phrase-secret";
     field.maxLength = 64;
     field.autocomplete = "off";
     field.spellcheck = false;
@@ -65,7 +92,20 @@ export function phraseInputs(signal: AbortSignal): { element: HTMLElement; input
       }
     }, { signal });
     field.addEventListener("input", () => { field.removeAttribute("aria-invalid"); }, { signal });
-    label.append(field);
+    const entry = make("span", "", "phrase-entry");
+    const show = make("button", "Show", "phrase-show secondary");
+    show.type = "button";
+    show.setAttribute("aria-label", `Show word ${index + 1}`);
+    show.setAttribute("aria-pressed", "false");
+    show.addEventListener("click", () => {
+      const visible = !field.classList.contains("phrase-visible");
+      field.classList.toggle("phrase-visible", visible);
+      show.textContent = visible ? "Hide" : "Show";
+      show.setAttribute("aria-label", `${visible ? "Hide" : "Show"} word ${index + 1}`);
+      show.setAttribute("aria-pressed", String(visible));
+    }, { signal });
+    entry.append(field, show);
+    label.append(entry);
     inputs.push(field);
     return label;
   });

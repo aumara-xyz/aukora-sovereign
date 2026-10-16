@@ -25,7 +25,7 @@ in the same frame. Claim opens setup; it does not establish passkey ownership.
 Interrupted replies are uncertain and do not advance. Closing clears inputs and
 aborts requests. The explicit resume button opens joining without resending a claim;
 joining must independently authenticate the existing setup session and read its
-checkpoint. Back returns to this form without consuming another claim or cancelling
-the host's stored ceremony. JavaScript strings and browser networking do not support guaranteed
+checkpoint. Joining replaces the claim form, with no claim navigation alongside
+the owner steps. JavaScript strings and browser networking do not support guaranteed
 memory erasure. Configure the joining service and the host's claim consumer before
 enabling the pane; this module adds no route or release entrypoint outside its tree.

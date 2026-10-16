@@ -3,6 +3,7 @@ import type { OwnerDisposer, OwnerPane, OwnerPaneContext } from "../contracts.js
 import { claimBody, claimToken, httpsOrigin } from "./codec.js";
 import type { ClaimMode } from "./codec.js";
 import { consumeClaim } from "./transport.js";
+import { ownerIcon } from "../icons.js";
 
 export interface ClaimConfiguration {
   readonly ownerOrigin: string;
@@ -40,15 +41,21 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     let entering = false;
     let continuation: OwnerDisposer | undefined;
     const form = document.createElement("form");
-    form.className = "owner-claim";
+    form.className = "owner-claim onboarding";
+    const emblem = document.createElement("div");
+    emblem.className = "claim-emblem";
+    emblem.append(ownerIcon("owner"));
     const title = document.createElement("h2");
     title.textContent = "Claim your node";
+    title.tabIndex = -1;
     const explanation = document.createElement("p");
+    explanation.className = "owner-detail";
     explanation.textContent = mode === "invite-v2"
-      ? "Enter your node's claim link and the private secret you kept for this invite. Then use your two devices to join."
+      ? "Use your claim link and private invite secret."
       : "Open your node with its claim link.";
     const tokenLabel = document.createElement("label");
-    tokenLabel.textContent = "Node claim link or token";
+    tokenLabel.className = "owner-input";
+    tokenLabel.textContent = "Claim link";
     const token = document.createElement("input");
     token.type = "password";
     token.required = true;
@@ -59,7 +66,8 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     initialToken = "";
     tokenLabel.append(token);
     const secretLabel = document.createElement("label");
-    secretLabel.textContent = "Invite secret (64 lowercase hexadecimal characters)";
+    secretLabel.className = "owner-input";
+    secretLabel.textContent = "Invite secret";
     const secret = document.createElement("input");
     secret.type = "password";
     secret.required = mode === "invite-v2";
@@ -72,21 +80,28 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     // The owner frame is sandboxed without allow-forms, so a form submission is dropped before any submit event fires;
     // the button and Enter call the handler directly (found on t2 at 5cacca0: "Claim node" did nothing).
     submit.type = "button";
-    submit.textContent = "Claim node";
+    submit.className = "primary";
+    const submitLabel = document.createElement("span");
+    submitLabel.textContent = "Claim node";
+    submit.append(ownerIcon("owner"), submitLabel);
     const resume = document.createElement("button");
     resume.type = "button";
-    resume.textContent = "Resume an opened setup session";
+    resume.className = "secondary";
+    resume.textContent = "Resume setup";
     const status = document.createElement("p");
+    status.className = "owner-status";
     status.setAttribute("role", "status");
     const next = document.createElement("section");
-    const back = document.createElement("button");
-    back.type = "button";
-    back.textContent = "Back to claim";
-    back.hidden = true;
-    form.append(title, explanation, tokenLabel);
-    if (mode === "invite-v2") form.append(secretLabel);
-    form.append(submit, resume, status);
-    context.host.replaceChildren(form, next, back);
+    const inputs = document.createElement("div");
+    inputs.className = "owner-content";
+    inputs.append(tokenLabel);
+    if (mode === "invite-v2") inputs.append(secretLabel);
+    const controls = document.createElement("div");
+    controls.className = "owner-controls";
+    controls.append(submit, resume);
+    form.append(emblem, title, explanation, inputs, controls, status);
+    context.host.replaceChildren(form, next);
+    title.focus({ preventScroll: true });
 
     function dispose(): void {
       if (lifetime.signal.aborted) return;
@@ -111,14 +126,15 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
         const cleanup = await joining({ ...context, host: next, signal: lifetime.signal });
         if (typeof cleanup !== "function") throw new Error("invites:joining-adapter");
         if (lifetime.signal.aborted) cleanup();
-        else { continuation = cleanup; form.hidden = true; back.hidden = false; }
+        else { continuation = cleanup; form.hidden = true; }
       } catch {
         if (!lifetime.signal.aborted) {
           status.textContent = claimed
             ? "The claim opened a setup session. Joining is unavailable; you can retry without sending the secret again."
             : "Joining could not resume. An authenticated setup session is required.";
-          if (claimed) submit.textContent = "Continue joining";
+          if (claimed) submitLabel.textContent = "Continue setup";
           submit.disabled = false;
+          title.focus({ preventScroll: true });
         }
       } finally { entering = false; resume.disabled = false; }
     }
@@ -126,18 +142,6 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     resume.addEventListener("click", () => {
       if (!busy) void enterJoining();
     }, { signal: lifetime.signal });
-    back.addEventListener("click", () => {
-      const cleanup = continuation;
-      continuation = undefined;
-      try { cleanup?.(); } finally {
-        next.replaceChildren();
-        form.hidden = false;
-        back.hidden = true;
-        submit.disabled = false;
-        if (claimed) submit.textContent = "Continue joining";
-      }
-    }, { signal: lifetime.signal });
-
     const onSubmit = (event: Event) => {
       event.preventDefault();
       if (busy || lifetime.signal.aborted) return;

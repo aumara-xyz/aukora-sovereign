@@ -45,6 +45,7 @@ export function renderCard(document: Document, card: ApprovalCard): HTMLElement 
   risk.textContent = card.risk.toUpperCase();
   const summary = document.createElement("h2");
   summary.className = "approval-summary";
+  summary.tabIndex = -1;
   summary.textContent = card.says;
   const facts = document.createElement("dl");
   facts.className = "approval-facts";
@@ -60,7 +61,6 @@ export function renderCard(document: Document, card: ApprovalCard): HTMLElement 
   changesLabel.textContent = "Exact changes";
   changes.append(changesLabel, exact(document, card.from_to));
   const canonical = document.createElement("details");
-  canonical.open = true;
   const canonicalLabel = document.createElement("summary");
   canonicalLabel.textContent = "Exact card";
   canonical.append(canonicalLabel, exact(document, card));

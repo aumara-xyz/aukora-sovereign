@@ -128,6 +128,7 @@ button:disabled { cursor: default; color: var(--muted); }
 .menu-group { padding: 6px 12px 12px; }
 .menu-group h2 { margin: 16px 0 8px; color: var(--muted); font-size: var(--type-label); letter-spacing: var(--tracking-label); }
 .menu-entry { width: 100%; margin: 3px 0; border-color: transparent; text-align: left; }
+.approvals-entry[data-pending='true'] { color: var(--mint); }
 .entry-title { min-width: 0; overflow-wrap: anywhere; }
 
 /* Every face is mounted once. The chosen one is visible; the rest stay in place, inert and invisible. */

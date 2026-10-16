@@ -9,7 +9,7 @@ export function createView(host: HTMLElement) {
   const title = document.createElement("h2");
   title.textContent = "Your seven-word phrase";
   const explanation = document.createElement("p");
-  explanation.textContent = "never type these words into an AI";
+  explanation.textContent = "Never type these words into an AI.";
   const entryLabel = document.createElement("label");
   entryLabel.textContent = "Current seven-word phrase";
   const entry = document.createElement("input");

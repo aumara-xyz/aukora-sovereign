@@ -19,6 +19,7 @@ export interface ShellOptions {
   prepareOwner?: () => Promise<string | void>;
   servicesPendingText?: string;
   phraseRoute?: () => '/phrase' | '/phrase/refresh';
+  openApprovals?: () => void;
 }
 export interface ShellController {
   readonly organism: Organism;
@@ -26,6 +27,7 @@ export interface ShellController {
   openFace(id: string): void;
   openOwner(route: OwnerRoute, claim?: string): Promise<void>;
   readonly ownerBusy: boolean;
+  setApprovalsPending(count: number): void;
   provideService(name: string, service: RpcService): Dispose;
   removeFace(id: string): Promise<void>;
   dispose(): Promise<void>;
@@ -229,11 +231,21 @@ export function mountShell(options: ShellOptions): ShellController {
     if (!owner) control.title = COPY.ownerUnavailable as string;
     bar.append(control);
   }
+  const approvalsEntry = iconButton('owner', 'Approvals (0)', () => options.openApprovals?.(), 'menu-entry approvals-entry');
+  approvalsEntry.disabled = true;
+  menuGroups.get('system')!.append(approvalsEntry);
+  const setApprovalsPending = (count: number): void => {
+    if (!Number.isSafeInteger(count) || count < 0 || count > 10_000) throw new Error('shell:approval-response-invalid');
+    approvalsEntry.querySelector('.entry-title')!.textContent = `Approvals (${count})`;
+    approvalsEntry.disabled = !owner || !options.openApprovals || count === 0;
+    approvalsEntry.dataset.pending = String(count > 0);
+  };
   openFace('threads');
   return {
     organism, layout, openFace,
     openOwner,
     get ownerBusy() { return owner?.busy ?? false; },
+    setApprovalsPending,
     provideService(name, service) { return organism.provide(name, service); },
     async removeFace(id) {
       const slot = faceSlots.get(id);

@@ -30,6 +30,7 @@ export function createOnboarding(
     context.signal.throwIfAborted();
     const lifetime = new AbortController();
     const signal = lifetime.signal;
+    let stepLifetime = new AbortController();
     let wasm: Awaited<ReturnType<typeof loadAumlok>> | undefined;
     let busy = false;
     let active: "claim" | "passkey" | "phrase" | "signin" = context.route.pane === "claim" ? "claim"
@@ -38,11 +39,13 @@ export function createOnboarding(
     let submission: RecordValue | undefined;
     let bindingId: string | undefined;
     let phrase: string[] = [];
+    let strength = "";
     const fields: HTMLInputElement[] = [];
     const panel = element("section", "", "onboarding");
     const progress = element("ol", "", "owner-steps");
     progress.setAttribute("aria-label", "Owner setup");
     const heading = element("h2");
+    heading.tabIndex = -1;
     const detail = element("p", "", "owner-detail");
     const content = element("div", "", "owner-content");
     const status = element("p", "", "owner-status");
@@ -64,6 +67,8 @@ export function createOnboarding(
 
     function screen(stage: typeof active, title: string, description: string): void {
       live();
+      stepLifetime.abort();
+      stepLifetime = new AbortController();
       active = stage;
       clearFields();
       content.replaceChildren();
@@ -71,6 +76,7 @@ export function createOnboarding(
       status.textContent = "";
       heading.textContent = title;
       detail.textContent = description;
+      heading.focus({ preventScroll: true });
       progress.replaceChildren();
       for (const name of ["claim", "passkey", "phrase", "signin"] as const) {
         const step = element("li");
@@ -200,23 +206,25 @@ export function createOnboarding(
         phrase = text(draw.phrase, 256).split(" ");
         if (phrase.length !== 7 || phrase.some(word => !/^[a-z]+$/.test(word))
           || draw.minimum_entropy_bits !== 41.5 || draw.average_entropy_bits !== 43.1) throw new Error("aumlok:phrase-invalid");
+        strength = `${draw.minimum_entropy_bits} bits at the weakest, ${draw.average_entropy_bits} on average`;
         showWords();
       });
       button("Sign in", () => { signinScreen(); }, true);
     }
 
     function showWords(): void {
-      screen("phrase", "Keep these seven words", "Picture one place for each pair.");
-      content.append(renderPhrase(phrase), element("p", "never type these words into an AI", "phrase-warning"));
+      screen("phrase", "Keep these seven words", "Build a story in your own head that walks through these seven words, in order.");
+      content.append(renderPhrase(phrase, stepLifetime.signal), element("p", strength, "phrase-strength"),
+        element("p", "Never type these words into an AI.", "phrase-warning"));
       button("Continue", () => { confirmationScreen(); });
     }
 
     function confirmationScreen(): void {
       screen("phrase", "Your words, once more", "Type all seven in order.");
-      const { element: entries, inputs } = phraseInputs(signal);
+      const { element: entries, inputs } = phraseInputs(stepLifetime.signal);
       fields.push(...inputs);
-      const acknowledgement = phraseAcknowledgement(signal);
-      content.append(entries, element("p", "never type these words into an AI", "phrase-warning"), acknowledgement.element);
+      const acknowledgement = phraseAcknowledgement(stepLifetime.signal);
+      content.append(entries, element("p", "Never type these words into an AI.", "phrase-warning"), acknowledgement.element);
       const seal = button("Seal my identity", async () => {
         if (!wasm || phrase.length !== 7) throw new Error("aumlok:phrase-locked");
         if (!acknowledgement.checked()) return;
@@ -248,7 +256,6 @@ export function createOnboarding(
         seal.disabled = busy || !acknowledgement.checked();
       });
       button("See my words again", () => { showWords(); }, true);
-      inputs[0].focus();
     }
 
     async function prepareBinding(): Promise<void> {
@@ -263,7 +270,7 @@ export function createOnboarding(
 
     function approvalScreen(): void {
       screen("phrase", "Bind your identity", "Your passkey approves this sealed identity.");
-      button("Bind with passkey", async () => {
+      button("Bind with Touch ID / passkey", async () => {
         if (!submission) throw new Error("aumlok:binding-input");
         await prepareBinding();
         const prepared = options(await post("/api/binding/confirm", { ceremony_id: bindingId, submission }, signal), false, config.relyingParty);
@@ -303,6 +310,7 @@ export function createOnboarding(
     function dispose(): void {
       if (signal.aborted) return;
       lifetime.abort();
+      stepLifetime.abort();
       clearFields();
       phrase.fill("");
       phrase = [];
