@@ -52,8 +52,8 @@ the cage.
 other stuff, then you need to be on your Sovereign node on your desktop." The two are one system, not two apps.
 - **Phone: AUKORA Light** (aumara-xyz/aukora-light), his installed PWA: messaging, and later Auma as his assistant.
   Its lane-corner navigation is the phone format.
-- **Desktop: the Sovereign node.** Building, approvals, apps and everything else. Its shell speaks the same design
-  language (the same tokens, icons, corners; no tab bar in corner zones).
+- **Desktop: the Sovereign node.** Building, approvals, apps and everything else. Its shell is Peter's Spatial app
+  (row 1, build 3673b98), the design source for both: Light's phone format is derived from it, never the reverse.
 - **One person.** One root, one person-nostr key, on both. Peter's own node is bound to the identity he already
   has in Light ("bind with my existing words"), never to a fresh root. Test nodes stay throwaway.
 - **They talk.** The phone reaches the node through Light's members-only relay with NIP-17 wraps; the node dials
