@@ -157,6 +157,47 @@ impl FloorService {
         self.advance(transaction, proof, proposed)
     }
 
+    /// Recheck the exact assertion consumed by the current floor. A retry returns
+    /// its existing receipt and cannot consume, append or change protected state.
+    pub fn retry_installed(
+        &self,
+        transaction: &aura::LedgerTxn<'_>,
+        proposal: canon::ids::ProposalId,
+        assertion: canon::authority::OwnerAssertion,
+        proposed: &ReleaseOrder,
+        installed: Digest32,
+    ) -> Result<AuthorityRecord> {
+        self.probe_release_guard(transaction)?;
+        let current = self.snapshot()?;
+        proposed.validate()?;
+        if proposed.digest != installed || release_order(&current) != *proposed {
+            return Err(refuse("release-binding"));
+        }
+        let spent = current
+            .high_water
+            .spent
+            .iter()
+            .find(|spent| spent.authority == current.authority && spent.proposal == proposal)
+            .ok_or_else(|| refuse("release-binding"))?;
+        let authorization = transaction.check_floor_assertion(
+            proposal,
+            spent.authorization_sha256,
+            assertion,
+        )?;
+        if authorization.op != OwnerOperation::Release
+            || authorization.target != "release"
+            || authorization.cell.is_some()
+            || authorization.new_sha256 != proposed.record
+            || authorization.epoch != proposed.signer_epoch
+            || Digest32::sha256(&authorization.canonical_bytes()?) != spent.authorization_sha256
+            || transaction.proposal(&proposal)?.operation != spent.operation
+        {
+            return Err(refuse("release-binding"));
+        }
+        release_pointer(&transaction.proposal(&proposal)?.new_bytes, installed)?;
+        transaction.record_at(current.authority)
+    }
+
     /// Row 65/110: verify exact Release action in a transaction with no prior append,
     /// reject any spent proposal or authorization, then stage floor and high-water
     /// persistence with the signed floor.advance record. No filesystem effect is

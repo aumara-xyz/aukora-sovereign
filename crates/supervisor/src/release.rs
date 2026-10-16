@@ -147,11 +147,38 @@ impl ReleaseFiles {
             if installed.floor.digest == self.release_digest {
                 floor.probe_release_guard(transaction)?;
                 require_release_order(&installed.floor, order)?;
-                return transaction.record_at(installed.authority);
+                if installed.high_water.spent.iter().any(|spent| {
+                    spent.authority == installed.authority && spent.proposal == proposal
+                }) {
+                    return floor
+                        .retry_installed(
+                            transaction,
+                            proposal,
+                            assertion,
+                            order,
+                            self.release_digest,
+                        )
+                        .map_err(|_| refuse("release-not-approved"));
+                }
             }
             let proof =
-                VerifiedProof::verify(transaction, &proposal, OwnerOperation::Release, assertion)?;
-            floor.advance_installed(transaction, proof, order, self.release_digest)
+                VerifiedProof::verify(transaction, &proposal, OwnerOperation::Release, assertion)
+                    .map_err(|error| {
+                        if installed.floor.digest == self.release_digest {
+                            refuse("release-not-approved")
+                        } else {
+                            error
+                        }
+                    })?;
+            floor
+                .advance_installed(transaction, proof, order, self.release_digest)
+                .map_err(|error| {
+                    if installed.floor.digest == self.release_digest {
+                        refuse("release-not-approved")
+                    } else {
+                        error
+                    }
+                })
         })?;
         // The floor stage is not readable until a fresh transaction authenticates
         // its committed receipt.

@@ -802,4 +802,113 @@ impl LedgerTxn<'_> {
         }
         Ok(Some(context))
     }
+
+    /// Recheck the exact assertion retained by an authenticated release receipt.
+    pub fn check_floor_assertion(
+        &self,
+        proposal: ProposalId,
+        approval: Digest32,
+        assertion: canon::authority::OwnerAssertion,
+    ) -> Result<canon::authority::OwnerAuthorization> {
+        use base64::engine::general_purpose::STANDARD;
+
+        let stored = self.proposal(&proposal)?;
+        let context = self
+            .floor_consumption(approval, proposal, stored.operation)?
+            .ok_or(refusal("floor-consumption"))?;
+        let receipt = self.record_at(context)?;
+        let payload = super::gate_payload(&receipt.body);
+        exact(
+            payload,
+            &["schema", "floor", "proposal", "authorization_sha256"],
+        )?;
+        if receipt.kind != Kind::FloorAdvance
+            || receipt.phase != Phase::Terminal
+            || receipt.operation != Some(stored.operation)
+            || field_text(payload, "schema")? != "aukora-floor-advance-v1"
+            || field_text(payload, "proposal")? != proposal.to_string()
+            || hash(payload, "authorization_sha256")? != approval
+            || hash(member(payload, "floor")?, "record")? != Digest32::sha256(&stored.new_bytes)
+        {
+            return Err(refusal("floor-consumption"));
+        }
+        let (proof_bytes, counter): (Vec<u8>, u32) = self
+            .transaction
+            .query_row(
+                "SELECT proof,counter FROM authority_consumptions WHERE approval=?1",
+                [approval.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(sql)?;
+        if proof_bytes.len() > 65_536 {
+            return Err(refusal("floor-consumption"));
+        }
+        let proof = json::parse_strict(&proof_bytes)?;
+        exact(
+            &proof,
+            &[
+                "authorization",
+                "credential",
+                "authenticator_data",
+                "client_data_json",
+                "signed_bytes",
+                "public_keys",
+                "signatures",
+            ],
+        )?;
+        let authorization_bytes = member(&proof, "authorization")?.canonical_bytes();
+        let authorization = crate::storage::decode_authorization(&authorization_bytes)?;
+        let binding = super::epochs::immune_binding_before(
+            &self.transaction,
+            &assertion.credential_id,
+            context.epoch,
+            context.sequence,
+            &self.state.keys,
+        )?;
+        let keys = crate::storage::decode_keys(&member(&proof, "public_keys")?.canonical_bytes())?;
+        let signatures =
+            crate::storage::decode_signatures(&member(&proof, "signatures")?.canonical_bytes())?;
+        let mut signed = assertion.authenticator_data.clone();
+        signed.extend_from_slice(Digest32::sha256(&assertion.client_data_json).as_bytes());
+        if proof.canonical_bytes() != proof_bytes
+            || authorization.canonical_bytes()? != authorization_bytes
+            || Digest32::sha256(&authorization_bytes) != approval
+            || authorization.proposal != proposal
+            || authorization.op != OwnerOperation::Release
+            || authorization.epoch != context.epoch
+            || authorization.expires_at <= receipt.at
+            || receipt.actor != authorization.subject.to_string()
+            || field_text(&proof, "credential")?
+                != URL_SAFE_NO_PAD.encode(assertion.credential_id.as_bytes())
+            || field_text(&proof, "authenticator_data")?
+                != STANDARD.encode(&assertion.authenticator_data)
+            || field_text(&proof, "client_data_json")?
+                != STANDARD.encode(&assertion.client_data_json)
+            || field_text(&proof, "signed_bytes")? != STANDARD.encode(&signed)
+            || assertion.authenticator_data.len() != 37
+            || assertion.authenticator_data[33..37] != counter.to_be_bytes()
+            || keys.as_slice() != std::slice::from_ref(&binding.public_key)
+            || signatures.components() != std::slice::from_ref(&assertion.signature)
+        {
+            return Err(refusal("floor-consumption"));
+        }
+        let card_bytes: Vec<u8> = self.transaction.query_row(
+            "SELECT card FROM authority_challenges WHERE proposal=?1 AND action='release'",
+            [proposal.to_string()], |row| row.get(0),
+        ).map_err(sql)?;
+        let card = crate::storage::decode_card(&card_bytes)?;
+        if Digest32::sha256(&card_bytes) != authorization.display_sha256
+            || card.risk != stored.risk
+            || card.model_note != stored.model_note
+        {
+            return Err(refusal("floor-consumption"));
+        }
+        canon::authority::verify_retained_owner_assertion(
+            binding,
+            authorization.clone(),
+            assertion,
+            crate::record::verify_signature,
+        )?;
+        Ok(authorization)
+    }
 }
