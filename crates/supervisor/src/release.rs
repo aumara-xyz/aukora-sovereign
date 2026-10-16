@@ -136,14 +136,18 @@ impl ReleaseFiles {
         order: &floor::ReleaseOrder,
     ) -> Result<AuthorityRecord> {
         if order.digest != self.release_digest {
-            return Err(refuse("release-approval-mismatch"));
+            return Err(refuse("release-not-approved"));
         }
+        order.validate()?;
         let mut floor = floor::service::FloorService::open(&self.floor_directory)?;
         self.ledger
             .transaction(|transaction| floor.reconcile(transaction))?;
         let record = self.ledger.transaction(|transaction| {
-            if floor.snapshot()?.floor.digest == self.release_digest {
-                return Err(refuse("release-already-approved"));
+            let installed = floor.snapshot()?;
+            if installed.floor.digest == self.release_digest {
+                floor.probe_release_guard(transaction)?;
+                require_release_order(&installed.floor, order)?;
+                return transaction.record_at(installed.authority);
             }
             let proof =
                 VerifiedProof::verify(transaction, &proposal, OwnerOperation::Release, assertion)?;
@@ -156,15 +160,9 @@ impl ReleaseFiles {
         self.ledger.transaction(|transaction| {
             floor.probe_release_guard(transaction)?;
             let installed = floor.snapshot()?;
-            if installed.floor.digest != self.release_digest
-                || installed.floor.record != order.record
-                || installed.floor.signer_epoch != order.signer_epoch
-                || installed.floor.ledger_seq != order.ledger_seq
-                || installed.floor.signer_key_sha256 != order.signer_key_sha256
-                || installed.floor.ledger_hash != order.ledger_hash
-                || installed.authority != record.authority
-            {
-                return Err(refuse("release-approval-mismatch"));
+            require_release_order(&installed.floor, order)?;
+            if installed.authority != record.authority {
+                return Err(refuse("release-not-approved"));
             }
             Ok(())
         })?;
@@ -215,6 +213,19 @@ impl ReleaseFiles {
     pub fn manifest_digest(&self) -> Digest32 {
         self.manifest_digest
     }
+}
+
+fn require_release_order(published: &floor::Floor, order: &floor::ReleaseOrder) -> Result<()> {
+    if published.digest != order.digest
+        || published.record != order.record
+        || published.signer_epoch != order.signer_epoch
+        || published.ledger_seq != order.ledger_seq
+        || published.signer_key_sha256 != order.signer_key_sha256
+        || published.ledger_hash != order.ledger_hash
+    {
+        return Err(refuse("release-not-approved"));
+    }
+    Ok(())
 }
 
 impl ReleaseSource for ReleaseFiles {

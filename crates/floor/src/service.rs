@@ -152,7 +152,7 @@ impl FloorService {
         installed: Digest32,
     ) -> Result<AuthorityRecord> {
         if proposed.digest != installed {
-            return Err(refuse("installed-release-mismatch"));
+            return Err(refuse("release-binding"));
         }
         self.advance(transaction, proof, proposed)
     }
