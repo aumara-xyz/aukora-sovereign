@@ -69,7 +69,9 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     secret.spellcheck = false;
     secretLabel.append(secret);
     const submit = document.createElement("button");
-    submit.type = "submit";
+    // The owner frame is sandboxed without allow-forms, so a form submission is dropped before any submit event fires;
+    // the button and Enter call the handler directly (found on t2 at 5cacca0: "Claim node" did nothing).
+    submit.type = "button";
     submit.textContent = "Claim node";
     const resume = document.createElement("button");
     resume.type = "button";
@@ -136,7 +138,7 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
       }
     }, { signal: lifetime.signal });
 
-    form.addEventListener("submit", event => {
+    const onSubmit = (event: Event) => {
       event.preventDefault();
       if (busy || lifetime.signal.aborted) return;
       if (claimed) { void enterJoining(); return; }
@@ -172,7 +174,13 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
         busy = false;
         if (!lifetime.signal.aborted && !form.hidden) { submit.disabled = false; resume.disabled = false; }
       });
-    }, { signal: lifetime.signal });
+    };
+    submit.addEventListener("click", onSubmit, { signal: lifetime.signal });
+    for (const field of [token, secret]) {
+      field.addEventListener("keydown", event => {
+        if (event.key === "Enter") onSubmit(event);
+      }, { signal: lifetime.signal });
+    }
     context.signal.addEventListener("abort", dispose, { once: true });
     return dispose;
   } };
