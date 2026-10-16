@@ -219,7 +219,7 @@ fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zero
         header.split(';').any(|part| {
             let part = part.trim();
             let name = part.split_once('=').map_or(part, |(name, _)| name);
-            !is_handoff_cookie(name)
+            matches!(name, OWNER_COOKIE | SHELL_COOKIE)
         })
     });
     if bearer_headers.count() > 1 {
@@ -231,7 +231,7 @@ fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zero
         for part in header.split(';') {
             let part = part.trim();
             let name = part.split_once('=').map_or(part, |(name, _)| name);
-            if is_handoff_cookie(name) {
+            if !matches!(name, OWNER_COOKIE | SHELL_COOKIE) {
                 continue;
             }
             let (name, value) = part
@@ -262,15 +262,6 @@ fn cookie_for(role: HostRole, headers: &[String]) -> Result<Option<zeroize::Zero
         }
     }
     Ok(selected)
-}
-
-fn is_handoff_cookie(name: &str) -> bool {
-    matches!(
-        name,
-        crate::fd4::HANDOFF_PENDING_COOKIE
-            | crate::fd4::HANDOFF_CORRELATION_COOKIE
-            | crate::fd4::HANDOFF_OWNER_COOKIE
-    )
 }
 
 /// Owner APIs stay on the owner host; shell APIs are documents and the data bridge only.
@@ -637,9 +628,9 @@ impl ShellSessionGrant {
 /// Correlation cookies never become a bound session or enter an FD 4 frame.
 pub struct HandoffAdmission {
     pub admission: HttpAdmission,
-    pub pending: Option<canon::digest::Digest32>,
-    pub correlation: Option<canon::digest::Digest32>,
-    pub owner_pending: Option<canon::digest::Digest32>,
+    pub pending: Vec<canon::digest::Digest32>,
+    pub correlation: Vec<canon::digest::Digest32>,
+    pub owner_pending: Vec<canon::digest::Digest32>,
     pub navigation: Option<canon::digest::Digest32>,
 }
 
@@ -709,25 +700,24 @@ impl HttpIngress {
             }
             admission.request.path = path.to_owned();
         }
-        let strict_handoff = handoff_path.is_some()
-            || admission.owner_navigation.is_some()
-            || (admission.request.role == HostRole::Owner
-                && admission.request.path == "/api/signin/finish");
-        let (pending, correlation, owner_pending) = if strict_handoff {
-            (
-                handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_PENDING_COOKIE)?,
-                handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_CORRELATION_COOKIE)?,
-                handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_OWNER_COOKIE)?,
-            )
+        let completing = handoff_path == Some(crate::fd4::HANDOFF_COMPLETE_PATH);
+        let signing_in = admission.request.role == HostRole::Owner
+            && admission.request.path == "/api/signin/finish";
+        let pending = if handoff_path.is_some() {
+            handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_PENDING_COOKIE)
         } else {
-            (None, None, None)
+            Vec::new()
         };
-        if pending.is_some() && admission.request.role != HostRole::Shell {
-            return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
-        }
-        if owner_pending.is_some() && admission.request.role != HostRole::Owner {
-            return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
-        }
+        let correlation = if completing || navigation.is_some() || signing_in {
+            handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_CORRELATION_COOKIE)
+        } else {
+            Vec::new()
+        };
+        let owner_pending = if signing_in {
+            handoff_cookie_digest(&cookies, crate::fd4::HANDOFF_OWNER_COOKIE)
+        } else {
+            Vec::new()
+        };
         Ok(HandoffAdmission {
             admission,
             pending,
@@ -738,24 +728,21 @@ impl HttpIngress {
     }
 }
 
-fn handoff_cookie_digest(
-    headers: &[String],
-    name: &str,
-) -> Result<Option<canon::digest::Digest32>> {
-    let mut digest = None;
+fn handoff_cookie_digest(headers: &[String], name: &str) -> Vec<canon::digest::Digest32> {
+    let mut digests = Vec::new();
     for header in headers {
         for cookie in header.split(';') {
-            let (key, value) = cookie
-                .trim()
-                .split_once('=')
-                .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+            let Some((key, value)) = cookie.trim().split_once('=') else {
+                continue;
+            };
             if key == name {
-                if digest.is_some() {
-                    return Err(codes::FRONTDOOR_SESSION_REQUIRED);
+                if let Ok(digest) = crate::session::session_digest(value.as_bytes()) {
+                    if !digests.contains(&digest) {
+                        digests.push(digest);
+                    }
                 }
-                digest = Some(crate::session::session_digest(value.as_bytes())?);
             }
         }
     }
-    Ok(digest)
+    digests
 }

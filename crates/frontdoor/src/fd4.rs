@@ -247,11 +247,33 @@ pub const HANDOFF_CORRELATION_COOKIE: &str = "__Secure-aukora-handoff";
 pub const HANDOFF_OWNER_COOKIE: &str = "__Host-aukora-owner-handoff";
 pub const HANDOFF_LIFETIME_MS: u64 = 300_000;
 const MAX_HANDOFFS: usize = 256;
+const MAX_CLIENT_HANDOFFS: usize = 4;
 const HANDOFF_NAVIGATION_LIFETIME_MS: u64 = 2 * HANDOFF_LIFETIME_MS;
 const HANDOFF_COOKIE_LIFETIME_MS: u64 = 3 * HANDOFF_LIFETIME_MS;
 const PREPARE_BURST: u64 = 8;
 const PREPARE_REFILL_MS: u64 = 5_000;
 const MAX_PREPARE_CLIENTS: usize = 1024;
+
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+enum PrepareClient {
+    Ipv4(std::net::Ipv4Addr),
+    Ipv6([u16; 4]),
+}
+
+impl From<std::net::IpAddr> for PrepareClient {
+    fn from(address: std::net::IpAddr) -> Self {
+        match address {
+            std::net::IpAddr::V4(address) => Self::Ipv4(address),
+            std::net::IpAddr::V6(address) => match address.to_ipv4_mapped() {
+                Some(address) => Self::Ipv4(address),
+                None => {
+                    let segments = address.segments();
+                    Self::Ipv6([segments[0], segments[1], segments[2], segments[3]])
+                }
+            },
+        }
+    }
+}
 
 struct PrepareBucket {
     tokens: u64,
@@ -259,6 +281,7 @@ struct PrepareBucket {
 }
 
 struct PendingHandoff {
+    client: PrepareClient,
     pending: canon::digest::Digest32,
     reference: canon::digest::Digest32,
     owner_pending: Option<canon::digest::Digest32>,
@@ -279,7 +302,7 @@ pub struct HandoffPrepared {
 #[derive(Default)]
 pub struct ShellHandoffs {
     pending: std::collections::BTreeMap<canon::digest::Digest32, PendingHandoff>,
-    prepare_clients: std::collections::BTreeMap<std::net::IpAddr, PrepareBucket>,
+    prepare_clients: std::collections::BTreeMap<PrepareClient, PrepareBucket>,
     next_order: u64,
 }
 
@@ -290,7 +313,7 @@ impl ShellHandoffs {
         &mut self,
         request: &crate::ingress::AdmittedRequest,
         boundary: &crate::tls::CaddyBoundary,
-        previous: Option<canon::digest::Digest32>,
+        previous: &[canon::digest::Digest32],
         now_ms: u64,
     ) -> Result<HandoffPrepared> {
         handoff_request(request, HANDOFF_PREPARE_PATH)?;
@@ -305,24 +328,13 @@ impl ShellHandoffs {
             .next_order
             .checked_add(1)
             .ok_or(canon::codes::FRONTDOOR_OVERLOADED)?;
-        self.limit_prepare(
-            request.client().ok_or(canon::codes::FRONTDOOR_OVERLOADED)?,
-            now_ms,
-        )?;
+        let client =
+            PrepareClient::from(request.client().ok_or(canon::codes::FRONTDOOR_OVERLOADED)?);
+        self.limit_prepare(client, now_ms)?;
         self.pending.retain(|_, handoff| {
             handoff.expires_at_ms > now_ms
-                && (Some(handoff.pending) != previous || handoff.grant.is_some())
+                && (!previous.contains(&handoff.pending) || handoff.grant.is_some())
         });
-        if self.pending.len() >= MAX_HANDOFFS {
-            let oldest = self
-                .pending
-                .iter()
-                .filter(|(_, handoff)| handoff.grant.is_none())
-                .min_by_key(|(_, handoff)| handoff.prepared_order)
-                .map(|(key, _)| *key)
-                .ok_or(canon::codes::FRONTDOOR_OVERLOADED)?;
-            self.pending.remove(&oldest);
-        }
         let pending = crate::session::SessionBearer::generate()?;
         let correlation = crate::session::SessionBearer::generate()?;
         let reference = crate::session::SessionBearer::generate()?.digest();
@@ -348,9 +360,11 @@ impl ShellHandoffs {
         {
             return Err(canon::codes::FRONTDOOR_SESSION_REQUIRED);
         }
+        self.prepare_room(client)?;
         self.pending.insert(
             correlation.digest(),
             PendingHandoff {
+                client,
                 pending: pending.digest(),
                 reference,
                 owner_pending: None,
@@ -369,7 +383,7 @@ impl ShellHandoffs {
     pub fn owner_navigation(
         &mut self,
         reference: canon::digest::Digest32,
-        correlation: canon::digest::Digest32,
+        correlations: &[canon::digest::Digest32],
         navigation: &crate::owner_origin::FrameNavigation,
         now_ms: u64,
     ) -> Result<String> {
@@ -378,15 +392,17 @@ impl ShellHandoffs {
         let expires_at_ms = handoff_deadline(now_ms, HANDOFF_NAVIGATION_LIFETIME_MS)?;
         let handoff = self
             .pending
-            .get_mut(&correlation)
-            .filter(|handoff| {
-                handoff.reference == reference
+            .iter_mut()
+            .find(|(correlation, handoff)| {
+                correlations.contains(correlation)
+                    && handoff.reference == reference
                     && handoff.shell == context.expected_top_origin
                     && context.owner_origin.host() == format!("owner.{}", handoff.shell.host())
                     && handoff.expires_at_ms > now_ms
                     && handoff.owner_pending.is_none()
                     && handoff.grant.is_none()
             })
+            .map(|(_, handoff)| handoff)
             .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
         let owner = crate::session::SessionBearer::generate()?;
         let cookie = handoff_cookie_header(
@@ -403,18 +419,20 @@ impl ShellHandoffs {
     /// Check the rendezvous before consuming a sign-in assertion; the caller retains its lock.
     pub fn validate_authorization(
         &self,
-        correlation: canon::digest::Digest32,
-        owner_pending: canon::digest::Digest32,
+        correlations: &[canon::digest::Digest32],
+        owner_pending: &[canon::digest::Digest32],
         now_ms: u64,
-    ) -> Result<()> {
+    ) -> Result<(canon::digest::Digest32, canon::digest::Digest32)> {
         self.pending
-            .get(&correlation)
-            .filter(|handoff| {
-                handoff.expires_at_ms > now_ms
-                    && handoff.owner_pending == Some(owner_pending)
-                    && handoff.grant.is_none()
+            .iter()
+            .find_map(|(correlation, handoff)| {
+                let owner = handoff.owner_pending?;
+                (correlations.contains(correlation)
+                    && handoff.expires_at_ms > now_ms
+                    && owner_pending.contains(&owner)
+                    && handoff.grant.is_none())
+                .then_some((*correlation, owner))
             })
-            .map(|_| ())
             .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)
     }
 
@@ -426,7 +444,7 @@ impl ShellHandoffs {
         grant: crate::ingress::ShellSessionGrant,
         now_ms: u64,
     ) -> Result<()> {
-        self.validate_authorization(correlation, owner_pending, now_ms)?;
+        self.validate_authorization(&[correlation], &[owner_pending], now_ms)?;
         let handoff = self
             .pending
             .get_mut(&correlation)
@@ -439,22 +457,24 @@ impl ShellHandoffs {
     pub fn complete(
         &mut self,
         request: &crate::ingress::AdmittedRequest,
-        pending: canon::digest::Digest32,
-        correlation: canon::digest::Digest32,
+        pending: &[canon::digest::Digest32],
+        correlations: &[canon::digest::Digest32],
         sessions: &mut impl crate::session::SessionStore,
         now_ms: u64,
     ) -> Result<[String; 3]> {
         handoff_request(request, HANDOFF_COMPLETE_PATH)?;
-        let handoff = self
+        let (correlation, handoff) = self
             .pending
-            .get(&correlation)
-            .filter(|handoff| {
-                handoff.pending == pending
+            .iter()
+            .find(|(correlation, handoff)| {
+                correlations.contains(correlation)
+                    && pending.contains(&handoff.pending)
                     && handoff.shell == *request.origin()
                     && handoff.expires_at_ms > now_ms
                     && handoff.grant.is_some()
             })
             .ok_or(canon::codes::FRONTDOOR_SESSION_REQUIRED)?;
+        let correlation = *correlation;
         let domain = handoff.shell.host().to_owned();
         let grant = self
             .pending
@@ -476,21 +496,49 @@ impl ShellHandoffs {
         ])
     }
 
-    fn limit_prepare(&mut self, client: std::net::IpAddr, now_ms: u64) -> Result<()> {
+    fn prepare_room(&mut self, client: PrepareClient) -> Result<()> {
+        let mut counts = std::collections::BTreeMap::<PrepareClient, usize>::new();
+        for handoff in self
+            .pending
+            .values()
+            .filter(|handoff| handoff.grant.is_none())
+        {
+            *counts.entry(handoff.client).or_default() += 1;
+        }
+        let own_count = counts.get(&client).copied().unwrap_or(0);
+        let full = self.pending.len() >= MAX_HANDOFFS;
+        let victim_client = if own_count >= MAX_CLIENT_HANDOFFS || (full && own_count > 0) {
+            client
+        } else if full {
+            // A singleton cannot be displaced by another client's prepare flood.
+            counts
+                .into_iter()
+                .filter(|(_, count)| *count > 1)
+                .max_by_key(|(_, count)| *count)
+                .map(|(client, _)| client)
+                .ok_or(canon::codes::FRONTDOOR_OVERLOADED)?
+        } else {
+            return Ok(());
+        };
+        let victim = self
+            .pending
+            .iter()
+            .filter(|(_, handoff)| handoff.client == victim_client && handoff.grant.is_none())
+            .min_by_key(|(_, handoff)| handoff.prepared_order)
+            .map(|(key, _)| *key)
+            .ok_or(canon::codes::FRONTDOOR_OVERLOADED)?;
+        self.pending.remove(&victim);
+        Ok(())
+    }
+
+    fn limit_prepare(&mut self, client: PrepareClient, now_ms: u64) -> Result<()> {
         self.prepare_clients.retain(|_, bucket| {
             now_ms.saturating_sub(bucket.refilled_at_ms) < PREPARE_BURST * PREPARE_REFILL_MS
         });
         if !self.prepare_clients.contains_key(&client)
             && self.prepare_clients.len() >= MAX_PREPARE_CLIENTS
         {
-            if let Some(oldest) = self
-                .prepare_clients
-                .iter()
-                .min_by_key(|(_, bucket)| bucket.refilled_at_ms)
-                .map(|(client, _)| *client)
-            {
-                self.prepare_clients.remove(&oldest);
-            }
+            return Err(canon::codes::FRONTDOOR_OVERLOADED);
         }
         let bucket = self.prepare_clients.entry(client).or_insert(PrepareBucket {
             tokens: PREPARE_BURST,
@@ -498,7 +546,7 @@ impl ShellHandoffs {
         });
         let refill = now_ms.saturating_sub(bucket.refilled_at_ms) / PREPARE_REFILL_MS;
         if refill > 0 {
-            bucket.tokens = (bucket.tokens + refill).min(PREPARE_BURST);
+            bucket.tokens = bucket.tokens.saturating_add(refill).min(PREPARE_BURST);
             bucket.refilled_at_ms += refill * PREPARE_REFILL_MS;
         }
         if bucket.tokens == 0 {

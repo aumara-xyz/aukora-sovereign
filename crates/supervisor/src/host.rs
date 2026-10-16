@@ -274,7 +274,7 @@ impl Host {
                 .handoffs
                 .lock()
                 .map_err(|_| codes::SUPERVISOR_STATE)?
-                .prepare(request, &self.config.boundary()?, admitted.pending, now()?)?;
+                .prepare(request, &self.config.boundary()?, &admitted.pending, now()?)?;
             let mut response = handoff_response(&prepared.cookies)?;
             *response.body_mut() = Value::object(vec![(
                 "reference".into(),
@@ -292,10 +292,8 @@ impl Host {
                 .map_err(|_| codes::SUPERVISOR_STATE)?
                 .complete(
                     request,
-                    admitted.pending.ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
-                    admitted
-                        .correlation
-                        .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                    &admitted.pending,
+                    &admitted.correlation,
                     &mut sessions,
                     now()?,
                 )?;
@@ -303,10 +301,13 @@ impl Host {
         }
         if request.role() == HostRole::Owner && request.path() == "/api/signin/finish" {
             let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;
-            let handoff = match (admitted.correlation, admitted.owner_pending) {
-                (Some(correlation), Some(owner_pending)) => Some((correlation, owner_pending)),
-                (None, None) => None,
-                _ => return Err(codes::FRONTDOOR_SESSION_REQUIRED),
+            let handoff = if admitted.correlation.is_empty() || admitted.owner_pending.is_empty() {
+                None
+            } else {
+                Some((
+                    admitted.correlation.as_slice(),
+                    admitted.owner_pending.as_slice(),
+                ))
             };
             return self.signin(request, route, handoff);
         }
@@ -318,9 +319,7 @@ impl Host {
                 .map_err(|_| codes::SUPERVISOR_STATE)?
                 .owner_navigation(
                     reference,
-                    admitted
-                        .correlation
-                        .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                    &admitted.correlation,
                     admitted
                         .admission
                         .owner_navigation()
@@ -683,7 +682,7 @@ impl Host {
         &self,
         request: &AdmittedRequest,
         route: OwnerRoute,
-        handoff: Option<(canon::digest::Digest32, canon::digest::Digest32)>,
+        handoff: Option<(&[canon::digest::Digest32], &[canon::digest::Digest32])>,
     ) -> Result<http::Response<Vec<u8>>> {
         use frontdoor::session::{BindingState, SessionBearer, SessionRecord, SessionScope};
         let mut identity = self.identity.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
@@ -696,12 +695,12 @@ impl Host {
         }
         let bearer = SessionBearer::generate()?;
         let mut sessions = self.sessions()?;
-        let mut handoffs = if let Some((correlation, owner_pending)) = handoff {
+        let (handoff, mut handoffs) = if let Some((correlations, owner_pending)) = handoff {
             let handoffs = self.handoffs.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
-            handoffs.validate_authorization(correlation, owner_pending, now)?;
-            Some(handoffs)
+            let selected = handoffs.validate_authorization(correlations, owner_pending, now)?;
+            (Some(selected), Some(handoffs))
         } else {
-            None
+            (None, None)
         };
         let result = identity.signin_finish(request.body(), now)?;
         let (epoch, binding, subject) =
@@ -754,6 +753,16 @@ impl Host {
                 .cookie_header(scope, expires, now)?
                 .parse()
                 .map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?,
+        );
+        response.headers_mut().append(
+            http::header::SET_COOKIE,
+            format!(
+                "{}=; {}; Max-Age=0",
+                frontdoor::fd4::HANDOFF_OWNER_COOKIE,
+                frontdoor::session::COOKIE_ATTRIBUTES
+            )
+            .parse()
+            .map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?,
         );
         Ok(response)
     }
