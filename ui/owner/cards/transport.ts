@@ -128,7 +128,8 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
       proposal(id);
       signal.throwIfAborted();
       const op = reviewed.get(id);
-      if ((op !== action && !(action === "apply" && op === "release")) || (action !== "apply" && action !== "retire")) {
+      if ((op !== action && !(action === "apply" && op === "release"))
+        || (action !== "apply" && action !== "retire" && action !== "release")) {
         refuse("review-required");
       }
       reviewed.delete(id);
