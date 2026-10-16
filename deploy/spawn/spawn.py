@@ -30,6 +30,7 @@ import egress  # noqa: E402
 import guard  # noqa: E402
 import host  # noqa: E402
 import lxd  # noqa: E402
+import node_release  # noqa: E402
 import release  # noqa: E402
 import vm  # noqa: E402
 
@@ -39,6 +40,59 @@ VALUES = {"--on": "on", "--release": "release", "--public-ip": "public-ip", "--s
           "--image": "image"}
 REPEATED = {"--relay": "relay", "--provider": "provider"}
 SWITCHES = {"--dry-run": "dry", "--spend-ok": "spend-ok", "--yes-destroy": "yes-destroy"}
+INSTALL_PROBE = """
+import hashlib, json, os, stat, subprocess, sys
+paths = json.loads(sys.argv[1])
+claimed = os.path.lexists(paths["delivered"])
+if claimed or sys.argv[2] == "fresh":
+    print(json.dumps({"claimed": claimed}))
+    sys.exit(0)
+
+def read_regular(path, limit):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise ValueError("regular file required")
+        raw = source.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("file exceeds bound")
+    return raw
+
+directory = paths["directory"]
+if not stat.S_ISDIR(os.lstat(directory).st_mode):
+    raise ValueError("release directory required")
+link = os.readlink(paths["current"])
+manifest = read_regular(os.path.join(directory, "release.json"), paths["manifest_limit"])
+config = read_regular(paths["config"], 65536).decode("utf-8")
+active = read_regular(paths["active"], 4096).decode("utf-8")
+verified = read_regular(os.path.join(directory, ".verified"), 128).decode("ascii").strip()
+
+def service():
+    command = ["systemctl", "show", "-p", "ActiveState", "-p", "SubState", "-p", "MainPID",
+               "-p", "NRestarts", paths["service"]]
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, check=True, timeout=15)
+    return dict(line.split("=", 1) for line in result.stdout.decode("utf-8").splitlines() if "=" in line)
+
+props = service()
+pid = props.get("MainPID", "")
+if not pid.isascii() or not pid.isdecimal() or int(pid) <= 0:
+    raise ValueError("running process required")
+executable = os.path.join(os.path.sep, "proc", pid, "exe")
+binary = os.readlink(executable)
+digest = hashlib.sha256()
+with open(executable, "rb") as source:
+    if os.fstat(source.fileno()).st_size != paths["binary_bytes"]:
+        raise ValueError("binary size mismatch")
+    for block in iter(lambda: source.read(1048576), b""):
+        digest.update(block)
+if service() != props or os.readlink(paths["current"]) != link:
+    raise ValueError("installation changed during inspection")
+print(json.dumps({"claimed": os.path.lexists(paths["delivered"]), "link": link,
+                  "manifest": hashlib.sha256(manifest).hexdigest(), "verified": verified,
+                  "config": config, "active": active, "service": props, "binary": binary,
+                  "binary_sha256": digest.hexdigest()}))
+"""
 
 
 class Plan:
@@ -103,14 +157,66 @@ def node_identity(state):
     return node_id
 
 
-def install_node(plan, node, mode):
-    """Stage the release and run the node installer once. An interrupted install is never retried."""
-    state = plan.state
-    if state.has("installed"):
-        return
-    if state.has("installing"):
+def inspect_install(plan, node, resume):
+    """Read the node before staging; a resumed install must match its running release."""
+    rid = plan.bundle.commit[:12] + "-" + plan.bundle.digest[:12]
+    binary = plan.bundle.manifest["files"]["bin/sovereign"]
+    directory = os.path.join(node_release.RELEASES, rid)
+    paths = {"delivered": node_release.DELIVERED, "directory": directory, "current": node_release.CURRENT,
+             "config": node_release.NODE_JSON, "active": node_release.ACTIVE, "service": node_release.SERVICE,
+             "manifest_limit": core.MAX_MANIFEST_BYTES, "binary_bytes": binary["bytes"]}
+    try:
+        done = node.run(["python3", "-B", "-c", INSTALL_PROBE, json.dumps(paths), "resume" if resume else "fresh"],
+                        check=False)
+        if done.returncode != 0:
+            core.refuse("spawn", "install-unknown")
+        observed = core.parse_json(done.stdout, "spawn", 512 * 1024)
+        if not isinstance(observed, dict) or type(observed.get("claimed")) is not bool:
+            core.refuse("spawn", "install-unknown")
+    except (core.Refusal, OSError, ValueError, TypeError):
         core.refuse("spawn", "install-unknown")
-    state.mark("installing")
+    if observed["claimed"]:
+        plan.state.mark("claim-issued")
+        core.refuse("spawn", "node-exists")
+    if not resume:
+        return
+    try:
+        config_raw = observed["config"].encode("utf-8")
+        active_raw = observed["active"].encode("utf-8")
+        config = core.parse_json(config_raw, "spawn", 64 * 1024)
+        active = core.parse_json(active_raw, "spawn", 4096)
+        core.exact_keys(active, ("v", "id", "commit", "release", "seq", "pointer_sha256", "activated_at_ms"),
+                        "spawn", "install-unknown")
+        expected = {"kind": "aukora-node-config-v1", "node": plan.name, "shell_origin": "https://" + plan.shell_host,
+                    "owner_origin": "https://" + plan.owner_host, "registered_site": "https://" + plan.shell_host,
+                    "public_ip": plan.public_ip, "approved_release_root": node_release.CURRENT,
+                    "release_state": node_release.ACTIVE}
+        valid = (isinstance(config, dict) and core.is_int(config.get("v"), 1, 1)
+                 and all(config.get(key) == value for key, value in expected.items())
+                 and core.canonical(config) == config_raw and core.canonical(active) == active_raw
+                 and core.is_int(active["v"], 1, 1) and core.is_int(active["seq"], 0, 0)
+                 and active["pointer_sha256"] is None and core.is_int(active["activated_at_ms"], 1)
+                 and active["id"] == rid and active["commit"] == plan.bundle.commit
+                 and active["release"] == plan.bundle.digest and observed["manifest"] == plan.bundle.digest
+                 and observed["verified"] == plan.bundle.digest and observed["link"] == "releases/" + rid
+                 and observed["binary"] == os.path.join(directory, "bin", "sovereign")
+                 and observed["binary_sha256"] == binary["sha256"]
+                 and observed["service"].get("ActiveState") == "active"
+                 and observed["service"].get("SubState") == "running")
+    except (core.Refusal, KeyError, ValueError, TypeError, AttributeError):
+        valid = False
+    if not valid:
+        core.refuse("spawn", "install-unknown")
+
+
+def install_node(plan, node, mode):
+    """Install once, or resume only after the node proves the earlier install is complete."""
+    state = plan.state
+    resume = state.has("installed") or state.has("installing")
+    inspect_install(plan, node, resume)
+    if resume:
+        state.mark("installed")
+        return
     node_input = core.canonical({"name": plan.name, "shell_host": plan.shell_host, "owner_host": plan.owner_host,
                                  "public_ip": plan.public_ip})
     stage = release.build_stage(plan.scratch, plan.bundle, release.INSTALL_TOOLS,
@@ -120,6 +226,9 @@ def install_node(plan, node, mode):
     node.run(["tar", "-xf", "/root/aukora-stage.tar", "-C", "/root"])
     node.run(["rm", "-f", "--", "/root/aukora-stage.tar"])
     node.push(plan.bundle.tar_path, release.NODE_STAGE + "/release.tar")
+    if mode == "lxd":
+        lxd.stage_packages(plan, node)
+    state.mark("installing")
     node.run(["python3", "-B", release.NODE_STAGE + "/node_install.py", "--stage", release.NODE_STAGE, "--mode", mode])
     state.mark("installed")
 

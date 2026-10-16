@@ -4,15 +4,19 @@ configuration, the units, and the first start. It refuses to touch a node that a
 release: an existing node changes only through deploy/upgrade.
 
 The stage directory holds release.json, release.tar, node-input.json and egress.json, and this tool with the
-modules it imports. It writes no claim: the one-time secret's commitment arrives afterwards from the operator
+modules it imports. An optional packages directory supplies the offline Debian packages. It writes no claim:
+the one-time secret's commitment arrives afterwards from the operator
 (node_release.py claim), and until then the node refuses every claim."""
 from __future__ import annotations
 
 import ctypes
 import grp
 import ipaddress
+import json
 import os
 import pwd
+import re
+import stat
 import subprocess
 import sys
 import time
@@ -67,19 +71,180 @@ def load_input(stage):
     return data
 
 
-def ensure_packages(packages):
+def missing_packages(packages):
     missing = []
     for package in packages:
         done = subprocess.run(["dpkg-query", "-W", "-f=${Status}", package], stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
-        if done.stdout != b"install ok installed":
+        if done.returncode not in (0, 1):
+            core.refuse("install", "package-query")
+        if done.returncode != 0 or done.stdout != b"install ok installed":
             missing.append(package)
-    if missing:
-        environment = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+    return missing
+
+
+def package_bundle(stage):
+    directory = os.path.join(stage, "packages")
+    if not os.path.lexists(directory):
+        return None
+    info = os.lstat(directory)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        core.refuse("install", "package-stage")
+    paths, total = [], 0
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        info = os.lstat(path)
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+:_%~-]*\.deb", name)
+                or not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+                or info.st_nlink != 1 or not 0 < info.st_size <= 256 * 1024 * 1024):
+            core.refuse("install", "package-stage")
+        total += info.st_size
+        paths.append(path)
+        if len(paths) > 512 or total > 1024 * 1024 * 1024:
+            core.refuse("install", "package-stage")
+    return paths
+
+
+def package_plan(stage, bundle):
+    """Validate the host's apt operation order before changing the package database."""
+    path = os.path.join(stage, "package-plan.json")
+    try:
+        info = os.lstat(path)
+    except OSError:
+        core.refuse("install", "package-plan")
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_nlink != 1):
+        core.refuse("install", "package-plan")
+    plan = core.parse_json(core.read_regular(path, 512 * 1024, "install"), "install", 512 * 1024)
+    core.exact_keys(plan, ("schema", "steps"), "install", "package-plan")
+    steps = plan["steps"]
+    if (plan["schema"] != "aukora-package-plan-v1" or not isinstance(steps, list)
+            or not 1 <= len(steps) <= 1024):
+        core.refuse("install", "package-plan")
+    archives, identities = {}, {}
+    package_name = r"[a-z0-9][a-z0-9+.-]{1,127}"
+    architecture = r"[a-z0-9][a-z0-9-]{0,63}"
+    for archive in bundle:
+        fields = run(["dpkg-deb", "--show", "--showformat=${Package}\t${Architecture}", archive]).stdout
+        try:
+            name, arch = fields.decode("ascii").split("\t")
+        except (UnicodeError, ValueError):
+            core.refuse("install", "package-plan")
+        identity = name + ":" + arch
+        if (not re.fullmatch(package_name, name) or not re.fullmatch(architecture, arch)
+                or identity in identities):
+            core.refuse("install", "package-plan")
+        archives[os.path.basename(archive)] = (archive, identity)
+        identities[identity] = name
+    unpacked, operations, count = set(), [], 0
+    for step in steps:
+        core.exact_keys(step, ("op", "packages"), "install", "package-plan")
+        action, packages = step["op"], step["packages"]
+        if action not in ("unpack", "configure") or not isinstance(packages, list) or not 1 <= len(packages) <= 512:
+            core.refuse("install", "package-plan")
+        count += len(packages)
+        if count > 2048:
+            core.refuse("install", "package-plan")
+        arguments = []
+        for package in packages:
+            if not isinstance(package, str):
+                core.refuse("install", "package-plan")
+            if action == "unpack":
+                if package not in archives:
+                    core.refuse("install", "package-plan")
+                archive, identity = archives[package]
+                if identity in unpacked:
+                    core.refuse("install", "package-plan")
+                unpacked.add(identity)
+                arguments.append(archive)
+                continue
+            if not re.fullmatch(package_name + "(?::" + architecture + ")?", package):
+                core.refuse("install", "package-plan")
+            matches = [identity for identity, name in identities.items()
+                       if package == identity or package == name]
+            if matches:
+                if len(matches) != 1 or matches[0] not in unpacked:
+                    core.refuse("install", "package-plan")
+            else:
+                done = subprocess.run(["dpkg-query", "-W", "-f=${db:Status-Status}", package],
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                      stderr=subprocess.DEVNULL, check=False)
+                if done.returncode != 0 or done.stdout not in (
+                        b"installed", b"unpacked", b"half-configured", b"triggers-awaited", b"triggers-pending"):
+                    core.refuse("install", "package-plan")
+            arguments.append(package)
+        operations.append((action, arguments))
+    if unpacked != set(identities):
+        core.refuse("install", "package-plan")
+    return operations
+
+
+def network_available():
+    """Require an up nonloopback interface with an address and a default route in the same family."""
+    for family in ("-4", "-6"):
+        values = []
+        for args in (("address", "show"), ("route", "show", "default")):
+            try:
+                done = subprocess.run(["ip", family, "-json"] + list(args), stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+                value = json.loads(done.stdout) if done.returncode == 0 else None
+            except (OSError, ValueError):
+                value = None
+            if not isinstance(value, list):
+                break
+            values.append(value)
+        if len(values) != 2:
+            continue
+        addresses, routes = values
+        for interface in addresses:
+            if not isinstance(interface, dict):
+                continue
+            flags, records = interface.get("flags"), interface.get("addr_info")
+            if (not isinstance(flags, list) or "UP" not in flags or "LOOPBACK" in flags
+                    or interface.get("operstate") not in ("UP", "UNKNOWN") or not isinstance(records, list)
+                    or not isinstance(interface.get("ifname"), str) or interface["ifname"] == "lo"):
+                continue
+            for record in records:
+                if (not isinstance(record, dict) or record.get("scope") != "global"
+                        or not isinstance(record.get("local"), str)):
+                    continue
+                try:
+                    address = ipaddress.ip_address(record.get("local", ""))
+                except ValueError:
+                    continue
+                if (address.version != (4 if family == "-4" else 6) or address.is_loopback
+                        or address.is_unspecified or address.is_link_local or address.is_multicast):
+                    continue
+                for route in routes:
+                    if (isinstance(route, dict) and route.get("dst") == "default"
+                            and route.get("dev") == interface.get("ifname")
+                            and route.get("type", "unicast") == "unicast"
+                            and isinstance(route.get("flags", []), list) and "linkdown" not in route.get("flags", [])):
+                        return True
+    return False
+
+
+def ensure_packages(packages, stage):
+    bundle = package_bundle(stage)
+    missing = missing_packages(packages)
+    if not missing:
+        return
+    environment = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+    if bundle is not None:
+        if not bundle:
+            core.refuse("install", "packages-missing")
+        operations = package_plan(stage, bundle)
+        for action, arguments in operations:
+            run(["dpkg", "--" + action] + arguments, environment)
+        run(["dpkg", "--configure", "--pending"], environment)
+    else:
+        if not network_available():
+            core.refuse("install", "packages-offline")
         # A new machine often runs its own package updates first; wait for the package lock instead of failing.
         wait = ["-o", "DPkg::Lock::Timeout=600"]
         run(["apt-get", "update"] + wait, environment)
         run(["apt-get", "install", "-y", "--no-install-recommends"] + wait + missing, environment)
+    if missing_packages(packages):
+        core.refuse("install", "packages-missing")
 
 
 def ensure_user():
@@ -175,6 +340,11 @@ def wait_active():
 
 
 def clean(stage):
+    packages = package_bundle(stage)
+    if packages is not None:
+        for path in packages:
+            os.unlink(path)
+        os.rmdir(os.path.join(stage, "packages"))
     for name in os.listdir(stage):
         path = os.path.join(stage, name)
         if os.path.isfile(path) and not os.path.islink(path):
@@ -188,6 +358,10 @@ def clean(stage):
 def main(argv):
     if os.geteuid() != 0:
         core.refuse("install", "root-required")
+    if len(argv) == 2 and argv[0] == "--missing-packages" and argv[1] in ("lxd", "vm"):
+        packages = PACKAGES + (VM_PACKAGES if argv[1] == "vm" else ())
+        sys.stdout.buffer.write(core.canonical(missing_packages(packages)))
+        return 0
     if len(argv) != 4 or argv[0] != "--stage" or argv[2] != "--mode" or argv[3] not in ("lxd", "vm"):
         core.refuse("install", "usage")
     stage, mode = argv[1], argv[3]
@@ -206,7 +380,7 @@ def main(argv):
     restricted = userns_restricted()
     if restricted and mode != "vm":
         core.refuse("install", "userns-policy")  # a container cannot load the profile that would allow it
-    ensure_packages(PACKAGES + (VM_PACKAGES if mode == "vm" else ()))
+    ensure_packages(PACKAGES + (VM_PACKAGES if mode == "vm" else ()), stage)
     if restricted:
         install_userns_profile()
     ensure_user()
