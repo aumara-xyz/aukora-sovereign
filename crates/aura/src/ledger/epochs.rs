@@ -149,11 +149,15 @@ pub(super) fn binding_anchor(
             .map_err(|_| refusal("sequence-range"))?;
         let record = io::record_at(connection, sequence)?;
         crate::record::verify_record(&record, keys)?;
-        let payload = AuthorityBodyV1::parse(&record.body)?.payload;
-        let Some(value) = payload.get("binding") else {
-            continue;
+        let mut anchored = if record.kind == Kind::AumlokEnrol {
+            enrolment::verify_anchor(&record, connection)?
+        } else {
+            let payload = AuthorityBodyV1::parse(&record.body)?.payload;
+            let Some(value) = payload.get("binding") else {
+                continue;
+            };
+            crate::storage::decode_binding(&value.canonical_bytes())?
         };
-        let mut anchored = crate::storage::decode_binding(&value.canonical_bytes())?;
         if anchored.credential_id != binding.credential_id {
             continue;
         }
@@ -205,11 +209,15 @@ pub(super) fn immune_binding_before(
             .map_err(|_| refusal("sequence-range"))?;
         let record = io::record_at(connection, sequence)?;
         crate::record::verify_record(&record, keys)?;
-        let payload = AuthorityBodyV1::parse(&record.body)?.payload;
-        let Some(value) = payload.get("binding") else {
-            continue;
+        let mut binding = if record.kind == Kind::AumlokEnrol {
+            enrolment::verify_anchor(&record, connection)?
+        } else {
+            let payload = AuthorityBodyV1::parse(&record.body)?.payload;
+            let Some(value) = payload.get("binding") else {
+                continue;
+            };
+            crate::storage::decode_binding(&value.canonical_bytes())?
         };
-        let mut binding = crate::storage::decode_binding(&value.canonical_bytes())?;
         if &binding.credential_id != credential {
             continue;
         }

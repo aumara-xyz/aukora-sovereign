@@ -909,9 +909,9 @@ pub trait AuthorityTxn {
     /// Accept only a still-routine `Apply`; refuse `Retire`, `Release`, `Grant`,
     /// `Permission`, unknown actions and missing or critical risk, regardless of scope.
     /// Require the capability's use number to equal the stored count plus one and
-    /// refuse any reused capability or already-consumed proposal. Bind row kind,
-    /// action, body and operation to the checked proposal and exact operation digest;
-    /// enforce next sequence, predecessor and unique terminal rules as in `append`.
+    /// refuse any reused capability or already-consumed proposal. Require
+    /// `GateConsume`/`Settle`, state `consumed`, and the exact operation and approval;
+    /// enforce next sequence and predecessor. The effect/recovery path settles it.
     /// Record the permission id/digest and use number in the canonical body, without
     /// adding C3 v1 fields. No fresh passkey proof or counter update is required.
     /// This path cannot grant, renew or loosen standing permissions. Any failure

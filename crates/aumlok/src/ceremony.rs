@@ -293,6 +293,10 @@ pub fn finish_enrolment<T: CeremonyReadTxn + ?Sized>(
         user_handle: identity.user_handle,
         backup_eligible: candidate.backup_eligible,
     };
+    if row.authority.epoch != 0 {
+        return Err(refusal("ceremony-stale"));
+    }
+    credential.binding.epoch = 1;
     let observation = inspect_assertion(
         assertion,
         &credential,

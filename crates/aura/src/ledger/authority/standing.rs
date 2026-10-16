@@ -6,6 +6,7 @@ use canon::authority::CardRisk;
 use canon::ids::OperationId;
 use format::*;
 
+mod consumption;
 mod format;
 mod history;
 mod proof;
@@ -73,7 +74,7 @@ impl LedgerTxn<'_> {
         Ok(())
     }
 
-    fn standing_grant(&mut self, id: &ProposalId, digest: Digest32) -> Result<Grant> {
+    fn standing_grant(&self, id: &ProposalId, digest: Digest32) -> Result<Grant> {
         self.active()?;
         let bytes: Vec<u8> = self
             .transaction
@@ -214,11 +215,11 @@ impl LedgerTxn<'_> {
         }
         if now < grant.permission.starts
             || now >= grant.permission.expires
-            || pending.kind != Kind::GateApply
-            || pending.phase != Phase::Terminal
+            || pending.kind != Kind::GateConsume
+            || pending.phase != Phase::Settle
             || pending.authority != self.current_version()?
             || pending.operation != Some(proposal.operation)
-            || pending.actor != "gate"
+            || pending.actor != "owner"
             || pending.at < 0
             || pending.at > now
         {
@@ -230,71 +231,26 @@ impl LedgerTxn<'_> {
                 return Err(refusal("standing-append-context"));
             }
         }
-        let input = gate_payload(&pending.body);
-        let normalized = use_body(&grant, &proposal, checked.use_number)?;
-        let base = match proposal.base_sha256 {
-            canon::authority::BaseDigest::Absent => "absent".to_owned(),
-            canon::authority::BaseDigest::Present(digest) => digest.to_string(),
-        };
-        for (key, expected) in [
-            ("proposal", proposal.proposal.to_string()),
-            ("target", proposal.target.clone()),
-            ("operation", proposal.operation_digest.to_string()),
-            (
-                "new_sha256",
-                Digest32::sha256(&proposal.new_bytes).to_string(),
-            ),
-            ("base_sha256", base),
-            ("state", "applied".to_owned()),
-        ] {
-            if field(input, key) != Some(expected.as_str()) {
-                return Err(refusal("standing-record-mismatch"));
-            }
-        }
-        if input.get("consumed_approval").is_some()
-            || input
-                .get("action")
-                .is_some_and(|_| field(input, "action") != Some("apply"))
-            || (input.get("schema").is_some() && input != &normalized)
-        {
+        let descriptor = consumption::descriptor(&grant, &proposal, checked.use_number)?;
+        let approval = Digest32::sha256(&descriptor.canonical_bytes());
+        let expected = consumption::body(&proposal, descriptor.clone(), approval)?;
+        if gate_payload(&pending.body) != &expected {
             return Err(refusal("standing-record-mismatch"));
         }
-        if input.get("schema").is_none() {
-            let json::ValueView::Object(fields) = input.view() else {
-                return Err(refusal("standing-record-mismatch"));
-            };
-            if fields.iter().any(|(key, _)| {
-                !matches!(
-                    key.as_str(),
-                    "proposal"
-                        | "target"
-                        | "operation"
-                        | "base_sha256"
-                        | "new_sha256"
-                        | "state"
-                        | "retry"
-                        | "observed_sha256"
-                        | "action"
-                )
-            }) || input
-                .get("retry")
-                .is_some_and(|value| !matches!(value.view(), json::ValueView::Boolean(false)))
-                || input.get("observed_sha256").is_some_and(|_| {
-                    field(input, "observed_sha256")
-                        != Some(Digest32::sha256(&proposal.new_bytes).to_string().as_str())
-                })
-            {
-                return Err(refusal("standing-record-mismatch"));
-            }
-        }
-        pending.body = normalized;
         pending.at = now;
+        let version = pending.authority;
+        let proof = consumption::proof(descriptor)?.canonical_bytes();
+        self.transaction.execute(
+            "INSERT INTO authority_consumptions(approval,proposal,operation,epoch,sequence,proof,credential,counter,action,appended,previous_hash) VALUES (?1,?2,?3,?4,?5,?6,'',0,'apply',1,?7)",
+            params![approval.to_string(), proposal.proposal.to_string(), proposal.operation.to_string(),
+                sql_number(version.epoch)?, sql_number(version.sequence)?, proof,
+                version.previous_hash.map(|hash| hash.to_string())],
+        ).map_err(sql)?;
         self.set_status(proposal.proposal, ProposalStatus::Consumed)?;
         let record = self.write_record(pending)?;
         let mut stored = grant.stored;
         stored.count = checked.use_number;
         self.replace_standing(&stored)?;
-        self.set_status(proposal.proposal, ProposalStatus::Applied)?;
         Ok(record)
     }
 

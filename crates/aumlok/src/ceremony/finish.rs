@@ -155,6 +155,12 @@ pub(super) fn complete<T: CeremonyReadTxn + ?Sized>(
         assertion_json: &assertion_json,
         now_ms,
     };
+    if kind == CeremonyKind::Enrolment {
+        if authority.epoch != 0 || credential.binding.epoch != 1 {
+            return Err(refusal("ceremony-stale"));
+        }
+        return txn.finish_ceremony(request);
+    }
     txn.ceremony_write()?
         .finish(&row, credential, &request, authority)
 }

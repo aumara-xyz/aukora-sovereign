@@ -6,7 +6,7 @@ use canon::authority::OwnerAssertion;
 
 impl LedgerTxn<'_> {
     pub(super) fn verify_standing_proof(
-        &mut self,
+        &self,
         stored: &Stored,
         proposal: &storage::ProposalState,
         record: &AuthorityRecord,
@@ -102,7 +102,17 @@ impl LedgerTxn<'_> {
             record.authority.sequence,
             &self.state.keys,
         )?;
-        let current = self.owner_binding(&credential_id)?;
+        let (binding_bytes, current_counter): (Vec<u8>, u32) = self.transaction.query_row(
+            "SELECT body,counter FROM authority_bindings WHERE credential=?1",
+            [&credential], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(sql)?;
+        let mut current = storage::decode_binding(&binding_bytes)?;
+        if current.credential_id != credential_id || current.epoch != self.state.epoch
+            || current_counter < current.sign_counter {
+            return Err(refusal("standing-owner-changed"));
+        }
+        current.sign_counter = current_counter;
+        super::super::super::epochs::binding_anchor(&self.transaction, &current, &self.state.keys)?;
         let mut equivalent = historical.clone();
         equivalent.sign_counter = current.sign_counter;
         if equivalent != current || current.sign_counter < counter {

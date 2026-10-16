@@ -31,7 +31,7 @@ impl LedgerTxn<'_> {
 
     fn standing_sequences(&self, grant: &Grant, schema: &str) -> Result<Vec<u64>> {
         let mut statement = self.transaction.prepare(
-            "SELECT seq FROM aura WHERE kind='gate.apply' AND phase='terminal' AND json_extract(body,'$.payload.schema')=?1 AND json_extract(body,'$.payload.permission')=?2 ORDER BY seq",
+            "SELECT seq FROM aura WHERE (kind='gate.apply' AND phase='terminal' AND json_extract(body,'$.payload.schema')=?1 AND json_extract(body,'$.payload.permission')=?2) OR (?1='aukora-aura-standing-use-v1' AND kind='gate.consume' AND phase='settle' AND json_extract(body,'$.payload.standing.permission_proposal')=?2) ORDER BY seq",
         ).map_err(sql)?;
         let mut rows = statement
             .query(params![schema, grant.stored.permission.to_string()])
@@ -95,10 +95,7 @@ impl LedgerTxn<'_> {
             let payload = gate_payload(&record.body);
             let proposal =
                 self.proposal(&ProposalId::from_hex(text_field(payload, "proposal")?)?)?;
-            if record.kind != Kind::GateApply
-                || record.phase != Phase::Terminal
-                || record.actor != "gate"
-                || record.operation != Some(proposal.operation)
+            if record.operation != Some(proposal.operation)
                 || record.authority.epoch != grant.record.authority.epoch
                 || sequence <= grant.stored.sequence
                 || record.at < last
@@ -109,13 +106,19 @@ impl LedgerTxn<'_> {
                 })
                 || record.at < grant.permission.starts
                 || record.at >= grant.permission.expires
-                || proposal.status != ProposalStatus::Applied
+                || !grant.permission.enabled
                 || proposal.risk != CardRisk::Routine
                 || proposal.authority.epoch != grant.record.authority.epoch
                 || !grant.permission.allows(&proposal.target)
                 || count > grant.permission.maximum
-                || payload != &use_body(grant, &proposal, count)?
             {
+                return Err(refusal("standing-history"));
+            }
+            if record.kind == Kind::GateConsume {
+                self.check_standing_consumption(grant, &proposal, &record, count)?;
+            } else if record.kind != Kind::GateApply || record.phase != Phase::Terminal
+                || record.actor != "gate" || proposal.status != ProposalStatus::Applied
+                || payload != &use_body(grant, &proposal, count)? {
                 return Err(refusal("standing-history"));
             }
             self.standing_proposal_intent(&proposal, record.at)?;

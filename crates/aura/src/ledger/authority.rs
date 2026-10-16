@@ -879,6 +879,9 @@ pub(super) fn verify_target_consumption(
         return Err(refusal("target-consumption"));
     }
     bind_gate_body(gate_payload(&consumed.body), stored, approval, "consumed")?;
+    if gate_payload(&consumed.body).get("standing").is_some() {
+        return transaction.verify_standing_target_consumption(stored, approval, &consumed);
+    }
     let proof = json::parse_strict(&proof_bytes)?;
     immune_exact(&proof, &["authorization", "credential", "authenticator_data", "client_data_json",
         "signed_bytes", "public_keys", "signatures"])?;

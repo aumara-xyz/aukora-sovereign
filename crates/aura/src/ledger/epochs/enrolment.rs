@@ -434,7 +434,7 @@ pub(super) fn verify_anchor(
     {
         return Err(refusal("enrolment-anchor"));
     }
-    let binding = storage::decode_binding(&field(payload, "binding")?.canonical_bytes())?;
+    let binding = codec::decode_binding(field(payload, "binding")?)?;
     if binding.epoch != 1 {
         return Err(refusal("enrolment-anchor"));
     }
