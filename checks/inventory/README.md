@@ -4,10 +4,19 @@ This directory owns the omission check for NORTH-STAR rows 127 and 41. Python's
 standard library and local Git are its only dependencies. It neither changes
 Git nor contacts a remote. NORTH-STAR remains the only plan.
 
-Run `python3 -B checks/inventory/check.py` for the working tree, or append
-`--ref FULL_COMMIT` to inspect committed bytes. The index is not substituted for
-the working tree. Missing history refuses; a shallow clone works only when it
-contains the pinned seed and all intervening history. Refusals use `inventory:`.
+Run `python3 -B checks/inventory/check.py --policy-anchor TRUSTED_FULL_COMMIT`
+for the working tree, or append `--ref FULL_COMMIT` to inspect committed bytes.
+The index is not substituted for the working tree. Missing history refuses; a
+shallow clone works only when it contains the pinned seed and all intervening
+history. Refusals use `inventory:`.
+
+`--policy-anchor` is required in every mode. The caller must obtain this exact
+commit independently of the candidate through the existing approval route.
+The checker reads the seed and old-tech digest only from that commit's policy
+blob and refuses unless the candidate policy matches it byte for byte. With
+`--ref`, comparison uses that commit's policy; otherwise it uses working files.
+There is no default anchor from the candidate, HEAD, or the owner-records
+argument. Trusting a policy commit does not authenticate the checker sources.
 
 The checker retains every version of every numbered plan row, every carry-list
 paragraph or bullet with its heading and list context, every coverage-audit
@@ -36,14 +45,18 @@ the chain, and a cycle never grants an unrecorded replacement.
 and trusted rebuilt registrations for that exact commit or dated owner
 dispositions for every retained item. The packet has not been supplied. No
 source-provenance status (RAN, SOURCE, PORT, BUILD, LATER) establishes completion.
+A present item needs a completion at the candidate commit or a disposition
+whose `after_sha256` equals that item's digest. A null `after_sha256` permits
+only an omission found by the history walk; it never clears a present item.
 A successful static check never claims installed acceptance or authorizes a
 release. The frozen coverage audit has 16 numbered gaps; all are retained.
 
 Conductor integration is required: replace the presence/CSV heuristic in
 `checks/run.py` with this command, pin these checker sources and policy through
 the existing independent source-pin mechanism, and invoke release mode before
-release proposal or signing. A source candidate must not choose either its own
-checker pins or its own trusted owner-record revision. Existing row-41 registry
+release proposal or signing, supplying the independently trusted policy anchor.
+A source candidate must not choose its own checker pins, policy anchor, or
+trusted owner-record revision. Existing row-41 registry
 and Aura terminal checks remain required; this check preserves their plan row
 but does not measure runtime terminal coverage.
 
@@ -55,10 +68,13 @@ packet and reviewed; no placeholder packet is supplied here.
 The trusted revision's `checks/inventory/owner-records-v1.json` has exact keys
 `schema`, `dispositions`, and `completions`, with schema
 `aukora-inventory-owner-records-v1`. Each disposition has `id`, `before_sha256`,
-`after_sha256` (the exact replacement digest or null for removal), `author`,
+`after_sha256` (the exact retained/replacement digest or null for removal), `author`,
 `date`, `issue`, and `quote`. Each completion has `id`, `sha256`, `commit`,
 `author`, `date`, `issue`, and `quote`. Author is `Peter`, date is a valid
 `YYYY-MM-DD`, issue is a positive integer, and quote preserves his own words.
 Completion means the trusted caller has recorded rebuilding at that exact
 candidate commit. The checker does not derive it from the presence of a file.
 No owner records are supplied by this worker.
+For a keep disposition, `before_sha256` and `after_sha256` both name the
+retained digest. A replacement disposition also accounts for its exact new
+bytes in release mode; an unrelated digest or another item's record does not.

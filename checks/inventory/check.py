@@ -31,6 +31,8 @@ class Arguments(argparse.ArgumentParser):
 def options(argv):
     parser = Arguments(description=__doc__, allow_abbrev=False)
     parser.add_argument("--ref", help="full commit to inspect; otherwise inspect working files")
+    parser.add_argument("--policy-anchor", required=True,
+                        help="externally trusted full commit holding the pinned inventory policy")
     parser.add_argument("--owner-records", help="externally trusted full commit holding Peter's records")
     parser.add_argument("--release", action="store_true", help="require the packet and rebuilt registrations")
     args = parser.parse_args(argv)
@@ -38,9 +40,12 @@ def options(argv):
     return args
 
 
-def policy(git):
-    raw = git.read(None, POLICY)
-    require(raw is not None, "policy", "missing pinned policy")
+def policy(git, anchor, revision):
+    trusted = git.commit(anchor)
+    raw = git.read(trusted, POLICY)
+    require(raw is not None, "policy", "trusted commit has no inventory policy")
+    require(git.read(revision, POLICY) == raw,
+            "policy-drift", "candidate policy differs from the externally trusted policy")
     value = unique_json(raw, POLICY)
     keys(value, ("schema", "seed_commit", "old_tech_sha256"), POLICY)
     require(value["schema"] == "aukora-inventory-policy-v1", "policy", "unknown schema")
@@ -68,8 +73,8 @@ def snapshot(git, revision, cache):
 
 def check(args):
     git = Git(Path(__file__).resolve().parents[2])
-    config = policy(git)
     candidate = git.commit(args.ref) if args.ref is not None else git.head()
+    config = policy(git, args.policy_anchor, candidate if args.ref is not None else None)
     history = git.history(config["seed_commit"], candidate)
     owner = load_records(git, args.owner_records) if args.owner_records else Records()
     cache = {}
@@ -96,7 +101,7 @@ def check(args):
         if not args.owner_records:
             failures.append("inventory:owner-records: trusted owner records are required for release")
         for value in sorted(current.values(), key=lambda value: value.id):
-            if not owner.completed(value, candidate) and not owner.permits(value, None):
+            if not owner.completed(value, candidate) and not owner.keeps(value):
                 failures.append(f"inventory:unrebuilt: {value.id} {value.sha256}")
     if failures:
         for failure in failures[:100]:

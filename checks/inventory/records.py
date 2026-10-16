@@ -47,6 +47,10 @@ class Records:
                 return False
         return False
 
+    def keeps(self, item: Item) -> bool:
+        return any(identifier == item.id and after == item.sha256
+                   for identifier, _before, after in self.dispositions)
+
     def completed(self, item: Item, candidate: str) -> bool:
         return (item.id, item.sha256, candidate) in self.completions
 
