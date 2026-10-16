@@ -29,6 +29,7 @@ pub enum OwnerRoute {
     SigninFinish,
     Approvals,
     ApprovalRetireChallenge,
+    ApprovalCeremonyV1,
     ApprovalReviewV1,
     ApprovalAssertionV1,
 }
@@ -53,6 +54,7 @@ impl OwnerRoute {
             (Method::Post, "/api/signin/start") => Ok(Self::SigninStart),
             (Method::Post, "/api/signin/finish") => Ok(Self::SigninFinish),
             (Method::Get, "/api/approvals") => Ok(Self::Approvals),
+            (Method::Post, "/api/approvals") => Ok(Self::ApprovalCeremonyV1),
             (Method::Post, "/api/approvals/retire/challenge") => Ok(Self::ApprovalRetireChallenge),
             _ => Err(Refusal {
                 organ: "frontdoor",
@@ -66,7 +68,8 @@ impl OwnerRoute {
 pub fn is_gate_route(route: OwnerRoute) -> bool {
     matches!(
         route,
-        OwnerRoute::ApprovalReviewV1
+        OwnerRoute::ApprovalCeremonyV1
+            | OwnerRoute::ApprovalReviewV1
             | OwnerRoute::ApprovalAssertionV1
             | OwnerRoute::ApprovalRetireChallenge
     )
@@ -125,11 +128,26 @@ impl GateAssertionMaterial {
     }
 }
 
-/// Gate requests accept exact selectors. The pinned retirement request keeps `id`.
+/// POST `/api/approvals` carries a versioned review or assertion wrapper.
+/// The pinned retirement challenge retains its exact `id` request.
 pub fn decode_gate_request(route: OwnerRoute, body: &Value) -> Result<GateRequest> {
     if body.canonical_bytes().len() > crate::ingress::MAX_BODY_BYTES {
         return Err(canon::codes::FRONTDOOR_BODY_INVALID);
     }
+    let (route, body) = if route == OwnerRoute::ApprovalCeremonyV1 {
+        gate_keys(body, &["schema", "kind", "body"])?;
+        if gate_text(body, "schema")? != "aukora-owner-gate-request-v1" {
+            return Err(canon::codes::FRONTDOOR_BODY_INVALID);
+        }
+        let route = match gate_text(body, "kind")? {
+            "review" => OwnerRoute::ApprovalReviewV1,
+            "assertion" => OwnerRoute::ApprovalAssertionV1,
+            _ => return Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE),
+        };
+        (route, gate_field(body, "body")?)
+    } else {
+        (route, body)
+    };
     if route == OwnerRoute::ApprovalRetireChallenge {
         gate_keys(body, &["id"])?;
         return Ok(GateRequest::Review {
@@ -571,6 +589,7 @@ pub fn dispatch_ceremony<S: crate::session::SessionStore>(
         | OwnerRoute::SigninFinish
         | OwnerRoute::Approvals
         | OwnerRoute::ApprovalRetireChallenge
+        | OwnerRoute::ApprovalCeremonyV1
         | OwnerRoute::ApprovalReviewV1
         | OwnerRoute::ApprovalAssertionV1 => Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE),
         _ => crate::session::with_owner_session(
