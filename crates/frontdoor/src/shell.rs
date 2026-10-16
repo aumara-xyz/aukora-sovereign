@@ -77,6 +77,7 @@ pub fn policies(shell: &Origin, owner: &Origin) -> ShellPolicies {
 }
 
 /// Faces may load their approved assets and return data to the shell, never embed frames.
-pub fn face_policy(shell: &Origin) -> String {
-    format!("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-src 'none'; frame-ancestors {}; object-src 'none'; base-uri 'none'; form-action 'none'", shell.as_str())
+pub fn face_policy(shell: &Origin, wasm: bool) -> String {
+    let wasm = if wasm { " 'wasm-unsafe-eval'" } else { "" };
+    format!("default-src 'none'; script-src 'self'{wasm}; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-src 'none'; frame-ancestors {}; object-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts", shell.as_str())
 }

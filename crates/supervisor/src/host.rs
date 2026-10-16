@@ -34,7 +34,7 @@ pub struct Host {
     pub documents: DocumentRoot,
     sessions: File,
     claim_service: Mutex<Option<supervisor::claim::HostClaimService>>,
-    identity: Mutex<crate::identity::Identity>,
+    identity: Arc<Mutex<crate::identity::Identity>>,
     assets: Arc<Mutex<Assets>>,
     pub runtime: Arc<crate::adapters::runtime::RuntimeAdapter>,
     pub health: Arc<crate::health::HealthCollector>,
@@ -173,6 +173,12 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         ledger.clone(),
         messaging,
     ));
+    let identity = Arc::new(Mutex::new(crate::identity::Identity::open(
+        ledger.clone(),
+        frontdoor::owner_origin::CeremonyContext::from_boundary(&config.boundary()?)?,
+        state.node,
+        &config.state_root.join("aura.sqlite3"),
+    )?));
     let faces = crate::faces::host::HostFaces::new(
         ledger.clone(),
         transcripts.clone(),
@@ -180,7 +186,8 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         broker.clone(),
     )
     .with_network(network)
-    .with_kira(kira.clone());
+    .with_kira(kira.clone())
+    .with_identity(identity.clone());
     let owner_gate = gate.clone();
     let runtime = Arc::new(crate::adapters::runtime::RuntimeAdapter::new(
         crate::adapters::runtime::RuntimeOrgans {
@@ -206,12 +213,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     )?);
     let live_data = crate::data::live::RuntimeData::new(data.clone());
     let host = Arc::new(Host {
-        identity: Mutex::new(crate::identity::Identity::open(
-            ledger.clone(),
-            frontdoor::owner_origin::CeremonyContext::from_boundary(&config.boundary()?)?,
-            state.node,
-            &config.state_root.join("aura.sqlite3"),
-        )?),
+        identity,
         approvals: crate::approvals::ApprovalFeed::new(ledger.clone()),
         gate: owner_gate,
         config,
@@ -402,21 +404,9 @@ impl Host {
             frontdoor::api::service_reads::authorize_data(release, field("body")?)
         })?;
         self.data.submit_generated(session, at, |_| {
-            let value = if read.service() == "aumlok" && read.method() == "status" {
-                if !matches!(
-                    read.params().view(),
-                    canon::json::ValueView::Object(fields) if fields.is_empty()
-                ) {
-                    return Err(codes::FRAME_INVALID_FIELD);
-                }
-                self.identity
-                    .try_lock()
-                    .map_err(|_| codes::SUPERVISOR_STATE)?
-                    .status(session.record(), at)?
-            } else {
-                self.faces
-                    .dispatch_extended(session, &read, &self.documents)?
-            };
+            let value = self
+                .faces
+                .dispatch_extended(session, &read, &self.documents)?;
             self.with_release(|_| Ok(()))?;
             let reply = Value::object(vec![
                 (
@@ -429,7 +419,10 @@ impl Host {
                 (
                     "body".into(),
                     Value::object(vec![
-                        ("schema".into(), Value::text("aukora:face-service:v3".into())?),
+                        (
+                            "schema".into(),
+                            Value::text("aukora:face-service:v3".into())?,
+                        ),
                         ("value".into(), value),
                     ])?,
                 ),
@@ -781,11 +774,12 @@ impl Host {
                 &context, request, navigation, release, source,
             );
         }
-        let surface = if request.path().starts_with("/app/faces/") {
-            AssetSurface::Face
-        } else {
-            AssetSurface::Shell
-        };
+        let surface =
+            if request.path().starts_with("/app/faces/") || request.path().starts_with("/faces/") {
+                AssetSurface::Face
+            } else {
+                AssetSurface::Shell
+            };
         let asset = frontdoor::assets::serve(release, source, surface, request.path())?;
         let mime = match asset.kind {
             frontdoor::assets::AssetKind::Html => "text/html; charset=utf-8",
@@ -798,7 +792,12 @@ impl Host {
         };
         let policies = frontdoor::shell::policies(&boundary.shell, &boundary.owner);
         let policy = if surface == AssetSurface::Face {
-            frontdoor::shell::face_policy(&boundary.shell)
+            let wasm = if asset.kind == frontdoor::assets::AssetKind::Html {
+                face_uses_wasm(release, source, request.path())?
+            } else {
+                false
+            };
+            frontdoor::shell::face_policy(&boundary.shell, wasm)
         } else {
             policies.shell_csp
         };
@@ -811,12 +810,40 @@ impl Host {
             .header("x-content-type-options", "nosniff")
             .header("referrer-policy", "strict-origin")
             .header("strict-transport-security", "max-age=31536000")
+            .header("access-control-allow-origin", "*")
+            .header("vary", "origin")
+            .header("cross-origin-resource-policy", "cross-origin")
             .body(if request.method() == Method::Head {
                 Vec::new()
             } else {
                 asset.bytes
             })
             .map_err(|_| codes::SUPERVISOR_STATE)
+    }
+}
+
+fn face_uses_wasm(
+    release: &ApprovedRelease,
+    source: &mut ReleaseFiles,
+    path: &str,
+) -> Result<bool> {
+    let face = path
+        .strip_prefix("/app/faces/")
+        .or_else(|| path.strip_prefix("/faces/"))
+        .and_then(|suffix| suffix.split_once('/'))
+        .map(|(id, _)| id)
+        .ok_or(codes::FRONTDOOR_UNKNOWN_ROUTE)?;
+    let manifest = frontdoor::assets::serve(
+        release,
+        source,
+        AssetSurface::Face,
+        &format!("/app/faces/{face}/manifest.json"),
+    )?;
+    let value = canon::json::parse_strict(&manifest.bytes)?;
+    match value.get("wasm").map(Value::view) {
+        None => Ok(false),
+        Some(canon::json::ValueView::Boolean(wasm)) => Ok(wasm),
+        _ => Err(codes::FRAME_INVALID_FIELD),
     }
 }
 

@@ -133,3 +133,18 @@ pub fn reply(reply: canon::fd3::Reply) -> Result<Value> {
 pub fn event(event: canon::fd4::SessionEvent) -> Result<Value> {
     body(&canon::fd4::encode_event(&frame(event)?)?)
 }
+
+/// The owner's scoped session read may retain entries with owner provenance.
+pub fn owner_event(event: canon::fd4::SessionEvent) -> Result<Value> {
+    if !matches!(
+        event,
+        canon::fd4::SessionEvent::Opened(_) | canon::fd4::SessionEvent::Listed(_)
+    ) {
+        return Err(refuse("face-operation-unknown"));
+    }
+    let mut event = frame(event)?;
+    event.provenance = Provenance {
+        source: Source::Owner,
+    };
+    body(&canon::fd4::encode_event(&event)?)
+}

@@ -15,7 +15,10 @@ use frontdoor::{
     documents::DocumentRoot,
     session::{BoundSession, SessionScope},
 };
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use supervisor::{
     ingress::{BindingState, PrincipalScope},
     services::KiraService,
@@ -29,6 +32,7 @@ pub struct HostFaces {
     broker: Arc<BrokerAdapter>,
     kira: Option<Arc<dyn KiraService>>,
     network: Option<Arc<dyn NetworkRead>>,
+    identity: Option<Arc<Mutex<crate::identity::Identity>>>,
 }
 impl HostFaces {
     pub fn new(
@@ -44,6 +48,7 @@ impl HostFaces {
             broker,
             kira: None,
             network: None,
+            identity: None,
         }
     }
     pub fn with_kira(mut self, kira: Arc<dyn KiraService>) -> Self {
@@ -52,6 +57,10 @@ impl HostFaces {
     }
     pub fn with_network(mut self, network: Arc<dyn NetworkRead>) -> Self {
         self.network = Some(network);
+        self
+    }
+    pub fn with_identity(mut self, identity: Arc<Mutex<crate::identity::Identity>>) -> Self {
+        self.identity = Some(identity);
         self
     }
 
@@ -64,6 +73,12 @@ impl HostFaces {
         read: &AuthorizedRead,
         root: &DocumentRoot,
     ) -> Result<Value> {
+        if matches!(
+            (read.service(), read.method()),
+            ("aumlok", "status" | "identity") | ("gate-aura", "head")
+        ) {
+            return self.dispatch_extended(session, read, root);
+        }
         let record = session.record();
         let scope = PrincipalScope {
             subject: record.subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
@@ -79,6 +94,13 @@ impl HostFaces {
             let value = documents::call(root, session, read.method(), read.params())?;
             self.recheck(scope)?;
             return Ok(value);
+        }
+        if read.service() == "broker" && read.method() == "model.report" {
+            super::wire::exact(read.params(), &[])?;
+            let value = self.broker.model_report(scope)?;
+            settings::validate("settings.models", &value)?;
+            self.recheck(scope)?;
+            return super::wire::bounded(value);
         }
         let settings = LiveSettings {
             read,
@@ -159,9 +181,21 @@ impl HostFaces {
         self.recheck(scope)?;
         let value = match (read.service(), read.method()) {
             ("gate-aura", "head") => self.ledger.with_read_ledger(|ledger| {
-                wire::object([("head", wire::text(ledger.retained_head()?.root.to_string())?)])
+                wire::object([(
+                    "head",
+                    wire::text(ledger.retained_head()?.root.to_string())?,
+                )])
             })?,
-            ("aumlok", "status") => return Err(refuse("aumlok-status-unavailable")),
+            ("aumlok", "status") => {
+                let now = u64::try_from(self.ledger.clock.now_ms()?)
+                    .map_err(|_| codes::SUPERVISOR_STATE)?;
+                self.identity
+                    .as_ref()
+                    .ok_or(refuse("aumlok-status-unavailable"))?
+                    .try_lock()
+                    .map_err(|_| codes::SUPERVISOR_STATE)?
+                    .status(record, now)?
+            }
             ("aumlok", "identity") => self.ledger.scoped(scope, |txn| {
                 let owner = txn
                     .bound_owner_identity()?
@@ -170,12 +204,20 @@ impl HostFaces {
                     return Err(codes::AUMLOK_BINDING_REQUIRED);
                 }
                 let version = txn.current_version()?;
-                for sequence in 1..version.sequence {
+                let mut node_npub = Value::null();
+                let mut agent_npub = Value::null();
+                for sequence in (1..version.sequence).rev() {
                     let row = txn
                         .floor_record_at_sequence(sequence)?
                         .ok_or(codes::AURA_UNVERIFIED)?;
                     if row.kind == Kind::NostrBind {
-                        return Err(refuse("identity-network-projection-unavailable"));
+                        let binding = nostr::identity::observe_binding(&row)?;
+                        if binding.owner == scope.subject && binding.authority.epoch == scope.epoch
+                        {
+                            node_npub = wire::text(binding.node_key.to_npub()?.as_str())?;
+                            agent_npub = wire::text(binding.agent_key.to_npub()?.as_str())?;
+                            break;
+                        }
                     }
                 }
                 let label = owner.credential.owner_id;
@@ -191,10 +233,10 @@ impl HostFaces {
                     return Err(refuse("identity-label-invalid"));
                 }
                 wire::object([
-                    ("agent_npub", Value::null()),
+                    ("agent_npub", agent_npub),
                     ("contact_code", Value::null()),
                     ("label", wire::text(label)?),
-                    ("node_npub", Value::null()),
+                    ("node_npub", node_npub),
                     ("safety", Value::array(Vec::new())?),
                     ("subject", wire::text(owner.subject.to_string())?),
                 ])

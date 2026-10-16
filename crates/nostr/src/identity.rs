@@ -261,3 +261,67 @@ pub struct EventDraft {
     pub tags: Vec<Vec<String>>,
     pub content: String,
 }
+
+/// Decodes a verified retained binding row as public data. This does not create a
+/// BoundIdentities capability or authorize a later use of either signing key.
+pub fn observe_binding(record: &AuthorityRecord) -> Result<BindingRequest> {
+    use canon::json::ValueView;
+
+    fn field<'a>(value: &'a Value, name: &str) -> Result<&'a Value> {
+        value.get(name).ok_or(refusal("binding-invalid"))
+    }
+    fn string<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
+        match field(value, name)?.view() {
+            ValueView::Text(text) => Ok(text),
+            _ => Err(refusal("binding-invalid")),
+        }
+    }
+    fn unsigned(value: &Value, name: &str) -> Result<u64> {
+        match field(value, name)?.view() {
+            ValueView::Integer(value) => value
+                .get()
+                .try_into()
+                .map_err(|_| refusal("binding-invalid")),
+            _ => Err(refusal("binding-invalid")),
+        }
+    }
+    let body = &record.body;
+    let authority = field(body, "authority")?;
+    let previous_hash = match field(authority, "previous_hash")?.view() {
+        ValueView::Null => None,
+        ValueView::Text(text) => Some(Digest32::from_hex(text)?),
+        _ => return Err(refusal("binding-invalid")),
+    };
+    let key = |name| {
+        let text = string(body, name)?;
+        let digest = Digest32::from_hex(text)?;
+        PublicKey::from_bytes(*digest.as_bytes())
+    };
+    let request = BindingRequest {
+        v: unsigned(body, "v")?
+            .try_into()
+            .map_err(|_| refusal("binding-invalid"))?,
+        node: NodeId::from_hex(string(body, "node")?)?,
+        owner: SubjectId::parse(string(body, "owner")?)?,
+        authority: AuthorityVersion {
+            epoch: unsigned(authority, "epoch")?,
+            sequence: unsigned(authority, "sequence")?,
+            previous_hash,
+        },
+        node_key: key("node_key")?,
+        agent_key: key("agent_key")?,
+        delegation_commitment: Digest32::from_hex(string(body, "delegation_commitment")?)?,
+    };
+    if record.v != BINDING_VERSION
+        || record.algorithm != AlgorithmId::Sha256
+        || record.kind != Kind::NostrBind
+        || record.phase != Phase::Terminal
+        || record.operation.is_none()
+        || record.actor != request.owner.to_string()
+        || record.authority != request.authority
+        || request.canonical_bytes()? != body.canonical_bytes()
+    {
+        return Err(refusal("binding-invalid"));
+    }
+    Ok(request)
+}

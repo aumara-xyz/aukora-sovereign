@@ -107,7 +107,10 @@ pub fn authorize(release: &ApprovedRelease, request: &AdmittedRequest) -> Result
 fn permitted(face: &str, service: &str, method: &str) -> bool {
     matches!(
         (face, service, method),
-        ("documents", "kira", "documents.list" | "documents.read")
+        ("aumlok", "aumlok", "status")
+            | ("identity", "aumlok", "identity")
+            | ("coherence", "gate-aura", "head")
+            | ("documents", "kira", "documents.list" | "documents.read")
             | ("memory", "kira", "memory.list" | "memory.recall")
             | ("humangraph", "network", "contacts.list")
             | (
@@ -122,6 +125,7 @@ fn permitted(face: &str, service: &str, method: &str) -> bool {
             )
             | ("general", "body", "settings.general")
             | ("models", "body", "settings.models")
+            | ("models", "broker", "model.report")
             | ("plugins", "body", "settings.plugins")
             | ("presets", "body", "settings.presets")
             | (
@@ -166,13 +170,7 @@ pub fn authorize_data(release: &ApprovedRelease, value: &Value) -> Result<Author
     let face = text(value, "face")?;
     let service = text(value, "service")?;
     let method = text(value, "method")?;
-    let added = matches!(
-        (face, service, method),
-        ("aumlok", "aumlok", "status")
-            | ("identity", "aumlok", "identity")
-            | ("coherence", "gate-aura", "head")
-    );
-    if !permitted(face, service, method) && !added {
+    if !permitted(face, service, method) {
         return Err(denied());
     }
     let expected = format!("app/faces/{face}/index.html");

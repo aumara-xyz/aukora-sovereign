@@ -70,7 +70,7 @@ impl FaceServices<'_> {
                         }
                         _ => return Err(refuse("face-operation-unknown")),
                     };
-                    wire::event(event)?
+                    wire::owner_event(event)?
                 }
                 ("network", "contacts.list" | "messages.list" | "refusals.counts") => {
                     network::call(

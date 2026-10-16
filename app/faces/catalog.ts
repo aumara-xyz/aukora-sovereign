@@ -7,6 +7,7 @@ export interface FaceManifest {
   readonly requires: readonly string[];
   readonly menu: { readonly section: "workspace" | "aukora_apps" | "system"; readonly order: number };
   readonly surface: string;
+  readonly wasm?: boolean;
   readonly capabilities: Readonly<Record<string, { readonly methods: readonly string[]; readonly topics: readonly string[] }>>;
 }
 
@@ -281,6 +282,7 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
       "order": 12
     },
     "surface": "./faces/coherence/index.html",
+    "wasm": true,
     "capabilities": {
       "gate-aura": {
         "methods": [

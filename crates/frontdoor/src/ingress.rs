@@ -125,11 +125,16 @@ fn request_metadata(input: &RequestInput) -> Result<Option<zeroize::Zeroizing<Ve
     let role = input.transport.role();
     let origin = input.transport.origin();
     check_header_budget(input)?;
+    let opaque_asset = role == HostRole::Shell
+        && matches!(input.method, Method::Get | Method::Head)
+        && !input.path.starts_with("/api/")
+        && input.fetch_sites.len() == 1
+        && input.fetch_sites[0] == "cross-site";
     if input.origins.len() > 1
         || input
             .origins
             .first()
-            .is_some_and(|value| value != origin.as_str())
+            .is_some_and(|value| value != origin.as_str() && !(value == "null" && opaque_asset))
         || (input.method == Method::Post && input.origins.len() != 1)
     {
         return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
