@@ -12,6 +12,10 @@ named_codes! {
 
 organ_codes! {
     pub(super) SUPPLEMENTAL_CODES => {
+        "nip44" => [
+            "base64-invalid", "key-invalid", "mac-invalid", "padding-invalid", "payload-length", "plaintext-length",
+            "plaintext-not-utf8", "random-unavailable", "unsupported-version",
+        ],
         "nostr" => [
             "antibody-bounds", "antibody-case", "antibody-case-id", "antibody-content", "antibody-duplicate-case", "antibody-engine",
             "antibody-input", "antibody-kind", "antibody-refusal", "antibody-tags", "antibody-version", "base64-invalid", "catalog-algorithm",

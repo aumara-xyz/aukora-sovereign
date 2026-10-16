@@ -19,7 +19,8 @@ named_codes! {
 organ_codes! {
     pub(super) SUPPLEMENTAL_CODES => {
         "supervisor" => [
-            "already-running", "approval-channels-full", "approval-limit", "approval-poll-not-due", "config-address", "config-canonical",
+            "already-running", "approval-channels-full", "approval-limit", "approval-poll-not-due", "aumlok-status-unavailable",
+            "config-address", "config-canonical",
             "config-id", "config-ip", "config-json", "config-listen", "config-node", "config-origin", "config-path", "config-permissions",
             "config-proxy", "config-shape", "config-size", "config-unreadable", "config-version", "contact-projection-unavailable",
             "egress-config", "egress-port", "egress-version", "exit-format", "exit-inconsistent", "exit-not-empty", "exit-not-permitted",
@@ -27,7 +28,8 @@ organ_codes! {
             "face-page-invalid", "face-principal-mismatch", "face-read-deadline", "face-reply-too-large", "face-runtime-unavailable",
             "face-shape-invalid", "genesis-claim-spent", "genesis-owner-present", "genesis-session-lock", "genesis-session-state",
             "harness-presets-unavailable", "health-page-invalid", "health-snapshot-changed", "health-stale", "health-unavailable",
-            "identity-format", "identity-missing", "identity-node", "identity-read", "listen", "manifest-changed", "memory-unavailable",
+            "identity-format", "identity-label-invalid", "identity-missing", "identity-network-projection-unavailable",
+            "identity-node", "identity-read", "listen", "manifest-changed", "memory-unavailable",
             "message-history-unavailable", "model-settings-unavailable", "network-store-unavailable", "network-unavailable",
             "pentora-asset-missing", "queue-full", "randomness", "release-directory", "release-file", "release-file-mismatch",
             "release-file-missing", "release-manifest", "release-not-approved", "release-not-verified", "release-path", "release-permissions",
