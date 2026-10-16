@@ -58,7 +58,8 @@ pub struct SessionRecord {
     pub revoked: bool,
 }
 
-/// Stores keep the live epoch and revocation guard throughout each callback.
+/// Stores check the live epoch and revocation while decoding the record, then release their lock before the
+/// callback runs (19f6a9a); callbacks that change authority recheck binding and epoch themselves.
 pub trait SessionStore {
     fn lookup(&mut self, digest: Digest32) -> Result<Option<SessionRecord>>;
     fn revoke(&mut self, digest: Digest32) -> Result<()>;
@@ -79,7 +80,7 @@ pub trait SessionStore {
     ) -> Result<T>;
 }
 
-/// Exists only while its store's live-session transaction is held.
+/// A live session record checked at lookup; the store's lock is not held while it is used.
 pub struct BoundSession<'a> {
     record: &'a SessionRecord,
 }

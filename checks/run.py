@@ -126,7 +126,7 @@ CLAIM_PINS = {
     "crates/aumlok/src/claim.rs": "d29c2f820b70c00b1474f04cb68b37092382085c12e61c42eca6cf3668896389",
     "crates/aumlok/src/lib.rs": "f0252d28a134424a64064351c958d596096c38137ab25c74a2bfde4d4323086b",
     "crates/frontdoor/src/claim.rs": "f85a1b29a5ca44fe21056f1d1c869615ee18ec168bdf86bf6c5011bc28201432",
-    "crates/frontdoor/src/session.rs": "84bc30314479a52365d6946fe82b2f72149c7404c5c4bce9a626e18eb6dc08d3",
+    "crates/frontdoor/src/session.rs": "4acdb1e39ef4189ec66bfc7062b6af1422fda82e5641f31c41e14f91d93bba0b",
     "crates/supervisor/src/claim.rs": "982d3aafdef6fa672f9be43f9794f1ddf67f8cc93f81c52158bdc9f2b849ba44",
     "crates/supervisor/src/lib.rs": "81d9f14180c122fb8c8022c0b7188575551441a9ca44f06f158ad237871aed52",
 }
