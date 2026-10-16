@@ -32,6 +32,7 @@ pub struct Host {
     pub documents: DocumentRoot,
     sessions: File,
     claim_service: Mutex<Option<supervisor::claim::HostClaimService>>,
+    identity: Mutex<crate::identity::Identity>,
     assets: Arc<Mutex<Assets>>,
     pub runtime: Arc<crate::adapters::runtime::RuntimeAdapter>,
     pub health: Arc<crate::health::HealthCollector>,
@@ -176,6 +177,12 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     ));
     let data = crate::data::HostData::new(transcripts, health.clone(), ledger.clone(), state.node)?;
     let host = Arc::new(Host {
+        identity: Mutex::new(crate::identity::Identity::open(
+            ledger.clone(),
+            frontdoor::owner_origin::CeremonyContext::from_boundary(&config.boundary()?)?,
+            state.node,
+            &config.state_root.join("aura.sqlite3"),
+        )?),
         approvals: crate::approvals::ApprovalFeed::new(ledger.clone()),
         config,
         state,
@@ -280,13 +287,11 @@ impl Host {
                 .into_http_response();
             }
             if matches!(route, OwnerRoute::SigninStart | OwnerRoute::SigninFinish) {
-                return Err(canon::Refusal {
-                    organ: "supervisor",
-                    reason: "identity-service-unavailable",
-                });
+                return self.signin(request, route);
             }
             let mut sessions = self.sessions()?;
-            return frontdoor::session::with_owner_session(
+            let mut identity = self.identity.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+            let result = frontdoor::session::with_owner_session(
                 &mut sessions,
                 request.cookie().ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
                 self.state.node,
@@ -298,14 +303,33 @@ impl Host {
                         let frontdoor::session::OwnerSession::Bound(session) = session else {
                             return Err(codes::AUMLOK_BINDING_REQUIRED);
                         };
-                        return json_response(self.approvals.snapshot(&session, now()?)?);
+                        return Ok(crate::identity::Reply {
+                            body: self.approvals.snapshot(&session, now()?)?,
+                            transition: None,
+                        });
                     }
-                    Err(canon::Refusal {
-                        organ: "supervisor",
-                        reason: "identity-service-unavailable",
-                    })
+                    let record = match &session {
+                        frontdoor::session::OwnerSession::Binding(session) => session.record(),
+                        frontdoor::session::OwnerSession::Bound(session) => session.record(),
+                    };
+                    if route == OwnerRoute::ApprovalRetireChallenge {
+                        return Err(codes::SUPERVISOR_GATE_SCOPE_UNAVAILABLE);
+                    }
+                    identity.authenticated(route, record, request.body(), now()?)
                 },
-            );
+            )?;
+            if let Some((epoch, binding, subject)) = result.transition {
+                sessions.advance_after_ceremony(
+                    frontdoor::session::session_digest(
+                        request.cookie().ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+                    )?,
+                    epoch,
+                    binding,
+                    subject,
+                    now()?,
+                )?;
+            }
+            return json_response(result.body);
         }
         if request.path() == frontdoor::api::service_reads::PATH {
             let read = self.with_release(|release| {
@@ -390,6 +414,58 @@ impl Host {
         )
     }
 
+    fn signin(
+        &self,
+        request: &AdmittedRequest,
+        route: OwnerRoute,
+    ) -> Result<http::Response<Vec<u8>>> {
+        use frontdoor::session::{BindingState, SessionBearer, SessionRecord, SessionScope};
+        let mut identity = self.identity.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+        let now = now()?;
+        if route == OwnerRoute::SigninStart {
+            return json_response(identity.signin_start(request.body(), now)?);
+        }
+        if route != OwnerRoute::SigninFinish {
+            return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
+        }
+        let bearer = SessionBearer::generate()?;
+        let result = identity.signin_finish(request.body(), now)?;
+        let (epoch, binding, subject) =
+            result.transition.ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+        let mut sessions = self.sessions()?;
+        sessions.synchronize_binding(epoch, binding, subject)?;
+        let scope = if binding == BindingState::Bound {
+            SessionScope::OwnerFrame
+        } else {
+            SessionScope::BindingOnly
+        };
+        let expires = now
+            .checked_add(frontdoor::session::MAX_LIFETIME_MS)
+            .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+        sessions.insert_after_ceremony(
+            SessionRecord {
+                token_digest: bearer.digest(),
+                node: self.state.node,
+                origin: request.origin().clone(),
+                subject,
+                owner_epoch: epoch,
+                scope,
+                expires_at_ms: expires,
+                revoked: false,
+            },
+            now,
+        )?;
+        let mut response = json_response(result.body)?;
+        response.headers_mut().insert(
+            http::header::SET_COOKIE,
+            bearer
+                .cookie_header(scope, expires, now)?
+                .parse()
+                .map_err(|_| codes::FRONTDOOR_SESSION_REQUIRED)?,
+        );
+        Ok(response)
+    }
+
     fn with_release<T>(&self, operation: impl FnOnce(&ApprovedRelease) -> Result<T>) -> Result<T> {
         let mut assets = self.assets.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
         if assets.release.is_none() {
@@ -421,11 +497,7 @@ impl Host {
         if request.role() == HostRole::Owner {
             let context = frontdoor::owner_origin::CeremonyContext::from_boundary(&boundary)?;
             return frontdoor::owner_origin::serve_owner_asset_response(
-                &context,
-                request,
-                navigation,
-                release,
-                source,
+                &context, request, navigation, release, source,
             );
         }
         let surface = if request.path().starts_with("/app/faces/") {

@@ -15,6 +15,7 @@ use crate::record::{AuthorityBodyV1, MembershipSet, MembershipTransition, AUTHOR
 use super::{io, refusal, sql};
 
 mod enrolment;
+pub(super) mod pending;
 
 /// Accept either a pending payload or its exact authority-body wrapper.
 pub(super) fn epoch_transition(body: &Value) -> Result<MembershipTransition> {
@@ -47,7 +48,11 @@ pub(super) fn verify_epoch_body(
         return Err(refusal("epoch-context"));
     }
     if old_epoch == 0 {
-        enrolment::verify_anchor(record, connection)?;
+        if record.kind == Kind::AumlokBind {
+            pending::initial_binding(connection, record)?;
+        } else {
+            enrolment::verify_anchor(record, connection)?;
+        }
     } else {
         verify_epoch_transition(&record.body, record.authority, old_epoch, connection)?;
     }
@@ -80,7 +85,10 @@ pub(super) fn verify_epoch_transition(
 
 fn previous_membership(connection: &Connection, epoch: u64, before: u64) -> Result<MembershipSet> {
     if epoch == 1 {
-        return enrolment::initial_membership(connection, before);
+        return match pending::initial_membership(connection, before)? {
+            Some(membership) => Ok(membership),
+            None => enrolment::initial_membership(connection, before),
+        };
     }
     let prior_epoch = epoch
         .checked_sub(1)
@@ -139,7 +147,7 @@ pub(super) fn binding_anchor(
 ) -> Result<()> {
     let mut statement = connection
         .prepare(
-            "SELECT seq FROM aura WHERE kind IN ('aumlok.enrol','aumlok.bind')
+            "SELECT seq FROM aura WHERE kind IN ('aumlok.enrol','aumlok.bind','aumlok.signin')
          AND phase='terminal' ORDER BY seq DESC",
         )
         .map_err(sql)?;
@@ -149,6 +157,9 @@ pub(super) fn binding_anchor(
             .map_err(|_| refusal("sequence-range"))?;
         let record = io::record_at(connection, sequence)?;
         crate::record::verify_record(&record, keys)?;
+        if record.authority.epoch == 0 {
+            continue;
+        }
         let mut anchored = if record.kind == Kind::AumlokEnrol {
             enrolment::verify_anchor(&record, connection)?
         } else {
@@ -201,7 +212,7 @@ pub(super) fn immune_binding_before(
 ) -> Result<OwnerBinding> {
     let before_sql = i64::try_from(before).map_err(|_| refusal("sequence-range"))?;
     let mut statement = connection.prepare(
-        "SELECT seq FROM aura WHERE seq<?1 AND kind IN ('aumlok.enrol','aumlok.bind') AND phase='terminal' ORDER BY seq DESC",
+        "SELECT seq FROM aura WHERE seq<?1 AND kind IN ('aumlok.enrol','aumlok.bind','aumlok.signin') AND phase='terminal' ORDER BY seq DESC",
     ).map_err(sql)?;
     let mut rows = statement.query([before_sql]).map_err(sql)?;
     while let Some(row) = rows.next().map_err(sql)? {
@@ -209,6 +220,9 @@ pub(super) fn immune_binding_before(
             .map_err(|_| refusal("sequence-range"))?;
         let record = io::record_at(connection, sequence)?;
         crate::record::verify_record(&record, keys)?;
+        if record.authority.epoch == 0 {
+            continue;
+        }
         let mut binding = if record.kind == Kind::AumlokEnrol {
             enrolment::verify_anchor(&record, connection)?
         } else {

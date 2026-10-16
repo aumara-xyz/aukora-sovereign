@@ -123,9 +123,9 @@ COVERAGE_PINS = {
 }
 CLAIM_PINS = {
     "crates/aumlok/src/claim.rs": "02924d4a65bfcf3a904938973f8c596630463d717eb41465395bf19dc34cc6b4",
-    "crates/aumlok/src/lib.rs": "7500b1e26a2be7663bd7e4726b509cc81c3eef6caea2b0e7e2b32fd4831b93b1",
+    "crates/aumlok/src/lib.rs": "bbe853eead5ed6421b14fa196354c8b54c3acf0e741513b5570e12b638134bff",
     "crates/frontdoor/src/claim.rs": "f85a1b29a5ca44fe21056f1d1c869615ee18ec168bdf86bf6c5011bc28201432",
-    "crates/frontdoor/src/session.rs": "36aacaf049a32545026acaabdfe6d29f7e8cd3841658daaf05f1fd0157b3741c",
+    "crates/frontdoor/src/session.rs": "4e83960ca59f2ef9602022d5a304828249add45ee1efbfd0f929c63c2820830a",
     "crates/supervisor/src/claim.rs": "32a694f8c7d8fb4b1bbee9e5419fe7dbd0cc2684789e22eb14787992c5f633e6",
     "crates/supervisor/src/lib.rs": "81d9f14180c122fb8c8022c0b7188575551441a9ca44f06f158ad237871aed52",
 }

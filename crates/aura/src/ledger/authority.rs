@@ -10,6 +10,7 @@ use base64::{
 use canon::{
     alg::Signature,
     authority::{
+        pending::{BindingFinish, BoundCeremonyFinish, BoundOwnerIdentity, PendingEnrolmentFinish, PendingOwnerCredential},
         FactRecord, Kind, LifecycleKind, LifecycleRecord, OwnerAuthorization, OwnerBinding,
         OwnerOperation, PendingAuthorityRecord, Phase, StandingUseContext, VerifiedStandingUse,
     },
@@ -22,6 +23,28 @@ pub(super) use super::epochs::verify_epoch_body;
 mod standing;
 
 impl AuthorityTxn for LedgerTxn<'_> {
+    fn finish_pending_enrolment(
+        &mut self,
+        request: PendingEnrolmentFinish<'_>,
+    ) -> Result<PendingOwnerCredential> {
+        self.mutate(|this| this.enrol_pending(request))
+    }
+    fn pending_owner_credential(&mut self) -> Result<Option<PendingOwnerCredential>> {
+        self.pending_credential()
+    }
+    fn bind_pending_owner(&mut self, request: BindingFinish<'_>) -> Result<BoundOwnerIdentity> {
+        self.mutate(|this| this.bind_pending(request))
+    }
+    fn bound_owner_identity(&mut self) -> Result<Option<BoundOwnerIdentity>> {
+        self.bound_identity()
+    }
+    fn finish_pending_signin(&mut self, request: BoundCeremonyFinish<'_>) -> Result<PendingOwnerCredential> {
+        self.mutate(|this| this.signin_pending(request))
+    }
+    fn finish_bound_ceremony(&mut self, request: BoundCeremonyFinish<'_>) -> Result<BoundOwnerIdentity> {
+        self.mutate(|this| this.finish_bound(request))
+    }
+
     fn finish_ceremony(
         &mut self,
         request: canon::authority::ceremony::CeremonyFinish<'_>,

@@ -8,6 +8,7 @@ mod data;
 pub mod faces;
 mod health;
 mod host;
+mod identity;
 mod release;
 mod state;
 mod web;

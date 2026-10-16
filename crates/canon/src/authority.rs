@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Exact owner authorization and the single authority transaction implemented by Aura.
-
 use core::fmt;
-
 pub mod ceremony;
 mod codec;
+pub mod pending;
 mod proof;
 mod standing;
-
-pub use standing::{StandingUseContext, VerifiedStandingUse};
-pub use proof::{verify_ceremony_client_data, verify_retained_owner_assertion};
-
 use crate::{
     alg::{AlgorithmId, PublicKey, Signature, Signatures},
     digest::Digest32,
@@ -18,7 +13,8 @@ use crate::{
     json::Value,
     Result,
 };
-
+pub use proof::{verify_ceremony_client_data, verify_retained_owner_assertion};
+pub use standing::{StandingUseContext, VerifiedStandingUse};
 /// Rollback context attached to each authority-bearing record.
 /// Sequence is gap-free and in 1..=2^53-1. `None` is valid only at sequence 1 and
 /// means C2's literal previous value `aukora:aura-record:v1`, never an all-zero hash.
@@ -31,7 +27,6 @@ pub struct AuthorityVersion {
     /// Exact predecessor hash, or the sequence-1 domain sentinel described above.
     pub previous_hash: Option<Digest32>,
 }
-
 /// Closed C3 v1 kind registry; adding a kind requires a contract change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -82,7 +77,6 @@ pub enum Kind {
     /// `nostr.bind`.
     NostrBind,
 }
-
 impl Kind {
     /// Return the exact C3 v1 kind spelling.
     pub const fn wire_name(self) -> &'static str {
@@ -112,7 +106,6 @@ impl Kind {
             Self::NostrBind => "nostr.bind",
         }
     }
-
     /// Parse the closed C3 registry, refusing unknown operations.
     pub fn from_wire(text: &str) -> Result<Self> {
         [
@@ -145,7 +138,6 @@ impl Kind {
         .ok_or(crate::codes::FRAME_UNKNOWN_KIND)
     }
 }
-
 /// Closed C3 phase; every operation has exactly one terminal row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -158,7 +150,6 @@ pub enum Phase {
     /// Informational evidence only, spelled `fact`; never an authorizing transition.
     Fact,
 }
-
 impl Phase {
     /// Return the exact C3 wire spelling.
     pub const fn wire_name(self) -> &'static str {
@@ -169,7 +160,6 @@ impl Phase {
             Self::Fact => "fact",
         }
     }
-
     /// Parse only the four C3 phase values.
     pub fn from_wire(text: &str) -> Result<Self> {
         [Self::Intent, Self::Settle, Self::Terminal, Self::Fact]
@@ -178,7 +168,6 @@ impl Phase {
             .ok_or(crate::codes::FRAME_INVALID_FIELD)
     }
 }
-
 /// The five C5 owner actions; unknown actions refuse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnerOperation {
@@ -193,7 +182,6 @@ pub enum OwnerOperation {
     /// Approve an exact permission change.
     Permission,
 }
-
 impl OwnerOperation {
     /// Return the C5 `op` spelling; apply and retire cannot share a proof.
     pub const fn wire_name(self) -> &'static str {
@@ -206,7 +194,6 @@ impl OwnerOperation {
         }
     }
 }
-
 /// The C5 base selector; absent is the literal JSON string `absent`, never omission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BaseDigest {
@@ -215,7 +202,6 @@ pub enum BaseDigest {
     /// The exact existing target's SHA-256 digest.
     Present(Digest32),
 }
-
 /// C4/C5 cell commitments; the supervisor reruns the cell and compares all three.
 /// A guest's supplied digests are evidence and never authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,29 +213,24 @@ pub struct CellCommitment {
     /// SHA-256 of the exact canonical cell effect body bytes.
     pub effect_sha256: Digest32,
 }
-
 /// A fresh gate nonce for C5: 16 random bytes encoded as exactly 32 lowercase hex digits.
 /// It is distinct from the 32-byte WebAuthn challenge derived from the authorization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AuthorizationChallenge([u8; 16]);
-
 impl AuthorizationChallenge {
     /// Retain 16 gate-supplied random bytes; this constructor supplies no randomness.
     pub const fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
-
     /// Borrow the exact C5 nonce bytes, without hashing them.
     pub const fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }
-
     /// Parse exactly 32 lowercase hexadecimal digits; all other spellings refuse.
     pub fn from_hex(text: &str) -> Result<Self> {
         Ok(Self(*ProposalId::from_hex(text)?.as_bytes()))
     }
 }
-
 impl fmt::Display for AuthorizationChallenge {
     fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
@@ -258,7 +239,6 @@ impl fmt::Display for AuthorizationChallenge {
         Ok(())
     }
 }
-
 /// The closed C6 risk vocabulary; the default is critical, never authority.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CardRisk {
@@ -268,7 +248,6 @@ pub enum CardRisk {
     #[default]
     Critical,
 }
-
 impl CardRisk {
     /// Return the exact C6 spelling without accepting arbitrary risk labels.
     pub const fn wire_name(self) -> &'static str {
@@ -278,7 +257,6 @@ impl CardRisk {
         }
     }
 }
-
 /// The closed C6 display object, rendered injectively by the owner surface.
 /// Its exact canonical bytes are committed by `OwnerAuthorization::display_sha256`.
 /// Different cards must remain visibly distinct, including escaped text; rendering
@@ -298,7 +276,6 @@ pub struct Card {
     /// Untrusted model text, displayed fenced after every other card field.
     pub model_note: String,
 }
-
 impl Card {
     /// Emit exactly `{v,risk,says,facts,from_to,model_note}` as canonical C1 bytes.
     /// Refuse a version other than 1, a non-single-line `says`, duplicate `from_to`
@@ -308,7 +285,6 @@ impl Card {
         codec::card(self)
     }
 }
-
 /// The gate's own C5 authorization, rebuilt from locked state rather than browser input.
 /// `algorithm` describes this wrapper's SHA-256 commitments and is not an added C5
 /// JSON field: `canonical_bytes` emits exactly the frozen C5 v1.1 field set.
@@ -345,7 +321,6 @@ pub struct OwnerAuthorization {
     /// C5 SHA-256 operation-content digest; distinct from the C7 random operation id.
     pub operation: OperationDigest,
 }
-
 impl OwnerAuthorization {
     /// Emit only the exact C5 v1.1 canonical object. Recompute `operation` from
     /// `aukora:operation-content:v1\0 || canon({v:1,node,target,base_sha256,new_sha256,cell})`
@@ -356,7 +331,6 @@ impl OwnerAuthorization {
         codec::authorization(self)
     }
 }
-
 /// The current stored passkey binding read inside the authority transaction.
 /// A value of this type alone proves nothing and cannot construct a `VerifiedProof`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -380,7 +354,6 @@ pub struct OwnerBinding {
     /// Last persisted authenticator counter, subject to AUMLOK's zero-counter policy.
     pub sign_counter: u32,
 }
-
 /// Untrusted WebAuthn input retained in full for verification inside the transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnerAssertion {
@@ -397,7 +370,6 @@ pub struct OwnerAssertion {
     /// Tagged signature over authenticatorData concatenated with SHA-256(clientDataJSON).
     pub signature: Signature,
 }
-
 /// A verified owner passkey assertion over the gate's exact rebuilt C5 bytes.
 /// Fields are private, there is no unchecked constructor, and this capability is not
 /// cloneable. Only `verify` can create it, while the same `BEGIN IMMEDIATE` transaction
@@ -419,7 +391,6 @@ pub struct VerifiedProof {
     public_key: PublicKey,
     transaction_id: Digest32,
 }
-
 impl VerifiedProof {
     /// The sole constructor. Inside `txn`, load its current owner binding and rebuild
     /// C5 from the gate's locked state for this proposal and action. Refuse stale epoch,
@@ -442,57 +413,46 @@ impl VerifiedProof {
     ) -> Result<Self> {
         proof::verify(txn, proposal, action, assertion)
     }
-
     /// Credential bound and verified in the transaction's current epoch.
     pub fn credential_id(&self) -> &CredentialId {
         &self.credential_id
     }
-
     /// Algorithm actually checked against the stored public key.
     pub const fn algorithm(&self) -> AlgorithmId {
         self.algorithm
     }
-
     /// Authenticator counter checked by verification and persisted before consumption.
     pub const fn sign_counter(&self) -> u32 {
         self.sign_counter
     }
-
     /// SHA-256 of the exact retained authenticatorData bytes.
     pub const fn authenticator_data_digest(&self) -> Digest32 {
         self.authenticator_data_digest
     }
-
     /// SHA-256 of the exact retained clientDataJSON bytes.
     pub const fn client_data_digest(&self) -> Digest32 {
         self.client_data_digest
     }
-
     /// SHA-256 of the exact WebAuthn signing bytes, not merely the authorization object.
     pub const fn signed_bytes_digest(&self) -> Digest32 {
         self.signed_bytes_digest
     }
-
     /// The exact top origin verified against the stored binding.
     pub fn top_origin(&self) -> &str {
         &self.top_origin
     }
-
     /// Retained original WebAuthn assertion, including raw bytes and tagged signature.
     pub const fn assertion(&self) -> &OwnerAssertion {
         &self.assertion
     }
-
     /// The gate-rebuilt authorization whose bytes the challenge committed to.
     pub const fn authorization(&self) -> &OwnerAuthorization {
         &self.authorization
     }
-
     /// Exact canonical gate authorization bytes used to derive the WebAuthn challenge.
     pub fn authorization_bytes(&self) -> &[u8] {
         &self.authorization_bytes
     }
-
     /// Exact `authenticatorData || SHA-256(clientDataJSON)` bytes verified by the key.
     pub fn signed_bytes(&self) -> &[u8] {
         &self.signed_bytes
@@ -966,6 +926,42 @@ pub trait AuthorityTxn {
     /// never treat the row as a capability or a replacement for the owner proof.
     fn append_fact(&mut self, fact: FactRecord) -> Result<AuthorityRecord>;
 
+    /// Verify possession and retain an epoch-zero credential without inventing a subject.
+    fn finish_pending_enrolment(
+        &mut self,
+        _request: pending::PendingEnrolmentFinish<'_>,
+    ) -> Result<pending::PendingOwnerCredential> {
+        Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))
+    }
+    /// Read the node's verified, unbound enrolment anchor.
+    fn pending_owner_credential(&mut self) -> Result<Option<pending::PendingOwnerCredential>> {
+        Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))
+    }
+    /// Bind the random-root subject and pending credential at epoch one atomically.
+    fn bind_pending_owner(
+        &mut self,
+        _request: pending::BindingFinish<'_>,
+    ) -> Result<pending::BoundOwnerIdentity> {
+        Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))
+    }
+    /// Read the currently signed identity and encrypted root.
+    fn bound_owner_identity(&mut self) -> Result<Option<pending::BoundOwnerIdentity>> {
+        Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))
+    }
+    /// Sign in to finish binding without assigning a subject or owner epoch.
+    fn finish_pending_signin(
+        &mut self,
+        _request: pending::BoundCeremonyFinish<'_>,
+    ) -> Result<pending::PendingOwnerCredential> {
+        Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))
+    }
+    /// Verify and consume a bound sign-in or encrypted-root refresh ceremony.
+    fn finish_bound_ceremony(
+        &mut self,
+        _request: pending::BoundCeremonyFinish<'_>,
+    ) -> Result<pending::BoundOwnerIdentity> {
+        Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))
+    }
     /// Standalone ceremonies require an adapter for atomic verification and finish.
     /// Enrolment installs the first binding at epoch 1 and signs its authority-body
     /// wrapper in the same transaction as possession verification and nonce use.

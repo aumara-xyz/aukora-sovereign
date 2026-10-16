@@ -474,6 +474,9 @@ impl LedgerTxn<'_> {
 impl LedgerTxn<'_> {
     /// Read the latest recorded owner subject without creating an authority proof.
     pub fn gate_owner_subject(&self) -> Result<canon::ids::SubjectId> {
+        if let Some(identity) = self.bound_identity()? {
+            return Ok(identity.subject);
+        }
         let operation: String = self.transaction.query_row(
             "SELECT op FROM aura WHERE kind IN ('aumlok.enrol','aumlok.bind') AND phase='terminal' ORDER BY seq DESC LIMIT 1",
             [], |row| row.get(0),

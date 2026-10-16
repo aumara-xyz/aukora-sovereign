@@ -70,6 +70,13 @@ pub trait SessionStore {
         now_ms: u64,
         operation: impl FnOnce(&SessionRecord) -> Result<T>,
     ) -> Result<T>;
+    /// Bootstrap admission needs the locked enrolment state, never an inferred subject.
+    fn with_live_session_state<T>(
+        &mut self,
+        digest: Digest32,
+        now_ms: u64,
+        operation: impl FnOnce(&SessionRecord, BindingState) -> Result<T>,
+    ) -> Result<T>;
 }
 
 /// Exists only while its store's live-session transaction is held.
@@ -85,10 +92,14 @@ impl BoundSession<'_> {
 /// A bootstrap session cannot be passed to agent, documents or approval APIs.
 pub struct BindingSession<'a> {
     record: &'a SessionRecord,
+    state: BindingState,
 }
 impl BindingSession<'_> {
     pub fn record(&self) -> &SessionRecord {
         self.record
+    }
+    pub fn state(&self) -> BindingState {
+        self.state
     }
 }
 
@@ -187,7 +198,7 @@ pub fn with_owner_session<S: SessionStore, T>(
     now_ms: u64,
     operation: impl for<'a> FnOnce(OwnerSession<'a>) -> Result<T>,
 ) -> Result<T> {
-    store.with_live_session(session_digest(cookie)?, now_ms, |record| {
+    store.with_live_session_state(session_digest(cookie)?, now_ms, |record, state| {
         check_audience(record, node, origin, now_ms)?;
         match record.scope {
             SessionScope::Shell => Err(FRONTDOOR_COOKIE_HOST_REFUSED),
@@ -204,11 +215,11 @@ pub fn with_owner_session<S: SessionStore, T>(
                 if matches!(
                     route,
                     OwnerRoute::BindingPrepare | OwnerRoute::BindingConfirm
-                ) && record.subject.is_none()
+                ) && state != BindingState::Enrolled
                 {
                     return Err(AUMLOK_ENROLMENT_REQUIRED);
                 }
-                operation(OwnerSession::Binding(BindingSession { record }))
+                operation(OwnerSession::Binding(BindingSession { record, state }))
             }
             SessionScope::OwnerFrame if record.subject.is_some() => {
                 operation(OwnerSession::Bound(BoundSession { record }))
@@ -378,7 +389,10 @@ impl DurableSessions {
         }
         let binding = parse_binding(&state.binding)?;
         let subject = parse_subject(state.subject.as_deref())?;
-        if matches!(binding, BindingState::Enrolled | BindingState::Bound) != subject.is_some() {
+        if (binding == BindingState::Bound) != subject.is_some()
+            || (binding != BindingState::Bound && state.epoch != 0)
+            || (binding == BindingState::Bound && state.epoch == 0)
+        {
             return Err(FRONTDOOR_SESSION_REQUIRED);
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -509,9 +523,12 @@ impl DurableSessions {
         if current.scope == SessionScope::Shell || binding == BindingState::Unclaimed {
             return Err(FRONTDOOR_SESSION_REQUIRED);
         }
-        if binding == BindingState::Bound && parse_binding(&state.binding)? == BindingState::Claimed
-        {
+        let previous = parse_binding(&state.binding)?;
+        if binding == BindingState::Bound && previous == BindingState::Claimed {
             return Err(AUMLOK_ENROLMENT_REQUIRED);
+        }
+        if previous == BindingState::Enrolled && binding == BindingState::Bound && epoch != 1 {
+            return Err(FRONTDOOR_SESSION_REQUIRED);
         }
         apply_binding(&mut state, epoch, binding, subject)?;
         let record = state
@@ -700,6 +717,17 @@ impl SessionStore for DurableSessions {
         let record = self.live_record(&state, digest, now_ms)?;
         operation(&record)
     }
+    fn with_live_session_state<T>(
+        &mut self,
+        digest: Digest32,
+        now_ms: u64,
+        operation: impl FnOnce(&SessionRecord, BindingState) -> Result<T>,
+    ) -> Result<T> {
+        let _lock = self.lock()?;
+        let state = self.load()?;
+        let record = self.live_record(&state, digest, now_ms)?;
+        operation(&record, parse_binding(&state.binding)?)
+    }
 }
 
 fn private_file(file: &File) -> Result<()> {
@@ -766,7 +794,9 @@ fn apply_binding(
             && (binding_rank(binding) < binding_rank(parse_binding(&state.binding)?)
                 || (subject.as_ref().map(ToString::to_string) != state.subject
                     && state.subject.is_some())))
-        || matches!(binding, BindingState::Enrolled | BindingState::Bound) != subject.is_some()
+        || (binding == BindingState::Bound) != subject.is_some()
+        || (binding != BindingState::Bound && epoch != 0)
+        || (binding == BindingState::Bound && epoch == 0)
     {
         return Err(FRONTDOOR_SESSION_REQUIRED);
     }

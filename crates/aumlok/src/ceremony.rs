@@ -986,3 +986,9 @@ CREATE TRIGGER IF NOT EXISTS aumlok_ceremonies_forward_v1
 }
 #[cfg(not(target_arch = "wasm32"))]
 pub use durable::{CeremonyConfig, SqliteCeremonyStore};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pending;
+
+#[cfg(target_arch = "wasm32")]
+pub mod initial_owner;

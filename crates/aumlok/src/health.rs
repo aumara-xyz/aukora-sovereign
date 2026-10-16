@@ -709,6 +709,9 @@ fn wrapped_owner_epoch(record: &AuthorityRecord) -> Result<Option<u64>> {
     {
         return Err(refuse("health-record-format"));
     }
+    if crate::receipt::recognizes(&wrapper.payload) {
+        return crate::receipt::owner_epoch(record);
+    }
     match record.kind {
         Kind::AumlokEnrol => enrolment_epoch(record, &wrapper.payload).map(Some),
         Kind::AumlokBind if wrapper.payload.get("membership").is_some() => {
