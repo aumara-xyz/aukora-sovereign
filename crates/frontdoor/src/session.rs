@@ -721,9 +721,11 @@ impl SessionStore for DurableSessions {
         now_ms: u64,
         operation: impl FnOnce(&SessionRecord) -> Result<T>,
     ) -> Result<T> {
-        let _lock = self.lock()?;
+        let lock = self.lock()?;
         let state = self.load()?;
         let record = self.live_record(&state, digest, now_ms)?;
+        // The record is an owned decode; slow reads and commands run without holding the store (SCOUT 6c4046c).
+        drop(lock);
         operation(&record)
     }
     fn with_live_session_state<T>(
@@ -732,10 +734,12 @@ impl SessionStore for DurableSessions {
         now_ms: u64,
         operation: impl FnOnce(&SessionRecord, BindingState) -> Result<T>,
     ) -> Result<T> {
-        let _lock = self.lock()?;
+        let lock = self.lock()?;
         let state = self.load()?;
         let record = self.live_record(&state, digest, now_ms)?;
-        operation(&record, parse_binding(&state.binding)?)
+        let binding = parse_binding(&state.binding)?;
+        drop(lock);
+        operation(&record, binding)
     }
 }
 

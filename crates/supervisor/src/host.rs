@@ -138,7 +138,14 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     )?);
     gate.configure_targets(config.gate_targets()?)?;
     if let BindingState::Bound(scope) = ledger.binding()? {
-        ledger.ensure_release_proposal(scope)?;
+        // A floor that differs from the installed release is a refused shell, never a crash loop (SCOUT 6c4046c).
+        match ledger.ensure_release_proposal(scope) {
+            Err(canon::Refusal {
+                organ: "supervisor",
+                reason: "release-not-approved",
+            }) => {}
+            other => other?,
+        }
     }
     let broker = Arc::new(crate::adapters::BrokerAdapter::new(
         ledger.clone(),

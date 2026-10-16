@@ -114,7 +114,8 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
       if (card.length > 1024 * 1024 || authorization.length > 16_384) refuse("response-too-large");
       parseCard(card);
       const auth = parseAuthorization(authorization, id);
-      if (auth.op !== action) refuse("operation-mismatch");
+      // The installed release is reviewed through the apply route; the gate answers it as op "release" (38abcd1).
+      if (auth.op !== action && !(action === "apply" && auth.op === "release")) refuse("operation-mismatch");
       await verifyCommitments(card, auth);
       const challenge = await domainDigest("aukora:owner-authorization:v1", authorization);
       if (!equal(challenge, credentialBytes(result.challenge))) refuse("challenge-mismatch");
@@ -126,7 +127,10 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
     async submitAuthorization(id, action, bytes, signal): Promise<void> {
       proposal(id);
       signal.throwIfAborted();
-      if (reviewed.get(id) !== action || (action !== "apply" && action !== "retire")) refuse("review-required");
+      const op = reviewed.get(id);
+      if ((op !== action && !(action === "apply" && op === "release")) || (action !== "apply" && action !== "retire")) {
+        refuse("review-required");
+      }
       reviewed.delete(id);
       if (!(bytes instanceof Uint8Array) || bytes.length < 1 || bytes.length > 32_768) refuse("assertion");
       const assertion = parseCanonical(bytes);
@@ -134,7 +138,7 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
       keys(assertion, ["kind", "credential_id", "client_data_json", "authenticator_data", "signature", "user_handle"]);
       if (assertion.kind !== "passkey") refuse("assertion");
       const loaded = await post("/api/v1/approvals/assertion", {
-        proposal_id: id, op: action, assertion: assertion as JsonValue,
+        proposal_id: id, op: op as string, assertion: assertion as JsonValue,
       }, signal);
       const result = responseObject(loaded.body);
       keys(result, ["schema", "proposal_id", "state"]);
