@@ -457,7 +457,9 @@ impl<'a> Router<'a> {
                     pending.state.observe_end(&end)?;
                     Reply::ModelEnd(end)
                 }
-                BrokerEvent::Error(error) => {
+                BrokerEvent::Error(mut error) => {
+                    error.code = canon::Refusal::from_code(&error.code.to_string())
+                        .unwrap_or(codes::SUPERVISOR_STATE);
                     pending
                         .correlation
                         .frame(Reply::ModelError(error.clone()))?;
