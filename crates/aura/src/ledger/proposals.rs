@@ -18,8 +18,12 @@ impl LedgerTxn<'_> {
             if proposal.status != ProposalStatus::Pending || proposal.authority != this.current_version()?
                 || proposal.target.is_empty() || proposal.actor.is_empty() { return Err(refusal("proposal-context")); }
             if let Some(version) = proposal.evidence_source { this.record_at(version)?; }
-            if let Some(prior) = this.last_decline(proposal.operation_digest)? {
-                if prior.evidence_digest == proposal.evidence_digest { return Err(refusal("unchanged-decline")); }
+            // The supervisor's installed-release proposal is re-raised after an epoch change with the same digest;
+            // its stale decline must not block it for good (SCOUT ad03d28 #4).
+            if !(proposal.actor == "supervisor" && proposal.target == "release") {
+                if let Some(prior) = this.last_decline(proposal.operation_digest)? {
+                    if prior.evidence_digest == proposal.evidence_digest { return Err(refusal("unchanged-decline")); }
+                }
             }
             this.transaction.execute("INSERT INTO authority_proposals(id,operation,target,status,body) VALUES (?1,?2,?3,'pending',?4)",
                 params![proposal.proposal.to_string(),proposal.operation.to_string(),proposal.target,storage::encode_proposal(&proposal)?]).map_err(sql)?;

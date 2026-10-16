@@ -295,7 +295,12 @@ export function createOnboarding(
       screen("signin", "Welcome home", "Sign in with your passkey.");
       button("Sign in", async () => {
         if (ceremony && ceremony.expires <= performance.now()) ceremony = undefined;
-        ceremony ??= options(await post("/api/signin/start", {}, signal), false, config.relyingParty);
+        try { ceremony ??= options(await post("/api/signin/start", {}, signal), false, config.relyingParty); }
+        catch (error) {
+          // Claimed but no passkey yet (a reload after the claim): continue the setup, never strand the owner.
+          if (error instanceof Error && error.message === "aumlok:enrolment-required") { enrolScreen(); return; }
+          throw error;
+        }
         if (!ceremony.assertion) throw new Error("aumlok:ceremony-state");
         deadline(ceremony.expires);
         const current = ceremony;

@@ -139,12 +139,10 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     gate.configure_targets(config.gate_targets()?)?;
     if let BindingState::Bound(scope) = ledger.binding()? {
         // A floor that differs from the installed release is a refused shell, never a crash loop (SCOUT 6c4046c).
-        match ledger.ensure_release_proposal(scope) {
-            Err(canon::Refusal {
-                organ: "supervisor",
-                reason: "release-not-approved",
-            }) => {}
-            other => other?,
+        // Raising the release proposal is best effort at start-up: a refused or stale proposal leaves the shell
+        // refused, never a crash loop (SCOUT ad03d28 #4). The approvals poll retries it.
+        if let Err(refusal) = ledger.ensure_release_proposal(scope) {
+            eprintln!("supervisor: release proposal not raised at start-up: {}:{}", refusal.organ, refusal.reason);
         }
     }
     let broker = Arc::new(crate::adapters::BrokerAdapter::new(
@@ -598,10 +596,14 @@ impl Host {
                     now()?,
                 )?;
                 if binding == frontdoor::session::BindingState::Bound {
-                    self.ledger.ensure_release_proposal(PrincipalScope {
+                    // The binding has committed; a release proposal that cannot be raised now must not turn it
+                    // into a failure the owner retries into already-bound (SCOUT ad03d28 #3). The poll retries it.
+                    if let Err(refusal) = self.ledger.ensure_release_proposal(PrincipalScope {
                         subject: subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
                         epoch,
-                    })?;
+                    }) {
+                        eprintln!("supervisor: release proposal not raised after binding: {}:{}", refusal.organ, refusal.reason);
+                    }
                 }
             }
             if frontdoor::owner_origin::is_gate_route(route) {
