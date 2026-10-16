@@ -366,9 +366,6 @@ pub fn recall_candidates(
     if reply.candidates.len() > limit {
         return Err(SemanticError::Response);
     }
-    if before.eligible_notes != 0 && reply.candidates.is_empty() {
-        return Err(SemanticError::IndexIncomplete);
-    }
     let after = index.index_state()?;
     after.require_complete(pin)?;
     if after != before {

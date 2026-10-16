@@ -3,8 +3,9 @@
 
 use super::HostLedger;
 use canon::{
-    authority::{AuthorityTxn, Kind},
+    authority::{AuthorityTxn, CellCommitment, Kind},
     codes,
+    digest::Digest32,
     fd3_payloads::{
         Accepted, MemoryList, MemoryListReply, MemoryPut, MemoryRecall, Outcome, Recall,
     },
@@ -35,6 +36,21 @@ pub struct KiraAdapter {
     backend: Option<Arc<dyn KiraBackend>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapturedChunk {
+    pub cell: CellCommitment,
+    pub receipt: SaveReceipt,
+}
+
+/// Content-free binding of an ordered set of saves to one durable entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaptureCheckpoint {
+    pub session_id: SessionId,
+    pub entry_sequence: u64,
+    pub entry_commitment: Digest32,
+    pub chunks: Vec<CapturedChunk>,
+}
+
 /// Implementations use the supplied Aura transaction for encrypted note storage,
 /// citations and capture checkpoints together. No method may commit independently.
 /// Keys must come from AUMLOK for the current subject and root epoch.
@@ -47,23 +63,23 @@ pub trait KiraBackend: Send + Sync {
         request: SaveRequest,
     ) -> Result<SaveReceipt>;
 
-    /// Read a verified checkpoint keyed by subject, session and entry sequence.
-    /// A different entry commitment at the same position must refuse.
+    /// Read an authenticated checkpoint keyed by subject, session and entry sequence.
+    /// Verify its binding to the retained chunk notes and refuse a different entry
+    /// commitment at the same position. Absence must not hide a partial capture.
     fn captured(
         &self,
         transaction: &mut aura::LedgerTxn<'_>,
         context: &PermissionContext,
         entry: &SessionEntry,
-    ) -> Result<Option<Vec<SaveReceipt>>>;
+    ) -> Result<Option<CaptureCheckpoint>>;
 
-    /// Retain only the entry commitment and save citations, never transcript text.
+    /// Retain the exact entry/chunk commitments and citations, never transcript text.
     /// The checkpoint and every chunk must commit in this same transaction.
     fn record_capture(
         &self,
         transaction: &mut aura::LedgerTxn<'_>,
         context: &PermissionContext,
-        entry: &SessionEntry,
-        receipts: &[SaveReceipt],
+        checkpoint: &CaptureCheckpoint,
     ) -> Result<()>;
 
     fn recall(
@@ -80,7 +96,6 @@ pub trait KiraBackend: Send + Sync {
         request: MemoryList,
     ) -> Result<MemoryListReply>;
 
-    /// A saved note has an applied outcome, with its note id as the C4 correlation id.
     fn outcome(
         &self,
         transaction: &mut aura::LedgerTxn<'_>,
@@ -129,14 +144,18 @@ impl KiraAdapter {
                     scope: PermissionScope::local_memory(),
                 },
             )?;
-            if let Some(receipts) = backend.captured(transaction, &context, entry)? {
-                validate_capture(&context, capture_chunks(entry).len(), &receipts)?;
-                verify_citations(transaction, &context, &receipts, None)?;
-                return Ok(receipts);
-            }
             let now = transaction.observation_context()?.at;
             let now = u64::try_from(now).map_err(|_| codes::KIRA_INVALID_FIELD)?;
             let requests = capture_requests(&self.cell, ingress, entry, category, now)?;
+            let cells: Vec<_> = requests
+                .iter()
+                .map(|request| request.put.cell.clone())
+                .collect();
+            if let Some(checkpoint) = backend.captured(transaction, &context, entry)? {
+                let receipts = checkpoint_receipts(&context, entry, &cells, &checkpoint)?;
+                verify_citations(transaction, &context, &receipts, None)?;
+                return Ok(receipts);
+            }
             let count = requests.len();
             let first_sequence = transaction.current_version()?.sequence;
             let mut receipts = Vec::with_capacity(requests.len());
@@ -145,7 +164,20 @@ impl KiraAdapter {
             }
             validate_capture(&context, count, &receipts)?;
             verify_citations(transaction, &context, &receipts, Some(first_sequence))?;
-            backend.record_capture(transaction, &context, entry, &receipts)?;
+            let checkpoint = CaptureCheckpoint {
+                session_id: entry.session_id,
+                entry_sequence: entry.sequence,
+                entry_commitment: entry.commitment,
+                chunks: cells
+                    .into_iter()
+                    .zip(receipts.iter().cloned())
+                    .map(|(cell, receipt)| CapturedChunk { cell, receipt })
+                    .collect(),
+            };
+            backend.record_capture(transaction, &context, &checkpoint)?;
+            if backend.captured(transaction, &context, entry)?.as_ref() != Some(&checkpoint) {
+                return Err(codes::KIRA_LEDGER_UNVERIFIED);
+            }
             Ok(receipts)
         })
     }
@@ -159,52 +191,13 @@ impl KiraService for KiraAdapter {
         request: MemoryPut,
     ) -> ServiceFuture<'a, Accepted> {
         Box::pin(async move {
-            self.ledger.scoped(scope, |transaction| {
+            self.ledger.scoped(scope, |_| {
                 let content = NoteContent::new(request.category, request.statement, request.quote)?;
                 if self.cell.replay(&content)? != request.cell {
                     return Err(codes::WASMCELL_EVIDENCE_MISMATCH);
                 }
-                LedgerPermissions.require(
-                    transaction,
-                    &context(scope),
-                    &PermissionRequest {
-                        permission: Permission::Store,
-                        scope: PermissionScope::local_memory(),
-                    },
-                )?;
-                let backend = self.backend.as_ref().ok_or(codes::KIRA_STORE_UNAVAILABLE)?;
-                let at_ms = u64::try_from(transaction.observation_context()?.at)
-                    .map_err(|_| codes::KIRA_INVALID_FIELD)?;
-                let first_sequence = transaction.current_version()?.sequence;
-                let receipt = backend.save(
-                    transaction,
-                    &context(scope),
-                    &self.cell,
-                    SaveRequest {
-                        put: MemoryPut {
-                            cell: request.cell,
-                            category: content.category().into(),
-                            statement: content.statement().into(),
-                            quote: content.quote().map(str::to_owned),
-                        },
-                        origin: MemoryOrigin::from_ingress(Provenance {
-                            source: Source::Auma,
-                        })?,
-                        form: NoteForm::Original,
-                        at_ms,
-                        review_by: None,
-                    },
-                )?;
-                validate_capture(&context(scope), 1, std::slice::from_ref(&receipt))?;
-                verify_citations(
-                    transaction,
-                    &context(scope),
-                    std::slice::from_ref(&receipt),
-                    Some(first_sequence),
-                )?;
-                Ok(Accepted {
-                    proposal_id: ProposalId::from_hex(receipt.commitment.note_id.as_str())?,
-                })
+                // C4 accepted requires an owner queue; automatic capture is separate.
+                Err(codes::KIRA_STORE_UNAVAILABLE)
             })
         })
     }
@@ -407,6 +400,33 @@ fn capture_chunks(entry: &SessionEntry) -> Vec<&str> {
         }
     }
     chunks
+}
+
+fn checkpoint_receipts(
+    context: &PermissionContext,
+    entry: &SessionEntry,
+    cells: &[CellCommitment],
+    checkpoint: &CaptureCheckpoint,
+) -> Result<Vec<SaveReceipt>> {
+    if checkpoint.session_id != entry.session_id
+        || checkpoint.entry_sequence != entry.sequence
+        || checkpoint.entry_commitment != entry.commitment
+        || checkpoint.chunks.len() != cells.len()
+        || checkpoint
+            .chunks
+            .iter()
+            .zip(cells)
+            .any(|(chunk, cell)| &chunk.cell != cell)
+    {
+        return Err(codes::KIRA_LEDGER_UNVERIFIED);
+    }
+    let receipts: Vec<_> = checkpoint
+        .chunks
+        .iter()
+        .map(|chunk| chunk.receipt.clone())
+        .collect();
+    validate_capture(context, cells.len(), &receipts)?;
+    Ok(receipts)
 }
 
 fn validate_capture(
