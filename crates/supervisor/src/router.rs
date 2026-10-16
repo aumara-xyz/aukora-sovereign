@@ -58,7 +58,7 @@ pub struct OrganPorts<'a> {
     pub snapshots: &'a dyn SnapshotService,
 }
 
-/// Stateful wiring for one guest. There is no retry-on-error entry point.
+/// Stateful wiring for one guest. Model admission and calls are never retried.
 pub struct Router<'a> {
     ports: OrganPorts<'a>,
     context: GuestContext,
@@ -101,6 +101,7 @@ struct PendingProposal {
 struct PendingStream {
     correlation: Correlation,
     state: ModelStream,
+    recovering: bool,
 }
 
 struct Delivery {
@@ -301,6 +302,7 @@ impl<'a> Router<'a> {
                         id: correlation.id.clone(),
                     },
                     state,
+                    recovering: false,
                 });
                 Reply::ModelStarted(started)
             }
@@ -403,6 +405,7 @@ impl<'a> Router<'a> {
     /// Row 128: poll only outstanding gate/Kira ids and admitted broker streams.
     /// Forward each terminal outcome once, and require the broker's settled receipt
     /// on success, error and cancellation. Full bounded queues pause producers.
+    /// Unencodable errors wait for a valid broker settlement without closing FD 3.
     /// Approvals themselves remain host services and do not depend on this poller.
     pub async fn next_event(&mut self) -> Result<Option<Frame<Reply>>> {
         if self.poisoned {
@@ -436,13 +439,40 @@ impl<'a> Router<'a> {
                 request_id: pending.state.request_id(),
                 reservation_id: pending.state.reservation_id(),
             };
-            let Some(event) = self.ports.broker.poll(scope, handle).await? else {
-                self.streams.rotate_left(1);
-                continue;
+            let event = if pending.recovering {
+                // Cancellation returns the existing settlement on repeated calls.
+                // Retain the stream and its capacity until that receipt validates.
+                let cancellation = self.ports.broker.cancel(
+                    scope,
+                    canon::session::ModelCancel {
+                        request_id: handle.request_id,
+                        reservation_id: handle.reservation_id,
+                    },
+                );
+                match tokio::time::timeout(Duration::from_millis(100), cancellation).await {
+                    Ok(Ok(end)) => BrokerEvent::Error(canon::session::ModelError {
+                        request_id: end.request_id,
+                        reservation_id: end.reservation_id,
+                        next_index: end.next_index,
+                        code: codes::SUPERVISOR_STATE,
+                        next: canon::session::Text::new(String::new())?,
+                        receipt: end.receipt,
+                    }),
+                    Ok(Err(_)) | Err(_) => {
+                        self.streams.rotate_left(1);
+                        continue;
+                    }
+                }
+            } else {
+                let Some(event) = self.ports.broker.poll(scope, handle).await? else {
+                    self.streams.rotate_left(1);
+                    continue;
+                };
+                event
             };
-            let body = match event {
+            let frame = match event {
                 BrokerEvent::Delta(delta) => {
-                    pending
+                    let frame = pending
                         .correlation
                         .frame(Reply::ModelDelta(delta.clone()))?;
                     pending.state.observe_delta(&delta)?;
@@ -450,24 +480,33 @@ impl<'a> Router<'a> {
                         handle,
                         index: delta.index,
                     });
-                    Reply::ModelDelta(delta)
+                    frame
                 }
                 BrokerEvent::End(end) => {
-                    pending.correlation.frame(Reply::ModelEnd(end.clone()))?;
+                    let frame = pending.correlation.frame(Reply::ModelEnd(end.clone()))?;
                     pending.state.observe_end(&end)?;
-                    Reply::ModelEnd(end)
+                    frame
                 }
                 BrokerEvent::Error(mut error) => {
                     error.code = canon::Refusal::from_code(&error.code.to_string())
                         .unwrap_or(codes::SUPERVISOR_STATE);
-                    pending
+                    let validated = pending
                         .correlation
-                        .frame(Reply::ModelError(error.clone()))?;
-                    pending.state.observe_error(&error)?;
-                    Reply::ModelError(error)
+                        .frame(Reply::ModelError(error.clone()))
+                        .and_then(|frame| {
+                            pending.state.observe_error(&error)?;
+                            Ok(frame)
+                        });
+                    match validated {
+                        Ok(frame) => frame,
+                        Err(_) => {
+                            pending.recovering = true;
+                            self.streams.rotate_left(1);
+                            continue;
+                        }
+                    }
                 }
             };
-            let frame = pending.correlation.frame(body)?;
             if pending.state.is_ended() {
                 self.streams.pop_front();
             } else {
