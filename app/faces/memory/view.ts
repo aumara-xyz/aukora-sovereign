@@ -134,7 +134,9 @@ function recallContent(query: string, recall: Recall): Array<Node | string> {
     ];
   }
   if (recall.result === "empty") return [h("p", { role: "status", class: "info" }, COPY.recallEmpty)];
-  return [problemFor(new Error("app:service-unavailable"))];
+  return [h("div", { role: "status", class: "undetermined" },
+    h("p", { class: "info" }, `◌ ${COPY.undeterminedLead}`),
+    h("p", {}, COPY.recallUndetermined))];
 }
 
 // Search is memory.recall. Its three answers stay apart: found, empty, and not determined. The frame is sandboxed

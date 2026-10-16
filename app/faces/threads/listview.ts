@@ -136,7 +136,8 @@ export function createListView(options: ListViewOptions): ListView {
       shownFailure = failure;
       if (failure !== null) {
         showServiceState(problem, failure);
-        if (serviceState(failure).kind === "failure") {
+        const state = serviceState(failure);
+        if (state.kind === "failure" || state.retryable) {
           const retry = h("button", { type: "button", class: "link" }, COPY.chat.retry);
           retry.addEventListener("click", () => options.reload(), { signal });
           problem.append(" ", retry);

@@ -179,6 +179,7 @@ export function createTranscript(options: TranscriptOptions): Transcript {
       const state = h("span", {});
       showServiceState(state, stream.code ?? "app:service-failed");
       parts.push(state);
+      if (stream.next) parts.push(" ", visible(stream.next));
     } else parts.push(stream.phase === "cancelled" ? COPY.chat.stopped : COPY.chat.unsaved);
     if (stream.receipt) parts.push(" ", h("span", { class: "usage" }, `· ${usage(stream.receipt)}`));
     parts.push(" ", h("button", { type: "button", class: "link" }, COPY.chat.dismiss));

@@ -3,7 +3,7 @@
 // a wide one). The first message of a new chat creates its session. The face reads and writes only through the body
 // service calls its manifest grants, and everything it shows from the node is data.
 import type { FaceClient } from "../../core/index.js";
-import { serviceState } from "../../core/service-state.js";
+import { serviceMessage, serviceState } from "../../core/service-state.js";
 import { COPY, countText } from "./copy.js";
 import { createComposer } from "./composer.js";
 import { createConversation } from "./conversation.js";
@@ -156,12 +156,13 @@ export function mountChat(root: HTMLElement, client: FaceClient, signal: AbortSi
         connectedBefore = true;
         return;
       }
-      if (code !== null && serviceState(code).kind === "unavailable") {
+      const state = code === null ? null : serviceState(code);
+      if (state?.kind === "unavailable" && !state.retryable) {
         conversation.dismiss("live");
         return;
       }
       conversation.notify({
-        key: "live", tone: "warn", text: COPY.notices.liveDown, code,
+        key: "live", tone: "warn", text: code ? `${serviceMessage(code)} ${COPY.notices.liveDown}` : COPY.notices.liveDown, code,
         action: { label: COPY.notices.liveRetry, run: () => live.retry() },
       });
     },

@@ -4,7 +4,7 @@
 // from the shell, and a failed read clears every running state. Nothing here installs, removes,
 // starts, stops or updates a plugin.
 import type { FaceManifest } from "../catalog.js";
-import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
 import { card, make, mark, note, plural } from "../general/kit.js";
 import type { Tone } from "../general/kit.js";
 import { join } from "./registry.js";
@@ -102,7 +102,7 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
     show(live) {
       const joined = join(catalog, live);
       let running = 0;
-      let broken = 0;
+      const broken = live.filter(plugin => plugin.state === "failed").length;
       for (const placed of joined.placed) {
         const part = parts.get(placed.manifest.id);
         if (!part) continue;
@@ -114,10 +114,6 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
         if (placed.live.state === "active") running++;
         setState(part, tone, label, "");
         if (placed.live.state === "waiting") showServiceState(part.state, "app:service-unavailable");
-        if (placed.live.state === "failed") {
-          showServiceState(part.state, placed.live.error);
-          if (serviceState(placed.live.error).kind === "failure") broken++;
-        }
       }
       const all = running === catalog.length;
       const extra = joined.strangers.length;
@@ -128,7 +124,7 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
       strangers.body.replaceChildren();
       strangers.section.hidden = joined.strangers.length === 0;
       if (joined.strangers.length > 0) {
-        mark(strangers.badge, "attention", "UNEXPECTED");
+        mark(strangers.badge, joined.strangers.some(plugin => plugin.state === "failed") ? "failed" : "attention", "UNEXPECTED");
         note(strangers.body, "The shell reports these, but this release does not register them.", "lead");
         const list = make("ul", "entries");
         for (const stranger of joined.strangers) {
@@ -139,7 +135,6 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
           state.dataset.tone = tone;
           state.textContent = label;
           if (stranger.state === "waiting") showServiceState(state, "app:service-unavailable");
-          if (stranger.state === "failed") showServiceState(state, stranger.error);
           head.append(make("code", "mono", stranger.id), state);
           item.append(head);
           list.append(item);
