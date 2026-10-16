@@ -4,6 +4,7 @@ import {
   assertionBytes, assertionMaterial, checkClientData, credentialBytes, registrationMaterial,
 } from "./codec.js";
 import type { AssertionMaterial, RegistrationMaterial } from "./codec.js";
+import { browserNeedsOpening, renderBrowserAdvice } from "./browser.js";
 
 export type { AssertionMaterial, RegistrationMaterial } from "./codec.js";
 
@@ -91,9 +92,6 @@ function refusal(error: unknown): string {
   if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError")) {
     return "Passkey cancelled or expired. Try again.";
   }
-  if (error instanceof Error && error.message === "aumlok:webauthn-unavailable") {
-    return "Passkeys are unavailable in this browser.";
-  }
   return "Passkey not confirmed. Try again.";
 }
 
@@ -111,13 +109,15 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
   const ceremonies = configuration.ceremonies;
   let pending = false;
 
-  function environment(expectedTopOrigin: string, signal: AbortSignal): void {
+  function frameEnvironment(expectedTopOrigin: string, signal: AbortSignal): void {
     live(signal);
     if (location.origin !== ownerOrigin || expectedTopOrigin !== shellOrigin
       || window.parent === window || window.top !== window.parent) throw new Error("owner:frame-required");
-    if (!window.isSecureContext || !navigator.credentials || typeof PublicKeyCredential === "undefined") {
-      throw new Error("aumlok:webauthn-unavailable");
-    }
+  }
+
+  function environment(expectedTopOrigin: string, signal: AbortSignal): void {
+    frameEnvironment(expectedTopOrigin, signal);
+    if (browserNeedsOpening()) throw new Error("aumlok:webauthn-unavailable");
   }
 
   async function browserRequest<T>(signal: AbortSignal, action: () => Promise<T>): Promise<T> {
@@ -128,6 +128,10 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
       const result = await action();
       live(signal);
       return result;
+    } catch (error) {
+      live(signal);
+      if (browserNeedsOpening(error)) throw new Error("aumlok:webauthn-unavailable");
+      throw error;
     } finally { pending = false; }
   }
 
@@ -209,7 +213,7 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
   }
 
   function mount(context: OwnerPaneContext): OwnerDisposer {
-    environment(context.shellOrigin, context.signal);
+    frameEnvironment(context.shellOrigin, context.signal);
     if (context.route.pane !== "passkey") throw new Error("owner:unknown-route");
     const lifetime = new AbortController();
     const stop = () => lifetime.abort();
@@ -283,7 +287,7 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
             step = undefined;
             action.textContent = "Resume ceremony";
           }
-          status.textContent = refusal(error);
+          if (!renderBrowserAdvice(status, error)) status.textContent = refusal(error);
           action.disabled = false;
           action.focus();
         }
@@ -291,14 +295,15 @@ export function createPasskeyService(configuration: PasskeyConfiguration): Owner
     };
     action.addEventListener("click", invoke);
     title.textContent = "Owner passkey";
-    status.textContent = "Resuming the owner ceremony.";
+    const browserUnavailable = renderBrowserAdvice(status);
+    if (!browserUnavailable) status.textContent = "Resuming the owner ceremony.";
     title.focus();
-    void ceremonies.current(lifetime.signal).then(show).catch(error => {
+    if (!browserUnavailable) void ceremonies.current(lifetime.signal).then(show).catch(error => {
       if (!lifetime.signal.aborted) {
         step = undefined;
         action.textContent = "Resume ceremony";
         action.disabled = false;
-        status.textContent = refusal(error);
+        if (!renderBrowserAdvice(status, error)) status.textContent = refusal(error);
         action.focus();
       }
     });

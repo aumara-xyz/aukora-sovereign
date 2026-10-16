@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ownerWasmImports } from './wasm-imports.js';
+import { abortScope, checkAbort } from './abort.js';
 
 export type AumlokBrowser = {
   call(input: Record<string, unknown>): Record<string, unknown>;
@@ -10,14 +11,11 @@ const fail = (): never => { throw new Error('aumlok:wasm-abi'); };
 const MAX_MODULE_BYTES = 16 * 1024 * 1024;
 
 async function moduleBytes(address: URL, signal?: AbortSignal): Promise<Uint8Array> {
-  signal?.throwIfAborted();
-  const controller = new AbortController();
-  const abort = (): void => controller.abort();
-  signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => controller.abort(), 15_000);
+  const request = abortScope(signal, 15_000);
   try {
+    checkAbort(request.signal);
     const response = await fetch(address, {
-      credentials: 'same-origin', mode: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
+      credentials: 'same-origin', mode: 'same-origin', cache: 'no-store', redirect: 'error', signal: request.signal,
     });
     if (!response.ok || new URL(response.url).origin !== location.origin || !response.body) return fail();
     const advertised = response.headers.get('content-length');
@@ -33,25 +31,26 @@ async function moduleBytes(address: URL, signal?: AbortSignal): Promise<Uint8Arr
         if (size > MAX_MODULE_BYTES) return fail();
         chunks.push(part.value);
       }
-    } finally { await reader.cancel(); reader.releaseLock(); }
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+    checkAbort(request.signal);
     if (size === 0) return fail();
     const result = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
     return result;
-  } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); controller.abort(); }
+  } finally { request.dispose(); }
 }
 
 export async function loadAumlok(signal?: AbortSignal): Promise<AumlokBrowser> {
   const address = new URL('./aumlok.wasm', import.meta.url);
   if (address.origin !== location.origin || location.protocol !== 'https:') return fail();
   const module = await WebAssembly.compile(await moduleBytes(address, signal));
-  signal?.throwIfAborted();
+  checkAbort(signal);
   const bridge = ownerWasmImports(module);
   let instance: WebAssembly.Instance;
   try {
     instance = await WebAssembly.instantiate(module, bridge.imports);
-    signal?.throwIfAborted();
+    checkAbort(signal);
   }
   catch (error) { bridge.dispose(); throw error; }
   try { bridge.attach(instance.exports); }

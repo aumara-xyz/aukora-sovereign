@@ -2,6 +2,8 @@
 import type { OwnerConfiguration } from "./bootstrap.js";
 import type { OwnerPane, OwnerPaneContext } from "./contracts.js";
 import { createPasskeyService } from "./passkey/index.js";
+import { renderBrowserAdvice } from "./passkey/browser.js";
+import { checkAbort } from "./abort.js";
 import { claimToken } from "./claim/codec.js";
 import { consumeClaim } from "./claim/transport.js";
 import { deadline, exact, handle, options, post, state, text } from "./transport.js";
@@ -27,7 +29,7 @@ export function createOnboarding(
     if (!["claim", "passkey", "phrase"].includes(context.route.pane)) throw new Error("owner:unknown-route");
     if (context.shellOrigin !== config.shellOrigin || location.origin !== config.ownerOrigin
       || window.parent === window || window.top !== window.parent) throw new Error("owner:frame-required");
-    context.signal.throwIfAborted();
+    checkAbort(context.signal);
     const lifetime = new AbortController();
     const signal = lifetime.signal;
     let stepLifetime = new AbortController();
@@ -58,7 +60,7 @@ export function createOnboarding(
       async advance() { throw new Error("owner:unknown-operation"); },
     } });
 
-    function live(): void { signal.throwIfAborted(); }
+    function live(): void { checkAbort(signal); }
 
     function clearFields(): void {
       fields.forEach(field => { field.value = ""; });
@@ -76,6 +78,7 @@ export function createOnboarding(
       status.textContent = "";
       heading.textContent = title;
       detail.textContent = description;
+      renderBrowserAdvice(status);
       heading.focus({ preventScroll: true });
       progress.replaceChildren();
       for (const name of ["claim", "passkey", "phrase", "signin"] as const) {
@@ -92,9 +95,15 @@ export function createOnboarding(
       if (busy || signal.aborted) return;
       busy = true;
       controls.querySelectorAll("button").forEach(button => { button.disabled = true; });
-      status.textContent = "Working…";
+      if (!renderBrowserAdvice(status)) status.textContent = "Working…";
       try { await action(); }
-      catch (error) { if (!signal.aborted) status.textContent = explainOwnerError(error); }
+      catch (error) {
+        if (!signal.aborted) {
+          if (error instanceof Error && ["aumlok:claim-spent", "aumlok:enrolment-closed"].includes(error.message)) {
+            signinScreen();
+          } else if (!renderBrowserAdvice(status, error)) status.textContent = explainOwnerError(error);
+        }
+      }
       finally {
         busy = false;
         if (!signal.aborted) controls.querySelectorAll("button").forEach(button => {
@@ -296,7 +305,7 @@ export function createOnboarding(
       submission = undefined;
       ceremony = undefined;
       bindingId = undefined;
-      screen("signin", "Welcome home", "Sign in with your passkey.");
+      screen("signin", "Welcome home", "Sign in to continue.");
       button("Sign in", async () => {
         if (ceremony && ceremony.expires <= performance.now()) ceremony = undefined;
         try { ceremony ??= options(await post("/api/signin/start", {}, signal), false, config.relyingParty); }

@@ -42,9 +42,14 @@ export async function consumeClaim(body: string, signal: AbortSignal): Promise<v
       body, signal: lifetime.signal,
     });
     const media = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
-    if (response.status !== 200 || media !== "application/json") throw new Error("invites:claim-refused");
-    if (await reply(response, lifetime.signal) !== CLAIM_OPEN) throw new Error("invites:claim-response");
+    if (media !== "application/json") throw new Error("invites:claim-refused");
+    const result = await reply(response, lifetime.signal);
     if (lifetime.signal.aborted) throw new DOMException("Claim closed", "AbortError");
+    if (response.status !== 200) {
+      if (result === '{"error":"aumlok:claim-spent"}') throw new Error("aumlok:claim-spent");
+      throw new Error("invites:claim-refused");
+    }
+    if (result !== CLAIM_OPEN) throw new Error("invites:claim-response");
   } finally {
     clearTimeout(deadline);
     signal.removeEventListener("abort", abort);

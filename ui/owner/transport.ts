@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { credentialBytes } from "./passkey/codec.js";
 import type { AssertionOptions, RegistrationOptions } from "./passkey/index.js";
+import { abortScope, checkAbort } from "./abort.js";
 
 type Route = "/api/enrol/start" | "/api/enrol/finish" | "/api/binding/prepare"
   | "/api/binding/confirm" | "/api/signin/start" | "/api/signin/finish"
@@ -22,38 +23,41 @@ export function text(value: unknown, maximum = 256): string {
 }
 
 export async function post(route: Route, body: RecordValue, signal: AbortSignal): Promise<RecordValue> {
-  const response = await fetch(route, {
-    method: "POST", credentials: "same-origin", mode: "same-origin", redirect: "error",
-    cache: "no-store", referrerPolicy: "no-referrer", signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  if (response.headers.get("Content-Type")?.split(";")[0].trim() !== "application/json" || !response.body) {
-    throw new Error("owner:response-invalid");
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
+  const request = abortScope(signal, 30_000);
   try {
-    for (;;) {
-      const part = await reader.read();
-      if (part.done) break;
-      length += part.value.length;
-      if (length > 65_536) throw new Error("owner:response-invalid");
-      chunks.push(part.value);
+    const response = await fetch(route, {
+      method: "POST", credentials: "same-origin", mode: "same-origin", redirect: "error",
+      cache: "no-store", referrerPolicy: "no-referrer", signal: request.signal,
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (response.headers.get("Content-Type")?.split(";")[0].trim() !== "application/json" || !response.body) {
+      throw new Error("owner:response-invalid");
     }
-  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
-  signal.throwIfAborted();
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-  const result = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-  if (response.status !== 200) {
-    exact(result, ["error"]);
-    const code = result.error;
-    throw new Error(typeof code === "string" && /^[a-z][a-z0-9_-]*:[a-z0-9-]+$/.test(code)
-      ? code : "owner:request-refused");
-  }
-  return result;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    try {
+      for (;;) {
+        const part = await reader.read();
+        if (part.done) break;
+        length += part.value.length;
+        if (length > 65_536) throw new Error("owner:response-invalid");
+        chunks.push(part.value);
+      }
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+    checkAbort(request.signal);
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    const result = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+    if (response.status !== 200) {
+      exact(result, ["error"]);
+      const code = result.error;
+      throw new Error(typeof code === "string" && /^[a-z][a-z0-9_-]*:[a-z0-9-]+$/.test(code)
+        ? code : "owner:request-refused");
+    }
+    return result;
+  } finally { request.dispose(); }
 }
 
 export function handle(value: unknown): string {

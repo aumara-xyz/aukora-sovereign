@@ -29,6 +29,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outl
 .owner-content { display: grid; gap: .65rem; margin-block: 1.5rem; }
 .owner-controls { display: flex; flex-wrap: wrap; gap: .75rem; }
 .owner-status { min-height: 1.5rem; color: var(--gold); font-size: .85rem; overflow-wrap: anywhere; }
+.owner-status svg { width: 1.1rem; height: 1.1rem; vertical-align: middle; }
 .owner-input { display: grid; gap: .45rem; min-width: 0; font-size: .7rem; letter-spacing: .09em; color: var(--band, var(--secondary)); }
 .owner-input input { width: 100%; min-width: 0; color: var(--text); background: var(--layer1); border: 1px solid var(--border); border-left: 3px solid var(--band, var(--violet)); border-radius: .65rem; padding: .7rem .85rem; }
 .phrase-composition { display: grid; gap: 1rem; }

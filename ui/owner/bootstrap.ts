@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { abortScope } from "./abort.js";
 export type OwnerConfiguration = { readonly ownerOrigin: string; readonly shellOrigin: string; readonly relyingParty: string };
 
 export async function configuration(): Promise<OwnerConfiguration> {
   if (!window.isSecureContext || location.protocol !== "https:" || window.parent === window
     || window.top !== window.parent) throw new Error("owner:frame-required");
-  const response = await fetch(new URL("./index.js", import.meta.url), {
-    method: "HEAD", mode: "same-origin", credentials: "same-origin", cache: "no-store", redirect: "error",
-    signal: AbortSignal.timeout(15_000),
-  });
+  const request = abortScope(undefined, 15_000);
+  let response: Response;
+  try {
+    response = await fetch(new URL("./index.js", import.meta.url), {
+      method: "HEAD", mode: "same-origin", credentials: "same-origin", cache: "no-store", redirect: "error",
+      signal: request.signal,
+    });
+  } finally { request.dispose(); }
   if (response.status !== 200) throw new Error("owner:configuration-unavailable");
   const policy = response.headers.get("Content-Security-Policy");
   if (!policy || policy.includes(",")) throw new Error("owner:configuration-invalid");

@@ -3,6 +3,8 @@ import type { OwnerConfiguration } from "../bootstrap.js";
 import type { OwnerPane, OwnerPaneContext } from "../contracts.js";
 import { loadAumlok } from "../aumlok.js";
 import { createPasskeyService } from "../passkey/index.js";
+import { renderBrowserAdvice } from "../passkey/browser.js";
+import { checkAbort } from "../abort.js";
 import { exact, handle, options, post, record, state, text } from "../transport.js";
 import type { RecordValue } from "../transport.js";
 import { explainOwnerError, phraseAcknowledgement, phraseInputs, renderPhrase } from "../phrase-layout.js";
@@ -59,12 +61,13 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
       async advance() { throw new Error("owner:unknown-operation"); },
     } });
 
-    function live(): void { signal.throwIfAborted(); }
+    function live(): void { checkAbort(signal); }
     function clear(heading = title.textContent ?? ""): void {
       stepLifetime.abort();
       stepLifetime = new AbortController();
       fields.forEach(field => { field.value = ""; }); fields = [];
       content.replaceChildren(); controls.replaceChildren(); status.textContent = "";
+      renderBrowserAdvice(status);
       title.textContent = heading;
       title.focus({ preventScroll: true });
     }
@@ -73,7 +76,9 @@ export function createLivePhraseService(config: OwnerConfiguration): { mount: Ow
       busy = true;
       controls.querySelectorAll("button").forEach(button => { button.disabled = true; });
       try { live(); await action(); }
-      catch (error) { if (!signal.aborted) status.textContent = explainOwnerError(error); }
+      catch (error) {
+        if (!signal.aborted && !renderBrowserAdvice(status, error)) status.textContent = explainOwnerError(error);
+      }
       finally {
         busy = false;
         if (!signal.aborted) controls.querySelectorAll("button").forEach(button => {

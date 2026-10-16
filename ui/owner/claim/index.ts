@@ -4,6 +4,7 @@ import { claimBody, claimToken, httpsOrigin } from "./codec.js";
 import type { ClaimMode } from "./codec.js";
 import { consumeClaim } from "./transport.js";
 import { ownerIcon } from "../icons.js";
+import { renderBrowserAdvice } from "../passkey/browser.js";
 
 export interface ClaimConfiguration {
   readonly ownerOrigin: string;
@@ -12,6 +13,7 @@ export interface ClaimConfiguration {
   readonly initialToken?: string;
   // Trusted release composition continues inside the same owner frame.
   readonly joining: OwnerPane;
+  readonly signin?: OwnerPane;
 }
 
 export interface ClaimService { mount(context: OwnerPaneContext): OwnerDisposer }
@@ -91,6 +93,7 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     const status = document.createElement("p");
     status.className = "owner-status";
     status.setAttribute("role", "status");
+    renderBrowserAdvice(status);
     const next = document.createElement("section");
     const inputs = document.createElement("div");
     inputs.className = "owner-content";
@@ -114,7 +117,7 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
       }
     }
 
-    async function enterJoining(): Promise<void> {
+    async function enterJoining(pane: OwnerPane = joining): Promise<void> {
       if (entering || lifetime.signal.aborted) return;
       entering = true;
       submit.disabled = true;
@@ -123,7 +126,7 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
       secret.value = "";
       try {
         frame(ownerOrigin, shellOrigin, context);
-        const cleanup = await joining({ ...context, host: next, signal: lifetime.signal });
+        const cleanup = await pane({ ...context, host: next, signal: lifetime.signal });
         if (typeof cleanup !== "function") throw new Error("invites:joining-adapter");
         if (lifetime.signal.aborted) cleanup();
         else { continuation = cleanup; form.hidden = true; }
@@ -170,9 +173,14 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
         status.textContent = mode === "invite-v2" ? "Setup opened. Continue joining."
           : "Setup opened. Create your passkey.";
         await enterJoining();
-      }).catch(() => {
+      }).catch(async error => {
         if (!lifetime.signal.aborted) {
-          status.textContent = "The node has not confirmed this claim. It may have been consumed if the reply was interrupted. Re-enter the private claim details to retry.";
+          if (error instanceof Error && error.message === "aumlok:claim-spent" && configuration.signin) {
+            status.textContent = "Sign in to continue.";
+            await enterJoining(configuration.signin);
+          } else if (!renderBrowserAdvice(status, error)) {
+            status.textContent = "The node has not confirmed this claim. It may have been consumed if the reply was interrupted. Re-enter the private claim details to retry.";
+          }
         }
       }).finally(() => {
         busy = false;

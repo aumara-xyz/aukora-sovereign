@@ -2,6 +2,8 @@
 .approval-review { display: grid; gap: 14px; }
 .approval-review > p { margin: 0; color: var(--muted); font-size: 12px; }
 .approval-review [role="alert"] { color: var(--gold); }
+.approval-review > .approval-renewed { display: flex; align-items: center; gap: 8px; color: var(--gold); }
+.approval-renewed svg { width: 18px; height: 18px; flex: none; }
 .approval-card {
   border: 1px solid var(--blue);
   border-radius: var(--radius, 14px);

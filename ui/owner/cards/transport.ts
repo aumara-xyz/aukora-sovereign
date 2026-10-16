@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ProposalCardBytes, SupervisorCards } from "../contracts.js";
+import { abortScope, checkAbort } from "../abort.js";
 import { credentialBytes } from "../passkey/codec.js";
 import { canonical, domainDigest, object, parseAuthorization, parseCanonical, parseCard, refuse,
   verifyCommitments } from "./codec.js";
@@ -36,11 +37,20 @@ function remaining(value: unknown, started: number): number {
 
 async function request(route: ApprovalRoute, body: JsonObject, signal: AbortSignal): Promise<ApprovalResponse> {
   const started = performance.now();
+  const scope = abortScope(signal, 30_000);
+  try {
+    return await requestWithin(route, body, scope.signal, started);
+  } finally { scope.dispose(); }
+}
+
+async function requestWithin(route: ApprovalRoute, body: JsonObject, signal: AbortSignal,
+  started: number): Promise<ApprovalResponse> {
+  checkAbort(signal);
   const response = await fetch(route, {
     method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error",
     cache: "no-store", referrerPolicy: "no-referrer",
     headers: { "Content-Type": "application/json" }, body: canonical(body),
-    signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+    signal,
   });
   if (response.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !response.body) {
     refuse("response");
@@ -60,7 +70,7 @@ async function request(route: ApprovalRoute, body: JsonObject, signal: AbortSign
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
-  signal.throwIfAborted();
+  checkAbort(signal);
   const bytes = new Uint8Array(length);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
@@ -99,7 +109,7 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
   return {
     async loadByProposalId(id, signal): Promise<ProposalCardBytes> {
       proposal(id);
-      signal.throwIfAborted();
+      checkAbort(signal);
       reviewed.delete(id);
       const loaded = await post("/api/v1/approvals/review", { proposal_id: id, op: action }, signal);
       const started = performance.now();
@@ -119,14 +129,14 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
       await verifyCommitments(card, auth);
       const challenge = await domainDigest("aukora:owner-authorization:v1", authorization);
       if (!equal(challenge, credentialBytes(result.challenge))) refuse("challenge-mismatch");
-      signal.throwIfAborted();
+      checkAbort(signal);
       reviewed.set(id, auth.op);
       return { proposalId: id, canonicalCard: card, canonicalAuthorization: authorization,
         relativeTimeoutMs: remaining(timeoutMs, started) };
     },
     async submitAuthorization(id, action, bytes, signal): Promise<void> {
       proposal(id);
-      signal.throwIfAborted();
+      checkAbort(signal);
       const op = reviewed.get(id);
       if ((op !== action && !(action === "apply" && op === "release"))
         || (action !== "apply" && action !== "retire" && action !== "release")) {
@@ -145,7 +155,7 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
       keys(result, ["schema", "proposal_id", "state"]);
       if (result.schema !== "aukora-owner-outcome-v1" || result.proposal_id !== id
         || result.state !== (action === "retire" ? "retired" : "applied")) refuse("effect-unconfirmed");
-      signal.throwIfAborted();
+      checkAbort(signal);
     },
   };
 }

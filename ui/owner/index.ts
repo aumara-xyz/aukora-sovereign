@@ -22,7 +22,8 @@ if (root) {
     const onboarding = createOnboarding(config, "");
     const joining = createOnboarding(config, "", "enrol");
     const claims = createClaimService({ ...config, mode: "host-token-v1", initialToken: claim,
-      joining: context => joining({ ...context, route: { pane: "passkey" } }) });
+      joining: context => joining({ ...context, route: { pane: "passkey" } }),
+      signin: context => onboarding({ ...context, route: { pane: "passkey" } }) });
     const refresh = createLivePhraseService(config);
     const { approval, supervisor } = createApprovalServices();
     const passkey = createPasskeyService({ ...config, ceremonies: {

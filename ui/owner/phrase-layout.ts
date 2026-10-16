@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-export {};
+import { checkAbort } from "./abort.js";
 
 const BANDS = ["ROOT", "UNITE", "RISE"] as const;
 
@@ -24,7 +24,7 @@ function bandContainer(anchor: HTMLElement, rows: readonly HTMLElement[]): HTMLE
 }
 
 export function renderPhrase(words: readonly string[], signal: AbortSignal): HTMLElement {
-  signal.throwIfAborted();
+  checkAbort(signal);
   if (words.length !== 7 || !/^[a-z]{6}$/.test(words[0])
     || words.slice(1).some((word, at) => !/^[a-z]+$/.test(word) || word[0] !== words[0][at])) {
     throw new Error("aumlok:phrase-invalid");

@@ -8,6 +8,8 @@ import { renderAuthorization, renderCard } from "./render.js";
 import { createApprovalTransport } from "./transport.js";
 import type { ApprovalServiceOptions } from "./transport.js";
 import { ownerIcon } from "../icons.js";
+import { abortScope, checkAbort } from "../abort.js";
+import { renderBrowserAdvice } from "../passkey/browser.js";
 
 export interface SupervisorApprovalActions {
   submitAuthorization(proposalId: string, action: Authorization["op"], assertion: Uint8Array, signal: AbortSignal): Promise<void>;
@@ -21,6 +23,11 @@ function failure(error: unknown): string {
     return "This approval is no longer available.";
   }
   return "Approval unavailable. Review again to check its current state.";
+}
+
+function needsReview(error: unknown): boolean {
+  return error instanceof Error
+    && /^[a-z][a-z0-9_-]*:(?:review-required|ceremony-expired)$/.test(error.message);
 }
 
 export class ApprovalCards implements ApprovalPaneService {
@@ -50,6 +57,8 @@ export class ApprovalCards implements ApprovalPaneService {
     context.host.replaceChildren(review);
     let disposed = false;
     let started = false;
+    let loading = false;
+    let renewed = false;
 
     const dispose = (): void => {
       if (disposed) return;
@@ -63,78 +72,107 @@ export class ApprovalCards implements ApprovalPaneService {
     const showFailure = (error: unknown): void => {
       if (signal.aborted) return;
       status.setAttribute("role", "alert");
-      status.textContent = failure(error);
+      if (!renderBrowserAdvice(status, error)) {
+        status.classList.remove("owner-status");
+        status.textContent = failure(error);
+      }
       retry.hidden = false;
       retry.focus();
     };
 
-    const load = async (): Promise<void> => {
-      started = false;
+    const recover = async (error: unknown): Promise<void> => {
+      if (signal.aborted) return;
+      if (!renewed && needsReview(error)) {
+        renewed = true;
+        await load(true).catch(showFailure);
+      } else showFailure(error);
+    };
+
+    const load = async (refresh = false): Promise<void> => {
+      if (loading || signal.aborted) return;
+      loading = true;
+      started = true;
       retry.hidden = true;
+      retry.disabled = true;
       review.replaceChildren(stylesheet, status, retry);
       status.setAttribute("role", "status");
-      status.textContent = "Loading approval…";
-      const loaded = await supervisor.loadByProposalId(proposalId, signal);
-      signal.throwIfAborted();
-      if (loaded.proposalId !== proposalId || !(loaded.canonicalCard instanceof Uint8Array)
-        || !(loaded.canonicalAuthorization instanceof Uint8Array)) refuse("response");
-      const timeoutMs = loaded.relativeTimeoutMs;
-      if (typeof timeoutMs !== "number" || !Number.isSafeInteger(timeoutMs)
-        || timeoutMs <= 0 || timeoutMs > 300_000) refuse("ceremony-expired");
-      const expires = performance.now() + timeoutMs;
-      const cardBytes = new Uint8Array(loaded.canonicalCard);
-      const authBytes = new Uint8Array(loaded.canonicalAuthorization);
-      const card = parseCard(cardBytes);
-      const auth = parseAuthorization(authBytes, proposalId);
-      await verifyCommitments(cardBytes, auth);
-      const challenge = await domainDigest("aukora:owner-authorization:v1", authBytes);
-      signal.throwIfAborted();
-      const cardView = renderCard(document, card);
-      const digest = document.createElement("div");
-      digest.className = "approval-digest";
-      const digestLabel = document.createElement("span");
-      digestLabel.textContent = "SHA-256 · exact bytes";
-      const digestValue = document.createElement("code");
-      digestValue.textContent = auth.new_sha256;
-      digest.append(digestLabel, digestValue);
-      cardView.insertBefore(digest, cardView.children[2]);
-      const authorize = document.createElement("button");
-      authorize.type = "button";
-      const labels = { apply: "Approve", retire: "Retire", release: "Approve release",
-        grant: "Approve grant", permission: "Approve permission" };
-      const actionLabel = document.createElement("span");
-      actionLabel.textContent = labels[auth.op];
-      const passkeyCue = document.createElement("small");
-      passkeyCue.textContent = "Touch ID / passkey";
-      authorize.append(ownerIcon("owner"), actionLabel, passkeyCue);
-      const controls = document.createElement("div");
-      controls.className = "approval-actions";
-      controls.append(authorize);
-      review.append(cardView, renderAuthorization(document, auth), controls);
-      status.textContent = "Review the exact bytes, then use your passkey.";
-      cardView.querySelector<HTMLElement>(".approval-summary")?.focus();
-      authorize.addEventListener("click", () => {
-        if (started || signal.aborted) return;
-        started = true;
-        authorize.disabled = true;
-        status.textContent = "Waiting for your passkey…";
-        void (async () => {
-          const remaining = Math.floor(expires - performance.now());
-          if (remaining <= 0 || remaining > 300_000) refuse("ceremony-expired");
-          const ceremonySignal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
-          const assertion = await passkey.assertExact(new Uint8Array(challenge), context.shellOrigin, ceremonySignal, remaining);
-          ceremonySignal.throwIfAborted();
-          if (!(assertion instanceof Uint8Array) || assertion.length === 0) refuse("assertion-empty");
-          status.textContent = "Applying approval…";
-          await this.actions.submitAuthorization(proposalId, auth.op, new Uint8Array(assertion), ceremonySignal);
-          signal.throwIfAborted();
-          status.textContent = "Approved.";
-          context.complete();
-        })().catch(showFailure);
-      }, { signal });
+      status.classList.remove("owner-status");
+      status.classList.toggle("approval-renewed", refresh);
+      status.textContent = refresh ? "Renewing review…" : "Loading approval…";
+      try {
+        const loaded = await supervisor.loadByProposalId(proposalId, signal);
+        checkAbort(signal);
+        if (loaded.proposalId !== proposalId || !(loaded.canonicalCard instanceof Uint8Array)
+          || !(loaded.canonicalAuthorization instanceof Uint8Array)) refuse("response");
+        const timeoutMs = loaded.relativeTimeoutMs;
+        if (typeof timeoutMs !== "number" || !Number.isSafeInteger(timeoutMs)
+          || timeoutMs <= 0 || timeoutMs > 300_000) refuse("ceremony-expired");
+        const expires = performance.now() + timeoutMs;
+        const cardBytes = new Uint8Array(loaded.canonicalCard);
+        const authBytes = new Uint8Array(loaded.canonicalAuthorization);
+        const card = parseCard(cardBytes);
+        const auth = parseAuthorization(authBytes, proposalId);
+        await verifyCommitments(cardBytes, auth);
+        const challenge = await domainDigest("aukora:owner-authorization:v1", authBytes);
+        checkAbort(signal);
+        const cardView = renderCard(document, card);
+        const digest = document.createElement("div");
+        digest.className = "approval-digest";
+        const digestLabel = document.createElement("span");
+        digestLabel.textContent = "SHA-256 · exact bytes";
+        const digestValue = document.createElement("code");
+        digestValue.textContent = auth.new_sha256;
+        digest.append(digestLabel, digestValue);
+        cardView.insertBefore(digest, cardView.children[2]);
+        const authorize = document.createElement("button");
+        authorize.type = "button";
+        const labels = { apply: "Approve", retire: "Retire", release: "Approve release",
+          grant: "Approve grant", permission: "Approve permission" };
+        const actionLabel = document.createElement("span");
+        actionLabel.textContent = labels[auth.op];
+        const passkeyCue = document.createElement("small");
+        passkeyCue.textContent = "Touch ID / passkey";
+        authorize.append(ownerIcon("owner"), actionLabel, passkeyCue);
+        const controls = document.createElement("div");
+        controls.className = "approval-actions";
+        controls.append(authorize);
+        review.append(cardView, renderAuthorization(document, auth), controls);
+        if (refresh) {
+          const message = document.createElement("span");
+          message.textContent = "Review renewed. Check the card, then approve.";
+          status.replaceChildren(ownerIcon("owner"), message);
+        } else status.textContent = "Review the exact bytes, then use your passkey.";
+        started = false;
+        cardView.querySelector<HTMLElement>(".approval-summary")?.focus();
+        authorize.addEventListener("click", () => {
+          if (started || loading || signal.aborted) return;
+          started = true;
+          authorize.disabled = true;
+          status.textContent = "Waiting for your passkey…";
+          void (async () => {
+            const remaining = Math.floor(expires - performance.now());
+            if (remaining <= 0 || remaining > 300_000) refuse("ceremony-expired");
+            const ceremony = abortScope(signal, remaining);
+            try {
+              const assertion = await passkey.assertExact(new Uint8Array(challenge), context.shellOrigin,
+                ceremony.signal, remaining);
+              checkAbort(ceremony.signal);
+              if (!(assertion instanceof Uint8Array) || assertion.length === 0) refuse("assertion-empty");
+              status.textContent = "Applying approval…";
+              await this.actions.submitAuthorization(proposalId, auth.op, new Uint8Array(assertion), ceremony.signal);
+              checkAbort(signal);
+              status.textContent = "Approved.";
+              context.complete();
+            } catch (error) {
+              if (!signal.aborted && ceremony.signal.aborted) refuse("ceremony-expired");
+              throw error;
+            } finally { ceremony.dispose(); }
+          })().catch(recover);
+        }, { signal });
+      } finally { loading = false; retry.disabled = false; }
     };
-    retry.addEventListener("click", () => { void load().catch(showFailure); }, { signal });
-    void load().catch(showFailure);
+    retry.addEventListener("click", () => { void load().catch(recover); }, { signal });
+    void load().catch(recover);
     return dispose;
   }
 }
