@@ -26,8 +26,8 @@ if (root) {
     const claim = takeClaim();
     const lifetime = new AbortController();
     const handoff = new ShellTransport();
-    let transport: ShellTransport | null = null;
-    let services: Dispose[] = [];
+    const transport = new ShellTransport();
+    const services: Dispose[] = [];
     let connecting: Promise<void> | null = null;
     let bound = false;
     let approvals: ApprovalWatch | null = null;
@@ -59,22 +59,14 @@ if (root) {
     };
     const activate = (): Promise<void> => {
       if (connecting) return connecting;
-      connecting = (async () => {
-        const next = new ShellTransport();
-        try {
-          await next.call('session.list', { thread_id: null, include_archived: false, before: null, limit: 1 }, lifetime.signal);
-          transport?.dispose();
-          await Promise.all(services.map(dispose => dispose()));
-          services = [];
-          transport = next;
-          const current = () => shell.organism.descriptors().flatMap(plugin => {
-            const status = shell.organism.status(plugin.id);
-            return status ? [status] : [];
-          });
-          for (const [name, service] of createServices(next, current)) services.push(shell.provideService(name, service));
-          notice.hidden = true;
-        } catch (error) { next.dispose(); throw error; }
-      })().finally(() => { connecting = null; });
+      connecting = transport.call('session.list', {
+        thread_id: null, include_archived: false, before: null, limit: 1,
+      }, lifetime.signal).then(async () => {
+        await Promise.all(services.splice(0).map(dispose => dispose()));
+        if (lifetime.signal.aborted) return;
+        provideServices();
+        notice.hidden = true;
+      }).finally(() => { connecting = null; });
       return connecting;
     };
     const shell = mountShell({
@@ -98,6 +90,15 @@ if (root) {
         } else if (notice.kind === 'refusal') show(new Error(notice.code));
       },
     });
+    const current = () => shell.organism.descriptors().flatMap(plugin => {
+      const status = shell.organism.status(plugin.id);
+      return status ? [status] : [];
+    });
+    // Faces may render before sign-in. Every service request still passes the node's session check.
+    const provideServices = () => {
+      for (const [name, service] of createServices(transport, current)) services.push(shell.provideService(name, service));
+    };
+    provideServices();
     approvals = new ApprovalWatch({
       signal: lifetime.signal,
       ownerBusy: () => shell.ownerBusy,
@@ -112,8 +113,8 @@ if (root) {
     approvals.refresh();
     root.append(notice);
     window.addEventListener('pagehide', () => {
-      lifetime.abort(); handoff.dispose(); transport?.dispose();
-      void shell.dispose();
+      lifetime.abort(); handoff.dispose(); transport.dispose();
+      void shell.dispose().finally(() => Promise.all(services.map(dispose => dispose())));
     }, { once: true });
     if (!claim) void activate().catch(showSessionError);
     if (claim) void shell.openOwner('/claim', claim).catch(show);

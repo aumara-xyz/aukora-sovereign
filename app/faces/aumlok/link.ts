@@ -1,57 +1,60 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The one connection a face in this brick makes to the shell. The shell origin is the frame's own referrer, the plugin
-// id selects the capability set the shell granted, and everything is released when the page goes away. A face opened
-// outside the shell has no parent and refuses.
-import { connectFace } from "../../core/index.js";
-import type { FaceClient } from "../../core/index.js";
+import { connectFace } from '../../core/index.js';
+import type { FaceClient } from '../../core/index.js';
 
+export type OwnerDestination = '/passkey' | '/phrase' | '/phrase/refresh';
 export interface FaceHost {
   readonly root: HTMLElement;
   readonly client: FaceClient;
   readonly signal: AbortSignal;
+  openOwner(route: OwnerDestination): void;
 }
 
 export function refusalText(error: unknown): string {
-  const message = error instanceof Error ? error.message : "";
+  const message = error instanceof Error ? error.message : '';
   if (/(?:session-required|binding-required|session-expired|signin-required)/.test(message)) {
-    return "Sign in to view your binding.";
+    return 'Sign in to view your binding.';
   }
-  if (/(?:shell-required|frame-required|origin-mismatch)/.test(message)) return "Open AUMLOK inside the app.";
-  return "Binding status unavailable. Try again shortly.";
+  if (/(?:shell-required|frame-required|origin-mismatch)/.test(message)) return 'Open AUMLOK inside the app.';
+  return 'Binding status unavailable. Try again shortly.';
 }
 
-/** Heading and status line first, then the face's own mount once the shell link exists. Returns the disposer. */
 export function openFace(id: string, title: string, mount: (host: FaceHost) => void | Promise<void>): () => void {
-  const root = document.getElementById("face");
-  if (!root) throw new Error("app:unknown-face");
+  const root = document.getElementById('face');
+  if (!root || id !== 'aumlok') throw new Error('aumlok:unknown-face');
   const life = new AbortController();
-  const heading = document.createElement("h1");
-  heading.textContent = title;
-  const status = document.createElement("p");
-  status.setAttribute("role", "status");
-  status.textContent = "Connecting";
-  root.replaceChildren(heading, status);
+  const status = document.createElement('p');
+  status.className = 'connectionStatus';
+  status.setAttribute('role', 'status');
+  status.textContent = 'Connecting';
+  root.setAttribute('aria-label', title);
+  root.replaceChildren(status);
   let client: FaceClient | undefined;
   const dispose = () => {
     life.abort();
     client?.dispose();
     root.replaceChildren();
   };
-  window.addEventListener("pagehide", dispose, { once: true, signal: life.signal });
+  window.addEventListener('pagehide', dispose, { once: true, signal: life.signal });
   void (async () => {
     try {
-      if (window.parent === window || !document.referrer) throw new Error("app:shell-required");
+      if (window.parent === window || !document.referrer) throw new Error('aumlok:shell-required');
       const shellOrigin = new URL(document.referrer).origin;
-      if (shellOrigin === "null") throw new Error("app:shell-required");
+      if (shellOrigin === 'null') throw new Error('aumlok:shell-required');
       client = connectFace({ shellOrigin, pluginId: id, signal: life.signal });
-      if (life.signal.aborted) {
-        client.dispose();
-        return;
-      }
-      status.textContent = "";
-      await mount({ root, client, signal: life.signal });
+      if (life.signal.aborted) { client.dispose(); return; }
+      const openOwner = (route: OwnerDestination) => {
+        if (life.signal.aborted || !['/passkey', '/phrase', '/phrase/refresh'].includes(route)) {
+          throw new Error('aumlok:owner-route');
+        }
+        window.parent.postMessage({ protocol: 'aukora.aumlok-navigation.v1', route }, shellOrigin);
+      };
+      await mount({ root, client, signal: life.signal, openOwner });
     } catch (error) {
-      if (!life.signal.aborted) status.textContent = refusalText(error);
+      if (!life.signal.aborted) {
+        status.textContent = refusalText(error);
+        root.replaceChildren(status);
+      }
     }
   })();
   return dispose;

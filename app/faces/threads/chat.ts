@@ -4,19 +4,25 @@
 // service calls its manifest grants, and everything it shows from the node is data.
 import type { FaceClient } from "../../core/index.js";
 import { serviceMessage, serviceState } from "../../core/service-state.js";
-import { COPY, countText } from "./copy.js";
+import { COPY, countText, refusalCode } from "./copy.js";
 import { createComposer } from "./composer.js";
 import { createConversation } from "./conversation.js";
 import { h, icon, mark, neutralize } from "./dom.js";
 import { listen } from "./events.js";
 import { createList } from "./list.js";
 import { createListView } from "./listview.js";
+import { PAGE, readOpened } from "./model.js";
 import type { Summary } from "./model.js";
+import { receiveNavigation } from "./navigation.js";
 import { createTranscript } from "./transcript.js";
 
 const PAINT_MS = 40;
 
 export function mountChat(root: HTMLElement, client: FaceClient, signal: AbortSignal, granted: ReadonlySet<string>): void {
+  document.documentElement.classList.add("spatialThreadsDocument");
+  document.body.setAttribute("data-ds-dark-theme", "");
+  document.body.classList.add("spatialThreads");
+  let navigationGeneration = 0;
   let dirtyList = false;
   let dirtyChat = false;
   let paint: number | undefined;
@@ -46,6 +52,7 @@ export function mountChat(root: HTMLElement, client: FaceClient, signal: AbortSi
   const composer = createComposer({ signal, conversation, granted });
 
   const choose = (summary: Summary) => {
+    navigationGeneration++;
     setDrawer(false);
     list.seen(summary.sessionId);
     composer.setMode(summary.mode);
@@ -54,6 +61,7 @@ export function mountChat(root: HTMLElement, client: FaceClient, signal: AbortSi
     render();
   };
   const start = () => {
+    navigationGeneration++;
     setDrawer(false);
     conversation.draft();
     composer.setMode("chat");
@@ -168,6 +176,23 @@ export function mountChat(root: HTMLElement, client: FaceClient, signal: AbortSi
     },
   });
 
+  receiveNavigation(signal, message => {
+    const generation = ++navigationGeneration;
+    if (message.action === "new-thread") { start(); return; }
+    const known = list.state.items.find(item => item.sessionId === message.sessionId);
+    if (known) { choose(known); return; }
+    void client.call("body", "session.open", { session_id: message.sessionId, after_sequence: 0, limit: PAGE }, { signal }).then(value => {
+      if (signal.aborted || generation !== navigationGeneration) return;
+      const opened = readOpened(value);
+      if (opened.summary.sessionId !== message.sessionId) throw new Error("app:invalid-reply");
+      list.upsert(opened.summary);
+      choose(opened.summary);
+    }).catch(error => {
+      if (signal.aborted || generation !== navigationGeneration) return;
+      conversation.notify({ key: "navigation", tone: "warn", text: serviceMessage(error), code: refusalCode(error), action: null });
+    });
+  }, code => conversation.notify({ key: "navigation", tone: "warn", text: serviceMessage(code), code, action: null }));
+  signal.addEventListener("abort", () => { navigationGeneration++; chat.remove(); }, { once: true });
   schedule(true, true);
   reload();
 }

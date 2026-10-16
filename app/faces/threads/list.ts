@@ -27,6 +27,7 @@ export interface ListOptions {
 export interface List {
   readonly state: ListState;
   load(): Promise<void>;
+  setArchived(archived: boolean): void;
   upsert(summary: Summary): void;
   event(event: Event, open: string | null): void;
   seen(sessionId: string): void;
@@ -58,6 +59,7 @@ function merge(found: ReadonlyMap<string, Summary>, meanwhile: readonly Summary[
 }
 
 export function createList(client: FaceClient, signal: AbortSignal, options: ListOptions): List {
+  let archived = options.archived;
   let byId = new Map<string, Summary>();
   const fresh = new Set<string>();
   const state: Writable<ListState> = { items: [], phase: "loading", failure: null, more: false, stalled: false, fresh };
@@ -67,7 +69,7 @@ export function createList(client: FaceClient, signal: AbortSignal, options: Lis
   let refresh: number | undefined;
   signal.addEventListener("abort", () => window.clearTimeout(refresh), { once: true });
 
-  const wanted = (summary: Summary) => !options.archived || summary.archived;
+  const wanted = (summary: Summary) => summary.archived === archived;
   const publish = () => {
     state.items = [...byId.values()].sort(order);
     if (!signal.aborted) options.changed();
@@ -92,7 +94,7 @@ export function createList(client: FaceClient, signal: AbortSignal, options: Lis
     try {
       for (let pages = 0; pages < MAX_PAGES; pages++) {
         const page = readListed(await client.call("body", "session.list", {
-          thread_id: null, include_archived: options.archived, before, limit: PAGE,
+          thread_id: null, include_archived: archived, before, limit: PAGE,
         }, { signal }));
         if (token !== generation || signal.aborted) return;
         for (const item of page.items) if (wanted(item)) found.set(item.sessionId, item);
@@ -128,13 +130,26 @@ export function createList(client: FaceClient, signal: AbortSignal, options: Lis
   return {
     state,
     load,
+    setArchived(value) {
+      if (archived === value || signal.aborted) return;
+      archived = value;
+      generation++;
+      byId.clear();
+      during = [];
+      fresh.clear();
+      state.items = [];
+      state.failure = null;
+      state.phase = "loading";
+      publish();
+      void load();
+    },
     upsert,
     event(event, open) {
       if (event.kind === "created") { upsert(event.summary); return; }
       if (event.kind !== "entry") return;
       const known = byId.get(event.entry.sessionId);
       // A chat this list has not read is new to it; the archived list never wants one that is not archived.
-      if (!known) { if (!options.archived) refreshSoon(); return; }
+      if (!known) { if (!archived) refreshSoon(); return; }
       if (event.entry.sequence <= known.sequence) return;
       put({ ...known, sequence: event.entry.sequence, updatedAtMs: Math.max(known.updatedAtMs, event.entry.atMs) });
       if (event.entry.sessionId !== open) fresh.add(event.entry.sessionId);

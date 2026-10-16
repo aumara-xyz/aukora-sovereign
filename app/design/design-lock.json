@@ -3,7 +3,7 @@
   "assets": [
     {
       "path": "brand/aumara-mark-96.png",
-      "sha256": "f7b5a4fac8c8a6309b159ee7f6d65995157fba077625f935824bc9130dee1cdb"
+      "sha256": "fec7d0bd7f007928fcb1b6866051b2c8344ec76d3211962650e3acd5f8b7e551"
     },
     {
       "path": "captures.json",
@@ -20,6 +20,18 @@
     {
       "path": "icons.json",
       "sha256": "8d691718775644e54ff18d04bfdb24ea290b02ac5ee7c575e9a187d75203fc32"
+    },
+    {
+      "path": "spatial/SOURCES.json",
+      "sha256": "b25f503ba0e113efb18a33ba94828ad2237b904822e94befef3f2d5ea6869e39"
+    },
+    {
+      "path": "spatial/glyphs.json",
+      "sha256": "9d867ac1058e70a0dc79cb5af4613fdae979f0887614f2657fbda308db94fcf3"
+    },
+    {
+      "path": "spatial/menu.json",
+      "sha256": "8b0834c64bd8abaf98cc7efa4488641b6d234fa54b595e980efaac790bd56ec6"
     },
     {
       "path": "tokens.json",

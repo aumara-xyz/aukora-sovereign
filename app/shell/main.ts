@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Organism, hostFace } from '../core/index.js';
 import type { Dispose, PluginHandle, PluginStatus, RpcService } from '../core/index.js';
-import { COPY, brandMarkUrl, fill, icon, ICONS } from '../design/index.js';
+import { COPY, fill } from '../design/index.js';
 import { FACE_CATALOG } from '../faces/catalog.js';
 import type { FaceManifest } from '../faces/catalog.js';
 import { TriPane } from './layout.js';
-import type { PaneState } from './layout.js';
-import { APP_OPEN, LANES, PANE_WEIGHTS } from './weights.js';
-import type { LaneId } from './weights.js';
+import menuData from '../design/spatial/menu.json' with { type: 'json' };
+import { APP_OPEN } from './weights.js';
 import { OwnerFrame } from './owner-frame.js';
 import type { OwnerNotice, OwnerRoute } from './owner-frame.js';
+import { createMenu, element, menuCard } from './menu.js';
+import { ownerNavigation, threadNavigation } from './navigation.js';
+import type { ThreadNavigation } from './navigation.js';
 
 export interface ShellOptions {
   root: HTMLElement;
@@ -36,231 +38,226 @@ interface FaceSlot {
   manifest: FaceManifest;
   element: HTMLElement;
   status: HTMLElement;
-  button: HTMLButtonElement;
+  button: HTMLButtonElement | null;
+  frame: HTMLIFrameElement | null;
   handle: PluginHandle | null;
 }
 
-const PHONE_ICONS: Readonly<Record<LaneId, string>> = { threads: 'threads', surface: 'surface', menu: 'apps' };
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  if (text) element.textContent = text;
-  return element;
-}
-
-function button(text: string, click: () => void, className = ''): HTMLButtonElement {
-  const element = el('button', className, text);
-  element.type = 'button';
-  element.addEventListener('click', click);
-  return element;
-}
-
-/** A button that carries a line icon beside its text. */
-function iconButton(iconName: string, text: string, click: () => void, className: string): HTMLButtonElement {
-  const element = el('button', className);
-  element.type = 'button';
-  element.append(icon(iconName), el('span', 'entry-title', text));
-  element.addEventListener('click', click);
-  return element;
-}
-
-function setActive(element: HTMLElement, active: boolean): void {
-  element.dataset.active = String(active);
-  element.inert = !active;
-  element.setAttribute('aria-hidden', String(!active));
+function active(element: HTMLElement, shown: boolean): void {
+  element.dataset.active = String(shown);
+  element.inert = !shown;
+  element.setAttribute('aria-hidden', String(!shown));
 }
 
 export function mountShell(options: ShellOptions): ShellController {
   if (window.top !== window.self) throw new Error('shell:framed-shell');
-  if (options.root.childNodes.length !== 0) throw new Error('shell:occupied-root');
+  if (options.root.childNodes.length) throw new Error('shell:occupied-root');
+  const life = new AbortController();
   const organism = new Organism();
-  const root = el('div', 'shell');
-  const bar = el('header', 'shell-bar');
-  const brand = el('span', 'shell-brand');
-  const mark = el('img', 'brand-mark');
-  mark.alt = '';
-  mark.width = ICONS.brand.size;
-  mark.height = ICONS.brand.size;
-  mark.src = brandMarkUrl();
-  brand.append(mark, el('strong', 'brand-name', COPY.brand as string));
-  bar.append(brand);
-  root.append(bar);
+  const root = element('div', 'shell');
   options.root.append(root);
-  const layout = new TriPane(root);
-  const owner = options.ownerOrigin ? new OwnerFrame(options.ownerOrigin, options.onOwnerNotice, options.prepareOwner) : null;
+  let disposed = false;
+  let selected = '';
+  let workspace = 'sidebar';
+  let threadReady = false;
+  let pendingThread: ThreadNavigation | null = null;
+  const slots = new Map<string, FaceSlot>();
+  const layout = new TriPane(root, () => openFace('sidebar'));
+  const owner = options.ownerOrigin
+    ? new OwnerFrame(options.ownerOrigin, options.onOwnerNotice, options.prepareOwner) : null;
   const openOwner = async (route: OwnerRoute, claim?: string): Promise<void> => {
-    if (!owner || disposed) throw new Error('shell:owner-unavailable');
-    try { await owner.open(route, claim); }
+    try {
+      if (!owner || disposed) throw new Error('shell:owner-unavailable');
+      await owner.open(route, claim);
+    }
     catch (error) {
       options.onOwnerNotice?.({ kind: 'refusal', code: error instanceof Error ? error.message : 'shell:owner-unavailable' });
       throw error;
     }
   };
-  const faceSlots = new Map<string, FaceSlot>();
-  const phoneButtons = new Map<LaneId, HTMLButtonElement>();
-  let selected = '';
-  let selectedWorkspace = 'threads';
-  let disposed = false;
 
-  const phone = el('nav', 'phone-tabs');
-  phone.setAttribute('aria-label', COPY.phoneTabs as string);
-  for (const lane of LANES) {
-    const item = iconButton(PHONE_ICONS[lane], COPY.laneTabs[lane], () => layout.showPhoneLane(lane), 'phone-tab');
-    phoneButtons.set(lane, item);
-    phone.append(item);
-  }
-  const layoutLabel = el('label', 'layout-label', COPY.lanes as string);
-  layoutLabel.htmlFor = 'pane-composition';
-  const picker = el('select', 'layout-picker');
-  picker.id = 'pane-composition';
-  picker.setAttribute('aria-label', COPY.lanesPicker as string);
-  for (const weights of PANE_WEIGHTS) {
-    const option = el('option', '', weights.join(' · '));
-    option.value = weights.join('-');
-    picker.append(option);
-  }
-  picker.addEventListener('change', () => {
-    const weights = PANE_WEIGHTS.find(value => value.join('-') === picker.value);
-    if (weights) layout.setWeights(weights);
-  });
-  const syncControls = (state: PaneState): void => {
-    root.dataset.phone = String(state.phone);
-    picker.value = state.weights.join('-');
-    for (const [lane, item] of phoneButtons) item.setAttribute('aria-pressed', String(lane === state.phoneLane));
-  };
-  syncControls(layout.state);
-  const unobserveLayout = layout.observe(syncControls);
-  bar.append(layoutLabel, picker, phone);
+  const threadStack = element('div', 'threadStack');
+  const listLayer = element('div', 'threadLayer');
+  listLayer.dataset.threadLayer = 'list';
+  const sidebarSlot = element('div');
+  sidebarSlot.dataset.slot = 'sidebar';
+  listLayer.append(sidebarSlot);
+  const conversationLayer = element('div', 'threadLayer');
+  conversationLayer.dataset.threadLayer = 'conversation';
+  const conversationBody = element('div', 'threadConversationBody');
+  const conversationSlot = element('div');
+  conversationSlot.dataset.slot = 'main';
+  conversationBody.append(conversationSlot);
+  conversationLayer.append(conversationBody);
+  threadStack.append(listLayer, conversationLayer);
+  layout.lanes.threads.append(threadStack);
 
-  const workspaceHeading = el('h2', 'lane-heading', COPY.threadsHeading as string);
-  const workspaceTabs = el('nav', 'workspace-tabs');
-  workspaceTabs.setAttribute('aria-label', COPY.threadsHeading as string);
-  const threadStack = el('div', 'face-stack');
-  layout.lanes.threads.append(workspaceHeading, workspaceTabs, threadStack);
-  const surfacePrompt = el('p', 'surface-status', COPY.emptySurface as string);
-  const surfaceStack = el('div', 'face-stack');
-  layout.lanes.surface.append(surfacePrompt, surfaceStack);
-  const menuGroups = new Map<string, HTMLElement>();
-  for (const [section, title] of [['aukora_apps', COPY.appsHeading], ['system', COPY.systemHeading]] as const) {
-    const group = el('nav', 'menu-group');
-    group.setAttribute('aria-label', title as string);
-    group.append(el('h2', '', title as string));
-    menuGroups.set(section, group);
-    layout.lanes.menu.append(group);
-  }
+  const surfaceStack = element('div', 'surfaceStack');
+  const surfaceEmpty = element('div', 'surfaceEmpty');
+  surfaceEmpty.dataset.surfaceEmpty = '';
+  surfaceEmpty.append(element('span', '', menuData.empty));
+  const surfaceLayer = element('div', 'surfaceLayer');
+  surfaceLayer.dataset.surfaceLayer = 'extension';
+  surfaceStack.append(surfaceEmpty, surfaceLayer);
+  layout.lanes.surface.append(surfaceStack);
+  const menu = createMenu(life.signal);
+  layout.lanes.menu.append(menu.element);
 
-  const openFace = (id: string): void => {
-    const chosen = faceSlots.get(id);
-    if (!chosen || disposed) throw new Error('shell:unknown-face');
-    const workspace = chosen.manifest.menu.section === 'workspace';
-    if (workspace) selectedWorkspace = id;
+  function openFace(id: string): void {
+    const slot = slots.get(id);
+    if (!slot || disposed) throw new Error('shell:unknown-face');
+    const isWorkspace = slot.manifest.menu.section === 'workspace';
+    if (isWorkspace) workspace = id;
     else selected = id;
-    for (const [key, slot] of faceSlots) {
-      const active = slot.manifest.menu.section === 'workspace' ? key === selectedWorkspace : key === selected;
-      setActive(slot.element, active);
-      slot.button.setAttribute('aria-pressed', String(active));
+    const conversation = workspace === 'threads';
+    threadStack.dataset.threadView = conversation ? 'conversation' : 'list';
+    listLayer.hidden = conversation;
+    listLayer.inert = conversation;
+    conversationLayer.hidden = !conversation;
+    conversationLayer.inert = !conversation;
+    layout.conversation(conversation);
+    surfaceStack.dataset.surfaceActive = selected;
+    surfaceEmpty.hidden = selected !== '';
+    for (const [key, value] of slots) {
+      const shown = value.manifest.menu.section === 'workspace' ? key === workspace : key === selected;
+      active(value.element, shown);
+      value.button?.classList.toggle('menuItemActive', shown);
+      value.button?.setAttribute('aria-pressed', String(shown));
+      if (shown) value.button?.setAttribute('aria-current', 'page');
+      else value.button?.removeAttribute('aria-current');
     }
-    surfacePrompt.hidden = selected !== '';
-    if (workspace) layout.reveal('threads');
+    if (isWorkspace) layout.reveal('threads');
     else {
-      // Reveal a hidden desktop surface without replacing a visible lane's chosen width.
       if (!layout.phone && layout.weights[1] === 0) layout.setWeights(APP_OPEN);
       layout.showPhoneLane('surface');
     }
+  }
+
+  const deliverThread = () => {
+    const target = slots.get('threads')?.frame?.contentWindow;
+    if (!threadReady || !pendingThread || !target) return;
+    // This frame has an opaque origin; the destination is the exact installed frame window.
+    target.postMessage(pendingThread, '*');
+    pendingThread = null;
   };
 
-  const refresh = (state: PluginStatus) => {
-    const slot = faceSlots.get(state.id);
+  const refresh = (status: PluginStatus) => {
+    const slot = slots.get(status.id);
     if (!slot) return;
-    slot.status.hidden = state.state === 'active';
-    slot.status.textContent = state.state === 'waiting' ? options.servicesPendingText ?? fill(COPY.waitingFor as string, { names: state.missing.join(', ') })
-      : state.state === 'failed' ? 'Unavailable' : state.state;
+    slot.status.hidden = status.state === 'active';
+    slot.status.textContent = status.state === 'waiting'
+      ? options.servicesPendingText ?? fill(COPY.waitingFor as string, { names: status.missing.join(', ') })
+      : status.state === 'failed' ? 'Unavailable' : status.state;
   };
   const unobserve = organism.observe(refresh);
   for (const [name, service] of options.services ?? []) organism.provide(name, service);
   const appRoot = new URL('../', import.meta.url);
   for (const manifest of [...FACE_CATALOG].sort((a, b) => a.menu.order - b.menu.order)) {
-    const element = el('section', 'face-slot');
-    element.setAttribute('aria-label', manifest.title);
-    setActive(element, false);
-    const status = el('p', 'surface-status');
+    const container = element('section', 'face-slot');
+    container.setAttribute('aria-label', manifest.title);
+    active(container, false);
+    const status = element('p', 'surface-status');
     status.setAttribute('role', 'status');
-    element.append(status);
-    const item = iconButton(manifest.id, manifest.title, () => openFace(manifest.id), 'menu-entry');
-    if (manifest.menu.section === 'workspace') {
-      workspaceTabs.append(item);
-      threadStack.append(element);
-    } else {
-      menuGroups.get(manifest.menu.section)!.append(item);
-      surfaceStack.append(element);
-    }
-    const slot: FaceSlot = { manifest, element, status, button: item, handle: null };
-    faceSlots.set(manifest.id, slot);
+    container.append(status);
+    const card = manifest.menu.section === 'workspace' ? null
+      : menu.add(manifest, () => openFace(manifest.id));
+    if (manifest.id === 'sidebar') sidebarSlot.append(container);
+    else if (manifest.id === 'threads') conversationSlot.append(container);
+    else if (manifest.menu.section === 'workspace') throw new Error('shell:unknown-face');
+    else surfaceLayer.append(container);
+    const slot: FaceSlot = { manifest, element: container, status, button: card, frame: null, handle: null };
+    slots.set(manifest.id, slot);
     const entry = new URL(manifest.surface, appRoot);
     if (manifest.surface !== `./faces/${manifest.id}/index.html` || entry.origin !== location.origin
-      || entry.pathname !== appRoot.pathname + `faces/${manifest.id}/index.html`
-      || entry.search || entry.hash) throw new Error('shell:face-entry');
+      || entry.pathname !== `${appRoot.pathname}faces/${manifest.id}/index.html` || entry.search || entry.hash) {
+      throw new Error('shell:face-entry');
+    }
     slot.handle = organism.install({
-      id: manifest.id,
-      requires: manifest.requires,
+      id: manifest.id, requires: manifest.requires,
       menu: { title: manifest.title, ...manifest.menu },
       surface: { kind: 'frame', entry: `./faces/${manifest.id}/index.html` },
       setup(context) {
-        const frame = el('iframe', 'face-frame');
+        const frame = element('iframe', 'face-frame');
         frame.title = manifest.title;
         frame.setAttribute('sandbox', 'allow-scripts');
         frame.referrerPolicy = 'origin';
+        slot.frame = frame;
         const services = new Map<string, RpcService>();
         for (const name of manifest.requires) services.set(name, context.service<RpcService>(name));
         context.effect(hostFace({ frame, pluginId: manifest.id, capabilities: manifest.capabilities, services, signal: context.signal }));
+        const rejectNavigation = (error: unknown) => {
+          const message = error instanceof Error ? error.message : '';
+          const code = /^[a-z][a-z0-9_-]*:[a-z0-9-]+$/.test(message) ? message : 'app:invalid-message';
+          status.textContent = `Navigation refused · ${code}`;
+          status.hidden = false;
+        };
+        const navigate = (event: MessageEvent) => {
+          if (disposed || context.signal.aborted || event.source !== frame.contentWindow || event.origin !== 'null') return;
+          try {
+            if (event.ports.length) throw new Error('app:invalid-message');
+            if (manifest.id === 'aumlok') {
+              const route = ownerNavigation(event.data);
+              if (route) void openOwner(route === '/phrase' ? options.phraseRoute?.() ?? route : route).catch(rejectNavigation);
+            } else if (manifest.id === 'sidebar' || manifest.id === 'threads') {
+              const request = threadNavigation(event.data);
+              if (!request) return;
+              if (request.action === 'ready') {
+                if (manifest.id !== 'threads') throw new Error('app:capability-denied');
+                threadReady = true;
+                deliverThread();
+              } else if (manifest.id === 'sidebar') {
+                pendingThread = request;
+                openFace('threads');
+                deliverThread();
+              } else throw new Error('app:capability-denied');
+            }
+          } catch (error) {
+            for (const port of event.ports) port.close();
+            rejectNavigation(error);
+          }
+        };
+        context.listen(window, 'message', navigate as EventListener);
         frame.src = entry.href;
-        element.append(frame);
-        context.effect(() => frame.remove());
+        container.append(frame);
+        context.effect(() => {
+          if (slot.frame === frame) slot.frame = null;
+          if (manifest.id === 'threads') { threadReady = false; pendingThread = null; }
+          frame.remove();
+        });
       },
     });
-    const state = organism.status(manifest.id);
-    if (state) refresh(state);
+    const statusNow = organism.status(manifest.id);
+    if (statusNow) refresh(statusNow);
   }
-  for (const [label, route] of [[COPY.ownerPasskey, '/passkey'], [COPY.ownerPhrase, '/phrase']] as const) {
-    const control = button(label as string, () => {
-      if (!owner) throw new Error('shell:owner-unavailable');
-      void openOwner(route === '/phrase' ? options.phraseRoute?.() ?? route : route).catch(() => {});
-    }, 'owner-entry');
-    control.disabled = !owner;
-    if (!owner) control.title = COPY.ownerUnavailable as string;
-    bar.append(control);
-  }
-  const approvalsEntry = iconButton('owner', 'Approvals (0)', () => options.openApprovals?.(), 'menu-entry approvals-entry');
-  approvalsEntry.disabled = true;
-  menuGroups.get('system')!.append(approvalsEntry);
-  const setApprovalsPending = (count: number): void => {
+
+  const approvals = menuCard('Approvals', 'Waiting for approval status', () => options.openApprovals?.(), life.signal);
+  approvals.button.classList.add('approvals-entry');
+  approvals.button.disabled = true;
+  menu.system.append(approvals.button);
+  const setApprovalsPending = (count: number) => {
     if (!Number.isSafeInteger(count) || count < 0 || count > 10_000) throw new Error('shell:approval-response-invalid');
-    approvalsEntry.querySelector('.entry-title')!.textContent = `Approvals (${count})`;
-    approvalsEntry.disabled = !owner || !options.openApprovals || count === 0;
-    approvalsEntry.dataset.pending = String(count > 0);
+    approvals.subtitle.textContent = count === 1 ? '1 waiting for you' : `${count} waiting for you`;
+    approvals.button.disabled = !owner || !options.openApprovals || count === 0;
+    approvals.button.dataset.pending = String(count > 0);
   };
-  openFace('threads');
+  openFace('sidebar');
   return {
-    organism, layout, openFace,
-    openOwner,
+    organism, layout, openFace, openOwner,
     get ownerBusy() { return owner?.busy ?? false; },
     setApprovalsPending,
     provideService(name, service) { return organism.provide(name, service); },
     async removeFace(id) {
-      const slot = faceSlots.get(id);
-      if (!slot) throw new Error('shell:unknown-face');
+      if (!slots.has(id)) throw new Error('shell:unknown-face');
       throw new Error('shell:locked-face');
     },
     async dispose() {
       if (disposed) return;
       disposed = true;
+      life.abort();
       owner?.dispose();
-      unobserveLayout();
       await unobserve();
-      await organism.dispose();
-      layout.dispose();
-      root.remove();
+      try { await organism.dispose(); }
+      finally { layout.dispose(); slots.clear(); root.remove(); }
     },
   };
 }

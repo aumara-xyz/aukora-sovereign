@@ -1,0 +1,60 @@
+{
+  "schema": "aukora-spatial-menu-v1",
+  "icons": {
+    "apps": [
+      {
+        "tag": "path",
+        "attributes": {
+          "d": "M8 2.25 13.5 13H2.5L8 2.25Z"
+        }
+      }
+    ],
+    "system": [
+      {
+        "tag": "rect",
+        "attributes": {
+          "x": "3",
+          "y": "3",
+          "width": "10",
+          "height": "10",
+          "rx": "1.5"
+        }
+      }
+    ],
+    "yours": [
+      {
+        "tag": "circle",
+        "attributes": {
+          "cx": "8",
+          "cy": "8",
+          "r": "5.25"
+        }
+      }
+    ]
+  },
+  "tabs": {
+    "apps": "APPS",
+    "system": "SYSTEM",
+    "yours": "YOURS"
+  },
+  "empty": "Apps open here",
+  "yoursEmpty": "Apps you create will appear here",
+  "subtitles": {
+    "lingwa": "learn her language — a game she grew",
+    "live": "talk to her out loud — local voice; replies come from your configured model provider",
+    "zetaharp": "play the Riemann–Siegel sum",
+    "humangraph": "",
+    "media": "",
+    "memory": "",
+    "messages": "preview — this node’s contacts; sending works, receiving is not proven yet",
+    "documents": "Read-only — open full-page rendered",
+    "aumlok": "seven-word binding witness",
+    "identity": "your public contact card",
+    "coherence": "record snapshot",
+    "general": "",
+    "models": "",
+    "plugins": "",
+    "presets": "",
+    "archived": ""
+  }
+}

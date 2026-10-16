@@ -1,161 +1,41 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-/* Every colour, size and duration is a custom property of tokens.css, which the build writes from app/design/tokens.json. */
+@import url('../design/spatial/theme.css');
+@import url('../design/spatial/spatial-tokens.css');
+@import url('../design/spatial/AppFrame.module.css');
+@import url('../design/spatial/Primitives.module.css');
+@import url('../design/spatial/Aumlok.module.css');
+
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body, #aukora-shell { margin: 0; width: 100%; height: 100%; }
-body { background: var(--canvas); color: var(--text); font-family: var(--font-interface); font-size: var(--type-body); }
-button, select { font: inherit; color: inherit; }
-.shell-bar button, .shell-bar select, .menu-entry, .owner-toolbar button {
-  border: 1px solid var(--border);
-  border-radius: var(--control-radius);
-  background: var(--control);
-  padding: 8px 12px;
-}
-.shell-bar button, .menu-entry, .owner-toolbar button { cursor: pointer; }
-.shell-bar button:hover, .menu-entry:hover, .owner-toolbar button:hover,
-.shell-bar button[aria-pressed='true'], .menu-entry[aria-pressed='true'] { background: var(--control-active); }
-button:focus-visible, select:focus-visible, iframe:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
-button:disabled { cursor: default; color: var(--muted); }
-
-/* The canvas: the night ramp with the three glows, as in the running app. */
-.shell {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  background:
-    radial-gradient(1200px 800px at 18% -10%, var(--glow-mint), transparent 60%),
-    radial-gradient(1100px 760px at 82% 110%, var(--glow-violet), transparent 60%),
-    radial-gradient(900px 700px at 50% 50%, var(--glow-blue), transparent 65%),
-    linear-gradient(160deg, var(--canvas-top) 0%, var(--canvas) 55%, var(--canvas-deep) 100%);
-}
-.shell-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: var(--frame-inset) var(--frame-inset) 0; }
-.shell-brand { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; }
-.brand-mark { width: 22px; height: 22px; }
-.brand-name { font-size: var(--type-brand); letter-spacing: var(--tracking-brand); }
-.layout-label { color: var(--muted); font-size: var(--type-small); }
-.shell-connection {
-  position: fixed;
-  right: var(--frame-inset);
-  bottom: var(--frame-inset);
-  z-index: 10;
-  max-width: calc(100% - 2 * var(--frame-inset));
-  margin: 0;
-  padding: 8px 12px;
-  border: 1px solid var(--violet);
-  border-radius: var(--control-radius);
-  background: var(--layer1);
-  overflow-wrap: anywhere;
-  font-size: var(--type-small);
-}
-.shell-connection::before { content: '◇ '; color: var(--violet); }
-.phone-tabs { display: none; }
-.phone-tab, .menu-entry { display: flex; align-items: center; gap: 10px; }
-.icon { width: 18px; height: 18px; flex: none; }
-
-/* Three tracks at all times. A lane of weight 0 is a track of zero width and stays in the page, inert and invisible. */
-.tri-pane {
-  --half-gap: calc(var(--lane-gap) / 2);
-  display: grid;
-  flex: 1;
-  min-height: 0;
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: calc(var(--frame-inset) - var(--half-gap));
-}
-.tri-pane[data-layout='0-0-3'] { grid-template-columns: minmax(0, 0fr) minmax(0, 0fr) minmax(0, 3fr); }
-.tri-pane[data-layout='0-1-2'] { grid-template-columns: minmax(0, 0fr) minmax(0, 1fr) minmax(0, 2fr); }
-.tri-pane[data-layout='0-2-1'] { grid-template-columns: minmax(0, 0fr) minmax(0, 2fr) minmax(0, 1fr); }
-.tri-pane[data-layout='0-3-0'] { grid-template-columns: minmax(0, 0fr) minmax(0, 3fr) minmax(0, 0fr); }
-.tri-pane[data-layout='1-0-2'] { grid-template-columns: minmax(0, 1fr) minmax(0, 0fr) minmax(0, 2fr); }
-.tri-pane[data-layout='1-2-0'] { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 0fr); }
-.tri-pane[data-layout='2-0-1'] { grid-template-columns: minmax(0, 2fr) minmax(0, 0fr) minmax(0, 1fr); }
-.tri-pane[data-layout='2-1-0'] { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 0fr); }
-.tri-pane[data-layout='3-0-0'] { grid-template-columns: minmax(0, 3fr) minmax(0, 0fr) minmax(0, 0fr); }
-.lane { display: flex; min-width: 0; min-height: 0; overflow: hidden; padding: var(--half-gap); }
-.lane[data-active='true'] { animation: lane-in var(--motion-fast) var(--motion-ease); }
-.lane[data-active='false'] { padding: 0; visibility: hidden; pointer-events: none; }
-.lane-panel {
-  position: relative;
-  isolation: isolate;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--lane-radius);
-  background: var(--lane);
-}
-.lane[data-lane='surface'] .lane-panel {
-  background:
-    radial-gradient(circle at 8% 2%, color-mix(in srgb, var(--mint) 9%, transparent), transparent 30%),
-    radial-gradient(circle at 96% 0%, color-mix(in srgb, var(--violet) 10%, transparent), transparent 34%),
-    var(--layer1);
-}
-.lane-body { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; margin-inline: auto; overflow: auto; }
-
-/* A lane that has the whole frame fills it edge to edge and keeps its content at two thirds, centred. No app is exempt. */
-.tri-pane[data-measure='focused'] { padding: 0; }
-.tri-pane[data-measure='focused'] .lane { padding: 0; }
-.tri-pane[data-measure='focused'] .lane-body { width: var(--focused-measure); }
-
-.corner {
-  position: absolute;
-  top: 0;
-  z-index: 9;
-  width: var(--corner-size);
-  height: var(--corner-size);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  opacity: 0.6;
-}
-.corner::before { content: ''; position: absolute; inset: 0; pointer-events: none; animation: corner-pulse 3.8s ease-in-out infinite; }
-.corner:hover, .corner:focus-visible { opacity: 1; }
-.corner:focus-visible { outline-offset: -4px; }
-.corner:focus-visible::before { animation: none; opacity: 1; }
-.corner[data-corner='left'], .corner[data-corner='centre-right'] { right: 0; border-radius: 0 var(--lane-radius) 0 30px; }
-.corner[data-corner='centre-left'], .corner[data-corner='right'] { left: 0; border-radius: var(--lane-radius) 0 30px; }
-.corner[data-corner='left']::before { background: radial-gradient(circle at 100% 0%, var(--corner-left), transparent 52%); }
-.corner[data-corner='centre-left']::before { background: radial-gradient(circle at 0% 0%, var(--corner-centre), transparent 52%); }
-.corner[data-corner='centre-right']::before { background: radial-gradient(circle at 100% 0%, var(--corner-centre), transparent 52%); }
-.corner[data-corner='right']::before { background: radial-gradient(circle at 0% 0%, var(--corner-right), transparent 52%); }
-
-.lane-heading { margin: 0; padding: 18px 16px 8px; color: var(--mint); font-size: var(--type-label); font-weight: 500; letter-spacing: var(--tracking-menu); }
-.workspace-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
-.workspace-tabs .menu-entry { width: auto; }
-.menu-group { padding: 6px 12px 12px; }
-.menu-group h2 { margin: 16px 0 8px; color: var(--muted); font-size: var(--type-label); letter-spacing: var(--tracking-label); }
-.menu-entry { width: 100%; margin: 3px 0; border-color: transparent; text-align: left; }
-.approvals-entry[data-pending='true'] { color: var(--mint); }
-.entry-title { min-width: 0; overflow-wrap: anywhere; }
-
-/* Every face is mounted once. The chosen one is visible; the rest stay in place, inert and invisible. */
-.face-stack { position: relative; flex: 1; min-height: 0; }
-.face-slot { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
+html, body, #aukora-shell, .shell { width: 100%; height: 100%; margin: 0; }
+body { color: var(--aukora-text); background: var(--dsw-specific-spatial-canvas); font: 14px var(--dsw-font-family); }
+button, select { font: inherit; }
+button:disabled { cursor: default; }
+.face-slot { position: absolute; inset: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .face-slot[data-active='false'] { visibility: hidden; pointer-events: none; }
 .face-frame { display: block; flex: 1; width: 100%; min-height: 0; border: 0; background: transparent; }
-.surface-status { margin: 0; padding: 20px; color: var(--muted); white-space: pre-wrap; }
+.surface-status { margin: 0; padding: 24px; color: var(--dsw-alias-label-tertiary); }
+.surface-status[hidden] { display: none; }
+.threadLayer > [data-slot], .threadConversationBody > [data-slot] { position: relative; }
+.menuEntries { width: 100%; }
+.approvals-entry[data-pending='true'] { color: var(--dsw-static-spatial-mint); }
 
-.owner-dialog { width: min(720px, 94vw); height: min(820px, 92dvh); padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--canvas); color: var(--text); }
-.owner-dialog::backdrop { background: var(--backdrop); }
-.owner-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px; }
-.owner-frame { width: 100%; height: calc(100% - 65px); border: 0; background: var(--canvas); }
-.startup-refusal { margin: 30px; color: var(--failed); white-space: pre-wrap; }
+.owner-dialog { width: min(720px, 94vw); height: min(820px, 92dvh); padding: 0; border: 1px solid var(--aukora-border); border-radius: 22px; background: var(--aukora-background); color: var(--aukora-text); }
+.owner-dialog::backdrop { background: rgb(0 0 0 / 70%); }
+.owner-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; }
+.owner-toolbar button { border: 1px solid var(--aukora-border); border-radius: 12px; padding: 8px 12px; color: inherit; background: var(--aukora-surface); cursor: pointer; }
+.owner-toolbar button:focus-visible { outline: 2px solid var(--dsw-static-spatial-mint); outline-offset: 2px; }
+.owner-frame { display: block; width: 100%; height: calc(100% - 65px); border: 0; background: var(--aukora-background); }
+.shell-connection { position: fixed; z-index: 20; right: 16px; bottom: 16px; max-width: calc(100% - 32px); margin: 0; border: 1px solid var(--aukora-border); border-radius: 12px; padding: 10px 14px; color: var(--aukora-text); background: var(--aukora-surface); font-size: 12px; }
+.startup-refusal { margin: 24px; color: var(--aukora-text); }
 
-/* On a phone one lane shows at a time, full width. The weights wait unchanged for a wider screen. */
-.shell[data-phone='true'] .shell-bar { padding: var(--phone-inset); }
-.shell[data-phone='true'] .shell-brand { flex: 1 0 100%; }
-.shell[data-phone='true'] .layout-label, .shell[data-phone='true'] .layout-picker { display: none; }
-.shell[data-phone='true'] .phone-tabs { display: flex; width: 100%; gap: 6px; }
-.shell[data-phone='true'] .phone-tab { flex: 1; justify-content: center; gap: 6px; padding: 8px 6px; font-size: var(--type-small); }
-.tri-pane[data-phone='true'] { padding: var(--phone-inset); }
-.tri-pane[data-phone='true'] .lane { padding: 0; }
-.tri-pane[data-phone='true'] .corner { display: none; }
-
-@keyframes lane-in { from { opacity: 0; } }
-@keyframes corner-pulse { 0%, 100% { opacity: 0.42; } 50% { opacity: 0.78; } }
+/* The phone changes the shown lane, retaining the desktop weights and each mounted frame. */
+.frame[data-phone='true'] { padding: 0; gap: 0; }
+.frame[data-phone='true'] .laneShell { width: 100%; }
+.frame[data-phone='true'] .laneCenter { width: 100%; transform: none; }
+.frame[data-phone='true'] .threadStack,
+.frame[data-phone='true'] .surfaceStack,
+.frame[data-phone='true'] .rightStack { width: 100%; }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }

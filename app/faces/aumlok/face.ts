@@ -1,37 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Reads the public binding status on load, on request and every half minute while the page is visible. A failed or
-// malformed read replaces the picture with an explicit unavailable state; the last good status is never kept on screen
-// behind a failure, so a stale "bound" cannot outlive the service that said it.
-import { refusalText } from "./link.js";
-import type { FaceHost } from "./link.js";
-import { parseStatusReply } from "./status.js";
-import { createAumlokView } from "./view.js";
+import { refusalText } from './link.js';
+import type { FaceHost } from './link.js';
+import { parseStatusReply } from './status.js';
+import { createAumlokView } from './view.js';
 
 export const REFRESH_MS = 30_000;
 
 export function mountAumlok(host: FaceHost): void {
   const { root, client, signal } = host;
-  const refresh = document.createElement("button");
-  refresh.type = "button";
-  refresh.textContent = "Refresh";
-  root.append(refresh);
-  const view = createAumlokView(root);
-  signal.addEventListener("abort", () => view.dispose(), { once: true });
-  let reading = 0;
-  const load = async () => {
-    const mine = ++reading;
-    refresh.disabled = true;
+  let sequence = 0;
+  let pending = false;
+  const view = createAumlokView(root, { openOwner: host.openOwner, refresh: () => void load() });
+  async function load(): Promise<void> {
+    if (pending || signal.aborted) return;
+    pending = true;
+    const current = ++sequence;
+    view.refreshing(true);
     try {
-      const status = parseStatusReply(await client.call("aumlok", "status", {}, { signal }));
-      if (!signal.aborted && mine === reading) view.show(status);
+      const reply = await client.call('aumlok', 'status', {}, { signal });
+      const status = parseStatusReply(reply);
+      if (!signal.aborted && current === sequence) view.show(status);
     } catch (error) {
-      if (!signal.aborted && mine === reading) view.unavailable(refusalText(error));
+      if (!signal.aborted && current === sequence) view.unavailable(refusalText(error));
     } finally {
-      if (mine === reading) refresh.disabled = signal.aborted;
+      pending = false;
+      if (!signal.aborted && current === sequence) view.refreshing(false);
     }
-  };
-  refresh.addEventListener("click", () => void load(), { signal });
-  const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, REFRESH_MS);
-  signal.addEventListener("abort", () => clearInterval(timer), { once: true });
+  }
+  const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void load(); }, { signal });
+  signal.addEventListener('abort', () => { clearInterval(timer); view.dispose(); }, { once: true });
   void load();
 }

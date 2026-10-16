@@ -1,0 +1,470 @@
+
+.runtimePosture {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-top: 14px;
+}
+
+.runtimePosture > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.runtimePosture strong {
+  color: var(--aumlok-anchor);
+  font-size: 15px;
+  line-height: 21px;
+  font-weight: 610;
+}
+
+.runtimePosture span {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.missingBinding {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.controlProjection {
+  display: grid;
+  gap: 10px;
+  margin: 2px 0 0;
+}
+
+.controlProjection > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(112px, 0.34fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 18%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--aumlok-anchor) 4%, transparent);
+}
+
+.controlProjection dt {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 9px;
+  line-height: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.controlProjection dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.controlProjection code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.flow h3 {
+  margin-bottom: 14px;
+}
+
+/* ---- the in-app ceremony request ------------------------------------------------
+   The one control on this screen that asks for something rather than reading it.
+   It lives in the flow column, under the steps that describe where the ceremony
+   runs, because that is the question it answers: the ceremony is real, and this
+   is the one place the app can ask for it to be opened. */
+.ceremonyAction {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px 17px;
+  box-sizing: border-box;
+  border: 1px solid var(--aukora-border);
+  border-top-color: color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  border-radius: var(--aukora-radius);
+  background: var(--aukora-surface);
+  backdrop-filter: blur(18px);
+}
+
+.ceremonyAction button {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 18px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  border-radius: 999px;
+  color: var(--aumlok-anchor);
+  background: color-mix(in srgb, var(--aumlok-anchor) 12%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 610;
+}
+
+.ceremonyAction button:hover:enabled {
+  background: color-mix(in srgb, var(--aumlok-anchor) 19%, transparent);
+}
+
+/* A ceremony is running. The label says so, and the button refuses a second one
+   rather than starting it on top of the first. */
+.ceremonyAction button:disabled {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-dimmed);
+  background: var(--dsw-alias-bg-layer-2);
+  cursor: not-allowed;
+}
+
+/* Y3's "GIVE ME ANOTHER", AND IT IS DELIBERATELY NOT A BUTTON TO LOOK AT OR TO BE.
+   Peter asks for it before binding, as many times as the person likes, and he asks in the same breath
+   that the screen keeps ONE big button per state — so this is small, unpressed-looking and set apart
+   from the ceremony's own control: no fill, no pill, no 46px hit area, just the words and a faint
+   underline that answers the pointer. The element is a span with `role="button"` (see the surface) so
+   X6's one-`<button>` rule holds while a keyboard can still reach it: the focus ring is the browser's
+   own, and it is the only affordance this control claims. */
+.redraw {
+  align-self: flex-start;
+  padding: 2px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--aumlok-anchor) 34%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.redraw:hover {
+  border-color: color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  color: var(--aumlok-anchor);
+}
+
+.ceremonyRefusal {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+/* The shell's own refusal code, shown verbatim instead of being reworded. */
+.ceremonyRefusal code {
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-error);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.boundReceipt {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--aukora-border);
+  border-top-color: color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  border-radius: var(--aukora-radius);
+  background: var(--aukora-surface);
+  backdrop-filter: blur(18px);
+}
+.phraseStage .boundLine { margin: 0; color: var(--aumlok-anchor); font-size: 24px; line-height: 1.3; font-weight: 610; letter-spacing: -0.025em; }
+.boundExplanation { margin: 12px 0 16px; color: var(--dsw-alias-label-secondary); font-size: 15px; line-height: 1.7; }
+.boundRoot { display: block; overflow-wrap: anywhere; color: var(--aumlok-unite); font-family: var(--dsw-font-family-mono, ui-monospace, monospace); font-size: 14px; line-height: 1.8; }
+.boundReceipt .ceremonyAction { margin-top: 22px; padding: 0; border: 0; background: none; }
+.boundReceipt .ceremonyAction button { min-height: 48px; font-size: 16px; }
+
+/* PETER'S STEP BEFORE ANYTHING IS BOUND: the last moment at which saying the words out loud can save
+   the identity, and the box that arms the button. */
+.confirm {
+  display: flex;
+  padding: 12px 13px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 52%, transparent);
+  border-radius: 12px;
+  flex-direction: column;
+  gap: 10px;
+  background: color-mix(in srgb, var(--aumlok-anchor) 8%, transparent);
+}
+
+.confirmWarning {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 560;
+}
+
+.confirmRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.confirmRow input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--aumlok-anchor);
+}
+
+/* THE EXPLANATION, short and straight, where the ceremony's own controls are. */
+.flow {
+  position: relative;
+  padding: clamp(24px, 3cqi, 36px);
+  border: 1px solid var(--aukora-border);
+  border-top-color: color-mix(in srgb, var(--aumlok-rise) 62%, transparent);
+  border-radius: var(--aukora-radius);
+  background: var(--aukora-surface);
+  backdrop-filter: blur(18px);
+}
+.flowSummary { display: none; width: 100%; padding: 0; border: 0; color: var(--aumlok-unite); background: transparent; cursor: pointer; font: inherit; font-size: 14px; font-weight: 610; text-align: left; }
+.flowBody { display: block; }
+.flow h3 { color: var(--dsw-alias-label-primary); font-size: clamp(28px, 3.8cqi, 37px); line-height: 1.2; letter-spacing: -0.035em; font-weight: 610; margin-bottom: 26px; }
+.boundaryArt { position: relative; width: 120px; height: 94px; margin-bottom: 24px; display: grid; place-items: center; }
+.boundaryArt span { position: absolute; width: 80px; height: 80px; border: 1px solid; border-radius: 50%; color: var(--aumlok-anchor); transform: rotate(-30deg) scaleX(0.6); box-shadow: 0 0 24px #e4be7310; }
+.boundaryArt span:nth-child(2) { transform: rotate(30deg) scaleX(0.8); color: var(--aumlok-unite); opacity: 0.65; }
+.boundaryArt span:nth-child(3) { transform: rotate(80deg); color: var(--aumlok-rise); opacity: 0.5; }
+.boundaryArt > svg { position: relative; width: 27px; height: 27px; padding: 12px; color: var(--aumlok-anchor); background: #161e2c; border-radius: 50%; }
+.explanation { display: grid; gap: 22px; color: var(--dsw-alias-label-secondary); font-size: 15.5px; line-height: 1.85; }
+.explanation p { margin: 0; }
+.explanation p:first-child { color: var(--dsw-alias-label-primary); font-size: 17px; line-height: 1.8; }
+.explanation p:nth-child(4) { padding-left: 18px; border-left: 2px solid color-mix(in srgb, var(--aumlok-anchor) 65%, transparent); color: var(--dsw-alias-label-primary); }
+.boundaryClosing { margin: 28px 0 0; padding-top: 24px; border-top: 1px solid color-mix(in srgb, var(--aumlok-anchor) 24%, transparent); color: var(--aumlok-anchor); font-size: 22px; line-height: 1.5; letter-spacing: -0.02em; }
+
+.completion {
+  display: flex;
+  min-height: 360px;
+  padding: clamp(28px, 6cqi, 54px);
+  box-sizing: border-box;
+  border: 1px solid var(--aukora-border);
+  border-top-color: color-mix(in srgb, var(--aumlok-anchor) 72%, transparent);
+  border-radius: var(--aukora-radius);
+  background: var(--aukora-surface);
+  backdrop-filter: blur(18px);
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+.completionBadge { display: inline-flex; align-items: center; gap: 7px; color: var(--aumlok-anchor); font-size: 11px; letter-spacing: .12em; }
+.completionBadge svg { width: 18px; height: 18px; }
+.phraseStage .completion h3 { margin: 18px 0 8px; color: transparent; background: linear-gradient(90deg, var(--aumlok-root), var(--aumlok-unite), var(--aumlok-rise), var(--aumlok-anchor)); background-clip: text; font-size: clamp(28px, 5cqi, 44px); line-height: 1.1; letter-spacing: -.035em; }
+.completion p { margin: 18px 0 4px; color: var(--aukora-text-muted); font-size: 12px; }
+.completion strong { color: var(--aumlok-unite); font-size: clamp(20px, 3cqi, 28px); font-weight: 610; overflow-wrap: anywhere; }
+.completion button { margin-top: 30px; min-height: 46px; padding: 10px 18px; border: 1px solid color-mix(in srgb, var(--aumlok-unite) 62%, transparent); border-radius: var(--aukora-radius); background: var(--aukora-surface); color: var(--aumlok-unite); font: inherit; cursor: pointer; }
+.completion button:hover { box-shadow: 0 0 14px color-mix(in srgb, var(--aumlok-unite) 18%, transparent); }
+
+/* A LOST PHRASE MEANS A NEW INSTANCE, said where the words are rather than in a footnote. */
+.warning {
+  margin: 0;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 42%, transparent);
+  border-radius: 11px;
+  color: var(--dsw-alias-label-secondary);
+  background: color-mix(in srgb, var(--aumlok-anchor) 7%, transparent);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: right;
+}
+
+.menuItem:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.menuItemActive {
+  border-color: var(--dsw-alias-border-l1);
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.menuCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-end;
+  flex-direction: column;
+}
+
+.menuCopy strong {
+  width: 100%;
+  overflow: hidden;
+  font-size: var(--dsh-spatial-menu-title-size, 14px);
+  line-height: var(--dsh-spatial-menu-title-line-height, 20px);
+  font-weight: 570;
+  text-overflow: ellipsis;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.menuCopy span {
+  width: 100%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsh-spatial-menu-description-size, 12px);
+  line-height: var(--dsh-spatial-menu-description-line-height, 18px);
+  text-overflow: ellipsis;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@container aumlok (min-width: 760px) {
+  .composition {
+    grid-template-columns: minmax(360px, 1.08fr) minmax(300px, 0.92fr);
+    align-items: start;
+  }
+
+  .flow {
+    position: sticky;
+    top: 0;
+  }
+}
+
+@container aumlok (max-width: 520px) {
+  .surface {
+    padding: 18px;
+  }
+
+  .hero {
+    gap: 14px;
+  }
+
+  .hero h2 {
+    font-size: 30px;
+  }
+
+  .firstRunSteps { grid-template-columns: 1fr; }
+  .firstRunSteps li { padding: 8px 10px; }
+  .flow { padding: 16px 18px; }
+  .flowSummary { display: block; }
+  .flowBody[data-collapsed] { display: none; }
+  .flowSummary[aria-expanded='true'] { margin-bottom: 20px; }
+
+}
+
+/* ── Y5: A QUIET CEREMONY, AND THE PIECE OF MARKUP IT HANGS ON ───────────────────────────────
+   Peter's Y5, verbatim: "Make it feel like a ceremony: a subtle reveal as the words appear (letters
+   settling into the gold boxes, rows fading in down the spine) and a quiet confirmation when bound.
+   Respect reduced-motion. Nothing flashy."
+
+   WHY THE REVEAL IS DRIVEN BY THESE SPANS RATHER THAN BY A CLICK. The words are drawn by a ceremony
+   that may ask a SEPARATE PROCESS for them, so the moment they arrive is not a moment this stylesheet
+   can observe: an animation restarted on a state change would need script, and a script-driven reveal
+   is a reveal that can desynchronise from the words it is revealing. The boxes do not exist before the
+   words do — they are rendered only at the face where a letter belongs in them — so mounting IS the
+   arrival, and CSS alone can settle them into place. These two markers carry no styling of their own;
+   they are the hooks that make "the words are on the screen" a thing a court or a probe can see. */
+[data-aumlok-reveal='words'] { display: contents; }
+
+@keyframes aumlok-letter-settle {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes aumlok-row-settle {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* REDUCED-MOTION, AND IT IS NOT A SHORTER ANIMATION. A person who has asked their machine for less
+   motion has asked for none, so both names are switched off outright rather than sped up: a 40ms fade
+   is still a fade, and "respect reduced-motion" is not "respect it a bit". The declarations the
+   animations ride on are named individually because the two elements carry different durations, and
+   `animation: none` on its own would leave those durations behind to apply to anything added later. */
+@media (prefers-reduced-motion: reduce) {
+  .firstRunSteps li,
+  .completion button {
+    transition: none;
+  }
+  .anchorBox,
+  .anchorBoxes .anchorBox:nth-child(2),
+  .anchorBoxes .anchorBox:nth-child(3),
+  .anchorBoxes .anchorBox:nth-child(4),
+  .anchorBoxes .anchorBox:nth-child(5),
+  .anchorBoxes .anchorBox:nth-child(6) {
+    animation: none;
+    animation-name: none;
+  }
+  .phraseRow,
+  .bandRows .phraseRow:nth-child(2),
+  .phraseBand:nth-child(2) .bandRows .phraseRow:nth-child(1),
+  .phraseBand:nth-child(2) .bandRows .phraseRow:nth-child(2),
+  .phraseBand:nth-child(3) .bandRows .phraseRow:nth-child(1),
+  .phraseBand:nth-child(3) .bandRows .phraseRow:nth-child(2) {
+    animation: none;
+    animation-name: none;
+  }
+}
+
+
+.handleLockedWrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 10px 17px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-unite) 62%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--aumlok-unite) 8%, transparent);
+  color: var(--aumlok-unite);
+  box-shadow: inset 0 0 18px color-mix(in srgb, var(--aumlok-unite) 5%, transparent);
+}
+.handleLockedWrap > svg { width: 18px; height: 18px; flex: none; }
+.identityAvatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 18px; }
+.identityAvatarControls { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: none; }
+.identityAvatarButton { padding: 0; border: 0; border-radius: 18px; background: transparent; cursor: pointer; }
+.identityAvatarButton:focus-visible { outline: 2px solid var(--aumlok-unite); outline-offset: 3px; }
+.identityAvatarControls > .identityAction { min-width: 28px; min-height: 28px; padding: 3px; }
+
+/* The shell owns the page; shared surfaces belong only to cards. */
+.handleHeading { --band-color: var(--aumlok-unite); width: 100%; box-sizing: border-box; padding: 15px; border: 1px solid color-mix(in srgb, var(--band-color) 34%, transparent); border-left: 3px solid color-mix(in srgb, var(--band-color) 76%, transparent); border-radius: 15px; background: linear-gradient(100deg, color-mix(in srgb, var(--band-color) 10%, transparent), color-mix(in srgb, var(--dsw-alias-bg-layer-2) 55%, transparent)); }
+.handleHeading .handleLabel { display: block; font-size: 12px; color: var(--aumlok-unite); }
+.phraseStage .handleHeading h3 { margin: 4px 0 0; font-size: 28px; }
+.handleTools { display: flex; gap: 8px; align-items: center; color: var(--aumlok-unite); font-size: 12px; }
+.handleTools svg { width: 20px; height: 20px; }
+.anchorMeta { flex: 1; min-width: 0; }
+.anchorBoxes { flex: 1; }
+.anchorBox { flex: 1; min-width: 22px; }
+.explanationHeader { gap: 10px; margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.flow .explanationHeader h3 { font-size: 22px; margin: 0; letter-spacing: -.025em; }
+.explanationHeader img { flex: none; }
+.boundaryClosing { border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 58%, transparent); border-radius: 17px; padding: 18px 20px; font-size: clamp(16px, 1.8cqi, 22px); white-space: nowrap; }
+@container aumlok (max-width: 520px) { .boundaryClosing { white-space: normal; } }
+@container aumlok (max-width: 520px) { .anchorToken { flex-direction: column; align-items: stretch; } .anchorBoxes { width: 100%; } }
+
+.phraseStage { container-type: inline-size; container-name: phrase; }
+@container phrase (max-width: 520px) { .anchorToken { flex-direction: column; align-items: stretch; } .anchorBoxes { width: 100%; } }

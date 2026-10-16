@@ -10,7 +10,7 @@ import { mountChat } from "./chat.js";
 
 const STYLES = ["./threads.css", "../sidebar/sidebar.css"] as const;
 
-function styles(): void {
+function styles(signal: AbortSignal): void {
   for (const path of STYLES) {
     const href = new URL(path, import.meta.url).href;
     if ([...document.querySelectorAll("link[rel='stylesheet']")].some(link => (link as HTMLLinkElement).href === href)) continue;
@@ -18,6 +18,7 @@ function styles(): void {
     link.rel = "stylesheet";
     link.href = href;
     document.head.append(link);
+    signal.addEventListener("abort", () => link.remove(), { once: true });
   }
 }
 
@@ -25,7 +26,7 @@ export function mountThreads(root: HTMLElement, client: FaceClient, signal: Abor
   const manifest = FACE_CATALOG.find(item => item.id === face);
   const grant = manifest ? manifest.capabilities[manifest.organ] : undefined;
   const granted: ReadonlySet<string> = new Set(grant ? grant.methods : []);
-  styles();
+  styles(signal);
   if (face === "threads") mountChat(root, client, signal, granted);
   else if (face === "sidebar" || face === "archived") mountSidebar(root, client, signal, granted, face === "archived");
   else throw new Error("app:unknown-face");

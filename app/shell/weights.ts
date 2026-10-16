@@ -41,16 +41,17 @@ export function soleLane(lane: LaneId): PaneWeights {
   return checked(at === 0 ? 3 : 0, at === 1 ? 3 : 0, at === 2 ? 3 : 0);
 }
 
-/** An outer lane gains one third from the far side first; a lane that has the whole frame gives one third back. */
+/** An outer lane gains one third from the far side first; a lane that has the whole frame returns to balanced 1·1·1
+ * in one tap (Peter, 2026-10-16: the step back to two thirds felt like a two-step crush). */
 function outer(weights: PaneWeights, side: 'left' | 'right'): PaneWeights {
   const [left, centre, right] = weights;
   if (side === 'left') {
     if (left === 0) return weights;
-    if (left === 3) return checked(2, 1, 0);
+    if (left === 3) return checked(1, 1, 1);
     return right > 0 ? checked(left + 1, centre, right - 1) : checked(left + 1, centre - 1, right);
   }
   if (right === 0) return weights;
-  if (right === 3) return checked(0, 1, 2);
+  if (right === 3) return checked(1, 1, 1);
   return left > 0 ? checked(left - 1, centre, right + 1) : checked(left, centre - 1, right + 1);
 }
 

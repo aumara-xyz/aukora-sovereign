@@ -1,0 +1,172 @@
+{
+  "schema": "aukora-spatial-design-sources-v1",
+  "reference_build": "3673b98",
+  "sources": [
+    {
+      "source": "plugins/aukora-face/layout/src/client/AppFrame.module.css",
+      "source_sha256": "3a51e0301ac5c7ef04a13eb9054f07fecf3bfd6cbe06ea69c3b985eaff366e0d",
+      "path": "AppFrame.module.css",
+      "sha256": "431913e7928c5652c12108e2049df08b3e021740969b2440af1d61e49a2123ad",
+      "global_wrappers_removed": 9
+    },
+    {
+      "source": "plugins/aukora-face/layout/src/client/spatial-tokens.css",
+      "source_sha256": "db2d34ff4cb509eb9d7ab7c6922d63b3623844ebd53bfa58bce24f1bafa666bd",
+      "path": "spatial-tokens.css",
+      "sha256": "db2d34ff4cb509eb9d7ab7c6922d63b3623844ebd53bfa58bce24f1bafa666bd",
+      "global_wrappers_removed": 0
+    },
+    {
+      "source": "plugins/aukora-face/layout/src/client/Primitives.module.css",
+      "source_sha256": "bb0cf253903356a1da1dc36ac5c2e5f2a092170e2580ec86ab3b8385a6941e8b",
+      "path": "Primitives.module.css",
+      "sha256": "bb0cf253903356a1da1dc36ac5c2e5f2a092170e2580ec86ab3b8385a6941e8b",
+      "global_wrappers_removed": 0
+    },
+    {
+      "source": "plugins/aukora-face/sidebar/src/client/SidebarRoot.module.css",
+      "source_sha256": "83bdcddcc3a578714f3a942c64efbea4bd9c59b2ca9c0ecf53d07cd8d6d31427",
+      "path": "SidebarRoot.module.css",
+      "sha256": "83bdcddcc3a578714f3a942c64efbea4bd9c59b2ca9c0ecf53d07cd8d6d31427",
+      "global_wrappers_removed": 0
+    },
+    {
+      "source": "plugins/aukora-face/threads/src/client/ThreadListHeaderActions.module.css",
+      "source_sha256": "a660f45502924d877588dc551955d9ab65e0584606dd933396983342f32f7191",
+      "path": "ThreadListHeaderActions.module.css",
+      "sha256": "a660f45502924d877588dc551955d9ab65e0584606dd933396983342f32f7191",
+      "global_wrappers_removed": 0
+    },
+    {
+      "source": "plugins/aukora-face/threads/src/client/rows/Rows.module.css",
+      "source_sha256": "5e1d624c33725a3e6241875773eb3c13953cc5504ec385cf9bf55a0c5330f6e0",
+      "path": "Rows.module.css",
+      "sha256": "5e1d624c33725a3e6241875773eb3c13953cc5504ec385cf9bf55a0c5330f6e0",
+      "global_wrappers_removed": 0
+    },
+    {
+      "source": "plugins/aukora-face/threads/src/client/WorkspaceBrowser.module.css",
+      "source_sha256": "6e22f51fe26dfb4678f52c6cc8d9c5d6cbeaf8e229bca1a9ff9bf3aea83c1197",
+      "path": "WorkspaceBrowser.module.css",
+      "sha256": "6e22f51fe26dfb4678f52c6cc8d9c5d6cbeaf8e229bca1a9ff9bf3aea83c1197",
+      "global_wrappers_removed": 0
+    },
+    {
+      "source": "plugins/aukora-face/aumlok/src/client/Aumlok.module.css",
+      "source_sha256": "49280464f059527b83aefd4ae14ba667d7bc2c8fa281494f55ec4810a08e8edd",
+      "path": "Aumlok.module.css",
+      "sha256": "5f582d24c23365a55cf935178f9302d354f52c3bb6aec571d07c7671b3076a91",
+      "parts": [
+        {
+          "path": "Aumlok.part1.css",
+          "sha256": "83a7b96e26443b38ae469930e5a5eafd4003a09c26bfaf07a16e0e01e42d48c1"
+        },
+        {
+          "path": "Aumlok.part2.css",
+          "sha256": "85270d7b6cc298314c2599a549c33a7aa261f6abcc305b141ea27b0eb9ebc213"
+        }
+      ],
+      "reassembled_sha256": "49280464f059527b83aefd4ae14ba667d7bc2c8fa281494f55ec4810a08e8edd",
+      "global_wrappers_removed": 0
+    }
+  ],
+  "theme": {
+    "path": "theme.css",
+    "sha256": "f8ea4e085bdf6bf497990810ccc59756f9a393381494ef9f87069e4ebd3b3631",
+    "inputs": [
+      {
+        "source": "vendor/dsh/packages/client/ui-theme/src/styles/design-platform.css",
+        "sha256": "5273cda5af6322fe0f8f9ef4ce00aecb8e85c2495c67e452d4350cd835f47046"
+      },
+      {
+        "source": "vendor/dsh/packages/client/ui-theme/src/styles/base.css",
+        "sha256": "85f8970d2650108ad47d66da1db3ba00ebbe3f26aaec00551cfa69dd029347a3"
+      }
+    ],
+    "mode": "dark",
+    "values": {
+      "--ds-ease-in-out": "cubic-bezier(0.4, 0, 0.2, 1)",
+      "--ds-transition-duration": "0.2s",
+      "--ds-transition-duration-slow": "0.3s",
+      "--dsw-alias-bg-layer-1": "rgb(35, 35, 36)",
+      "--dsw-alias-bg-layer-2": "rgb(44, 44, 46)",
+      "--dsw-alias-border-l1": "rgba(255, 255, 255, 0.06)",
+      "--dsw-alias-border-l2": "rgba(255, 255, 255, 0.12)",
+      "--dsw-alias-interactive-bg-hover": "rgba(255, 255, 255, 0.08)",
+      "--dsw-alias-label-caption": "rgb(129, 133, 140)",
+      "--dsw-alias-label-dimmed": "rgb(67, 69, 74)",
+      "--dsw-alias-label-primary": "rgb(249, 250, 251)",
+      "--dsw-alias-label-secondary": "rgb(207, 211, 214)",
+      "--dsw-alias-label-tertiary": "rgb(173, 178, 184)",
+      "--dsw-alias-scrollbar-bg-l2": "rgb(84, 85, 87)",
+      "--dsw-alias-scrollbar-hover-l2": "rgb(101, 103, 107)",
+      "--dsw-alias-state-business-primary": "rgb(103, 158, 254)",
+      "--dsw-alias-state-error-primary": "rgb(242, 90, 90)",
+      "--dsw-alias-state-success-primary": "rgb(34, 197, 94)",
+      "--dsw-font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',\n    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif",
+      "--dsw-specific-sidebar-nav-item-active": "rgb(67, 69, 74)"
+    }
+  },
+  "glyphs": {
+    "path": "glyphs.json",
+    "sha256": "9d867ac1058e70a0dc79cb5af4613fdae979f0887614f2657fbda308db94fcf3",
+    "inputs": [
+      {
+        "source": "plugins/aukora-face/threads/src/client/ThreadIcons.tsx",
+        "sha256": "975af651b2787219a53483a30817aad6894d257dd75ceb0e6a05474832e37bfb"
+      },
+      {
+        "source": "vendor/dsh/packages/client/ui-primitives/src/icons/index.tsx",
+        "sha256": "e5c26ee0d7e8a00901b9b88df50edd842de87d5f6c0b406847ea991b6428d7da"
+      }
+    ]
+  },
+  "menu": {
+    "path": "menu.json",
+    "sha256": "8b0834c64bd8abaf98cc7efa4488641b6d234fa54b595e980efaac790bd56ec6",
+    "inputs": [
+      {
+        "source": "plugins/aukora-face/layout/src/client/AppFrame.tsx",
+        "sha256": "2dfd0c147f77971fdabd8a159a57dbb776dc7b8b0ffe3a722329b1a42d8d3bab"
+      },
+      {
+        "source": "plugins/aukora-face/layout/src/client/locales.ts",
+        "sha256": "240a8ca29017f2b598de7eac8340d5dccd3287c308a688a4d89180684a23985f"
+      },
+      {
+        "source": "plugins/aukora-face/apps/src/client/StockAppMenu.tsx",
+        "sha256": "98da8643aefa3425d9c33f63743a7f79677bdac563510736969624bcd8cfc5d4"
+      },
+      {
+        "source": "plugins/aukora-face/apps/src/client/locales.ts",
+        "sha256": "ed5ec373c6a72dfe296cffa104b31cea293065278627d81bff3da689aeda8a11"
+      },
+      {
+        "source": "plugins/aukora-face/settings/src/client/SettingsMenu.tsx",
+        "sha256": "713484ccdaf0ca1e9e4d7b7157dfcf05925ecc711fd422aae28265520726466b"
+      },
+      {
+        "source": "plugins/aukora-face/settings/src/client/locales.ts",
+        "sha256": "3d1fa768f8607d27228c0070e8ea0458f4ca76b03a0986c3e0034843775e288a"
+      },
+      {
+        "source": "plugins/aukora-face/aumlok/src/client/locales.ts",
+        "sha256": "9d5203977c6d860217c7d0c2939c40f939b4b0d3672bd75c5472a87f631e6fde"
+      },
+      {
+        "source": "plugins/aukora-face/messages/src/client/locales.ts",
+        "sha256": "b6076c93a499db2db1899075b158366bf0fa00e9b8c776cb18840385527b1a43"
+      },
+      {
+        "source": "plugins/aukora-face/documents/src/client/locales.ts",
+        "sha256": "f29f47bd83e68d087c85f3766a892a2fe2684af77d61aac5f33e95bd0d25c4d1"
+      }
+    ]
+  },
+  "brand": {
+    "source": "plugins/aukora-face/apps/vendor/auma-lingwa/runtime/assets/aumara-icon-96.png",
+    "source_sha256": "fec7d0bd7f007928fcb1b6866051b2c8344ec76d3211962650e3acd5f8b7e551",
+    "path": "brand/aumara-mark-96.png",
+    "sha256": "fec7d0bd7f007928fcb1b6866051b2c8344ec76d3211962650e3acd5f8b7e551"
+  }
+}

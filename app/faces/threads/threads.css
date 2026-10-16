@@ -1,4 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
+@import "../../design/spatial/SidebarRoot.module.css";
+@import "../../design/spatial/WorkspaceBrowser.module.css";
+@import "../../design/spatial/Rows.module.css";
+@import "../../design/spatial/ThreadListHeaderActions.module.css";
 /* Colours, radius and spacing are the design tokens of app/design/tokens.json. The Sidebar face loads this file too. */
 :root {
   --canvas: #0b0d18; --base: #111520; --surface: #262b36b8; --line: #ffffff1a; --text: #e8eaed; --secondary: #b8bcc4;
@@ -56,33 +60,6 @@ code { font-family: var(--mono); font-size: 12.5px; }
   grid-area: dock; display: grid; gap: 6px; width: 100%; max-width: 48rem; margin-inline: auto; padding: 6px 12px 12px;
 }
 
-/* The thread list. */
-.list-bar { display: flex; align-items: center; gap: 6px; padding: 10px 12px 4px; }
-.search { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
-.search > .icon { position: absolute; inset-inline-start: 11px; width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
-.search input { width: 100%; padding: 8px 34px; border-radius: 999px; }
-.search .icon-button { position: absolute; inset-inline-end: 2px; width: 28px; height: 28px; }
-.info { margin: 4px 14px; color: var(--muted); font-size: 12.5px; }
-.cards { grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 0; padding: 4px 12px 12px; }
-.cards li { min-width: 0; margin: 0; }
-.card {
-  display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 56px; padding: 10px 14px;
-  border: 1px solid var(--mint-edge); border-radius: var(--radius); background: transparent; text-align: start;
-  transition: transform 200ms ease, border-color 250ms ease, box-shadow 250ms ease;
-}
-.card:hover { transform: translateX(3px); }
-.card[aria-current="true"] { border-color: var(--mint-edge-on); box-shadow: 0 0 14px var(--mint-glow); }
-.orb { position: relative; flex: none; display: grid; place-items: center; width: 26px; height: 26px; }
-.card[data-running="true"] .mark { animation: turn 1.6s linear infinite; }
-.card[data-fresh="true"] .orb::after {
-  content: ""; position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid var(--base);
-  border-radius: 50%; background: var(--mint);
-}
-.name { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.card-meta { flex: none; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-.chip { padding: 0 7px; border: 1px solid var(--violet); border-radius: 999px; color: var(--violet); font-size: 11px; }
-@keyframes turn { to { transform: rotate(360deg); } }
-
 /* The empty chat. */
 .hero {
   flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -93,7 +70,7 @@ code { font-family: var(--mono); font-size: 12.5px; }
 .hero-lede { max-width: 30rem; margin: 0; color: var(--secondary); }
 .recent { width: min(100%, 34rem); margin-block-start: 18px; text-align: start; }
 .recent h3 { margin: 0 0 2px 14px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
-.hero .list-bar, .hero .info { display: none; }
+.hero .sectionHeader, .hero .empty { display: none; }
 
 /* The transcript. */
 .transcript { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px 8px; }
@@ -190,8 +167,26 @@ code { font-family: var(--mono); font-size: 12.5px; }
   .bubble { max-width: 92%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .card { transition: none; }
-  .card:hover { transform: none; }
-  .card[data-running="true"] .mark, .dots i { animation: none; }
+  .sessionRow { transition: none; }
+  .sessionRow:hover { transform: none; }
+  .turning, .dots i { animation: none; }
   .dots i { opacity: .7; }
 }
+
+/* Component names remain unchanged; these hosts separate CSS-module root slots. */
+.spatialThreadsDocument { background: transparent; }
+.spatialThreads { --dsw-specific-sidebar-fill: transparent; background: transparent; color: var(--dsw-alias-label-primary); }
+.workspaceBrowser.root { height: auto; padding: 0 var(--dsh-session-list-edge-inset) 0 0; background: transparent; }
+.workspaceBrowser .sectionHeader { padding-block: 0; }
+.workspaceBrowser .searchInput { padding: 0; border-radius: 0; font: 13px/18px var(--dsw-font-family); }
+.workspaceBrowser .sessionRow .title { font-size: 14px; font-weight: 400; line-height: 20px; }
+.workspaceBrowser .sessionRow.withoutActions .sessionMeta { display: flex; }
+.workspaceBrowser .rowActions .iconButton { width: 20px; height: 20px; }
+.workspaceBrowser .empty:empty { display: none; }
+.workspaceBrowser .treeBody { overflow: hidden; }
+.workspaceBrowser .searchButton svg { width: 14px; height: 14px; }
+.workspaceBrowser .searchExpanded .searchButton svg { width: 11px; height: 11px; }
+.workspaceBrowser .search { position: static; }
+.drawer .workspaceBrowser { min-height: 100%; }
+.recent .workspaceBrowser { min-height: 0; }
+.recent .workspaceBrowser .list { overflow: visible; }

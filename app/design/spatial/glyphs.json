@@ -1,0 +1,121 @@
+{
+  "schema": "aukora-spatial-glyphs-v1",
+  "icons": {
+    "pin": {
+      "viewBox": "0 0 16 16",
+      "size": 16,
+      "shapes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M9.5 1.5 14.5 6.5 11 8l-1.5 4.5L4 7 8.5 5.5Z",
+            "stroke": "currentColor",
+            "stroke-width": "1.4",
+            "stroke-linecap": "round",
+            "stroke-linejoin": "round"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M5 11l-3 3",
+            "stroke": "currentColor",
+            "stroke-width": "1.4",
+            "stroke-linecap": "round",
+            "stroke-linejoin": "round"
+          }
+        }
+      ]
+    },
+    "ring": {
+      "viewBox": "0 0 16 16",
+      "size": 16,
+      "shapes": [
+        {
+          "tag": "circle",
+          "attributes": {
+            "cx": "8",
+            "cy": "8",
+            "r": "4.6",
+            "stroke": "currentColor",
+            "stroke-width": "1.4"
+          }
+        }
+      ]
+    },
+    "archive": {
+      "viewBox": "0 0 16 16",
+      "size": 16,
+      "shapes": [
+        {
+          "tag": "rect",
+          "attributes": {
+            "x": "2",
+            "y": "3",
+            "width": "12",
+            "height": "3.4",
+            "rx": "0.8",
+            "stroke": "currentColor",
+            "stroke-width": "1.4"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M3.4 6.4V13h9.2V6.4M6.4 9h3.2",
+            "stroke": "currentColor",
+            "stroke-width": "1.4",
+            "stroke-linecap": "round",
+            "stroke-linejoin": "round"
+          }
+        }
+      ]
+    },
+    "plus": {
+      "viewBox": "0 0 16 16",
+      "size": 16,
+      "shapes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M8.64453 1.5V7.34961H14.5V8.65039H8.64453V14.5H7.34473V8.65039H1.5V7.34961H7.34473V1.5H8.64453Z",
+            "fill": "currentColor"
+          }
+        }
+      ]
+    },
+    "search": {
+      "viewBox": "0 0 16 16",
+      "size": 16,
+      "shapes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M11.894845 6.647401C11.894845 3.725463 9.534486 1.356779 6.623219 1.35657C3.711786 1.35657 1.351635 3.725338 1.351635 6.647401C1.351843 9.569296 3.711911 11.938273 6.623219 11.938273C9.534361 11.938064 11.894637 9.569171 11.894845 6.647401ZM13.245462 6.647401C13.245254 10.317935 10.280401 13.293613 6.623219 13.293821C2.965871 13.293821 0.000204 10.31806 0 6.647401C0 2.976574 2.965746 0 6.623219 0C10.280526 0.000205 13.245462 2.9767 13.245462 6.647401Z",
+            "fill": "currentColor"
+          }
+        },
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M16.000417 15.041079L15.044449 16.000433L11.530434 12.473588L12.486298 11.514234L16.000417 15.041079Z",
+            "fill": "currentColor"
+          }
+        }
+      ]
+    },
+    "close": {
+      "viewBox": "0 0 14 14",
+      "size": 14,
+      "shapes": [
+        {
+          "tag": "path",
+          "attributes": {
+            "d": "M10.6074 4.40278L8.00975 6.99973L10.6074 9.59739L9.59736 10.6074L6.9997 8.00978L4.40274 10.6074L3.3927 9.59739L5.98966 6.99973L3.3927 4.40278L4.40274 3.39273L6.9997 5.98969L9.59736 3.39273L10.6074 4.40278Z",
+            "fill": "currentColor"
+          }
+        }
+      ]
+    }
+  }
+}
