@@ -22,24 +22,23 @@ pub(super) fn verify(
     keys: &[PublicKey],
 ) -> Result<()> {
     let operation = OperationId::from_bytes(*ceremony.as_bytes());
-    let body = aura::record::AuthorityBodyV1::parse(&record.body).map_err(|_| failed())?;
-    let binding =
-        aura::storage::owner_binding_from_value(body.payload.get("binding").ok_or_else(failed)?)
-            .map_err(|_| failed())?;
+    let wrapped = aura::record::AuthorityBodyV1 {
+        algorithm: AlgorithmId::Sha256,
+        authority,
+        payload: expected.clone(),
+    }
+    .canonical_value()
+    .map_err(|_| failed())?;
     if record.v != 1
         || record.algorithm != AlgorithmId::Sha256
         || record.authority != authority
         || record.kind != kind
-        || !matches!(kind, Kind::AumlokEnrol | Kind::AumlokSignin)
+        || kind != Kind::AumlokSignin
         || record.phase != Phase::Terminal
         || record.operation != Some(operation)
         || record.at != now_ms
         || now_ms < 0
-        || record.body != *expected
-        || body.authority != authority
-        || body.algorithm != record.algorithm
-        || binding.epoch != authority.epoch
-        || (kind == Kind::AumlokEnrol && binding.epoch != 1)
+        || (record.body != *expected && record.body != wrapped)
         || record.signatures.version() != 1
     {
         return Err(failed());

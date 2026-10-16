@@ -751,7 +751,7 @@ fn enrolment_epoch(record: &AuthorityRecord, payload: &Value) -> Result<u64> {
         "session", "subject", "expires_at", "candidate_digest", "ceremony_authority", "owner_id",
         "user_handle", "backup_eligible", "assertion", "binding",
     ])?;
-    let binding = aura::storage::owner_binding_from_value(field(payload, "binding")?)?;
+    let binding = enrolment_binding(field(payload, "binding")?)?;
     let ceremony = parse_version(field(payload, "ceremony_authority")?)?;
     let previous = match field(payload, "previous_hash")?.view() {
         ValueView::Null => None,
@@ -803,6 +803,54 @@ fn enrolment_epoch(record: &AuthorityRecord, payload: &Value) -> Result<u64> {
     }
     crate::webauthn::decode_assertion(&field(payload, "assertion")?.canonical_bytes())?;
     Ok(binding.epoch)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn enrolment_binding(value: &Value) -> Result<canon::authority::OwnerBinding> {
+    use crate::keys::{exact_fields, field, refuse, value_text, value_u64};
+    use canon::{alg::PublicKey, authority::OwnerBinding, ids::CredentialId};
+
+    exact_fields(value, &[
+        "v", "algorithm", "credential", "key_version", "key_algorithm", "public_key",
+        "epoch", "rp", "owner_origin", "top_origin", "counter",
+    ])?;
+    let text = |name| value_text(field(value, name)?);
+    let number = |name| value_u64(field(value, name)?);
+    let bytes = |name| -> Result<Vec<u8>> {
+        let encoded = text(name)?;
+        if encoded.len() > 32768
+            || !encoded.len().is_multiple_of(2)
+            || !encoded.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(refuse("health-record-format"));
+        }
+        hex::decode(encoded).map_err(|_| refuse("health-record-format"))
+    };
+    let binding = OwnerBinding {
+        v: u16::try_from(number("v")?).map_err(|_| refuse("health-record-format"))?,
+        algorithm: AlgorithmId::from_wire(text("algorithm")?)?,
+        credential_id: CredentialId::new(bytes("credential")?)?,
+        public_key: PublicKey {
+            v: u16::try_from(number("key_version")?)
+                .map_err(|_| refuse("health-record-format"))?,
+            algorithm: AlgorithmId::from_wire(text("key_algorithm")?)?,
+            bytes: bytes("public_key")?,
+        },
+        epoch: number("epoch")?,
+        relying_party: text("rp")?.to_owned(),
+        owner_origin: text("owner_origin")?.to_owned(),
+        top_origin: text("top_origin")?.to_owned(),
+        sign_counter: u32::try_from(number("counter")?)
+            .map_err(|_| refuse("health-record-format"))?,
+    };
+    if binding.v != 1
+        || binding.public_key.v != 1
+        || binding.algorithm != binding.public_key.algorithm
+        || binding.public_key.bytes.is_empty()
+    {
+        return Err(refuse("health-record-format"));
+    }
+    Ok(binding)
 }
 
 fn membership_epoch(membership: &Value) -> Result<u64> {
