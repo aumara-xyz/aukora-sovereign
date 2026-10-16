@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { showServiceState } from "../../core/service-state.js";
 import { mountHarp } from "./view.js";
 
 const root = document.getElementById("face");
@@ -20,7 +21,6 @@ try {
   lifetime.abort();
   const message = document.createElement("p");
   message.setAttribute("role", "alert");
-  message.textContent = error instanceof Error && /^zetaharp:[a-z0-9-]+$/.test(error.message)
-    ? error.message : "zetaharp:unavailable";
+  showServiceState(message, error);
   root.replaceChildren(message);
 }

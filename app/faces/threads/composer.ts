@@ -2,6 +2,7 @@
 // The composer and the notices above it. The frame is sandboxed without allow-forms, so there is no form here: a
 // message goes out from the send button's click or from Enter in the box. Send turns into Stop while Auma is replying.
 import { COPY } from "./copy.js";
+import { serviceState, showServiceState } from "../../core/service-state.js";
 import { canSend } from "./conversation.js";
 import type { Conversation, Notice } from "./conversation.js";
 import { h, icon } from "./dom.js";
@@ -52,9 +53,14 @@ export function createComposer(options: ComposerOptions): Composer {
     notices.replaceChildren(...list.map(item => {
       const dismiss = h("button", { type: "button", class: "icon-button", "aria-label": COPY.notices.dismiss }, icon("close"));
       dismiss.addEventListener("click", () => conversation.dismiss(item.key), { signal });
-      const row = h("div", { class: "notice", "data-tone": item.tone }, h("span", { class: "notice-text" }, item.text));
-      if (item.code) row.append(" ", h("code", {}, item.code));
-      if (item.action) {
+      const text = h("span", { class: "notice-text" }, item.text);
+      const state = item.code ? serviceState(item.code) : null;
+      const row = h("div", { class: "notice", "data-tone": state?.kind === "unavailable" ? "info" : item.tone }, text);
+      if (state) {
+        row.dataset.serviceState = state.kind;
+        if (state.kind !== "failure" && item.code !== "app:deadline") showServiceState(text, item.code);
+      }
+      if (item.action && state?.kind !== "unavailable") {
         const run = item.action.run;
         const button = h("button", { type: "button", class: "link" }, item.action.label);
         button.addEventListener("click", () => run(), { signal });

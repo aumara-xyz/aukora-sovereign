@@ -17,18 +17,18 @@
   },
   "refresh": "on load, on request, and every 30 seconds while the page is visible; a read that is superseded is ignored",
   "screen": {
-    "registry": "every registered plugin is listed whether or not the shell answers; each row shows Running, Starting, Waiting (with the services it waits for), Stopping, Failed to start (with the code), Removed, Not reported (the shell named other plugins but not this one) or Unknown (the read failed); the badge counts how many run, turns red when one failed, and says how many unexpected plugins the shell reported",
+    "registry": "every registered plugin is listed whether or not the shell answers; each row shows its running state, or the shared icon and short service state without a code when waiting or failed; the badge counts how many run, marks actual failures and says how many unexpected plugins the shell reported",
     "unexpected": "plugins the shell reports that the release does not register are listed apart and marked UNEXPECTED",
     "app_store": "a card saying no app store is connected in this release; the page has no control that installs, removes, starts, stops or updates a plugin",
-    "unavailable": "every state reads Unknown; a failed read removes the last reported states, so nothing keeps reading Running"
+    "unavailable": "every state shows the shared icon and short service state; a failed read removes the last reported states, so nothing keeps reading Running"
   },
   "states": {
     "initial": "heading, purpose, the full registry with every state CHECKING, and the app store card",
     "loading": "the same, until the first read settles",
     "empty": "not applicable: the registry shipped with the release is never empty",
     "ready": "states from the shell; badge ALL RUNNING or N OF 18 RUNNING",
-    "refusal": "badge STATE UNKNOWN with the service's code, every row Unknown",
-    "service-unavailable": "badge STATE UNKNOWN with app:service-unavailable or app:deadline; a reply this page does not accept shows plugins:reply-invalid",
+    "refusal": "badge and rows show the shared short refusal state without the service code; only a confirmed ended session asks for sign-in",
+    "service-unavailable": "badge and rows show a muted icon and Not yet; malformed replies remain refusals",
     "phone": "rows wrap and fact lines become one column at 480 px and below"
   },
   "face_holds": "names, states and capability lists; no control, no code and no grant",

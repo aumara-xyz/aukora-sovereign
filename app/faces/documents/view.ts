@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { showServiceState } from "../../core/service-state.js";
 // The Documents face: a read-only folder browser over the owner's document root, and a full-page reader.
 // Nothing here writes, saves or follows a link. Every call goes through the shell's kira service.
 import type { FaceClient } from "../../core/index.js";
 import { el, icon, isEditable, safeText } from "./dom.js";
 import { documentTitle, parseMarkdown } from "./markdown.js";
 import { renderBlocks, renderPlain } from "./render.js";
-import { failure, listDocuments, MAX_LOADED, readDocument } from "./service.js";
+import { listDocuments, MAX_LOADED, readDocument } from "./service.js";
 import type { DocumentEntry } from "./service.js";
 
 const MARKDOWN = /\.(md|markdown|mdown)$/i;
@@ -79,8 +80,7 @@ export function mountDocuments(root: HTMLElement, client: FaceClient, signal: Ab
   root.append(browser, reader);
 
   const showProblem = (target: HTMLElement, error: unknown): void => {
-    const { code, note } = failure(error);
-    target.textContent = `Unavailable · ${code}. ${note}`;
+    showServiceState(target, error);
     target.hidden = false;
   };
 

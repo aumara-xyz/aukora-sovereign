@@ -23,15 +23,15 @@
   "screen": {
     "list": "a searchable list with the mode, the entry count and when each session was last active, and a Read button",
     "reader": "replaces the list while open; Back returns to the list with its search and its place, and puts focus on the button that opened the session",
-    "unavailable": "a failed or malformed read empties the list and the reader and says why; a failed page of entries empties the reader"
+    "unavailable": "a failed or malformed read empties the list and the reader and shows the shared icon and short service state without a code; a failed page of entries empties the reader"
   },
   "states": {
     "initial": "heading, purpose and an Archive card reading CHECKING",
     "loading": "Reading sessions from the node; Reading more sessions while further pages are read; Reading the entries in the reader",
     "empty": "NONE and No archived sessions; a session with no entries reads This session has no entries",
     "ready": "N ARCHIVED with the list",
-    "refusal": "UNAVAILABLE with the service's code, for example archived:refused",
-    "service-unavailable": "UNAVAILABLE with app:service-unavailable or app:deadline; a reply this page does not accept shows archived:reply-invalid",
+    "refusal": "the shared short refusal state without the service code; only a confirmed ended session asks for sign-in",
+    "service-unavailable": "a muted icon and Not yet, with the last list and reader removed; malformed replies remain refusals",
     "phone": "rows wrap so the Read button sits under the title at 480 px and below"
   },
   "face_holds": "session titles and entries as text; it cannot restore, edit, delete, append to or send into a session",

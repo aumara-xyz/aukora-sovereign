@@ -4,8 +4,9 @@
 // opened outside the shell has no parent and refuses.
 import { connectFace } from "../../core/index.js";
 import type { FaceClient } from "../../core/index.js";
+import { showServiceState } from "../../core/service-state.js";
 import { FACE_CATALOG } from "../catalog.js";
-import { COPY, explain, refusalCode } from "./copy.js";
+import { COPY } from "./copy.js";
 import { h } from "./dom.js";
 
 export type Mount = (root: HTMLElement, client: FaceClient, signal: AbortSignal, granted: ReadonlySet<string>) => void;
@@ -41,7 +42,6 @@ export function boot(id: string, mount: Mount): void {
     mount(root, client, life.signal, granted);
     status.remove();
   } catch (error) {
-    const code = refusalCode(error);
-    status.replaceChildren(`Unavailable · ${explain(code)} `, h("code", {}, code));
+    showServiceState(status, error);
   }
 }

@@ -30,6 +30,7 @@ export class ShellTransport implements DataTransport {
   #listeners = new Map<string, Set<(value: JsonValue) => void>>();
   #controller = new AbortController();
   #polling = false;
+  #wakePoll: (() => void) | undefined;
   #writes: Promise<void> = Promise.resolve();
   #queuedBytes = 0;
 
@@ -58,6 +59,7 @@ export class ShellTransport implements DataTransport {
       listeners.delete(emit);
       if (!listeners.size) this.#listeners.delete(topic);
       signal.removeEventListener('abort', dispose);
+      if (!this.#pending.size && !this.#listeners.size) this.#wakePoll?.();
     };
     signal.addEventListener('abort', dispose, { once: true });
     void this.#poll();
@@ -95,6 +97,7 @@ export class ShellTransport implements DataTransport {
             AbortSignal.any([signal, this.#controller.signal])));
           exactKeys(reply, ['ok']);
           if (reply.ok !== true) throw new Error('app:invalid-message');
+          this.#wakePoll?.();
           void this.#poll();
           await completion;
         } catch (error) {
@@ -118,6 +121,7 @@ export class ShellTransport implements DataTransport {
     this.#pending.delete(id);
     pending.cleanup();
     pending.reject(error);
+    if (!this.#pending.size && !this.#listeners.size) this.#wakePoll?.();
   }
 
   #emit(topic: string, value: JsonValue): void {
@@ -129,10 +133,12 @@ export class ShellTransport implements DataTransport {
   async #poll(): Promise<void> {
     if (this.#polling || this.#controller.signal.aborted) return;
     this.#polling = true;
+    let idleDelay = 1_000;
     try {
       while (!this.#controller.signal.aborted && (this.#pending.size || this.#listeners.size)) {
         try {
           const event = eventFrame(await this.#http('/api/data', 'GET', undefined, this.#controller.signal));
+          idleDelay = 1_000;
           const pending = this.#pending.get(event.id as string);
           if (event.kind === 'refusal') {
             const body = objectData(event.body);
@@ -148,11 +154,14 @@ export class ShellTransport implements DataTransport {
         } catch (error) {
           if (this.#controller.signal.aborted) break;
           const code = error instanceof Error ? error.message : 'app:transport-failed';
-          if (code !== 'supervisor:not-ready') {
-            for (const [id] of this.#pending) this.#reject(id, new Error(code));
-            this.#emit('session.event', { kind: 'refusal', body: { code: CODE.test(code) ? code : 'app:transport-failed', next: '' } });
+          if (code === 'supervisor:not-ready') {
+            await this.#pause(this.#pending.size ? 1_000 : idleDelay);
+            idleDelay = Math.min(idleDelay * 2, 30_000);
+            continue;
           }
-          await this.#pause(code === 'supervisor:not-ready' ? 250 : 2_000);
+          for (const [id] of this.#pending) this.#reject(id, new Error(code));
+          this.#emit('session.event', { kind: 'refusal', body: { code: CODE.test(code) ? code : 'app:transport-failed', next: '' } });
+          await this.#pause(2_000);
         }
       }
     } finally { this.#polling = false; }
@@ -161,8 +170,14 @@ export class ShellTransport implements DataTransport {
   #pause(ms: number): Promise<void> {
     return new Promise(resolve => {
       const signal = this.#controller.signal;
-      const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+      const done = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', done);
+        if (this.#wakePoll === done) this.#wakePoll = undefined;
+        resolve();
+      };
       const timer = setTimeout(done, ms);
+      this.#wakePoll = done;
       signal.addEventListener('abort', done, { once: true });
       if (signal.aborted) done();
     });

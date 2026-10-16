@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Plugins screen. The registry card lists every plugin this release registers, grouped as the shell groups them, from
 // the registry shipped with the release, so it is printed whether or not the shell answers. Only each plugin's state comes
-// from the shell, and when that read fails every state reads "Unknown", never "Running". Nothing here installs, removes,
+// from the shell, and a failed read clears every running state. Nothing here installs, removes,
 // starts, stops or updates a plugin.
 import type { FaceManifest } from "../catalog.js";
-import { card, explain, make, mark, note, plural } from "../general/kit.js";
+import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
+import { card, make, mark, note, plural } from "../general/kit.js";
 import type { Tone } from "../general/kit.js";
 import { join } from "./registry.js";
 import type { PluginState, PluginStatus } from "./registry.js";
 
 export interface PluginsView {
   show(live: readonly PluginStatus[]): void;
-  unavailable(reason: string): void;
+  unavailable(reason: unknown): void;
 }
 
 const SECTIONS = [
@@ -34,6 +35,7 @@ interface RowParts {
 }
 
 function setState(parts: RowParts, tone: Tone, label: string, detail: string): void {
+  clearServiceState(parts.state);
   parts.state.dataset.tone = tone;
   parts.state.textContent = label;
   parts.detail.textContent = detail;
@@ -89,8 +91,7 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
   const strangers = card(root, "strangers", "Not in this release's registry");
   strangers.section.hidden = true;
   const store = card(root, "store", "App store");
-  mark(store.badge, "unknown", "NOT IN THIS RELEASE");
-  note(store.body, "No app store is connected in this release. This page has no control that installs, removes or updates a plugin.", "lead");
+  showServiceState(store.badge, "app:service-unavailable");
 
   const total = plural(catalog.length, "plugin is", "plugins are");
   mark(registry.badge, "unknown", "CHECKING");
@@ -111,9 +112,12 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
         }
         const [tone, label] = STATES[placed.live.state];
         if (placed.live.state === "active") running++;
-        if (placed.live.state === "failed") broken++;
-        setState(part, tone, label, placed.live.state === "waiting" ? `Waiting for: ${placed.live.missing.join(", ") || "nothing named"}`
-          : placed.live.state === "failed" ? `Failed to start · ${placed.live.error ?? "no reason given"}` : "");
+        setState(part, tone, label, "");
+        if (placed.live.state === "waiting") showServiceState(part.state, "app:service-unavailable");
+        if (placed.live.state === "failed") {
+          showServiceState(part.state, placed.live.error);
+          if (serviceState(placed.live.error).kind === "failure") broken++;
+        }
       }
       const all = running === catalog.length;
       const extra = joined.strangers.length;
@@ -134,6 +138,8 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
           const [tone, label] = STATES[stranger.state];
           state.dataset.tone = tone;
           state.textContent = label;
+          if (stranger.state === "waiting") showServiceState(state, "app:service-unavailable");
+          if (stranger.state === "failed") showServiceState(state, stranger.error);
           head.append(make("code", "mono", stranger.id), state);
           item.append(head);
           list.append(item);
@@ -142,9 +148,12 @@ export function createPluginsView(root: HTMLElement, catalog: readonly FaceManif
       }
     },
     unavailable(reason) {
-      mark(registry.badge, "unknown", "STATE UNKNOWN");
-      lead.textContent = `${total} registered in this release. ${explain(reason)} Whether each one is running is unknown.`;
-      for (const part of parts.values()) setState(part, "unknown", "Unknown", "");
+      showServiceState(registry.badge, reason);
+      lead.textContent = "";
+      for (const part of parts.values()) {
+        setState(part, "unknown", "", "");
+        showServiceState(part.state, reason);
+      }
       strangers.section.hidden = true;
       strangers.body.replaceChildren();
     },

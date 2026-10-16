@@ -2,7 +2,6 @@
 // Reads the public card on load, on request, once a minute while visible, and when a contact code is about to lapse or has.
 // A failed or malformed read replaces the card with an explicit unavailable state; the last good card is never kept on
 // screen behind a failure.
-import { refusalText } from "../aumlok/link.js";
 import type { FaceHost } from "../aumlok/link.js";
 import { parseCard } from "./card.js";
 import { createIdentityView } from "./view.js";
@@ -29,7 +28,7 @@ export function mountIdentity(host: FaceHost): void {
       const card = parseCard(await client.call("aumlok", "identity", {}, { signal }));
       if (!signal.aborted && mine === reading) view.show(card, Date.now());
     } catch (error) {
-      if (!signal.aborted && mine === reading) view.unavailable(refusalText(error));
+      if (!signal.aborted && mine === reading) view.unavailable(error);
     } finally {
       if (mine === reading) refresh.disabled = signal.aborted;
     }

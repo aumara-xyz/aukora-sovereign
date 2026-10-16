@@ -3,12 +3,13 @@
 // to compare. Everything on it is public and display-only. The code is drawn on a canvas (this page allows no data
 // images), and a code past its expiry is removed rather than left to be photographed. No key, signature or secret is
 // ever held here, and nothing on the page can sign, approve or open anything.
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
 import type { IdentityCard } from "./card.js";
 import { encodeQr } from "./qr.js";
 
 export interface IdentityView {
   show(card: IdentityCard, now: number): void;
-  unavailable(reason: string): void;
+  unavailable(reason: unknown): void;
   /** Re-evaluates expiry; returns whole seconds left on the shown code, 0 once it has expired, or null without one. */
   tick(now: number): number | null;
   dispose(): void;
@@ -110,6 +111,10 @@ export function createIdentityView(root: HTMLElement): IdentityView {
 
   const view: IdentityView = {
     show(next, now) {
+      clearServiceState(badge);
+      facts.hidden = false;
+      code.hidden = false;
+      safety.hidden = false;
       badge.textContent = next.subject === null ? "UNBOUND" : "PUBLIC";
       badge.dataset.state = next.subject === null ? "unbound" : "public";
       name.textContent = next.label;
@@ -147,14 +152,18 @@ export function createIdentityView(root: HTMLElement): IdentityView {
       }
     },
     unavailable(reason) {
-      badge.textContent = "UNAVAILABLE";
+      showServiceState(badge, reason);
       badge.dataset.state = "unavailable";
       name.textContent = "";
-      for (const part of [subject, node, agent]) part.textContent = "Unknown.";
-      lead.textContent = `The identity service did not answer (${reason}). Nothing here is shown as current.`;
+      for (const part of [subject, node, agent]) part.textContent = "—";
+      facts.hidden = true;
+      lead.textContent = "";
       expiresAt = null;
       lapsed = false;
-      hideCode("No contact code.");
+      hideCode("");
+      codeText.textContent = "";
+      code.hidden = true;
+      safety.hidden = true;
       safetyList.replaceChildren();
     },
     tick(now) {

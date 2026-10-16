@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Every sentence this face shows. A service that is not connected, a refusal and an empty list each say so in these
 // words and never leave a blank screen.
+import { serviceMessage } from "../../core/service-state.js";
 
 export const COPY = {
   connecting: "Connecting",
@@ -100,42 +101,13 @@ export const COPY = {
   },
 } as const;
 
-const PLAIN: Readonly<Record<string, string>> = {
-  "app:capability-denied": "This face is not allowed to make that call.",
-  "app:service-unavailable": "The service is not connected.",
-  "app:service-failed": "The service failed to answer.",
-  "app:deadline": "The service took too long to answer.",
-  "app:busy": "Too many requests are waiting. Try again.",
-  "app:invalid-reply": "The service answered in a shape this screen does not accept, so nothing from that answer is shown.",
-  "app:invalid-message": "The connection to the app shell broke.",
-  "app:shell-required": "This page only works inside the AUKORA app.",
-  "app:invalid-shell": "The app shell's address is not acceptable.",
-  "app:backpressure": "Updates arrived faster than this screen could take them.",
-  "app:session-too-long": "This chat is too long to read here.",
-  "session:sequence": "The chat changed on the node since it was last read.",
-  "session:not-found": "The node has no such chat for you.",
-  "frame:too-large": "The data was larger than one message may carry.",
-  "frontdoor:session-required": "Your session has ended. Sign in again.",
-  "supervisor:read-rate-limited": "Too many reads. Wait a moment and try again.",
-  "broker:grant-exhausted": "The model allowance has no room left for this call.",
-  "broker:grant-expired": "The model allowance has expired.",
-  "broker:grant-revoked": "The model allowance was revoked.",
-  "broker:grant-unknown": "No model allowance is set for this call.",
-  "broker:busy": "The model broker is busy. Try again.",
-  "broker:provider-no-credit": "The model provider reports no credit.",
-  "broker:provider-rate-limited": "The model provider is limiting calls. Try again later.",
-  "broker:provider-unavailable": "The model provider is not available.",
-  "broker:provider-key-rejected": "The model provider rejected the key.",
-  "broker:per-request-cap": "The call would cost more than one request may.",
-};
-
 export function refusalCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   return /^[a-z][a-z0-9_-]{0,31}:[a-z0-9-]{1,64}$/.test(message) ? message : "app:service-failed";
 }
 
 export function explain(code: string): string {
-  return Object.hasOwn(PLAIN, code) ? PLAIN[code] : "The node refused this request.";
+  return serviceMessage(code);
 }
 
 const OUTCOMES: Readonly<Record<string, string>> = {

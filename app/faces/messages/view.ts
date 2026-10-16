@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Messages face: three sections over the network service's read calls. A section whose call this face has not
-// been granted says "no backend yet" and makes no call. Nothing here sends, adds a contact or approves anything.
+// been granted shows an unavailable state and makes no call. Nothing here sends, adds a contact or approves anything.
 import type { FaceClient, JsonValue } from "../../core/index.js";
-import { COPY, explain, refusalCode } from "./copy.js";
+import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
+import { COPY } from "./copy.js";
 import { h, untrusted } from "./dom.js";
 import { moment, readContactPage, readMessagePage, readRefusals, shortKey } from "./model.js";
 import type { Contact, Message, Page, Refusals } from "./model.js";
@@ -28,15 +29,15 @@ function stamp(ms: number): HTMLElement {
   return at ? h("time", { datetime: at.iso }, at.label) : h("span", {}, "time not readable");
 }
 
-function trouble(error: unknown): Array<Node | string> {
-  const code = refusalCode(error);
-  return [explain(code), " ", h("code", {}, code)];
-}
-
 function messageRow(message: Message, names: ReadonlyMap<string, string>): HTMLElement {
   const inbound = message.direction === "in";
   const name = names.get(message.contact);
   const sentence = message.state === null ? null : COPY.states[message.state];
+  const outcome = sentence === null ? null : h("p", { class: `outcome ${message.state ?? ""}` }, sentence);
+  if (outcome && message.code !== null) {
+    const error = new Error(message.code);
+    if (serviceState(error).kind === "unavailable") showServiceState(outcome, error);
+  }
   return h("li", { class: `message ${inbound ? "in" : "out"}`, "data-message": message.id },
     h("p", { class: "who" },
       h("span", { class: "badge" }, inbound ? COPY.inboundBadge : COPY.outboundBadge),
@@ -45,8 +46,7 @@ function messageRow(message: Message, names: ReadonlyMap<string, string>): HTMLE
       h("code", { class: "key", title: message.contact }, shortKey(message.contact))),
     untrusted("p", { class: "words" }, message.text),
     h("p", { class: "meta" }, stamp(message.at), h("span", {}, COPY.viaRelays)),
-    sentence !== null && h("p", { class: `outcome ${message.state ?? ""}` }, sentence, " ",
-      message.code !== null && h("code", {}, message.code)));
+    outcome);
 }
 
 function contactRow(contact: Contact): HTMLElement {
@@ -91,6 +91,7 @@ function pagedList<T>(client: FaceClient, signal: AbortSignal, feed: Feed<T>): P
     element.setAttribute("aria-busy", "true");
     info.textContent = COPY.reading;
     problem.hidden = true;
+    clearServiceState(problem);
     const before = restart ? null : next;
     try {
       const [value] = await Promise.all([
@@ -116,7 +117,7 @@ function pagedList<T>(client: FaceClient, signal: AbortSignal, feed: Feed<T>): P
       if (signal.aborted) return;
       if (restart) { rows.replaceChildren(); seen.clear(); next = null; summary = ""; }
       info.textContent = summary;
-      problem.replaceChildren(...trouble(error));
+      showServiceState(problem, error);
       problem.hidden = false;
     } finally {
       busy = false;
@@ -157,6 +158,7 @@ function refusalsPanel(client: FaceClient, signal: AbortSignal): Panel {
     element.setAttribute("aria-busy", "true");
     info.textContent = COPY.reading;
     problem.hidden = true;
+    clearServiceState(problem);
     try {
       const data = readRefusals(await client.call("network", "refusals.counts", {}, { signal }));
       if (!signal.aborted) show(data);
@@ -164,7 +166,7 @@ function refusalsPanel(client: FaceClient, signal: AbortSignal): Panel {
       if (signal.aborted) return;
       counts.replaceChildren();
       info.textContent = "";
-      problem.replaceChildren(...trouble(error));
+      showServiceState(problem, error);
       problem.hidden = false;
     } finally {
       busy = false;
@@ -178,12 +180,10 @@ function refusalsPanel(client: FaceClient, signal: AbortSignal): Panel {
   return { element, show: () => { if (!started) void read(); } };
 }
 
-function absent(paragraphs: readonly string[]): Panel {
-  return {
-    element: h("div", { class: "no-backend" },
-      h("p", { class: "flag" }, COPY.noBackend), ...paragraphs.map(line => h("p", {}, line))),
-    show: () => undefined,
-  };
+function absent(): Panel {
+  const element = h("p", { role: "status" });
+  showServiceState(element, new Error("app:service-unavailable"));
+  return { element, show: () => undefined };
 }
 
 function tabs(signal: AbortSignal, specs: readonly TabSpec[]): HTMLElement {
@@ -246,7 +246,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     : null;
   const messages: Panel = thread
     ? { element: h("div", {}, h("p", { class: "aside" }, COPY.inbound), thread.element), show: thread.show }
-    : absent(COPY.absent.messages);
+    : absent();
   const book = granted.has("contacts.list")
     ? pagedList<Contact>(client, signal, {
       method: "contacts.list", read: readContactPage, key: contact => contact.npub,
@@ -255,8 +255,8 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     : null;
   const contacts: Panel = book
     ? { element: h("div", {}, h("p", { class: "aside" }, COPY.pairingNote), book.element), show: book.show }
-    : absent(COPY.absent.contacts);
-  const refused = granted.has("refusals.counts") ? refusalsPanel(client, signal) : absent(COPY.absent.refused);
+    : absent();
+  const refused = granted.has("refusals.counts") ? refusalsPanel(client, signal) : absent();
   root.append(
     h("p", { class: "lede" }, COPY.lede),
     tabs(signal, [

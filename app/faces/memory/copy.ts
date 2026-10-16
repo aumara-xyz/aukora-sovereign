@@ -39,31 +39,3 @@ export const COPY = {
   undeterminedLead: "Not determined.",
   recallUndetermined: "Kira could not decide. This does not mean nothing matched: the search was unavailable. Try again later.",
 } as const;
-
-const PLAIN: Readonly<Record<string, string>> = {
-  "app:capability-denied": "This face is not allowed to make that call.",
-  "app:service-unavailable": "The service is not connected.",
-  "app:service-failed": "The service failed to answer.",
-  "app:deadline": "The service took too long to answer.",
-  "app:busy": "Too many requests are waiting. Try again.",
-  "app:invalid-reply": "The service answered in a shape this screen does not accept, so nothing from that answer is shown.",
-  "app:invalid-message": "The connection to the app shell broke.",
-  "app:shell-required": "This page only works inside the AUKORA app.",
-  "app:invalid-shell": "The app shell's address is not acceptable.",
-  "kira:disclosure-not-permitted": "Kira will not show notes to this view: the current principal lacks permission to disclose them.",
-  "kira:ledger-unverified": "Kira could not verify its own record, so it shows nothing rather than guess.",
-  "kira:store-unavailable": "Kira's store is not available.",
-  "kira:store-corrupt": "Kira's store failed an integrity check.",
-  "kira:authentication-failed": "A stored note failed its integrity check.",
-  "supervisor:read-rate-limited": "Too many reads. Wait a moment and try again.",
-  "frontdoor:session-required": "Your session has ended. Sign in again.",
-};
-
-export function refusalCode(error: unknown): string {
-  const message = error instanceof Error ? error.message : "";
-  return /^[a-z][a-z0-9_-]{0,31}:[a-z0-9-]{1,64}$/.test(message) ? message : "app:service-failed";
-}
-
-export function explain(code: string): string {
-  return Object.hasOwn(PLAIN, code) ? PLAIN[code] : "The service refused this request.";
-}

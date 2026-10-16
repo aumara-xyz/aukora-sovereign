@@ -10,7 +10,7 @@
   },
   "refresh": "on load, on request, and every 60 seconds while the page is visible; a read that is superseded is ignored",
   "screen": {
-    "release": "one card from the node: CHECKING, then REPORTED with the digest in groups of eight and the file count, or UNAVAILABLE with the refusal code and every value shown as Unknown; a failed read removes the last good report",
+    "release": "one card from the node: CHECKING, then REPORTED with the digest in groups of eight and the file count; a failed read removes the last good report, hides the values and shows the shared icon and short service state",
     "facts_of_the_release": "three cards that print whether or not the node answers, because none of them is a claim about the node: language and appearance, the limits the app keeps (read from app/core: FD4_LIMITS, MAX_RPC_BYTES, RPC_DEADLINE_MS), and how settings change"
   },
   "states": {
@@ -18,8 +18,8 @@
     "loading": "the same, until the first read settles",
     "empty": "not applicable: a release always lists its files",
     "ready": "release card REPORTED",
-    "refusal": "release card UNAVAILABLE with the service's code, for example general:refused",
-    "service-unavailable": "release card UNAVAILABLE with app:service-unavailable or app:deadline; a reply this page does not accept shows general:reply-invalid",
+    "refusal": "release card shows the shared short refusal state without the service code; only a confirmed ended session asks for sign-in",
+    "service-unavailable": "release card shows a muted icon and Not yet, with its data hidden; malformed replies remain refusals",
     "phone": "cards stack and fact rows become one column at 480 px and below"
   },
   "face_holds": "a digest and a count; it has no field that saves a setting and no control that approves one",

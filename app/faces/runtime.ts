@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { clearServiceState, serviceMessage, showServiceState, throwServiceRefusal } from "../core/service-state.js";
 import { connectFace } from "../core/index.js";
 import type { FaceClient, JsonValue } from "../core/index.js";
 import { FACE_CATALOG } from "./catalog.js";
@@ -14,8 +15,7 @@ export interface FaceAdapters {
 }
 
 export function refusalText(error: unknown): string {
-  if (error instanceof Error && /^[a-z][a-z0-9-]*:[a-z0-9-]+$/.test(error.message)) return error.message;
-  return "app:service-unavailable";
+  return serviceMessage(error);
 }
 
 export function record(value: unknown): Record<string, JsonValue> {
@@ -32,9 +32,9 @@ function readout(root: HTMLElement, client: FaceClient, organ: string, method: s
     refresh.disabled = true;
     try {
       const data = await client.call(organ, method, params, { signal });
-      if (!signal.aborted) output.textContent = JSON.stringify(data, null, 2);
+      if (!signal.aborted) { clearServiceState(output); output.textContent = JSON.stringify(data, null, 2); }
     } catch (error) {
-      if (!signal.aborted) output.textContent = `Unavailable · ${refusalText(error)}`;
+      if (!signal.aborted) showServiceState(output, error);
     } finally { refresh.disabled = signal.aborted; }
   };
   refresh.addEventListener("click", () => void load(), { signal });
@@ -79,14 +79,15 @@ async function coherence(root: HTMLElement, client: FaceClient, adapters: FaceAd
     window.clearTimeout(headTimer);
     headTimer = undefined;
     pendingHead = undefined;
-    views.clearFingerprint(`Unavailable · ${refusalText(error)}`);
+    views.clearFingerprint(serviceMessage(error));
   };
   const health = (value: JsonValue) => {
     if (signal.aborted) return;
     try {
+      throwServiceRefusal(value);
       if (!adapters.health) throw new Error("coherence:health-decoder-unavailable");
       views.health(opaqueBytes(value), adapters.health, repairing);
-    } catch (error) { views.clearHealth(`Unavailable · ${refusalText(error)}`); }
+    } catch (error) { views.clearHealth(serviceMessage(error)); }
   };
   const fingerprint = (value: JsonValue) => {
     if (signal.aborted) return;
@@ -95,6 +96,7 @@ async function coherence(root: HTMLElement, client: FaceClient, adapters: FaceAd
     headTimer = undefined;
     views.clearFingerprint("Fingerprint settling");
     try {
+      throwServiceRefusal(value);
       const pentora = adapters.pentora;
       if (!pentora) throw new Error("coherence:pentora-unavailable");
       const head = headBytes(value);
@@ -118,14 +120,14 @@ async function coherence(root: HTMLElement, client: FaceClient, adapters: FaceAd
   };
   await Promise.all([
     client.call("body", "health.snapshot", {}, { signal }).then(health,
-      error => views.clearHealth(`Unavailable · ${refusalText(error)}`)),
+      error => views.clearHealth(serviceMessage(error))),
     client.call("gate-aura", "head", {}, { signal }).then(fingerprint, failFingerprint),
   ]);
   if (signal.aborted) return;
   await Promise.all([
     client.subscribe("body", "health.snapshot", {}, health, {
-      signal, onError: code => { if (!signal.aborted) views.clearHealth(`Unavailable · ${code}`); },
-    }).catch(error => { if (!signal.aborted) views.clearHealth(`Unavailable · ${refusalText(error)}`); }),
+      signal, onError: code => { if (!signal.aborted) views.clearHealth(serviceMessage(code)); },
+    }).catch(error => { if (!signal.aborted) views.clearHealth(serviceMessage(error)); }),
     client.subscribe("gate-aura", "head", {}, fingerprint, {
       signal, onError: code => failFingerprint(new Error(code)),
     }).catch(failFingerprint),
@@ -162,10 +164,10 @@ export async function mountFace(id: string, adapters: FaceAdapters = {}): Promis
     } else {
       const method = manifest.capabilities[manifest.organ].methods[0];
       if (method) readout(root, client, manifest.organ, method, {}, life.signal);
-      else status.textContent = "This face is registered. Its service is not connected.";
+      else showServiceState(status, "app:service-unavailable");
     }
   } catch (error) {
-    if (!life.signal.aborted) status.textContent = `Unavailable · ${refusalText(error)}`;
+    if (!life.signal.aborted) showServiceState(status, error);
   }
   return dispose;
 }

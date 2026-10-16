@@ -2,7 +2,8 @@
 // The transcript: the node's saved entries, then whatever is still on its way (a message being sent, a reply being
 // streamed), each marked as not yet saved. All text is shown as text. A function call Auma suggests is listed with its
 // name and arguments and is never run, and tool and context entries are labelled as data.
-import { COPY, explain, sourceText } from "./copy.js";
+import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
+import { COPY, sourceText } from "./copy.js";
 import type { Conversation, State, Stream } from "./conversation.js";
 import { h, icon, mark, neutralize, untrusted, visible } from "./dom.js";
 import { clip } from "./model.js";
@@ -175,9 +176,9 @@ export function createTranscript(options: TranscriptOptions): Transcript {
     const parts: Array<Node | string> = [];
     if (stream.phase === "unconfirmed") parts.push(COPY.chat.unconfirmed);
     else if (stream.phase === "failed") {
-      const code = stream.code ?? "app:service-failed";
-      parts.push(h("strong", {}, COPY.chat.failed), " ", explain(code), " ", h("code", {}, code));
-      if (stream.next) parts.push(" ", ...neutralize(clip(stream.next, 400)));
+      const state = h("span", {});
+      showServiceState(state, stream.code ?? "app:service-failed");
+      parts.push(state);
     } else parts.push(stream.phase === "cancelled" ? COPY.chat.stopped : COPY.chat.unsaved);
     if (stream.receipt) parts.push(" ", h("span", { class: "usage" }, `· ${usage(stream.receipt)}`));
     parts.push(" ", h("button", { type: "button", class: "link" }, COPY.chat.dismiss));
@@ -212,6 +213,8 @@ export function createTranscript(options: TranscriptOptions): Transcript {
     if (stream.gap) parts.push(" ", COPY.chat.partial);
     else if (stream.clipped) parts.push(" ", COPY.chat.clipped);
     live.foot.replaceChildren(...parts);
+    if (stream.phase === "failed") live.foot.dataset.serviceState = serviceState(stream.code ?? "app:service-failed").kind;
+    else clearServiceState(live.foot);
     live.foot.querySelector("button")?.addEventListener("click", () => conversation.clearStream(), { signal });
     live.root.dataset.phase = stream.phase;
     grew = true;
@@ -254,10 +257,12 @@ export function createTranscript(options: TranscriptOptions): Transcript {
 
   const syncBanner = (st: State) => {
     let parts: Array<Node | string> | null = null;
+    clearServiceState(banner);
     if (st.phase === "loading") parts = [COPY.chat.loading];
     else if (st.phase === "failed") {
-      const code = st.failure ?? "app:service-failed";
-      parts = [`${explain(code)} `, h("code", {}, code)];
+      showServiceState(banner, st.failure ?? "app:service-failed");
+      banner.hidden = false;
+      return;
     } else if (st.phase === "ready" && st.entries.length === 0 && tail.childElementCount === 0) parts = [COPY.chat.empty];
     if (parts) banner.replaceChildren(...parts);
     banner.hidden = parts === null;

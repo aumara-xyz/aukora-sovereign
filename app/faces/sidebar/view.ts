@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
 // The Sidebar face: the node's list of chats, and a reader that shows one chat's saved entries. It reads only. It has no
 // call that sends a message or creates a chat, so writing happens in Threads. The same view lists archived sessions
 // when it is asked to (the Archived sessions face).
@@ -74,7 +75,8 @@ export function mountSidebar(
       ? `${summary.mode === "build" ? COPY.composer.build : COPY.composer.chat} · ${countText(summary.sequence, COPY.list.message, COPY.list.messages)}`
       : "";
     const latest = notices[notices.length - 1];
-    if (latest) problem.replaceChildren(latest.text, latest.code ? " " : "", latest.code ? h("code", {}, latest.code) : "");
+    if (latest?.code) showServiceState(problem, latest.code);
+    else if (latest) { clearServiceState(problem); problem.textContent = latest.text; }
     problem.hidden = latest === undefined;
     transcript.sync();
   };
@@ -110,6 +112,7 @@ export function mountSidebar(
     state: (connected, code) => {
       conversation.live(connected);
       if (connected) {
+        clearServiceState(live);
         live.hidden = true;
         if (connectedBefore) { reload(); conversation.resync(); }
         connectedBefore = true;
@@ -117,7 +120,8 @@ export function mountSidebar(
       }
       const retry = h("button", { type: "button", class: "link" }, COPY.notices.liveRetry);
       retry.addEventListener("click", () => link.retry(), { signal });
-      live.replaceChildren(`${COPY.notices.liveDown} `, code ? h("code", {}, code) : "", " ", retry);
+      showServiceState(live, code ?? "app:service-unavailable");
+      live.append(" ", retry);
       live.hidden = false;
     },
   });

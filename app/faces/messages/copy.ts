@@ -69,30 +69,3 @@ export const COPY = {
     ["staleContact", "Contact approval is out of date"],
   ] as const,
 } as const;
-
-const PLAIN: Readonly<Record<string, string>> = {
-  "app:capability-denied": "This face is not allowed to make that call.",
-  "app:service-unavailable": "The service is not connected.",
-  "app:service-failed": "The service failed to answer.",
-  "app:deadline": "The service took too long to answer.",
-  "app:busy": "Too many requests are waiting. Try again.",
-  "app:invalid-reply": "The service answered in a shape this screen does not accept, so nothing from that answer is shown.",
-  "app:invalid-message": "The connection to the app shell broke.",
-  "app:shell-required": "This page only works inside the AUKORA app.",
-  "app:invalid-shell": "The app shell's address is not acceptable.",
-  "messaging:refusal-counts-unreconciled": "The refusal counts are not yet reconciled with the Aura record, so none are shown.",
-  "messaging:refusal-recovery-required": "A refused message is waiting to be reconciled, so the counts are held back.",
-  "messaging:page-limit": "The page size was refused.",
-  "messaging:transport-rejected": "No relay accepted the message.",
-  "supervisor:read-rate-limited": "Too many reads. Wait a moment and try again.",
-  "frontdoor:session-required": "Your session has ended. Sign in again.",
-};
-
-export function refusalCode(error: unknown): string {
-  const message = error instanceof Error ? error.message : "";
-  return /^[a-z][a-z0-9_-]{0,31}:[a-z0-9-]{1,64}$/.test(message) ? message : "app:service-failed";
-}
-
-export function explain(code: string): string {
-  return Object.hasOwn(PLAIN, code) ? PLAIN[code] : "The service refused this request.";
-}

@@ -2,7 +2,9 @@
 // What the five System settings faces share: how a page opens, how it reads a service and stops printing it the moment
 // the read fails, and the small DOM and number formats it prints with. These faces hold no authority. They read data over
 // the shell link, print it as text, and have no control that saves, approves, signs or installs anything.
-import { openFace, refusalText } from "../aumlok/link.js";
+import { connectFace } from "../../core/index.js";
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
+import type { FaceClient } from "../../core/index.js";
 import type { FaceHost } from "../aumlok/link.js";
 
 /** What a badge reports: data from the node that is fine, data that wants a look, a failure, nothing known, or a plain label. */
@@ -20,8 +22,39 @@ export function make<K extends keyof HTMLElementTagNameMap>(tag: K, className?: 
  * comes up, so a page that cannot reach its service still says what it is.
  */
 export function openSettings(id: string, title: string, purpose: string, mount: (host: FaceHost) => void | Promise<void>): void {
-  openFace(id, title, mount);
+  openServiceFace(id, title, mount);
   document.getElementById("face")?.querySelector("h1")?.after(make("p", "purpose", purpose));
+}
+
+export function openServiceFace(id: string, title: string, mount: (host: FaceHost) => void | Promise<void>): () => void {
+  const root = document.getElementById("face");
+  if (!root) throw new Error("app:unknown-face");
+  const life = new AbortController();
+  const heading = make("h1", undefined, title);
+  const status = make("p", undefined, "Connecting");
+  status.setAttribute("role", "status");
+  root.replaceChildren(heading, status);
+  let client: FaceClient | undefined;
+  const dispose = () => {
+    life.abort();
+    client?.dispose();
+    root.replaceChildren();
+  };
+  window.addEventListener("pagehide", dispose, { once: true, signal: life.signal });
+  void (async () => {
+    try {
+      if (window.parent === window || !document.referrer) throw new Error("app:shell-required");
+      const shellOrigin = new URL(document.referrer).origin;
+      if (shellOrigin === "null") throw new Error("app:shell-required");
+      client = connectFace({ shellOrigin, pluginId: id, signal: life.signal });
+      if (life.signal.aborted) { client.dispose(); return; }
+      status.textContent = "";
+      await mount({ root, client, signal: life.signal });
+    } catch (error) {
+      if (!life.signal.aborted) showServiceState(status, error);
+    }
+  })();
+  return dispose;
 }
 
 export interface Card {
@@ -47,6 +80,7 @@ export function card(root: HTMLElement, id: string, title: string): Card {
 }
 
 export function mark(badge: HTMLElement, tone: Tone, label: string): void {
+  clearServiceState(badge);
   badge.dataset.tone = tone;
   badge.textContent = label;
 }
@@ -116,24 +150,14 @@ export function groups(hex: string): string {
   return hex.match(/.{1,8}/g)?.join(" ") ?? hex;
 }
 
-/**
- * Says what a failure code means for the reader: the service did not answer, this page would not accept what it sent, or
- * the service refused the request.
- */
-export function explain(reason: string): string {
-  if (reason.startsWith("app:")) return `The service behind this page did not answer (${reason}).`;
-  if (/:(reply-invalid|cursor-repeated)$/.test(reason)) return `This page did not accept the reply it got (${reason}).`;
-  return `The service refused the request (${reason}).`;
-}
-
 export interface Reading<T> {
   /** Milliseconds between reads while the page is visible; 0 reads only on load and on request. */
   readonly every: number;
   /** Fetches and strictly reads the data; throws a refusal code when anything is wrong. */
   read(signal: AbortSignal): Promise<T>;
   show(value: T, at: number): void;
-  /** Called with the refusal text; the face must clear whatever it printed from the node. */
-  fail(reason: string): void;
+  /** Called with the read failure; the face must clear whatever it printed from the node. */
+  fail(reason: unknown): void;
 }
 
 /**
@@ -165,8 +189,8 @@ export function follow<T>(host: FaceHost, build: (stage: HTMLElement) => Reading
       }
     } catch (error) {
       if (!signal.aborted && mine === latest) {
-        reading.fail(refusalText(error));
-        stamp.textContent = `Read failed ${CLOCK.format(new Date())}`;
+        reading.fail(error);
+        stamp.textContent = "";
       }
     } finally {
       if (mine === latest) {

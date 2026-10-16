@@ -14,15 +14,15 @@
   "screen": {
     "presets": "one card per preset: its model, its longest reply, and all eight built-in operations, each marked Allowed or Not allowed in words as well as colour",
     "chat_and_build": "a card that says what the two modes are and that a preset only selects among operations already in the node: it never loads code, runs a command or opens a network connection",
-    "unavailable": "the preset cards are replaced by one UNAVAILABLE card with the refusal code; a failed read removes the last good list"
+    "unavailable": "the preset cards are replaced by one card with the shared icon and short service state without a code; a failed read removes the last good list"
   },
   "states": {
     "initial": "heading, purpose, one Presets card reading CHECKING, and the Chat and Build card",
     "loading": "the same, until the first read settles",
     "empty": "one Presets card reading NONE: the node reports no presets",
     "ready": "a Chat card and a Build card",
-    "refusal": "one Presets card UNAVAILABLE with the service's code, for example presets:refused",
-    "service-unavailable": "one Presets card UNAVAILABLE with app:service-unavailable or app:deadline; a reply this page does not accept shows presets:reply-invalid",
+    "refusal": "one Presets card shows the shared short refusal state without the service code; only a confirmed ended session asks for sign-in",
+    "service-unavailable": "one Presets card shows a muted icon and Not yet; malformed replies remain refusals",
     "phone": "operation rows wrap so the state sits under the words at 480 px and below"
   },
   "face_holds": "preset names, a model name, a number and a closed list of operation names; it cannot create, copy, edit or delete a preset, and a preset carries no code",

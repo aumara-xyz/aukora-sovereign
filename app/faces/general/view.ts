@@ -4,12 +4,13 @@
 // limits the app keeps, how a setting changes) and are printed whether or not the node answers, because none of them is a
 // claim about the node. Nothing on the page saves, approves or changes anything.
 import { FD4_LIMITS, MAX_RPC_BYTES, RPC_DEADLINE_MS } from "../../core/index.js";
-import { card, count, explain, facts, groups, make, mark, note, plural } from "./kit.js";
+import { showServiceState } from "../../core/service-state.js";
+import { card, count, facts, groups, make, mark, note, plural } from "./kit.js";
 import type { ReleaseReport } from "./release.js";
 
 export interface GeneralView {
   show(report: ReleaseReport): void;
-  unavailable(reason: string): void;
+  unavailable(reason: unknown): void;
 }
 
 export function createGeneralView(root: HTMLElement): GeneralView {
@@ -44,16 +45,18 @@ export function createGeneralView(root: HTMLElement): GeneralView {
 
   return {
     show(report) {
+      release.body.hidden = false;
       mark(release.badge, "ok", "REPORTED");
       lead.textContent = "The node reports serving this release. The digest identifies the exact set of files the app was built from.";
       digest.textContent = groups(report.manifestSha256);
       assets.textContent = plural(report.assets, "file", "files");
     },
     unavailable(reason) {
-      mark(release.badge, "unknown", "UNAVAILABLE");
-      lead.textContent = `${explain(reason)} Nothing here is shown as current.`;
-      digest.textContent = "Unknown.";
-      assets.textContent = "Unknown.";
+      showServiceState(release.badge, reason);
+      release.body.hidden = true;
+      lead.textContent = "";
+      digest.textContent = "—";
+      assets.textContent = "—";
     },
   };
 }

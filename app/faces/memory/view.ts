@@ -2,7 +2,8 @@
 // The Memory face: four sections over Kira's two read calls. Remembered and Forgotten read memory.list; search reads
 // memory.recall; Signed and Proposals have no backend and say so. Nothing here writes, forgets or approves.
 import type { FaceClient } from "../../core/index.js";
-import { COPY, explain, refusalCode } from "./copy.js";
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
+import { COPY } from "./copy.js";
 import { h, untrusted } from "./dom.js";
 import { moment, readNotePage, readRecall } from "./model.js";
 import type { Note, Recall, Recalled, Tier } from "./model.js";
@@ -23,9 +24,10 @@ function citation(sequence: number, meaning: string): HTMLElement {
   return h("span", { class: "cite", title: meaning }, `Aura record #${sequence}`);
 }
 
-function trouble(error: unknown): Array<Node | string> {
-  const code = refusalCode(error);
-  return [explain(code), " ", h("code", {}, code)];
+function problemFor(error: unknown): HTMLElement {
+  const element = h("p", { class: "problem" });
+  showServiceState(element, error);
+  return element;
 }
 
 function rememberedRow(note: Note): HTMLElement {
@@ -84,6 +86,7 @@ function noteList(client: FaceClient, signal: AbortSignal, tier: Tier): Panel {
     element.setAttribute("aria-busy", "true");
     info.textContent = COPY.reading;
     problem.hidden = true;
+    clearServiceState(problem);
     const before = restart ? null : next;
     try {
       const page = readNotePage(await client.call("kira", "memory.list", { tier, before }, { signal }), tier);
@@ -104,7 +107,7 @@ function noteList(client: FaceClient, signal: AbortSignal, tier: Tier): Panel {
       if (signal.aborted) return;
       if (restart) { rows.replaceChildren(); seen.clear(); next = null; summary = ""; }
       info.textContent = summary;
-      problem.replaceChildren(...trouble(error));
+      showServiceState(problem, error);
       problem.hidden = false;
     } finally {
       busy = false;
@@ -131,8 +134,7 @@ function recallContent(query: string, recall: Recall): Array<Node | string> {
     ];
   }
   if (recall.result === "empty") return [h("p", { role: "status", class: "info" }, COPY.recallEmpty)];
-  return [h("p", { role: "status", class: "undetermined" },
-    h("strong", {}, COPY.undeterminedLead), " ", COPY.recallUndetermined)];
+  return [problemFor(new Error("app:service-unavailable"))];
 }
 
 // Search is memory.recall. Its three answers stay apart: found, empty, and not determined. The frame is sandboxed
@@ -174,7 +176,7 @@ function search(client: FaceClient, signal: AbortSignal, list: HTMLElement): HTM
     client.call("kira", "memory.recall", { query, limit: RECALL_LIMIT }, { signal })
       .then(value => { if (!signal.aborted) present(recallContent(query, readRecall(value))); })
       .catch((error: unknown) => {
-        if (!signal.aborted) present([h("p", { role: "alert", class: "problem" }, ...trouble(error))]);
+        if (!signal.aborted) present([problemFor(error)]);
       })
       .finally(() => { pending = false; go.disabled = false; go.textContent = COPY.search; });
   };
@@ -193,12 +195,10 @@ function rememberedPanel(client: FaceClient, signal: AbortSignal): Panel {
   return { element: h("div", {}, lookup, list.element, h("p", { class: "aside" }, COPY.noForget)), show: list.show };
 }
 
-function notice(paragraphs: readonly string[]): Panel {
-  return {
-    element: h("div", { class: "no-backend" },
-      h("p", { class: "flag" }, COPY.noBackend), ...paragraphs.map(line => h("p", {}, line))),
-    show: () => undefined,
-  };
+function notice(): Panel {
+  const element = h("p", { role: "status" });
+  showServiceState(element, new Error("app:service-unavailable"));
+  return { element, show: () => undefined };
 }
 
 function tabs(signal: AbortSignal, specs: readonly TabSpec[]): HTMLElement {
@@ -246,8 +246,8 @@ export function mountMemory(root: HTMLElement, client: FaceClient, signal: Abort
     h("p", { class: "lede" }, COPY.lede),
     tabs(signal, [
       { id: "remembered", label: COPY.tabs.remembered, blurb: COPY.blurbs.remembered, panel: rememberedPanel(client, signal) },
-      { id: "signed", label: COPY.tabs.signed, blurb: COPY.blurbs.signed, panel: notice(COPY.signed) },
-      { id: "proposals", label: COPY.tabs.proposals, blurb: COPY.blurbs.proposals, panel: notice(COPY.proposals) },
+      { id: "signed", label: COPY.tabs.signed, blurb: COPY.blurbs.signed, panel: notice() },
+      { id: "proposals", label: COPY.tabs.proposals, blurb: COPY.blurbs.proposals, panel: notice() },
       { id: "forgotten", label: COPY.tabs.forgotten, blurb: COPY.blurbs.forgotten, panel: noteList(client, signal, "forgotten") },
     ]),
   );

@@ -2,7 +2,7 @@
 import { connectFace } from "../../core/index.js";
 import type { FaceClient } from "../../core/index.js";
 import { FACE_CATALOG } from "../catalog.js";
-import { explain, refusalCode } from "./copy.js";
+import { showServiceState } from "../../core/service-state.js";
 import { h } from "./dom.js";
 import { mountMessages } from "./view.js";
 
@@ -40,8 +40,7 @@ function start(): void {
     mountMessages(root, client, life.signal, granted);
     status.remove();
   } catch (error) {
-    const code = refusalCode(error);
-    status.replaceChildren(`Unavailable · ${explain(code)} `, h("code", {}, code));
+    showServiceState(status, error);
   }
 }
 

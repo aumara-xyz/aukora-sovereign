@@ -3,13 +3,14 @@
 // built-in operation marked allowed or not allowed in words as well as colour, then a card on what the two modes are and
 // what a preset can never do. A failed read replaces the preset cards with an unavailable card. Nothing here edits, adds,
 // copies or removes a preset, and a preset is only ever a choice among operations the node already has.
-import { card, count, explain, facts, make, mark, note } from "../general/kit.js";
+import { showServiceState } from "../../core/service-state.js";
+import { card, count, facts, make, mark, note } from "../general/kit.js";
 import { OPERATIONS } from "./presets.js";
 import type { Operation, Preset } from "./presets.js";
 
 export interface PresetsView {
   show(presets: readonly Preset[]): void;
-  unavailable(reason: string): void;
+  unavailable(reason: unknown): void;
 }
 
 const TITLES = { chat: "Chat", build: "Build" } as const;
@@ -74,7 +75,9 @@ export function createPresetsView(root: HTMLElement): PresetsView {
       }
     },
     unavailable(reason) {
-      instead("UNAVAILABLE", `${explain(reason)} Nothing here is shown as current.`);
+      stage.replaceChildren();
+      const only = card(stage, "presets", "Presets");
+      showServiceState(only.badge, reason);
     },
   };
 }

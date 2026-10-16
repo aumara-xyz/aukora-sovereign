@@ -469,7 +469,7 @@ export function createConversation(client: FaceClient, signal: AbortSignal, opti
           `Proposal ${visible(clip(event.proposal, 12))}: ${outcomeText(event.state)}`);
         break;
       case "refused":
-        note("refusal", "warn", `${COPY.notices.refused} ${explain(event.code)} ${visible(clip(event.next, 300))}`, event.code);
+        note("refusal", "warn", explain(event.code), event.code);
         break;
       default:
         return;

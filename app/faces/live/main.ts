@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { showServiceState } from "../../core/service-state.js";
 import { FACE_CATALOG } from "../catalog.js";
 import { mountLive } from "./view.js";
 
@@ -30,8 +31,6 @@ try {
   title.textContent = "Auma Live";
   const status = document.createElement("p");
   status.setAttribute("role", "alert");
-  const code = error instanceof Error && /^[a-z][a-z0-9-]*:[a-z0-9-]+$/.test(error.message)
-    ? error.message : "live:unavailable";
-  status.textContent = `Unavailable · ${code}`;
+  showServiceState(status, error);
   root.append(title, status);
 }

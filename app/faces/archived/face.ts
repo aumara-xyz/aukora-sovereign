@@ -4,7 +4,6 @@
 // state instead of keeping the last list up. Reading is bounded: a few pages at a time, a repeated cursor ends the read
 // as a refusal, and a session's entries come a page at a time on request. Nothing here writes to a session.
 import type { FaceHost } from "../aumlok/link.js";
-import { refusalText } from "../aumlok/link.js";
 import { follow } from "../general/kit.js";
 import { MAX_PAGE, parseOpened, parsePage } from "./sessions.js";
 import type { Summary } from "./sessions.js";
@@ -58,7 +57,7 @@ export function mountArchived(host: FaceHost): void {
   };
 
   // Empties the list and the reader, and cancels whatever was still being read for either.
-  const down = (reason: string) => {
+  const down = (reason: unknown) => {
     generation++;
     reading++;
     session = null;
@@ -76,7 +75,7 @@ export function mountArchived(host: FaceHost): void {
       const next = await collect(current, MORE_PAGES);
       if (!signal.aborted && mine === generation) show(next, Date.now());
     } catch (error) {
-      if (!signal.aborted && mine === generation) down(refusalText(error));
+      if (!signal.aborted && mine === generation) down(error);
     } finally {
       extending = false;
       if (mine === generation) view?.working(false);
@@ -96,7 +95,7 @@ export function mountArchived(host: FaceHost): void {
       after = opened.next;
       view?.reader.show(opened, false);
     } catch (error) {
-      if (!signal.aborted && mine === reading) view?.reader.fail(refusalText(error));
+      if (!signal.aborted && mine === reading) view?.reader.fail(error);
     }
   };
 
@@ -115,7 +114,7 @@ export function mountArchived(host: FaceHost): void {
       after = opened.next;
       view?.reader.show(opened, true);
     } catch (error) {
-      if (!signal.aborted && mine === reading) view?.reader.fail(refusalText(error));
+      if (!signal.aborted && mine === reading) view?.reader.fail(error);
     } finally {
       paging = false;
       if (mine === reading) view?.reader.working(false);

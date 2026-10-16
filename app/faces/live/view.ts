@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { showServiceState } from "../../core/service-state.js";
 import { icon } from "../../design/index.js";
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -18,28 +19,26 @@ export function mountLive(root: HTMLElement, signal: AbortSignal): void {
   const header = element("header", "live-header");
   const identity = element("div", "live-identity");
   identity.append(icon("live"), element("h1", "live-title", "Auma Live"));
-  const badge = element("span", "live-badge", "Voice not installed");
+  const badge = element("span", "live-badge", "Not yet");
   header.append(identity, badge);
 
   const stage = element("section", "live-stage");
   stage.setAttribute("aria-labelledby", "live-heading");
   const heading = element("h2", "live-heading", "A space for voice with Auma");
   heading.id = "live-heading";
-  const status = element("p", "live-status", "Voice is not installed in this release.");
+  const status = element("p", "live-status");
+  showServiceState(status, "live:voice-status-unavailable");
   status.id = "live-status";
   status.setAttribute("role", "status");
-  const reason = element("p", "live-reason", "Speaking comes after the core milestones. Voice is unavailable here for now.");
-  reason.id = "live-reason";
-
   const start = element("button", "live-start");
   start.type = "button";
   start.disabled = true;
-  start.setAttribute("aria-describedby", "live-status live-reason");
+  start.setAttribute("aria-describedby", "live-status");
   const orb = element("span", "live-orb");
   orb.setAttribute("aria-hidden", "true");
   orb.append(icon("live", "live-wave"));
   start.append(orb, element("span", "live-start-label", "Start Voice"));
-  stage.append(heading, status, start, reason);
+  stage.append(heading, status, start);
 
   const footer = element("footer", "live-footer");
   const facts = element("dl", "live-facts");

@@ -21,3 +21,10 @@ li button { width: 100%; text-align: start; }
 canvas { display: block; width: 100%; max-width: 640px; height: auto; }
 [role="status"] { color: #adbad0; }
 [role="alert"] { color: #ff9ba3; }
+/* Shared service states stay on the face's surface, including inside error containers. */
+:root body #face [data-service-state="unavailable"],
+:root body #face [data-service-state="session-ended"] {
+  color: var(--muted, var(--text-muted, #adbad0));
+  background: var(--surface, var(--panel, var(--glass, #1b1f2a)));
+  border-color: var(--border, var(--line, #3c4659));
+}

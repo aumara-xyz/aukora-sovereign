@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The thread list as cards: a mark, the title, and when it last changed. The title is the node's text and is shown as
 // text only. Searching matches the titles of the chats read here; the node has no content search.
-import { COPY, countText, explain } from "./copy.js";
+import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
+import { COPY, countText } from "./copy.js";
 import { h, icon, mark, neutralize, visible } from "./dom.js";
 import type { List } from "./list.js";
 import type { Summary } from "./model.js";
@@ -62,7 +63,7 @@ export function createListView(options: ListViewOptions): ListView {
       h("label", { for: `${options.id}-search`, class: "sr" }, COPY.list.searchLabel), icon("search"), input, clear),
     reload);
   const info = h("p", { class: "info", role: "status" });
-  const problem = h("p", { class: "problem", role: "alert", hidden: "" });
+  const problem = h("p", { class: "problem", role: "status", hidden: "" });
   const rows = h("ul", { class: "cards", "aria-label": COPY.list.heading });
   const more = h("button", { type: "button", class: "more", hidden: "" });
   const element = h("section", { class: "thread-list", "aria-label": COPY.list.heading, "aria-busy": "false" },
@@ -134,10 +135,13 @@ export function createListView(options: ListViewOptions): ListView {
     if (failure !== shownFailure) {
       shownFailure = failure;
       if (failure !== null) {
-        problem.replaceChildren(`${explain(failure)} `, h("code", {}, failure), " ",
-          h("button", { type: "button", class: "link" }, COPY.chat.retry));
-        problem.querySelector("button")?.addEventListener("click", () => options.reload(), { signal });
-      }
+        showServiceState(problem, failure);
+        if (serviceState(failure).kind === "failure") {
+          const retry = h("button", { type: "button", class: "link" }, COPY.chat.retry);
+          retry.addEventListener("click", () => options.reload(), { signal });
+          problem.append(" ", retry);
+        }
+      } else { clearServiceState(problem); problem.replaceChildren(); }
     }
     problem.hidden = failure === null;
     const hidden = matches.length - limit;

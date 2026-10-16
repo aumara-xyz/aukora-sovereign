@@ -4,7 +4,7 @@
 // one never changes what the other canvas shows, and a canvas that cannot be drawn is cleared with its reason. A map or
 // picture that can no longer be kept current is cleared rather than left up as if it were; Refresh starts both feeds over.
 import type { JsonValue } from "../../core/index.js";
-import { refusalText } from "../aumlok/link.js";
+import { serviceMessage, throwServiceRefusal } from "../../core/service-state.js";
 import type { FaceHost } from "../aumlok/link.js";
 import { MAX_SNAPSHOT_BYTES } from "./health.js";
 import { parseHead } from "./head.js";
@@ -67,17 +67,18 @@ export async function mountCoherence(
       const current = ++healthGeneration;
       views.clearHealth("Loading health snapshot…");
       try {
+        throwServiceRefusal(value);
         const bytes = snapshotBytes(value);
         const decoder = await health;
         if (!live.aborted && current === healthGeneration) views.health(bytes, decoder, repairing);
       } catch (error) {
-        if (!live.aborted && current === healthGeneration) views.clearHealth(`Unavailable · ${refusalText(error)}`);
+        if (!live.aborted && current === healthGeneration) views.clearHealth(serviceMessage(error));
       }
     };
     const healthFailed = (error: unknown) => {
       if (live.aborted) return;
       ++healthGeneration;
-      views.clearHealth(`Unavailable · ${refusalText(error)}`);
+      views.clearHealth(serviceMessage(error));
     };
     const showHead = async (value: JsonValue) => {
       if (live.aborted) return;
@@ -85,6 +86,7 @@ export async function mountCoherence(
       // Nothing is drawn or named while a head is being read; a failure then forgets the last head.
       views.loadingFingerprint();
       try {
+        throwServiceRefusal(value);
         const head = parseHead(value);
         const module = await pentora;
         if (live.aborted || current !== generation) return;
@@ -92,13 +94,13 @@ export async function mountCoherence(
         views.showFingerprint(digest, trits, head.hex);
         views.showSources(head.sources);
       } catch (error) {
-        if (!live.aborted && current === generation) views.clearFingerprint(`Unavailable · ${refusalText(error)}`);
+        if (!live.aborted && current === generation) views.clearFingerprint(serviceMessage(error));
       }
     };
     const headFailed = (error: unknown) => {
       if (live.aborted) return;
       ++generation;
-      views.clearFingerprint(`Unavailable · ${refusalText(error)}`);
+      views.clearFingerprint(serviceMessage(error));
     };
 
     try {

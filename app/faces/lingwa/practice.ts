@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { showServiceState } from "../../core/service-state.js";
 import { CONTENT, type Word } from "./content.js";
 import { LearningStore } from "./state.js";
 import { el, button, shuffled } from "./dom.js";
@@ -156,9 +157,8 @@ export function mountPractice(
         lockExtraControls();
         if (!free) {
           try { store.grade(question.word.token, correct); }
-          catch {
-            result.className = "lingwa-feedback lingwa-bad";
-            result.textContent = "lingwa:review-invalid · This answer could not update its schedule. Return to practice.";
+          catch (error) {
+            showServiceState(result, error);
             return;
           }
         }

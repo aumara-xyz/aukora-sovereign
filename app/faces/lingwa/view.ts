@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
 import { CANON_VERSION, CONTENT } from "./content.js";
 import type { Lesson, Word } from "./content.js";
 import { button, el, shuffled } from "./dom.js";
@@ -94,11 +95,12 @@ export function mountLingwa(root: HTMLElement, signal: AbortSignal): void {
         try {
           store.flag(context, verdict);
           controls.replaceChildren();
+          clearServiceState(result);
           result.textContent = "Flag kept locally.";
           update();
           feedbackFooter();
         } catch (error) {
-          result.textContent = error instanceof Error ? error.message : "lingwa:feedback-invalid";
+          showServiceState(result, error);
         }
       }, life));
     }
@@ -118,13 +120,13 @@ export function mountLingwa(root: HTMLElement, signal: AbortSignal): void {
         utterance.voice = local;
         utterance.lang = local.lang;
         utterance.rate = 0.8;
-        utterance.onerror = () => { if (!life.aborted) status.textContent = "lingwa:voice-unavailable"; };
+        utterance.onerror = () => { if (!life.aborted) showServiceState(status, "lingwa:voice-unavailable"); };
         ownsSpeech = true;
         speech.speak(utterance);
+        clearServiceState(status);
         status.textContent = "Approximate browser voice; pronunciation guide shown on the card.";
       } catch (error) {
-        status.textContent = error instanceof Error && error.message === "lingwa:local-voice-unavailable"
-          ? error.message : "lingwa:voice-unavailable";
+        showServiceState(status, error);
       }
     }, life);
     control.disabled = !speech || !pronunciation;

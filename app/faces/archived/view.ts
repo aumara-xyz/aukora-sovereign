@@ -3,7 +3,8 @@
 // they were stored. Titles and contents are text someone wrote and are printed only as text, each in its own direction
 // so reordering characters cannot spill into the page around it. Reading is all this screen does: nothing on it restores,
 // edits, deletes or sends, and an old owner message shown here is a record, not a request.
-import { card, explain, make, mark, moment, plural, since } from "../general/kit.js";
+import { showServiceState } from "../../core/service-state.js";
+import { card, make, mark, moment, plural, since } from "../general/kit.js";
 import type { Card } from "../general/kit.js";
 import type { Entry, Opened, Origin, Summary } from "./sessions.js";
 
@@ -18,7 +19,7 @@ export interface ReaderView {
   /** Disables "Show more entries" while a further page is being read. */
   working(on: boolean): void;
   show(opened: Opened, append: boolean): void;
-  fail(reason: string): void;
+  fail(reason: unknown): void;
   close(): void;
 }
 export interface ArchivedView {
@@ -26,7 +27,7 @@ export interface ArchivedView {
   /** Disables "Read more sessions" while further pages are being read. */
   working(on: boolean): void;
   show(sessions: readonly Summary[], more: boolean, now: number): void;
-  unavailable(reason: string): void;
+  unavailable(reason: unknown): void;
   readonly reader: ReaderView;
 }
 
@@ -109,6 +110,7 @@ function readerCard(root: HTMLElement, actions: Actions): ReaderView {
       clear();
       heading.textContent = titleOf(summary);
       mark(target.badge, "plain", MODES[summary.mode].toUpperCase());
+      line.hidden = false;
       line.textContent = "Reading the entries.";
       target.section.hidden = false;
       heading.focus();
@@ -116,6 +118,7 @@ function readerCard(root: HTMLElement, actions: Actions): ReaderView {
     working(on) { more.disabled = on; },
     show(opened, append) {
       if (!append) clear();
+      line.hidden = false;
       for (const entry of opened.entries) log.append(message(entry));
       more.hidden = opened.next === null;
       more.disabled = false;
@@ -125,7 +128,9 @@ function readerCard(root: HTMLElement, actions: Actions): ReaderView {
     },
     fail(reason) {
       clear();
-      line.textContent = `${explain(reason)} Nothing here is shown as current.`;
+      showServiceState(target.badge, reason);
+      line.textContent = "";
+      line.hidden = true;
     },
     close() {
       clear();
@@ -193,6 +198,7 @@ export function createArchivedView(root: HTMLElement, actions: Actions): Archive
     },
     reading() {
       mark(list.badge, "unknown", "CHECKING");
+      line.hidden = false;
       line.textContent = "Reading sessions from the node.";
       rows.replaceChildren();
       search.hidden = true;
@@ -207,16 +213,18 @@ export function createArchivedView(root: HTMLElement, actions: Actions): Archive
       hasMore = remaining;
       at = now;
       mark(list.badge, "plain", sessions.length === 0 ? "NONE" : `${sessions.length} ARCHIVED`);
+      line.hidden = false;
       draw();
     },
     unavailable(reason) {
       sessions = [];
       hasMore = false;
-      mark(list.badge, "unknown", "UNAVAILABLE");
+      showServiceState(list.badge, reason);
       rows.replaceChildren();
       search.hidden = true;
       more.hidden = true;
-      line.textContent = `${explain(reason)} Nothing here is shown as current.`;
+      line.textContent = "";
+      line.hidden = true;
       hold(false);
       reader.close();
     },

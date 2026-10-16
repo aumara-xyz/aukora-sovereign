@@ -2,13 +2,14 @@
 // The Models screen, three cards: the model in the slot and whether the node holds a key for it, the spend grant and what
 // is left of it, and how the last reply's model identity stands. It prints what the broker reports and nothing more; there
 // is no field for a key and no control that signs, raises, freezes or revokes a grant. A failed read empties all three.
-import { card, count, explain, facts, make, mark, moment, note, since, usd } from "../general/kit.js";
+import { showServiceState } from "../../core/service-state.js";
+import { card, count, facts, make, mark, moment, note, since, usd } from "../general/kit.js";
 import type { Card } from "../general/kit.js";
 import type { LastReply, ModelSlot, ModelsReport, SpendGrant } from "./broker.js";
 
 export interface ModelsView {
   show(report: ModelsReport, now: number): void;
-  unavailable(reason: string): void;
+  unavailable(reason: unknown): void;
 }
 
 const PROVIDERS = { deepseek: "DeepSeek", openrouter: "OpenRouter" } as const;
@@ -28,17 +29,15 @@ function pending(target: Card, text: string): void {
   note(target.body, text, "lead");
 }
 
-function failed(target: Card, reason: string): void {
+function failed(target: Card, reason: unknown): void {
   target.body.replaceChildren();
-  mark(target.badge, "unknown", "UNAVAILABLE");
-  note(target.body, `${explain(reason)} Nothing here is shown as current.`, "lead");
+  showServiceState(target.badge, reason);
 }
 
 function showModel(target: Card, slot: ModelSlot | null, keyPresent: boolean): void {
   target.body.replaceChildren();
   if (slot === null) {
-    mark(target.badge, "attention", "NO MODEL");
-    note(target.body, "No model is set. Auma cannot answer until the node has one.", "lead");
+    showServiceState(target.badge, "broker:model-unavailable");
     facts(target.body)("Provider key").textContent = keyPresent ? "Held by the node." : "Not held.";
   } else {
     const row = facts(target.body);

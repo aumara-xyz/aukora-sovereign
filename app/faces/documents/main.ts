@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { showServiceState } from "../../core/service-state.js";
 import { connectFace } from "../../core/index.js";
 import type { FaceClient } from "../../core/index.js";
 import { FACE_CATALOG } from "../catalog.js";
 import { mountDocuments } from "./view.js";
 
 const ID = "documents";
-
-function refusalCode(error: unknown): string {
-  return error instanceof Error && /^[a-z][a-z0-9-]*:[a-z0-9-]+$/.test(error.message) ? error.message : "app:service-unavailable";
-}
 
 const root = document.getElementById("face");
 const manifest = FACE_CATALOG.find(face => face.id === ID);
@@ -34,6 +31,6 @@ if (root) {
     client = connectFace({ shellOrigin, pluginId: ID, signal: life.signal });
     mountDocuments(root, client, life.signal);
   } catch (error) {
-    status.textContent = `Unavailable · ${refusalCode(error)}`;
+    showServiceState(status, error);
   }
 }

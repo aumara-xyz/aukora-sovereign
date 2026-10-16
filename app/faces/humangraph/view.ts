@@ -3,9 +3,10 @@
 // node's network service and writes nothing. A pairing mark is evidence about how a contact was paired;
 // it grants nothing and nothing here can add, remove or trust a contact.
 import type { FaceClient } from "../../core/index.js";
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
 import { el, safeText } from "./dom.js";
 import { createGraph, MARKS } from "./graph.js";
-import { failure, listConnections, MAX_LOADED } from "./service.js";
+import { listConnections, MAX_LOADED } from "./service.js";
 import type { Connection, Pairing } from "./service.js";
 
 const TITLES: Readonly<Record<Pairing, string>> = {
@@ -166,6 +167,7 @@ export function mountHumanGraph(root: HTMLElement, client: FaceClient, signal: A
     busy = true;
     syncControls();
     problem.hidden = true;
+    clearServiceState(problem);
     status.textContent = append ? "Reading more…" : "Reading your connections…";
     try {
       const page = await listConnections(client, append ? next : null, signal);
@@ -181,8 +183,7 @@ export function mountHumanGraph(root: HTMLElement, client: FaceClient, signal: A
       if (append) buttons[before]?.focus();
     } catch (error) {
       if (signal.aborted || mine !== generation) return;
-      const { code, note: sentence } = failure(error);
-      problem.textContent = `Unavailable · ${code}. ${sentence}`;
+      showServiceState(problem, error);
       problem.hidden = false;
       busy = false;
       syncControls();
