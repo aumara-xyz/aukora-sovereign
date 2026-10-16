@@ -315,8 +315,9 @@ fn metadata(file: &File) -> Result<Metadata> {
 }
 
 fn protected_directory(metadata: &Metadata, private: bool) -> Result<()> {
+    let uid = rustix::process::geteuid().as_raw();
     if !metadata.is_dir()
-        || metadata.uid() != 0
+        || (metadata.uid() != uid && (private || metadata.uid() != 0))
         || metadata.mode() & 0o022 != 0
         || private && metadata.mode() & 0o7777 != 0o700
     {
@@ -327,7 +328,7 @@ fn protected_directory(metadata: &Metadata, private: bool) -> Result<()> {
 
 fn protected_file(metadata: &Metadata) -> Result<()> {
     if !metadata.is_file()
-        || metadata.uid() != 0
+        || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.mode() & 0o7777 != 0o600
         || metadata.nlink() != 1
     {
