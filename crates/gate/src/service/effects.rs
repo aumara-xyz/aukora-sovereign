@@ -124,13 +124,10 @@ impl<S: TargetStore> Gate<'_, S> {
             return Err(crate::refuse("consumption-mismatch"));
         }
         transaction.check_target_consumption(id, approval)?;
-        let before = self
-            .targets
-            .observe(&proposal.request.target)
-            .and_then(|observed| {
-                check_observation(&observed)?;
-                Ok(observed)
-            });
+        let before = self.targets.observe(&proposal.request.target);
+        if let Ok(observed) = &before {
+            check_observation(observed)?;
+        }
         let mut applied = false;
         if matches!(before, Ok(ref observed) if observed.digest == proposal.request.base) {
             crash.at(CrashPoint::BeforeEffect)?;
@@ -144,8 +141,8 @@ impl<S: TargetStore> Gate<'_, S> {
             let replacement = self.targets.replace_once(permit);
             crash.at(CrashPoint::AfterEffect)?;
             if let Ok(observed) = replacement {
-                applied = check_observation(&observed).is_ok()
-                    && observed.digest == BaseDigest::Present(proposal.new_digest)
+                check_observation(&observed)?;
+                applied = observed.digest == BaseDigest::Present(proposal.new_digest)
                     && observed.bytes.as_ref() == Some(&proposal.request.new_bytes);
             }
         }

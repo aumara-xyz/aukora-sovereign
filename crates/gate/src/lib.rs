@@ -7,6 +7,7 @@ pub mod coverage;
 pub mod decision;
 pub mod health;
 pub mod install;
+mod observation;
 pub mod proposal;
 pub mod recovery;
 pub mod service;

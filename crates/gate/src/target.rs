@@ -41,18 +41,10 @@ impl<S: TargetStore> crate::service::Gate<'_, S> {
             return Err(crate::refuse("install-consumption"));
         }
         transaction.check_target_consumption(id, approval)?;
-        let valid =
-            |observation: &TargetObservation| match (&observation.digest, &observation.bytes) {
-                (BaseDigest::Absent, None) => true,
-                (BaseDigest::Present(expected), Some(bytes)) => {
-                    *expected == Digest32::sha256(bytes)
-                }
-                _ => false,
-            };
-        let before = targets
-            .observe(&proposal.request.target)
-            .ok()
-            .filter(&valid);
+        let before = targets.observe(&proposal.request.target).ok();
+        if let Some(observed) = &before {
+            crate::observation::validate(observed)?;
+        }
         let mut acknowledged = false;
         if before
             .as_ref()
@@ -67,11 +59,11 @@ impl<S: TargetStore> crate::service::Gate<'_, S> {
                 proposal.request.new_bytes.clone(),
             ));
             crash.at(CrashPoint::AfterEffect)?;
-            acknowledged = result.is_ok_and(|seen| {
-                valid(&seen)
-                    && seen.digest == BaseDigest::Present(proposal.new_digest)
-                    && seen.bytes.as_ref() == Some(&proposal.request.new_bytes)
-            });
+            if let Ok(seen) = result {
+                crate::observation::validate(&seen)?;
+                acknowledged = seen.digest == BaseDigest::Present(proposal.new_digest)
+                    && seen.bytes.as_ref() == Some(&proposal.request.new_bytes);
+            }
         }
         crash.at(CrashPoint::BeforeTerminal)?;
         let (state, status, observed) =
@@ -99,15 +91,14 @@ fn observe_effect<S: TargetStore>(
     aura::storage::ProposalStatus,
     Option<BaseDigest>,
 )> {
-    let reader = |target: &str| {
-        let observed = targets.observe(&TargetId::new(target.into())?)?;
-        match (&observed.digest, &observed.bytes) {
-            (BaseDigest::Absent, None) => (),
-            (BaseDigest::Present(digest), Some(bytes)) if *digest == Digest32::sha256(bytes) => (),
-            _ => return Err(crate::refuse("target-observation")),
-        }
-        Ok(observed.bytes)
-    };
+    let proposal = crate::install::transition_load(transaction, id)?;
+    let read = crate::observation::read_for_settlement(
+        transaction,
+        targets,
+        id,
+        &proposal.request.target,
+    )?;
+    let reader = |_: &str| read;
     let (status, observed) = if acknowledged {
         transaction.observe_consumed_target(id, approval, reader)?
     } else {
@@ -735,10 +726,10 @@ pub mod sites {
             }
             current_epoch(&transaction, &proposal)?;
             transaction.check_target_consumption(id, approval)?;
-            let before = targets
-                .observe(&proposal.request.target)
-                .ok()
-                .filter(observation_valid);
+            let before = targets.observe(&proposal.request.target).ok();
+            if let Some(observed) = &before {
+                crate::observation::validate(observed)?;
+            }
             let mut acknowledged = false;
             if before
                 .as_ref()
@@ -753,11 +744,11 @@ pub mod sites {
                     proposal.request.new_bytes.clone(),
                 ));
                 crash.at(CrashPoint::AfterEffect)?;
-                acknowledged = replacement.is_ok_and(|seen| {
-                    observation_valid(&seen)
-                        && seen.digest == BaseDigest::Present(proposal.new_digest)
-                        && seen.bytes.as_ref() == Some(&proposal.request.new_bytes)
-                });
+                if let Ok(seen) = replacement {
+                    crate::observation::validate(&seen)?;
+                    acknowledged = seen.digest == BaseDigest::Present(proposal.new_digest)
+                        && seen.bytes.as_ref() == Some(&proposal.request.new_bytes);
+                }
             }
             crash.at(CrashPoint::BeforeTerminal)?;
             let (state, status, observed) =

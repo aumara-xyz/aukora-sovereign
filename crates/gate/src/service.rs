@@ -657,18 +657,17 @@ fn settle<S: TargetStore>(
     acknowledged: bool,
     crash: &mut dyn CrashInjector,
 ) -> Result<Outcome> {
-    let reader = |target: &str| {
-        if target != proposal.request.target.as_str() {
-            return Err(crate::refuse("consumption-mismatch"));
-        }
-        let observed = targets.observe(&proposal.request.target)?;
-        check_observation(&observed)?;
-        Ok(observed.bytes)
-    };
+    let read = crate::observation::read_for_settlement(
+        transaction,
+        targets,
+        proposal.id,
+        &proposal.request.target,
+    )?;
+    let reader = |_: &str| read;
     let (status, observed) = if acknowledged {
         transaction.observe_consumed_target(proposal.id, approval, reader)?
     } else {
-        transaction.observe_interrupted_target(proposal.id, approval, reader)?
+        transaction.observe_recoverable_target(proposal.id, approval, reader)?
     };
     use aura::storage::ProposalStatus;
     let state = match status {
@@ -680,7 +679,11 @@ fn settle<S: TargetStore>(
         _ => return Err(crate::refuse("settlement-state")),
     };
     crash.at(CrashPoint::BeforeTerminal)?;
-    let receipt = transaction.settle_consumed_target(proposal.id, approval, status, observed)?;
+    let receipt = if acknowledged {
+        transaction.settle_consumed_target(proposal.id, approval, status, observed)?
+    } else {
+        transaction.settle_recovered_target(proposal.id, approval, status, observed)?
+    };
     transaction.release_reservation(&proposal.id)?;
     crash.at(CrashPoint::AfterTerminal)?;
     Ok(outcome(proposal, state, receipt.hash))
@@ -808,11 +811,7 @@ fn commit(transaction: LedgerTxn<'_>, crash: &mut dyn CrashInjector) -> Result<(
 }
 
 fn check_observation(observed: &TargetObservation) -> Result<()> {
-    match (&observed.digest, &observed.bytes) {
-        (BaseDigest::Absent, None) => Ok(()),
-        (BaseDigest::Present(expected), Some(bytes)) if *expected == hash(bytes) => Ok(()),
-        _ => Err(crate::refuse("target-observation")),
-    }
+    crate::observation::validate(observed).map_err(|_| crate::refuse("target-observation"))
 }
 
 fn clock(services: TransactionServices<'_>) -> Result<i64> {

@@ -316,9 +316,6 @@ impl<'a, S: crate::target::TargetStore> crate::service::Gate<'a, S> {
             crash.at(CrashPoint::AfterTerminal)?;
             (ProposalState::Expired, receipt)
         } else if proposal.state == ProposalState::Consumed {
-            if proposal.authority.epoch != transaction.current_version()?.epoch {
-                return Err(crate::refuse("install-consumption"));
-            }
             let work = transaction.recovery_work(10_001)?;
             if work.len() > 10_000 {
                 return Err(crate::refuse("recovery-limit"));
@@ -550,22 +547,14 @@ fn settle_interrupted<S: crate::target::TargetStore>(
     approval: Digest32,
     crash: &mut dyn CrashInjector,
 ) -> Result<(ProposalState, canon::authority::AuthorityRecord)> {
+    let read = crate::observation::read_for_settlement(
+        transaction,
+        targets,
+        proposal.id,
+        &proposal.request.target,
+    )?;
     let (status, observed) =
-        transaction.observe_interrupted_target(proposal.id, approval, |target| {
-            if target != proposal.request.target.as_str() {
-                return Err(crate::refuse("consumption-mismatch"));
-            }
-            let observed = targets.observe(&proposal.request.target)?;
-            match (&observed.digest, &observed.bytes) {
-                (BaseDigest::Absent, None) => Ok(None),
-                (BaseDigest::Present(digest), Some(bytes))
-                    if *digest == Digest32::sha256(bytes) =>
-                {
-                    Ok(observed.bytes)
-                }
-                _ => Err(crate::refuse("observation-digest")),
-            }
-        })?;
+        transaction.observe_recoverable_target(proposal.id, approval, |_: &str| read)?;
     let state = match status {
         aura::storage::ProposalStatus::Incomplete => ProposalState::Incomplete,
         aura::storage::ProposalStatus::Failed => ProposalState::Failed,
@@ -574,7 +563,7 @@ fn settle_interrupted<S: crate::target::TargetStore>(
         _ => return Err(crate::refuse("settlement-state")),
     };
     crash.at(CrashPoint::BeforeTerminal)?;
-    let receipt = transaction.settle_consumed_target(proposal.id, approval, status, observed)?;
+    let receipt = transaction.settle_recovered_target(proposal.id, approval, status, observed)?;
     crash.at(CrashPoint::AfterTerminal)?;
     Ok((state, receipt))
 }
