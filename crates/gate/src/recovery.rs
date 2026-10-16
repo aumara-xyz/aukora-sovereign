@@ -117,26 +117,14 @@ pub struct RecoverySweep {
 }
 
 pub fn classify_observation(item: &RecoveryItem) -> Result<ProposalState> {
-    use sha2::{Digest, Sha256};
-
     if item.consumption.sequence == 0
         || item.consumption.sequence > canon::json::MAX_SAFE_INTEGER as u64
         || (item.consumption.sequence == 1) != item.consumption.previous_hash.is_none()
     {
         return Err(crate::refuse("recovery-context"));
     }
-    match (&item.observed.digest, &item.observed.bytes) {
-        (BaseDigest::Absent, Some(_)) => {
-            return Err(crate::refuse("observation-digest"));
-        }
-        (BaseDigest::Present(_), None) => return Ok(ProposalState::Unknown),
-        (BaseDigest::Present(expected), Some(bytes)) => {
-            let actual = Digest32::from_bytes(Sha256::digest(bytes).into());
-            if actual != *expected {
-                return Err(crate::refuse("observation-digest"));
-            }
-        }
-        (BaseDigest::Absent, None) => {}
+    if crate::observation::validate(&item.observed).is_err() {
+        return Ok(ProposalState::Unknown);
     }
     if item.observed.digest == BaseDigest::Present(item.expected_new_digest) {
         Ok(ProposalState::Incomplete)

@@ -172,14 +172,10 @@ impl<S: TargetStore> ScopedGate<S> {
         }
         txn.check_target_consumption(proposal.id, consumed.approval)?;
         let before = self.targets.observe(&proposal.request.target);
-        if let Ok(observed) = &before {
-            crate::observation::validate(observed)?;
-        }
         let mut acknowledged = false;
-        if before
-            .as_ref()
-            .is_ok_and(|seen| seen.digest == proposal.request.base)
-        {
+        if before.as_ref().is_ok_and(|seen| {
+            crate::observation::validate(seen).is_ok() && seen.digest == proposal.request.base
+        }) {
             crash.at(CrashPoint::BeforeEffect)?;
             let result = self.targets.replace_once(EffectPermit::new(
                 proposal.operation_id,
@@ -190,8 +186,8 @@ impl<S: TargetStore> ScopedGate<S> {
             ));
             crash.at(CrashPoint::AfterEffect)?;
             if let Ok(seen) = result {
-                crate::observation::validate(&seen)?;
-                acknowledged = seen.digest == BaseDigest::Present(proposal.new_digest)
+                acknowledged = crate::observation::validate(&seen).is_ok()
+                    && seen.digest == BaseDigest::Present(proposal.new_digest)
                     && seen.bytes.as_deref() == Some(proposal.request.new_bytes.as_slice());
             }
         }

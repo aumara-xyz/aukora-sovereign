@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Corrupt observations refuse before Aura classifies a target read.
+//! Corrupt target reads settle as unreadable without supplying bytes to Aura.
 
 use crate::{
     target::{TargetId, TargetObservation, TargetStore},
@@ -26,10 +26,7 @@ pub(crate) fn read_for_settlement<S: TargetStore>(
         return Err(crate::refuse("observation-digest"));
     }
     match targets.observe(expected) {
-        Ok(observed) => {
-            validate(&observed)?;
-            Ok(Ok(observed.bytes))
-        }
+        Ok(observed) => Ok(validate(&observed).map(|()| observed.bytes)),
         Err(unreadable) => Ok(Err(unreadable)),
     }
 }

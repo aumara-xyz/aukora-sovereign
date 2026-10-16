@@ -42,14 +42,10 @@ impl<S: TargetStore> crate::service::Gate<'_, S> {
         }
         transaction.check_target_consumption(id, approval)?;
         let before = targets.observe(&proposal.request.target).ok();
-        if let Some(observed) = &before {
-            crate::observation::validate(observed)?;
-        }
         let mut acknowledged = false;
-        if before
-            .as_ref()
-            .is_some_and(|seen| seen.digest == proposal.request.base)
-        {
+        if before.as_ref().is_some_and(|seen| {
+            crate::observation::validate(seen).is_ok() && seen.digest == proposal.request.base
+        }) {
             crash.at(CrashPoint::BeforeEffect)?;
             let result = targets.replace_once(EffectPermit::new(
                 proposal.operation_id,
@@ -60,8 +56,8 @@ impl<S: TargetStore> crate::service::Gate<'_, S> {
             ));
             crash.at(CrashPoint::AfterEffect)?;
             if let Ok(seen) = result {
-                crate::observation::validate(&seen)?;
-                acknowledged = seen.digest == BaseDigest::Present(proposal.new_digest)
+                acknowledged = crate::observation::validate(&seen).is_ok()
+                    && seen.digest == BaseDigest::Present(proposal.new_digest)
                     && seen.bytes.as_ref() == Some(&proposal.request.new_bytes);
             }
         }
@@ -727,14 +723,10 @@ pub mod sites {
             current_epoch(&transaction, &proposal)?;
             transaction.check_target_consumption(id, approval)?;
             let before = targets.observe(&proposal.request.target).ok();
-            if let Some(observed) = &before {
-                crate::observation::validate(observed)?;
-            }
             let mut acknowledged = false;
-            if before
-                .as_ref()
-                .is_some_and(|value| value.digest == proposal.request.base)
-            {
+            if before.as_ref().is_some_and(|value| {
+                crate::observation::validate(value).is_ok() && value.digest == proposal.request.base
+            }) {
                 crash.at(CrashPoint::BeforeEffect)?;
                 let replacement = targets.replace_once(EffectPermit::new(
                     proposal.operation_id,
@@ -745,8 +737,8 @@ pub mod sites {
                 ));
                 crash.at(CrashPoint::AfterEffect)?;
                 if let Ok(seen) = replacement {
-                    crate::observation::validate(&seen)?;
-                    acknowledged = seen.digest == BaseDigest::Present(proposal.new_digest)
+                    acknowledged = crate::observation::validate(&seen).is_ok()
+                        && seen.digest == BaseDigest::Present(proposal.new_digest)
                         && seen.bytes.as_ref() == Some(&proposal.request.new_bytes);
                 }
             }

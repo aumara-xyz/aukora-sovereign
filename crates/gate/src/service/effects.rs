@@ -125,11 +125,10 @@ impl<S: TargetStore> Gate<'_, S> {
         }
         transaction.check_target_consumption(id, approval)?;
         let before = self.targets.observe(&proposal.request.target);
-        if let Ok(observed) = &before {
-            check_observation(observed)?;
-        }
         let mut applied = false;
-        if matches!(before, Ok(ref observed) if observed.digest == proposal.request.base) {
+        if matches!(before, Ok(ref observed) if check_observation(observed).is_ok()
+            && observed.digest == proposal.request.base)
+        {
             crash.at(CrashPoint::BeforeEffect)?;
             let permit = EffectPermit::new(
                 proposal.operation_id,
@@ -141,8 +140,8 @@ impl<S: TargetStore> Gate<'_, S> {
             let replacement = self.targets.replace_once(permit);
             crash.at(CrashPoint::AfterEffect)?;
             if let Ok(observed) = replacement {
-                check_observation(&observed)?;
-                applied = observed.digest == BaseDigest::Present(proposal.new_digest)
+                applied = check_observation(&observed).is_ok()
+                    && observed.digest == BaseDigest::Present(proposal.new_digest)
                     && observed.bytes.as_ref() == Some(&proposal.request.new_bytes);
             }
         }
