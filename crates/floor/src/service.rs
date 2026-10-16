@@ -21,6 +21,7 @@ use std::path::Path;
 const STATE_FILE: &str = "floor-state.json";
 const PENDING_FILE: &str = "floor-stage.json";
 const STAGE_SCHEMA: &str = "aukora-floor-stage-v1";
+const GENESIS_STAGE_SCHEMA: &str = "aukora-floor-stage-v2";
 const ADVANCE_SCHEMA: &str = "aukora-floor-advance-v1";
 const STAGE_MAX: usize = crate::state::STATE_MAX_BYTES + 1024;
 
@@ -30,7 +31,7 @@ pub struct FloorService {
 
 impl FloorService {
     /// Row 65: open through safe no-follow directory descriptors, lock, validate owner,
-    /// permissions and bounded bytes. Missing protected state refuses; do not bootstrap.
+    /// permissions and bounded bytes. An empty store awaits a proven release advance.
     pub fn open(directory: &Path) -> Result<Self> {
         let service = Self {
             store: store::Store::open(directory)?,
@@ -43,6 +44,10 @@ impl FloorService {
     }
 
     pub fn snapshot(&self) -> Result<ProtectedState> {
+        self.unstaged_state()?.ok_or_else(|| refuse("absent"))
+    }
+
+    fn unstaged_state(&self) -> Result<Option<ProtectedState>> {
         if self.store.read(PENDING_FILE, STAGE_MAX)?.is_some() {
             return Err(refuse("recovery-ledger-required"));
         }
@@ -62,16 +67,20 @@ impl FloorService {
     /// Row 65/110: verify exact Release action in a transaction with no prior append,
     /// reject any spent proposal or authorization, then stage floor and high-water
     /// persistence with the signed floor.advance record. No filesystem effect is
-    /// authorized by the unsigned `ReleaseOrder`; a failure rolls back the stage.
+    /// authorized by the unsigned `ReleaseOrder`. Publication follows append; the
+    /// caller remains responsible for committing Aura.
     pub fn advance(
         &mut self,
         transaction: &mut aura::LedgerTxn<'_>,
         proof: VerifiedProof,
         proposed: &ReleaseOrder,
     ) -> Result<AuthorityRecord> {
-        let current = self.snapshot()?;
-        let old_bytes = current.canonical_bytes()?;
-        if transaction.floor_recovery_state()?.as_deref() != Some(old_bytes.as_slice()) {
+        let current = self.unstaged_state()?;
+        let old_bytes = current
+            .as_ref()
+            .map(ProtectedState::canonical_bytes)
+            .transpose()?;
+        if transaction.floor_recovery_state()? != old_bytes {
             return Err(refuse("ledger-state-mismatch"));
         }
         if transaction.transaction_id() != proof.transaction_id() {
@@ -86,7 +95,9 @@ impl FloorService {
             || auth.algorithm != AlgorithmId::Sha256
             || auth.new_sha256 != proposed.record
             || auth.epoch != proposed.signer_epoch
-            || auth.epoch < current.high_water.highest_epoch
+            || current
+                .as_ref()
+                .is_some_and(|state| auth.epoch < state.high_water.highest_epoch)
             || proposal.target != auth.target
             || proposal.cell.is_some()
             || proposal.base_sha256 != auth.base_sha256
@@ -99,10 +110,12 @@ impl FloorService {
         release_pointer(&proposal.new_bytes, proposed.digest)?;
         let approval = Digest32::sha256(proof.authorization_bytes());
         if auth.canonical_bytes()?.as_slice() != proof.authorization_bytes()
-            || current.high_water.spent.iter().any(|spent| {
-                spent.operation == proposal.operation
-                    || spent.proposal == auth.proposal
-                    || spent.authorization_sha256 == approval
+            || current.as_ref().is_some_and(|state| {
+                state.high_water.spent.iter().any(|spent| {
+                    spent.operation == proposal.operation
+                        || spent.proposal == auth.proposal
+                        || spent.authorization_sha256 == approval
+                })
             })
         {
             return Err(refuse("approval-spent"));
@@ -139,29 +152,22 @@ impl FloorService {
             return Err(refuse("signer-epoch-mismatch"));
         }
         aura::record::verify_record(&source, &signing_keys)?;
-        let prior = transaction.record_at(current.authority)?;
-        check_receipt(&prior, &current)?;
-        let floor = advance_floor(Some(&current.floor), proposed)?;
+        if let Some(current) = &current {
+            let prior = transaction.record_at(current.authority)?;
+            check_receipt(&prior, current)?;
+        }
+        let floor = advance_floor(current.as_ref().map(|state| &state.floor), proposed)?;
         let context = transaction.authority_append_context(&proof)?;
         if context.operation_id != proposal.operation
             || context.authority.epoch != auth.epoch
-            || context.authority.sequence <= current.high_water.highest_sequence
+            || current.as_ref().is_some_and(|state| {
+                context.authority.sequence <= state.high_water.highest_sequence
+            })
             || source.authority.sequence >= context.authority.sequence
             || !(0..=json::MAX_SAFE_INTEGER).contains(&context.at)
         {
             return Err(refuse("high-water-predecessor"));
         }
-        let mut high_water = current.high_water.clone();
-        pin_credential(&mut high_water, &proof)?;
-        high_water.highest_epoch = context.authority.epoch;
-        high_water.highest_sequence = context.authority.sequence;
-        high_water.spent.push(SpentApproval {
-            algorithm: proof.algorithm(),
-            authority: context.authority,
-            operation: proposal.operation,
-            proposal: auth.proposal,
-            authorization_sha256: approval,
-        });
         let record = PendingAuthorityRecord {
             v: 1,
             algorithm: AlgorithmId::Sha256,
@@ -183,7 +189,25 @@ impl FloorService {
             }
             .canonical_value()?,
         };
-        high_water.head = expected_hash(&record)?;
+        let mut high_water = crate::HighWater {
+            highest_epoch: context.authority.epoch,
+            highest_sequence: context.authority.sequence,
+            head: expected_hash(&record)?,
+            credentials: current
+                .as_ref()
+                .map_or_else(Vec::new, |state| state.high_water.credentials.clone()),
+            spent: current
+                .as_ref()
+                .map_or_else(Vec::new, |state| state.high_water.spent.clone()),
+        };
+        pin_credential(&mut high_water, &proof)?;
+        high_water.spent.push(SpentApproval {
+            algorithm: proof.algorithm(),
+            authority: context.authority,
+            operation: proposal.operation,
+            proposal: auth.proposal,
+            authorization_sha256: approval,
+        });
         let next = ProtectedState {
             schema: crate::state::STATE_SCHEMA.into(),
             algorithm: AlgorithmId::Sha256,
@@ -191,11 +215,13 @@ impl FloorService {
             floor,
             high_water,
         };
-        current.high_water.validate_successor(&next.high_water)?;
+        if let Some(current) = &current {
+            current.high_water.validate_successor(&next.high_water)?;
+        }
         let next_bytes = next.canonical_bytes()?;
         let stage = Stage {
             transaction: transaction.transaction_id(),
-            previous: Digest32::sha256(&old_bytes),
+            previous: old_bytes.as_deref().map(Digest32::sha256),
             state: next,
         };
         let stage_bytes = stage.bytes()?;
@@ -204,13 +230,16 @@ impl FloorService {
             self.store.write_new(PENDING_FILE, &stage_bytes)?;
             transaction.persist_counter(&proof)?;
             transaction.consume(&proof)?;
-            transaction.stage_floor(&proof, Some(stage.previous), &next_bytes)?;
+            transaction.stage_floor(&proof, stage.previous, &next_bytes)?;
             let appended = transaction.append(proof, record)?;
             check_receipt(&appended, &stage.state)?;
+            self.publish_state(current.as_ref(), &next_bytes)?;
+            self.store.remove(PENDING_FILE)?;
             Ok(appended)
         })();
         if outcome.is_err() {
             transaction.abort_floor_transition()?;
+            self.restore_state(old_bytes.as_deref(), &next_bytes)?;
             self.store.discard_stage(&stage_bytes)?;
         }
         outcome
@@ -220,15 +249,17 @@ impl FloorService {
     /// Discard an aborted stage only with its retained predecessor and no spent identity.
     pub fn reconcile(&mut self, transaction: &mut aura::LedgerTxn<'_>) -> Result<ProtectedState> {
         let current = self.read_state()?;
-        let old_bytes = current.canonical_bytes()?;
-        let committed = transaction
-            .floor_recovery_state()?
-            .ok_or_else(|| refuse("absent"))?;
-        check_history(transaction, &current)?;
+        let old_bytes = current
+            .as_ref()
+            .map(ProtectedState::canonical_bytes)
+            .transpose()?;
+        let committed = transaction.floor_recovery_state()?;
         let Some(bytes) = self.store.read(PENDING_FILE, STAGE_MAX)? else {
             if committed != old_bytes {
                 return Err(refuse("ledger-state-mismatch"));
             }
+            let current = current.ok_or_else(|| refuse("absent"))?;
+            check_history(transaction, &current)?;
             return Ok(current);
         };
         let stage = Stage::parse(&bytes)?;
@@ -236,35 +267,40 @@ impl FloorService {
             return Err(refuse("uncommitted-stage"));
         }
         let next_bytes = stage.state.canonical_bytes()?;
-        let current_hash = Digest32::sha256(&old_bytes);
-        if current_hash != stage.previous && old_bytes != next_bytes {
+        if committed.as_deref() == Some(next_bytes.as_slice()) {
+            if old_bytes.as_deref() != Some(next_bytes.as_slice()) {
+                if old_bytes.as_deref().map(Digest32::sha256) != stage.previous {
+                    return Err(refuse("stage-conflict"));
+                }
+                check_successor(current.as_ref(), &stage.state)?;
+            } else if stage.previous.is_none() {
+                check_successor(None, &stage.state)?;
+            }
+            check_history(transaction, &stage.state)?;
+            if old_bytes.as_deref() != Some(next_bytes.as_slice()) {
+                self.publish_state(current.as_ref(), &next_bytes)?;
+            }
+            self.store.remove(PENDING_FILE)?;
+            return Ok(stage.state);
+        }
+        if committed.as_deref().map(Digest32::sha256) != stage.previous {
+            return Err(refuse("recovery-ledger-mismatch"));
+        }
+        if old_bytes != committed && old_bytes.as_deref() != Some(next_bytes.as_slice()) {
             return Err(refuse("stage-conflict"));
         }
-        if old_bytes != next_bytes {
-            current
-                .high_water
-                .validate_successor(&stage.state.high_water)?;
-            let proposed = release_order(&stage.state);
-            if advance_floor(Some(&current.floor), &proposed)? != stage.state.floor
-                || stage.state.high_water.spent.len() != current.high_water.spent.len() + 1
-            {
-                return Err(refuse("stage-conflict"));
-            }
+        let predecessor = committed
+            .as_deref()
+            .map(ProtectedState::parse)
+            .transpose()?;
+        if let Some(predecessor) = &predecessor {
+            check_history(transaction, predecessor)?;
         }
-        if committed != next_bytes {
-            if committed != old_bytes || current_hash != stage.previous {
-                return Err(refuse("recovery-ledger-mismatch"));
-            }
-            check_aborted(transaction, &stage)?;
-            self.store.remove(PENDING_FILE)?;
-            return Ok(current);
-        }
-        check_history(transaction, &stage.state)?;
-        if old_bytes != next_bytes {
-            self.store.replace(STATE_FILE, &next_bytes)?;
-        }
-        self.store.remove(PENDING_FILE)?;
-        Ok(stage.state)
+        check_successor(predecessor.as_ref(), &stage.state)?;
+        check_aborted(transaction, &stage)?;
+        self.restore_state(committed.as_deref(), &next_bytes)?;
+        self.store.discard_stage(&bytes)?;
+        predecessor.ok_or_else(|| refuse("absent"))
     }
 
     /// Compatibility entry point for callers finishing a committed advance.
@@ -275,13 +311,55 @@ impl FloorService {
         self.reconcile(transaction)
     }
 
-    fn read_state(&self) -> Result<ProtectedState> {
-        let bytes = self
-            .store
+    fn read_state(&self) -> Result<Option<ProtectedState>> {
+        self.store
             .read(STATE_FILE, crate::state::STATE_MAX_BYTES)?
-            .ok_or_else(|| refuse("absent"))?;
-        ProtectedState::parse(&bytes)
+            .as_deref()
+            .map(ProtectedState::parse)
+            .transpose()
     }
+
+    fn publish_state(&self, current: Option<&ProtectedState>, next: &[u8]) -> Result<()> {
+        match current {
+            Some(_) => self.store.replace(STATE_FILE, next),
+            None => self.store.write_new(STATE_FILE, next),
+        }
+    }
+
+    fn restore_state(&self, previous: Option<&[u8]>, next: &[u8]) -> Result<()> {
+        let stored = self.store.read(STATE_FILE, crate::state::STATE_MAX_BYTES)?;
+        if stored.as_deref() == previous {
+            return Ok(());
+        }
+        if stored.as_deref() != Some(next) {
+            return Err(refuse("stage-conflict"));
+        }
+        match previous {
+            Some(bytes) => self.store.replace(STATE_FILE, bytes),
+            None => self.store.remove(STATE_FILE),
+        }
+    }
+}
+
+fn check_successor(current: Option<&ProtectedState>, next: &ProtectedState) -> Result<()> {
+    let retained = match current {
+        Some(current) => {
+            current.high_water.validate_successor(&next.high_water)?;
+            current.high_water.spent.len()
+        }
+        None => {
+            if next.high_water.credentials.len() != 1 {
+                return Err(refuse("stage-conflict"));
+            }
+            0
+        }
+    };
+    if advance_floor(current.map(|state| &state.floor), &release_order(next))? != next.floor
+        || next.high_water.spent.len() != retained + 1
+    {
+        return Err(refuse("stage-conflict"));
+    }
+    Ok(())
 }
 
 fn check_history(transaction: &aura::LedgerTxn<'_>, state: &ProtectedState) -> Result<()> {
@@ -460,16 +538,20 @@ fn release_pointer(bytes: &[u8], digest: Digest32) -> Result<()> {
 
 struct Stage {
     transaction: Digest32,
-    previous: Digest32,
+    previous: Option<Digest32>,
     state: ProtectedState,
 }
 
 impl Stage {
     fn bytes(&self) -> Result<Vec<u8>> {
+        let (schema, previous) = match self.previous {
+            Some(previous) => (STAGE_SCHEMA, text(previous)?),
+            None => (GENESIS_STAGE_SCHEMA, Value::null()),
+        };
         let value = object(vec![
-            ("schema", text(STAGE_SCHEMA)?),
+            ("schema", text(schema)?),
             ("transaction", text(self.transaction)?),
-            ("previous", text(self.previous)?),
+            ("previous", previous),
             ("state", json::parse_strict(&self.state.canonical_bytes()?)?),
         ])?;
         let bytes = json::to_canonical(&value);
@@ -484,11 +566,7 @@ impl Stage {
         let ValueView::Object(fields) = value.view() else {
             return Err(refuse("stage-malformed"));
         };
-        if bytes.len() > STAGE_MAX
-            || json::to_canonical(&value) != bytes
-            || fields.len() != 4
-            || field_text(&value, "schema") != Some(STAGE_SCHEMA)
-        {
+        if bytes.len() > STAGE_MAX || json::to_canonical(&value) != bytes || fields.len() != 4 {
             return Err(refuse("stage-malformed"));
         }
         let hash = |name| {
@@ -496,12 +574,24 @@ impl Stage {
                 .ok_or_else(|| refuse("stage-malformed"))
                 .and_then(|value| Digest32::from_hex(value).map_err(|_| refuse("stage-malformed")))
         };
+        let previous = match field_text(&value, "schema") {
+            Some(STAGE_SCHEMA) => Some(hash("previous")?),
+            Some(GENESIS_STAGE_SCHEMA)
+                if matches!(
+                    value.get("previous").map(Value::view),
+                    Some(ValueView::Null)
+                ) =>
+            {
+                None
+            }
+            _ => return Err(refuse("stage-malformed")),
+        };
         let state = value
             .get("state")
             .ok_or_else(|| refuse("stage-malformed"))?;
         Ok(Self {
             transaction: hash("transaction")?,
-            previous: hash("previous")?,
+            previous,
             state: ProtectedState::parse(&json::to_canonical(state))?,
         })
     }
