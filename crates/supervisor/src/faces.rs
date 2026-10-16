@@ -15,6 +15,7 @@ pub mod host;
 pub mod live_network;
 pub mod model_settings;
 pub mod network;
+pub mod preset_settings;
 pub mod settings;
 mod wire;
 

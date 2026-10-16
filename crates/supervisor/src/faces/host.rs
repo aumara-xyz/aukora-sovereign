@@ -146,7 +146,7 @@ impl SettingsRead for LiveSettings<'_> {
             "settings.general" => settings::release(self.read.manifest(), self.read.assets()),
             "settings.models" => self.broker.model_report(scope),
             "settings.plugins" => Err(refuse("shell-plugin-state-unavailable")),
-            "settings.presets" => Err(refuse("harness-presets-unavailable")),
+            "settings.presets" => super::preset_settings::project(&self.broker.slot),
             _ => Err(refuse("face-operation-unknown")),
         }
     }

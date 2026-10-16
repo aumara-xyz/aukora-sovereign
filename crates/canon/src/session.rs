@@ -481,3 +481,48 @@ fn check_record(version: u16, algorithm: AlgorithmId) -> Result<()> {
     }
     Ok(())
 }
+
+pub mod presets {
+    //! Read metadata for the compiled harness presets; it selects no runtime model.
+
+    /// Describes a compiled preset without authorizing any operation.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct CompiledPreset {
+        /// The harness's closed preset identifier.
+        pub id: &'static str,
+        /// The validator's output ceiling, not a per-request token selection.
+        pub max_output_tokens: u32,
+        /// Closed operation names in the harness's order and spelling.
+        pub operations: &'static [&'static str],
+    }
+
+    /// The guest asserts that these values match its compiled preset implementation.
+    pub const COMPILED_PRESETS: [CompiledPreset; 2] = [
+        CompiledPreset {
+            id: "chat",
+            max_output_tokens: 32_768,
+            operations: &[
+                "chat",
+                "threads",
+                "sessions",
+                "streaming",
+                "compaction",
+                "memory.read",
+            ],
+        },
+        CompiledPreset {
+            id: "build",
+            max_output_tokens: 32_768,
+            operations: &[
+                "chat",
+                "threads",
+                "sessions",
+                "streaming",
+                "compaction",
+                "proposals",
+                "memory.read",
+                "memory.propose",
+            ],
+        },
+    ];
+}

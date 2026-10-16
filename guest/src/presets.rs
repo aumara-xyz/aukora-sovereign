@@ -184,3 +184,74 @@ pub struct PreloadFacts {
     pub context_bytes_loaded: u32,
     pub elapsed_ms: Option<u64>,
 }
+
+const _: () = {
+    const fn same_text(left: &str, right: &str) -> bool {
+        let left = left.as_bytes();
+        let right = right.as_bytes();
+        if left.len() != right.len() {
+            return false;
+        }
+        let mut index = 0;
+        while index < left.len() {
+            if left[index] != right[index] {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+
+    const fn operation_index(operation: BuiltinOperation) -> usize {
+        match operation {
+            BuiltinOperation::Chat => 0,
+            BuiltinOperation::Threads => 1,
+            BuiltinOperation::Sessions => 2,
+            BuiltinOperation::Streaming => 3,
+            BuiltinOperation::Compaction => 4,
+            BuiltinOperation::Proposals => 5,
+            BuiltinOperation::MemoryRead => 6,
+            BuiltinOperation::MemoryPropose => 7,
+        }
+    }
+
+    let all_operations = [
+        BuiltinOperation::Chat,
+        BuiltinOperation::Threads,
+        BuiltinOperation::Sessions,
+        BuiltinOperation::Streaming,
+        BuiltinOperation::Compaction,
+        BuiltinOperation::Proposals,
+        BuiltinOperation::MemoryRead,
+        BuiltinOperation::MemoryPropose,
+    ];
+    let metadata = canon::session::presets::COMPILED_PRESETS;
+    assert!(metadata.len() == PresetId::ALL.len());
+    let mut preset_index = 0;
+    while preset_index < PresetId::ALL.len() {
+        let preset = PresetId::ALL[preset_index];
+        let published = metadata[preset_index];
+        assert!(same_text(preset.as_str(), published.id));
+        assert!(published.max_output_tokens == MAX_OUTPUT_TOKENS);
+        let operations = preset.operations();
+        assert!(operations.len() == published.operations.len());
+        let mut listed = [false; 8];
+        let mut index = 0;
+        while index < operations.len() {
+            let operation = operations[index];
+            let position = operation_index(operation);
+            assert!(!listed[position]);
+            listed[position] = true;
+            assert!(same_text(operation.as_str(), published.operations[index]));
+            assert!(preset.permits(operation));
+            index += 1;
+        }
+        index = 0;
+        while index < all_operations.len() {
+            let operation = all_operations[index];
+            assert!(listed[operation_index(operation)] == preset.permits(operation));
+            index += 1;
+        }
+        preset_index += 1;
+    }
+};
