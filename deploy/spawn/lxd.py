@@ -239,6 +239,7 @@ def provision(plan):
     host, state, instance = plan.host, plan.state, plan.instance
     if not IMAGE.match(plan.image):
         core.refuse("spawn", "image-invalid")
+    caddy.preflight(plan.name, plan.shell_host, plan.owner_host)
     row = find(inventory(host), instance, plan.node_id)
     if row is None:
         if state.has("initialized"):
@@ -258,6 +259,7 @@ def provision(plan):
 def expose(plan):
     """Publish the frontdoor on the host's loopback and put the node's Caddy block in front of it."""
     state = plan.state
+    caddy.preflight(plan.name, plan.shell_host, plan.owner_host)
     if not state.has("port"):
         state.put("port", str(free_port()))
     port = int(state.get("port"))

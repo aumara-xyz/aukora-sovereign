@@ -2,14 +2,16 @@
 """One-command spawn (row 73), behind the deploy guard (row 131).
 
   spawn.sh create  NAME --release DIR [--on host-lxd|nebius-vm] [--relay URL]... [--provider NAME]...
-                        [--public-ip IP] [--shell-host HOST] [--image IMAGE] [--spend-ok] [--dry-run]
+                        [--public-ip IP] [--shell-host HOST] [--claim-out FILE] [--image IMAGE]
+                        [--spend-ok] [--dry-run]
   spawn.sh destroy NAME [--on ...] [--yes-destroy] [--dry-run]
   spawn.sh egress  NAME [--on ...] [--relay URL]... [--provider NAME]... [--dry-run]
 
 NAME is checked against deploy/EXISTING-NODES before anything else; a listed node is refused for every action,
 before any state directory, DNS lookup, cloud call or host command. create installs the release that
 scripts/reproduce.sh built (every file checked against its release.json), publishes the node behind one Caddy
-block, and prints the owner's claim link once. Only the SHA-256 of the claim secret is ever written on the host."""
+block, and delivers the owner's claim link to a new private file or a terminal. Only the SHA-256 of the claim
+secret is written to the node's claim commitment."""
 from __future__ import annotations
 
 import base64
@@ -19,6 +21,7 @@ import json
 import os
 import secrets
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -37,7 +40,7 @@ import vm  # noqa: E402
 NODE_TOOL = "/opt/aukora/current/deploy/upgrade/node_release.py"
 ACTIONS = ("create", "destroy", "egress")
 VALUES = {"--on": "on", "--release": "release", "--public-ip": "public-ip", "--shell-host": "shell-host",
-          "--image": "image"}
+          "--image": "image", "--claim-out": "claim-out"}
 REPEATED = {"--relay": "relay", "--provider": "provider"}
 SWITCHES = {"--dry-run": "dry", "--spend-ok": "spend-ok", "--yes-destroy": "yes-destroy"}
 INSTALL_PROBE = """
@@ -102,6 +105,81 @@ class Plan:
         self.__dict__.update(fields)
 
 
+class ClaimOutput:
+    """Reserve a new private file before provisioning; terminal output is checked again at delivery."""
+
+    def __init__(self, path):
+        self.path = path
+        self.descriptor = None
+        self.written = False
+        self.identity = None
+        if path is None:
+            if not sys.stdout.isatty():
+                core.refuse("spawn", "claim-out-required")
+            return
+        try:
+            self.descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                      0o600)
+        except FileExistsError:
+            core.refuse("spawn", "claim-out-exists")
+        except OSError:
+            core.refuse("spawn", "claim-out-unwritable")
+        try:
+            self.identity = os.fstat(self.descriptor)
+            os.fchmod(self.descriptor, 0o600)
+        except OSError:
+            self.close()
+            core.refuse("spawn", "claim-out-unwritable")
+
+    def deliver(self, link):
+        if self.descriptor is None:
+            if not sys.stdout.isatty():
+                core.refuse("spawn", "claim-out-required")
+            print(link, flush=True)
+            self.written = True
+            return
+        info = os.fstat(self.descriptor)
+        current = os.lstat(self.path)
+        if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino) or info.st_size != 0):
+            core.refuse("spawn", "claim-out-changed")
+        core.write_all(self.descriptor, (link + "\n").encode("ascii"))
+        os.fsync(self.descriptor)
+        directory = os.open(os.path.dirname(self.path) or ".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        self.written = True
+
+    def close(self):
+        if self.descriptor is None:
+            return
+        try:
+            if not self.written and self.identity is not None:
+                try:
+                    info = os.lstat(self.path)
+                    if (info.st_dev, info.st_ino) == (self.identity.st_dev, self.identity.st_ino):
+                        os.unlink(self.path)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(self.descriptor)
+            self.descriptor = None
+
+
+def check_claim_output(options):
+    """Reject an unusable output choice without creating a file, including during a dry run."""
+    path = options.get("claim-out")
+    if path is not None:
+        if not path or "\x00" in path:
+            core.refuse("spawn", "claim-out-invalid")
+        if os.path.lexists(path):
+            core.refuse("spawn", "claim-out-exists")
+    elif not options.get("dry") and not sys.stdout.isatty():
+        core.refuse("spawn", "claim-out-required")
+
+
 def parse(argv):
     if len(argv) < 2 or argv[0] not in ACTIONS or argv[1].startswith("-"):
         core.refuse("spawn", "usage")
@@ -120,6 +198,8 @@ def parse(argv):
     options.setdefault("on", "host-lxd")
     if options["on"] not in host.BACKENDS:
         core.refuse("spawn", "backend")
+    if action != "create" and "claim-out" in options:
+        core.refuse("spawn", "usage")
     return action, name, options
 
 
@@ -234,17 +314,16 @@ def install_node(plan, node, mode):
 
 
 def issue_claim(plan, node):
-    """Write the commitment on the host, show the secret once, then tell the host it was shown. Until then another
-    run may replace the secret; afterwards the host refuses any other commitment."""
+    """Commit on the node, deliver through the reserved output, then seal issuance on the node."""
     shown = json.loads(node.run(["python3", "-B", NODE_TOOL, "status"]).stdout.decode("utf-8"))
     if shown.get("claim_delivered") is True:  # an earlier run showed it and was interrupted before it said so
         plan.state.mark("claim-issued")
-        print("The claim link was already shown on an earlier run; nothing was issued.", file=sys.stderr)
+        print("The claim link was already delivered on an earlier run; nothing was issued.", file=sys.stderr)
         return
     token, commitment = new_claim()
     node.run(["python3", "-B", NODE_TOOL, "claim", "--digest", commitment])
-    print("https://%s/#claim=%s" % (plan.shell_host, token), flush=True)
-    print("This claim link is shown once. Give it only to the owner; it is not stored anywhere.", file=sys.stderr)
+    plan.claim_output.deliver("https://%s/#claim=%s" % (plan.shell_host, token))
+    print("Claim link delivered once. Give it only to the owner.", file=sys.stderr)
     node.run(["python3", "-B", NODE_TOOL, "claim", "--delivered"])
     plan.state.mark("claim-issued")
 
@@ -257,12 +336,12 @@ def describe(action, name, options):
         print("would: init an unprivileged container (nesting, isolated ids) and start it; push the verified release "
               "and installer; install packages, the aukora user and subordinate ids, the release link, the node "
               "configuration, the egress policy and the hardened units; publish its loopback port; add the node's "
-              "Caddy block (validated, reloaded, rolled back on failure); write the claim commitment; print the claim "
-              "link once.")
+              "Caddy block (validated, reloaded, rolled back on failure); write the claim commitment; deliver the "
+              "claim link to a new --claim-out file or a terminal.")
     elif action == "create":
         print("would: with --spend-ok, create one managed VM (smallest CPU preset, 40 GiB disk); ssh as the default "
-              "user; push and install as above, with Caddy on the VM; write the claim commitment; print the claim "
-              "link once.")
+              "user; push and install as above, with Caddy on the VM; write the claim commitment; deliver the "
+              "claim link to a new --claim-out file or a terminal.")
     elif action == "destroy":
         print("would: remove the node's Caddy block, its ingress device, and the container or VM, only if the "
               "recorded spawn id matches; then its state directory.")
@@ -273,6 +352,7 @@ def describe(action, name, options):
 
 def create(admission, name, options):
     backend, shell_override = options["on"], options.get("shell-host")
+    check_claim_output(options)
     if "release" not in options:
         core.refuse("spawn", "usage")
     bundle = release.load(os.path.abspath(options["release"]))
@@ -295,9 +375,11 @@ def create(admission, name, options):
     else:
         settings = vm.environment()
         vm.require_spend(options.get("spend-ok"))
-    root = host.private_dir(host.default_state_root(backend))
-    scratch = tempfile.mkdtemp(prefix="aukora-spawn-")
+    claim_output = ClaimOutput(options.get("claim-out"))
+    scratch = None
     try:
+        root = host.private_dir(host.default_state_root(backend))
+        scratch = tempfile.mkdtemp(prefix="aukora-spawn-")
         with host.Lock(root):
             state = host.NodeState(root, backend, name)
             if state.exists() and state.has("claim-issued"):
@@ -313,7 +395,7 @@ def create(admission, name, options):
             plan = Plan(host=host.Host(admission), state=state, name=name, instance="aukora-" + name, node_id=node_id,
                         image=options.get("image") or os.environ.get("AUKORA_LXD_IMAGE", "ubuntu:24.04"),
                         bundle=bundle, policy=policy, scratch=scratch, public_ip=public_ip, shell_host=None,
-                        owner_host=None)
+                        owner_host=None, claim_output=claim_output)
             if backend == "host-lxd":
                 plan.shell_host, plan.owner_host = hostnames(name, public_ip, shell_override)
                 node = lxd.provision(plan)
@@ -326,7 +408,11 @@ def create(admission, name, options):
             state.mark("ready")
             issue_claim(plan, node)
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        try:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+        finally:
+            claim_output.close()
     return 0
 
 
@@ -407,6 +493,7 @@ def refresh_egress(admission, name, options):
 def main(argv):
     action, name, options = parse(argv)
     admission = guard.admit(action, name)  # a listed node stops here, before anything else
+    guard.refuse_shell_host(options.get("shell-host"))
     if action == "create":
         return create(admission, name, options)
     if action == "destroy":
