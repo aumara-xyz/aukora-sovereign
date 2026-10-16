@@ -40,7 +40,7 @@ impl Store {
     pub(crate) fn open(directory: &Path) -> Result<Self> {
         let handle = directory_handle(directory)?;
         let directory_identity = Identity::of(&metadata(&handle)?);
-        let lock = leaf(&handle, LOCK, true)?.ok_or_else(|| refuse("lock-absent"))?;
+        let lock = open_lock(&handle)?;
         fs::flock(&lock, FlockOperation::NonBlockingLockExclusive).map_err(|_| refuse("locked"))?;
         let lock_identity = Identity::of(&metadata(&lock)?);
         let store = Self {
@@ -265,6 +265,32 @@ fn directory_handle(path: &Path) -> Result<File> {
     }
     protected_directory(&metadata(&directory)?, true)?;
     Ok(directory)
+}
+
+fn open_lock(directory: &File) -> Result<File> {
+    if let Some(lock) = leaf(directory, LOCK, true)? {
+        return Ok(lock);
+    }
+    protected_directory(&metadata(directory)?, true)?;
+    let descriptor = match fs::openat(
+        directory,
+        LOCK,
+        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(error) if error == rustix::io::Errno::EXIST => {
+            return leaf(directory, LOCK, true)?.ok_or_else(|| refuse("lock-absent"));
+        }
+        Err(_) => return Err(refuse("io")),
+    };
+    let lock = File::from(descriptor);
+    lock.set_permissions(Permissions::from_mode(0o600))
+        .map_err(|_| refuse("io"))?;
+    protected_file(&metadata(&lock)?)?;
+    lock.sync_all().map_err(|_| refuse("io"))?;
+    directory.sync_all().map_err(|_| refuse("io"))?;
+    Ok(lock)
 }
 
 fn leaf(directory: &File, name: &str, writable: bool) -> Result<Option<File>> {
