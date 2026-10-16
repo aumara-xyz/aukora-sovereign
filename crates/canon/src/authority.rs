@@ -9,7 +9,7 @@ mod proof;
 mod standing;
 
 pub use standing::{StandingUseContext, VerifiedStandingUse};
-pub use proof::verify_retained_owner_assertion;
+pub use proof::{verify_ceremony_client_data, verify_retained_owner_assertion};
 
 use crate::{
     alg::{AlgorithmId, PublicKey, Signature, Signatures},
@@ -884,8 +884,9 @@ pub trait AuthorityTxn {
     /// inside this transaction, never from a caller-supplied snapshot. Require its
     /// recorded full grant-time `VerifiedProof` over the exact standing permission,
     /// not an unrelated permission proof. Check the current owner binding and epoch,
-    /// nonrevocation, expiry against the trusted clock and consumed count below the
-    /// owner-signed cap. Rebuild the proposal's exact operation, action and risk from
+    /// nonrevocation, signed validity window, rate and consumed count below the cap.
+    /// Preserve v1 exact targets; glob scopes require a versioned permission body.
+    /// Rebuild the proposal's exact operation, action and risk from
     /// locked gate state and check them against the signed scope. Accept only routine
     /// `Apply`; refuse `Retire`, `Release`, `Grant`, `Permission` and unknown actions,
     /// even when named in the scope. Missing risk is critical. Refuse any grant,
@@ -926,7 +927,7 @@ pub trait AuthorityTxn {
     /// Under this transaction's lock, resolve the granting proposal and exact digest
     /// against the current owner and epoch. Missing, foreign or mismatched grants
     /// refuse; an already-revoked matching grant is an idempotent success.
-    /// Only set its revoked flag to true. Preserve the grant proof, scope, cap,
+    /// Set revoked to true and retain a signed narrowing receipt. Preserve proof, scope, cap,
     /// expiry, epoch and consumed count; never grant, renew, loosen, consume a
     /// proposal or persist a passkey counter. Subsequent standing checks and appends
     /// must observe the revocation in this transaction. Commit or roll back with the
@@ -946,8 +947,8 @@ pub trait AuthorityTxn {
     /// digest in the kind and body. Resolve that digest in locked storage and require
     /// an already-consumed approval for this exact operation and its recorded epoch;
     /// missing, unconsumed or unrelated approvals refuse. Recovery accepts only body
-    /// states `incomplete`, `failed` or `conflict` and obeys the unique terminal rule.
-    /// Refuse `retired`, `applied`, `unknown` and every other state. Retirement and its
+    /// states `incomplete`, `failed`, `conflict` or `unknown` and obeys the unique terminal rule.
+    /// Refuse `retired`, `applied` and every other state. Retirement and its
     /// resumption require `append` with a fresh `OwnerOperation::Retire` proof.
     /// `GateRefuse` and `GateExpire` close unconsumed work, including an interrupted
     /// proposal with no consumed approval. These and completed `GateRecover` release
@@ -966,6 +967,8 @@ pub trait AuthorityTxn {
     fn append_fact(&mut self, fact: FactRecord) -> Result<AuthorityRecord>;
 
     /// Standalone ceremonies require an adapter for atomic verification and finish.
+    /// Enrolment installs the first binding at epoch 1 and signs its authority-body
+    /// wrapper in the same transaction as possession verification and nonce use.
     /// The default refuses without writing a counter, nonce, binding or record.
     fn finish_ceremony(&mut self, _request: ceremony::CeremonyFinish<'_>) -> Result<()> {
         Err(crate::Refusal::new("aumlok", "canon-ceremony-contract"))

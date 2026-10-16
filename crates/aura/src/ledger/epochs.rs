@@ -14,6 +14,8 @@ use crate::record::{AuthorityBodyV1, MembershipSet, MembershipTransition, AUTHOR
 
 use super::{io, refusal, sql};
 
+mod enrolment;
+
 /// Accept either a pending payload or its exact authority-body wrapper.
 pub(super) fn epoch_transition(body: &Value) -> Result<MembershipTransition> {
     let payload = if body
@@ -44,7 +46,11 @@ pub(super) fn verify_epoch_body(
     if wrapper.authority != record.authority || wrapper.algorithm != record.algorithm {
         return Err(refusal("epoch-context"));
     }
-    verify_epoch_transition(&record.body, record.authority, old_epoch, connection)?;
+    if old_epoch == 0 {
+        enrolment::verify_anchor(record, connection)?;
+    } else {
+        verify_epoch_transition(&record.body, record.authority, old_epoch, connection)?;
+    }
     Ok(())
 }
 
@@ -73,7 +79,9 @@ pub(super) fn verify_epoch_transition(
 }
 
 fn previous_membership(connection: &Connection, epoch: u64, before: u64) -> Result<MembershipSet> {
-    // No membership is inferred from a signing key, a fact, or an empty ledger.
+    if epoch == 1 {
+        return enrolment::initial_membership(connection, before);
+    }
     let prior_epoch = epoch
         .checked_sub(1)
         .ok_or(refusal("membership-unavailable"))?;
@@ -214,7 +222,7 @@ pub(super) fn immune_binding_before(
         let enrolled_epoch = binding.epoch;
         binding.epoch = epoch;
         verify_membership_promotions(connection, &binding, keys, sequence, enrolled_epoch)?;
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
         let previous: Option<u32> = connection.query_row(
             "SELECT max(counter) FROM authority_consumptions WHERE credential=?1 AND sequence<?2",
             rusqlite::params![URL_SAFE_NO_PAD.encode(credential.as_bytes()), before_sql],

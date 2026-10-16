@@ -6,6 +6,35 @@ use crate::{codes, domain};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 mod client;
+
+/// Validate framed possession client data against a locked ceremony challenge.
+/// This checks context only; callers must verify the original signature bytes.
+pub fn verify_ceremony_client_data(
+    raw: &[u8],
+    challenge: &[u8; 32],
+    binding: &OwnerBinding,
+) -> Result<()> {
+    if raw.len() > 16_384 || binding.owner_origin.is_empty() || binding.top_origin.is_empty() {
+        return Err(codes::GATE_PROOF_INVALID);
+    }
+    let fields = client::parse(raw)?;
+    let challenge = URL_SAFE_NO_PAD.encode(challenge);
+    for (field, expected) in [
+        ("type", "webauthn.get"),
+        ("challenge", challenge.as_str()),
+        ("origin", binding.owner_origin.as_str()),
+        ("topOrigin", binding.top_origin.as_str()),
+    ] {
+        if fields.get(field).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(codes::GATE_PROOF_INVALID);
+        }
+    }
+    if fields.get("crossOrigin").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err(codes::GATE_PROOF_INVALID);
+    }
+    Ok(())
+}
+
 /// Recheck an already committed assertion without exporting an authority capability.
 /// The caller supplies its authenticated historical binding and authorization.
 pub fn verify_retained_owner_assertion(

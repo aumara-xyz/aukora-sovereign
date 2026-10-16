@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The granting permission retains the exact consumed owner assertion.
+
+use super::*;
+use canon::authority::OwnerAssertion;
+
+impl LedgerTxn<'_> {
+    pub(super) fn verify_standing_proof(
+        &mut self,
+        stored: &Stored,
+        proposal: &storage::ProposalState,
+        record: &AuthorityRecord,
+    ) -> Result<OwnerAuthorization> {
+        type Consumption = (
+            Vec<u8>,
+            String,
+            u32,
+            i64,
+            i64,
+            Option<String>,
+            String,
+            String,
+            String,
+            i64,
+        );
+        let (bytes, credential, counter, epoch, sequence, previous, operation, id, action, appended): Consumption =
+            self.transaction.query_row(
+                "SELECT proof,credential,counter,epoch,sequence,previous_hash,operation,proposal,action,appended FROM authority_consumptions WHERE approval=?1",
+                [stored.approval.to_string()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?,
+                    row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+            ).map_err(sql)?;
+        if bytes.len() > 65_536
+            || epoch != sql_number(record.authority.epoch)?
+            || sequence != sql_number(record.authority.sequence)?
+            || previous != record.authority.previous_hash.map(|hash| hash.to_string())
+            || operation != proposal.operation.to_string()
+            || id != proposal.proposal.to_string()
+            || action != "permission"
+            || appended != 1
+        {
+            return Err(refusal("standing-grant-proof"));
+        }
+        let proof = json::parse_strict(&bytes)?;
+        exact(
+            &proof,
+            &[
+                "authorization",
+                "credential",
+                "authenticator_data",
+                "client_data_json",
+                "signed_bytes",
+                "public_keys",
+                "signatures",
+            ],
+        )?;
+        let authorization_bytes = member(&proof, "authorization")?.canonical_bytes();
+        let auth = storage::decode_authorization(&authorization_bytes)?;
+        if proof.canonical_bytes() != bytes
+            || auth.canonical_bytes()? != authorization_bytes
+            || Digest32::sha256(&authorization_bytes) != stored.approval
+            || text_field(&proof, "credential")? != credential
+            || auth.op != OwnerOperation::Permission
+            || auth.proposal != proposal.proposal
+            || auth.epoch != record.authority.epoch
+            || auth.target != proposal.target
+            || auth.base_sha256 != proposal.base_sha256
+            || auth.cell != proposal.cell
+            || auth.new_sha256 != stored.digest
+            || auth.operation != proposal.operation_digest
+            || auth.expires_at <= record.at
+            || auth.subject != self.gate_owner_subject()?
+        {
+            return Err(refusal("standing-grant-proof"));
+        }
+        let (challenge_body, card_bytes, challenge, spent): (Vec<u8>, Vec<u8>, String, i64) =
+            self.transaction.query_row(
+                "SELECT body,card,challenge,spent FROM authority_challenges WHERE proposal=?1 AND action='permission'",
+                [proposal.proposal.to_string()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).map_err(sql)?;
+        let card = storage::decode_card(&card_bytes)?;
+        if challenge_body != authorization_bytes
+            || challenge != auth.challenge.to_string()
+            || spent != 1
+            || card.canonical_bytes()? != card_bytes
+            || Digest32::sha256(&card_bytes) != auth.display_sha256
+            || card.risk != CardRisk::Critical
+            || card.model_note != proposal.model_note
+        {
+            return Err(refusal("standing-grant-proof"));
+        }
+        let credential_bytes = URL_SAFE_NO_PAD
+            .decode(&credential)
+            .map_err(|_| refusal("standing-grant-proof"))?;
+        if URL_SAFE_NO_PAD.encode(&credential_bytes) != credential {
+            return Err(refusal("standing-grant-proof"));
+        }
+        let credential_id = CredentialId::new(credential_bytes)?;
+        let historical = super::super::super::epochs::immune_binding_before(
+            &self.transaction,
+            &credential_id,
+            record.authority.epoch,
+            record.authority.sequence,
+            &self.state.keys,
+        )?;
+        let current = self.owner_binding(&credential_id)?;
+        let mut equivalent = historical.clone();
+        equivalent.sign_counter = current.sign_counter;
+        if equivalent != current || current.sign_counter < counter {
+            return Err(refusal("standing-owner-changed"));
+        }
+        let keys = storage::decode_keys(&member(&proof, "public_keys")?.canonical_bytes())?;
+        let signatures =
+            storage::decode_signatures(&member(&proof, "signatures")?.canonical_bytes())?;
+        if keys != [historical.public_key.clone()] || signatures.components().len() != 1 {
+            return Err(refusal("standing-grant-proof"));
+        }
+        let signature = signatures.components()[0].clone();
+        let authenticator_data = immune_standard_bytes(&proof, "authenticator_data")?;
+        let client_data_json = immune_standard_bytes(&proof, "client_data_json")?;
+        if authenticator_data.len() != 37 || authenticator_data[33..37] != counter.to_be_bytes() {
+            return Err(refusal("standing-grant-proof"));
+        }
+        let mut signed = authenticator_data.clone();
+        signed.extend_from_slice(Digest32::sha256(&client_data_json).as_bytes());
+        if signed != immune_standard_bytes(&proof, "signed_bytes")? {
+            return Err(refusal("standing-grant-proof"));
+        }
+        canon::authority::verify_retained_owner_assertion(
+            historical,
+            auth.clone(),
+            OwnerAssertion {
+                v: 1,
+                algorithm: signature.algorithm,
+                credential_id,
+                authenticator_data,
+                client_data_json,
+                signature,
+            },
+            crate::record::verify_signature,
+        )?;
+        Ok(auth)
+    }
+}

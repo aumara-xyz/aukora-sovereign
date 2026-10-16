@@ -19,8 +19,16 @@ use canon::{
 use rusqlite::params;
 
 pub(super) use super::epochs::verify_epoch_body;
+mod standing;
 
 impl AuthorityTxn for LedgerTxn<'_> {
+    fn finish_ceremony(
+        &mut self,
+        request: canon::authority::ceremony::CeremonyFinish<'_>,
+    ) -> Result<()> {
+        self.mutate(|this| this.enrol_owner(request))
+    }
+
     fn authority_state(&mut self, namespace: &str, key: &str) -> Result<Option<Value>> {
         self.read_broker_absence(namespace, key)
     }
@@ -259,19 +267,23 @@ impl AuthorityTxn for LedgerTxn<'_> {
 
     fn check_standing_use(
         &mut self,
-        _permission_id: &ProposalId,
-        _permission_digest: Digest32,
-        _proposal: &ProposalId,
-        _action: OwnerOperation,
+        permission_id: &ProposalId,
+        permission_digest: Digest32,
+        proposal: &ProposalId,
+        action: OwnerOperation,
     ) -> Result<StandingUseContext> {
-        Err(refusal("standing-permission-unavailable"))
+        self.check_standing(permission_id, permission_digest, proposal, action)
     }
     fn append_standing(
         &mut self,
-        _usage: VerifiedStandingUse,
-        _record: PendingAuthorityRecord,
+        usage: VerifiedStandingUse,
+        record: PendingAuthorityRecord,
     ) -> Result<AuthorityRecord> {
-        self.mutate(|_| Err(refusal("standing-permission-unavailable")))
+        self.mutate(|this| this.append_standing_use(usage, record))
+    }
+
+    fn revoke_standing(&mut self, permission: &ProposalId, digest: Digest32) -> Result<()> {
+        self.mutate(|this| this.revoke_standing_permission(permission, digest))
     }
 
     fn append_lifecycle(&mut self, row: LifecycleRecord) -> Result<AuthorityRecord> {
@@ -312,7 +324,7 @@ impl AuthorityTxn for LedgerTxn<'_> {
                         || field(body,"consumed_approval") != Some(consumed_approval.to_string().as_str()) { return Err(refusal("recovery-context")); }
                     let (operation,epoch,appended):(String,i64,i64) = this.transaction.query_row("SELECT operation,epoch,appended FROM authority_consumptions WHERE approval=?1 AND proposal=?2",params![consumed_approval.to_string(),id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql)?;
                     if operation != row.operation.to_string() || epoch != sql_number(row.authority.epoch)? || appended != 1 { return Err(refusal("recovery-context")); }
-                    let state = match field(body,"state") { Some("incomplete")=>ProposalStatus::Incomplete,Some("failed")=>ProposalStatus::Failed,Some("conflict")=>ProposalStatus::Conflict,_=>return Err(refusal("recovery-state")) };
+                    let state = match field(body,"state") { Some("incomplete")=>ProposalStatus::Incomplete,Some("failed")=>ProposalStatus::Failed,Some("conflict")=>ProposalStatus::Conflict,Some("unknown")=>ProposalStatus::Unknown,_=>return Err(refusal("recovery-state")) };
                     bind_gate_body(body,&proposal,consumed_approval,state.wire_name())?;
                     if row.phase == Phase::Terminal { Some(state) } else { None }
                 }
@@ -436,6 +448,10 @@ impl LedgerTxn<'_> {
                 }
                 ProposalStatus::Applied
             }
+            (OwnerOperation::Permission, Kind::GateApply, Phase::Terminal) => {
+                self.validate_standing_grant(&proof, &pending, &proposal)?;
+                ProposalStatus::Applied
+            }
             _ => return Err(refusal("unsupported-authority-operation")),
         };
         if epoch_change {
@@ -508,6 +524,9 @@ impl LedgerTxn<'_> {
         }
         self.set_status(auth.proposal, status)?;
         self.consumptions.remove(&approval.to_string());
+        if auth.op == OwnerOperation::Permission && record.kind == Kind::GateApply {
+            self.store_standing_grant(&proposal, approval, &record)?;
+        }
         if record.kind == Kind::FloorAdvance {
             self.check_floor_record(&record)?;
             self.floor_obligation = None;
