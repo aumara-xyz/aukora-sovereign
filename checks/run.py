@@ -119,7 +119,7 @@ DEPLOY_PINS = {
 }
 COVERAGE_PINS = {
     "crates/gate/src/coverage.rs": "477d1e4c2a13f3738e20bb9c789cfd4558be01e9c7b1fedac93d341ccf39b25b",
-    "crates/aura/src/schema.rs": "1e6573208564388f26392a6b218acaf85f173365d2ad621c0d87bde6a4d4240b",
+    "crates/aura/src/schema.rs": "fa0547b25829ecb36e0a293522138595156b07a623c8c3a99f5c72587de99a51",
 }
 CLAIM_PINS = {
     "crates/aumlok/src/claim.rs": "02924d4a65bfcf3a904938973f8c596630463d717eb41465395bf19dc34cc6b4",

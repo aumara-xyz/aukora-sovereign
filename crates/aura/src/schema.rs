@@ -158,7 +158,17 @@ fn install(connection: &rusqlite::Connection, version: u32) -> Result<()> {
 fn verify_schema(connection: &rusqlite::Connection, version: u32) -> Result<()> {
     let expected = rusqlite::Connection::open_in_memory().map_err(storage_error)?;
     install(&expected, version)?;
-    if objects(connection)? != objects(&expected)? {
+    let wanted = objects(&expected)?;
+    // The node keeps other organs' tables (AUMLOK's ceremonies, Kira's notes) in this same file so that one authority
+    // transaction can span them. Aura owns exactly its own tables: every object on an Aura table, and any object
+    // named like one of Aura's, must match the installed schema exactly; other organs' objects are theirs to check.
+    let tables: std::collections::BTreeSet<&str> = wanted.iter().map(|object| object.2.as_str()).collect();
+    let owned = |name: &str| name.starts_with("aura") || name.starts_with("authority_");
+    let found: SchemaObjects = objects(connection)?
+        .into_iter()
+        .filter(|object| tables.contains(object.2.as_str()) || owned(&object.1) || owned(&object.2))
+        .collect();
+    if found != wanted {
         return Err(schema_error());
     }
     Ok(())
