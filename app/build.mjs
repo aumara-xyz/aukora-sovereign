@@ -22,7 +22,7 @@ const sourceTrees = [
   ['app/theme', true], ['ui/owner', true], ['portal', false],
 ];
 const extension = /\.(ts|js|mjs|html|css|json|svg|png|webp|jpg|jpeg|woff2?)$/;
-const dataFile = /\.(json|svg|png|webp|jpg|jpeg|woff2?)$/;
+const dataFile = /\.(json|svg|png|webp|jpg|jpeg|woff2?|css)$/;
 const designPath = /^[A-Za-z][A-Za-z0-9.-]*(?:\/[A-Za-z][A-Za-z0-9.-]*)*\.(json|svg|png|webp|jpg|jpeg|woff2?|css)$/;
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const portable = path => path.split(sep).join('/');

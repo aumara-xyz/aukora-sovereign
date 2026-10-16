@@ -4,7 +4,7 @@ import type { RpcService } from '../core/rpc.js';
 import type { JsonValue } from '../core/data.js';
 import type { Dispose, Organism, PluginHandle } from '../core/organism.js';
 import type { TriPane } from '../shell/layout.js';
-import { APP_OPEN } from '../shell/weights.js';
+import { revealCentre } from '../shell/weights.js';
 import { fail, parseManifest, sha256 } from './protocol.js';
 import type { AppGrant } from './protocol.js';
 import { installedSnapshot, StoreService } from './service.js';
@@ -109,7 +109,7 @@ export function attachStore(options: StoreShellOptions): StoreAttachment {
   const reveal = (id: string): void => {
     if (closed) fail('disposed');
     navigation.select(id);
-    if (!layout.phone && layout.weights[1] === 0) layout.setWeights(APP_OPEN);
+    if (!layout.phone && layout.weights[1] === 0) layout.setWeights(revealCentre(layout.weights));
     layout.showPhoneLane('surface');
   };
 

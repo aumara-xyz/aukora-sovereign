@@ -3,16 +3,40 @@
 @import url('../../design/spatial/spatial-tokens.css');
 @import url('../../design/spatial/Primitives.module.css');
 @import url('../../design/spatial/Aumlok.module.css');
+@import url('../../design/spatial/primitives.css');
 
-:root { color-scheme: dark; font-family: var(--dsw-font-family); color: var(--dsw-alias-label-primary); background: transparent; }
+:root { color-scheme: dark; font-family: var(--dsw-font-family); color: var(--spatial-text); background: var(--spatial-surface); }
 html, body, #face { width: 100%; height: 100%; margin: 0; min-width: 0; }
 body { overflow: hidden; }
 * { box-sizing: border-box; }
 button, input, select { font: inherit; }
 [hidden] { display: none !important; }
 .ownerControls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.handleLabel select { display: block; margin-block: 7px 12px; padding: 7px 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
+.handleLabel select { display: block; margin-block: 7px 12px; padding: 7px 10px; border: 1px solid var(--spatial-control-border); border-radius: var(--spatial-radius); color: var(--spatial-text); background: var(--spatial-surface); }
 .handleLabel select:disabled { opacity: 1; }
 .handleInput[readonly] { cursor: default; }
-.surface[data-state='unavailable'] .statusBadge { color: var(--dsw-alias-label-secondary); border-color: var(--dsw-alias-border-l1); }
-.connectionStatus { margin: 24px; color: var(--dsw-alias-label-secondary); }
+.surface[data-state='unavailable'] .statusBadge { color: var(--spatial-secondary); border-color: var(--spatial-control-border); }
+.connectionStatus { margin: 24px; color: var(--spatial-secondary); }
+
+:root body #face :is(.surface, .canvas, .panel, .handleInput, .anchorToken, .anchorBox,
+    .phraseBand, .phraseRow, .initialBox, .wordMask, .tileEmpty, .statusBadge, .ceremonyAction) {
+  background: var(--spatial-surface);
+  box-shadow: none;
+}
+:root body #face :is(.panel, .handleInput, .anchorToken, .anchorBox, .phraseBand,
+    .phraseRow, .initialBox, .wordMask, .tileEmpty, .statusBadge) {
+  border-width: 1px;
+  border-color: var(--spatial-control-border);
+}
+.anchorToken, .statusBadge { --spatial-accent: var(--spatial-gold); }
+[data-aumlok-tone='green'] { --spatial-accent: var(--spatial-mint); }
+[data-aumlok-tone='blue'] { --spatial-accent: var(--spatial-blue); }
+[data-aumlok-tone='purple'] { --spatial-accent: var(--spatial-violet); }
+
+:root body #face .ceremonyAction { backdrop-filter: none; }
+.surface {
+  --aumlok-anchor: var(--spatial-gold);
+  --aumlok-root: var(--spatial-mint);
+  --aumlok-unite: var(--spatial-blue);
+  --aumlok-rise: var(--spatial-violet);
+}

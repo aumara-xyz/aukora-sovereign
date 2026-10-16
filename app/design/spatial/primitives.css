@@ -1,0 +1,128 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+:root, body {
+  --spatial-surface: transparent;
+  --spatial-lane-surface: var(--dsw-specific-spatial-lane);
+  --spatial-text: rgb(232, 234, 237);
+  --spatial-secondary: rgb(184, 188, 196);
+  --spatial-muted: rgb(139, 144, 153);
+  --spatial-border: rgba(255, 255, 255, 0.1);
+  --spatial-mint: rgb(129, 212, 180);
+  --spatial-blue: rgb(150, 180, 255);
+  --spatial-violet: rgb(196, 170, 255);
+  --spatial-gold: rgb(224, 183, 106);
+  --spatial-red: rgb(242, 85, 90);
+  --spatial-radius: 14px;
+  --spatial-duration: 180ms;
+  --spatial-accent: var(--spatial-violet);
+}
+
+/* The shell paints the lane once; nested surfaces let that paint show through. */
+.spatial-surface {
+  min-width: 0;
+  box-sizing: border-box;
+  color: var(--spatial-text);
+  background: var(--spatial-surface);
+}
+
+:is(.spatial-button, .spatial-card, .spatial-tab) {
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid var(--spatial-control-border);
+  border-radius: var(--spatial-radius);
+  color: var(--spatial-text);
+  background: var(--spatial-surface);
+  box-shadow: none;
+  transition: border-color var(--spatial-duration) ease, box-shadow var(--spatial-duration) ease;
+}
+
+:is(.spatial-button, .spatial-tab) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 12px;
+  color: var(--spatial-accent);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.spatial-card { padding: 16px; }
+
+/* Existing DOM builders share the primitives without changing their geometry. */
+:where(*) {
+  --spatial-control-border: color-mix(in srgb, var(--spatial-accent) 38%, transparent);
+  --spatial-selected-border: color-mix(in srgb, var(--spatial-accent) 70%, transparent);
+  --spatial-selected-shadow: 0 0 14px color-mix(in srgb, var(--spatial-accent) 14%, transparent);
+}
+
+:is(.spatial-button--mint, .spatial-card--mint, .spatial-tab--mint, .green) {
+  --spatial-accent: var(--spatial-mint);
+}
+:is(.spatial-button--blue, .spatial-card--blue, .spatial-tab--blue, .blue) {
+  --spatial-accent: var(--spatial-blue);
+}
+:is(.spatial-button--violet, .spatial-card--violet, .spatial-tab--violet, .purple) {
+  --spatial-accent: var(--spatial-violet);
+}
+:is(.spatial-button--gold, .spatial-card--gold, .spatial-tab--gold, .gold) {
+  --spatial-accent: var(--spatial-gold);
+}
+:is(.spatial-button--red, .spatial-card--red, .spatial-tab--red, .red-warning) {
+  --spatial-accent: var(--spatial-red);
+}
+
+:root body :is(#face, #aukora-shell, .owner-dialog) :is(button, [role='button'], [role='tab'],
+    .spatial-button, .spatial-card, .spatial-tab, .action, .portal, .card,
+    .sessionRow, .searchResultRow, .workspaceRow, .composer-card, .bubble,
+    .band, .wordOne, .identityPortal, .handleHeading, .panel, .doc-problem,
+    .graph-problem, .graph-board, .graph-side, .graph-media, .code, .safety,
+    .lingwa-card, .lingwa-tier, .lingwa-notice, .live-badge,
+    .media-status, .media-panel, .media-model, .media-frame, .notes > .note, .rows > .message,
+    .contact, .no-backend, .undetermined, .harp-panel, .harp-fence, .harp-disclosure,
+    .anchorToken, .phraseBand, .ceremonyAction, .calls, .tool-result, .notice, .msg.context,
+    .workspaceBrowser .search) {
+  border-width: 1px;
+  border-style: solid;
+  border-color: var(--spatial-control-border);
+  background: var(--spatial-surface);
+  box-shadow: none;
+  transition: border-color var(--spatial-duration) ease, box-shadow var(--spatial-duration) ease;
+}
+
+/* Hover, selection and an open control have the same border and glow. */
+:is(.spatial-button, .spatial-card, .spatial-tab),
+:root body :is(#face, #aukora-shell, .owner-dialog) :is(button, [role='button'], [role='tab'],
+    .spatial-button, .spatial-card, .spatial-tab, .action, .portal, .card,
+    .sessionRow, .searchResultRow, .workspaceRow, .composer-card, .bubble,
+    .band, .wordOne, .identityPortal, .handleHeading, .panel, .doc-problem,
+    .graph-problem, .graph-board, .graph-side, .graph-media, .code, .safety,
+    .lingwa-card, .lingwa-tier, .lingwa-notice, .live-badge,
+    .media-status, .media-panel, .media-model, .media-frame, .notes > .note, .rows > .message,
+    .contact, .no-backend, .undetermined, .harp-panel, .harp-fence, .harp-disclosure,
+    .anchorToken, .phraseBand, .ceremonyAction, .calls, .tool-result, .notice, .msg.context,
+    .workspaceBrowser .search) {
+  &:is(:hover, :focus-visible, :focus-within, .spatial-selected, [aria-selected='true'], [aria-pressed='true'],
+      [aria-expanded='true'], [aria-current='page'], [aria-current='true'], [data-open='yes'], [data-selected='true'],
+      .selected, .active, .menuItemActive, .menuOpen, [open]):not(:disabled, [aria-disabled='true']) {
+    border-color: var(--spatial-selected-border);
+    background: var(--spatial-surface);
+    box-shadow: var(--spatial-selected-shadow);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--spatial-accent);
+    outline-offset: 3px;
+  }
+  &:is(:disabled, [aria-disabled='true']) {
+    opacity: .5;
+    cursor: default;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root, body { --spatial-duration: 0ms; }
+}

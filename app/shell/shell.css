@@ -4,6 +4,7 @@
 @import url('../design/spatial/AppFrame.module.css');
 @import url('../design/spatial/Primitives.module.css');
 @import url('../design/spatial/Aumlok.module.css');
+@import url('../design/spatial/primitives.css');
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -20,13 +21,20 @@ button:disabled { cursor: default; }
 .menuEntries { width: 100%; }
 .approvals-entry[data-pending='true'] { color: var(--dsw-static-spatial-mint); }
 
-.owner-dialog { width: min(720px, 94vw); height: min(820px, 92dvh); padding: 0; border: 1px solid var(--aukora-border); border-radius: 22px; background: var(--aukora-background); color: var(--aukora-text); }
-.owner-dialog::backdrop { background: rgb(0 0 0 / 70%); }
+.laneShell, .laneCenter .laneShell { background: var(--spatial-lane-surface); }
+.cornerControl[data-corner='left'], .cornerControl[data-corner='conversation-close'] { --spatial-accent: var(--spatial-mint); }
+.cornerControl[data-corner^='center-'] { --spatial-accent: var(--spatial-blue); }
+.menuTab[data-menu-tab='apps'] { --spatial-accent: var(--spatial-violet); }
+.menuTab[data-menu-tab='system'] { --spatial-accent: var(--spatial-blue); }
+.menuTab[data-menu-tab='yours'] { --spatial-accent: var(--spatial-mint); }
+:root body #aukora-shell .menuPanel button:hover { transform: none; }
+
+.owner-dialog { width: min(720px, 94vw); height: min(820px, 92dvh); padding: 0; border: 1px solid var(--spatial-border); border-radius: 22px; background: linear-gradient(var(--spatial-lane-surface), var(--spatial-lane-surface)), var(--dsw-specific-spatial-canvas); color: var(--spatial-text); }
+.owner-dialog::backdrop { background: var(--aukora-backdrop); }
 .owner-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; }
-.owner-toolbar button { border: 1px solid var(--aukora-border); border-radius: 12px; padding: 8px 12px; color: inherit; background: var(--aukora-surface); cursor: pointer; }
-.owner-toolbar button:focus-visible { outline: 2px solid var(--dsw-static-spatial-mint); outline-offset: 2px; }
-.owner-frame { display: block; width: 100%; height: calc(100% - 65px); border: 0; background: var(--aukora-background); }
-.shell-connection { position: fixed; z-index: 20; right: 16px; bottom: 16px; max-width: calc(100% - 32px); margin: 0; border: 1px solid var(--aukora-border); border-radius: 12px; padding: 10px 14px; color: var(--aukora-text); background: var(--aukora-surface); font-size: 12px; }
+.owner-toolbar button { --spatial-accent: var(--spatial-mint); border: 1px solid var(--spatial-control-border); border-radius: var(--spatial-radius); padding: 8px 12px; color: inherit; background: var(--spatial-surface); cursor: pointer; }
+.owner-frame { display: block; width: 100%; height: calc(100% - 65px); border: 0; background: var(--spatial-surface); }
+.shell-connection { position: fixed; z-index: 20; right: 16px; bottom: 16px; max-width: calc(100% - 32px); margin: 0; border: 1px solid var(--spatial-control-border); border-radius: var(--spatial-radius); padding: 10px 14px; color: var(--spatial-text); background: var(--spatial-surface); font-size: 12px; }
 .startup-refusal { margin: 24px; color: var(--aukora-text); }
 
 /* The phone changes the shown lane, retaining the desktop weights and each mounted frame. */
@@ -39,3 +47,11 @@ button:disabled { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* Peter, 2026-10-16: hot corners are invisible zones (a soft glow on hover, never a border), and the menu tab icons
+   carry no outline; only the selected tab shows its highlight, as in his Spatial app. */
+:root body #aukora-shell .cornerControl { border: 0 !important; box-shadow: none !important; background: transparent !important; outline: none; }
+:root body #aukora-shell .cornerControl:hover, :root body #aukora-shell .cornerControl:focus-visible {
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--spatial-accent) 22%, transparent), transparent) !important; }
+:root body #aukora-shell .menuTab { border: 0 !important; box-shadow: none !important; background: transparent !important; }
+:root body #aukora-shell .menuTab[aria-selected='true'] { background: color-mix(in srgb, var(--spatial-accent) 16%, transparent) !important; }

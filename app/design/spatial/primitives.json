@@ -1,0 +1,59 @@
+{
+  "schema": "aukora-spatial-primitives-v1",
+  "reference_build": "3673b98",
+  "stylesheet": {
+    "path": "spatial/primitives.css",
+    "sha256": "bf5e179ca6e0126c822d20f0ae290417b77e4e03503fd43bd2bed1be6c311393"
+  },
+  "reference_design": [
+    {
+      "path": "spatial/Primitives.module.css",
+      "sha256": "bb0cf253903356a1da1dc36ac5c2e5f2a092170e2580ec86ab3b8385a6941e8b"
+    },
+    {
+      "path": "spatial/AppFrame.module.css",
+      "sha256": "daf87a218a7043d3d556c863534ed88eb47258f4ad8ee77599e4302435f7c1df"
+    },
+    {
+      "path": "spatial/spatial-tokens.css",
+      "sha256": "db2d34ff4cb509eb9d7ab7c6922d63b3623844ebd53bfa58bce24f1bafa666bd"
+    }
+  ],
+  "reference_screenshots": [
+    {
+      "path": "spatial/reference/01-system-aumlok.jpg",
+      "sha256": "462ac4714210d5bc2908acdde986d660c217eb3579aced2e8ae177b6d0320579"
+    },
+    {
+      "path": "spatial/reference/02-apps-tab.jpg",
+      "sha256": "ab15882802df8afc99a6c10cdfc7c9c0614b85c4dbede3d40df78979d45959b2"
+    },
+    {
+      "path": "spatial/reference/03-yours-tab.jpg",
+      "sha256": "8cad5f85dd2e1c452f08b15873301095068fc6dd807f337e1b73dba2f35803c1"
+    }
+  ],
+  "capture_index": "captures.json",
+  "surface": {
+    "lane": "--dsw-specific-spatial-lane",
+    "nested": "transparent",
+    "paint_count": 1
+  },
+  "control": {
+    "accents": [
+      "mint",
+      "blue",
+      "violet",
+      "gold",
+      "red"
+    ],
+    "red_use": "danger or critical",
+    "border_width_px": 1,
+    "border_accent_percent": 38,
+    "selected_border_accent_percent": 70,
+    "selected_glow_accent_percent": 14,
+    "selected_glow_radius_px": 14,
+    "transition_ms": 180,
+    "radius_px": 14
+  }
+}

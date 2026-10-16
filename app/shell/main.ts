@@ -6,7 +6,7 @@ import { FACE_CATALOG } from '../faces/catalog.js';
 import type { FaceManifest } from '../faces/catalog.js';
 import { TriPane } from './layout.js';
 import menuData from '../design/spatial/menu.json' with { type: 'json' };
-import { APP_OPEN } from './weights.js';
+import { revealCentre } from './weights.js';
 import { OwnerFrame } from './owner-frame.js';
 import type { OwnerNotice, OwnerRoute } from './owner-frame.js';
 import { createMenu, element, menuCard } from './menu.js';
@@ -128,7 +128,7 @@ export function mountShell(options: ShellOptions): ShellController {
     }
     if (isWorkspace) layout.reveal('threads');
     else {
-      if (!layout.phone && layout.weights[1] === 0) layout.setWeights(APP_OPEN);
+      if (!layout.phone && layout.weights[1] === 0) layout.setWeights(revealCentre(layout.weights));
       layout.showPhoneLane('surface');
     }
   }

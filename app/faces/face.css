@@ -1,32 +1,86 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 @import "../design/spatial/theme.css";
 @import "../design/spatial/spatial-tokens.css";
-:root { color-scheme: dark; font-family: var(--dsw-font-family); color: #e4e9f1; background: #111520; }
+@import "../design/spatial/primitives.css";
+
+html:root {
+  color-scheme: dark;
+  font-family: var(--dsw-font-family);
+  color: var(--spatial-text);
+  background: var(--spatial-surface);
+}
+/* Settings and Harp still read the older token names. */
+:root body {
+  --text: var(--spatial-text);
+  --secondary: var(--spatial-secondary);
+  --muted: var(--spatial-muted);
+  --border: var(--spatial-border);
+  --line: var(--spatial-border);
+  --blue: var(--spatial-blue);
+  --mint: var(--spatial-mint);
+  --violet: var(--spatial-violet);
+  --gold: var(--spatial-gold);
+  --failed: var(--spatial-red);
+  --radius: var(--spatial-radius);
+  --canvas: var(--spatial-surface);
+  --canvas-deep: var(--spatial-surface);
+  --base: var(--spatial-surface);
+  --lane: var(--spatial-surface);
+  --surface: var(--spatial-surface);
+  --panel: var(--spatial-surface);
+  --glass: var(--spatial-surface);
+  --control: var(--spatial-surface);
+  --control-active: var(--spatial-surface);
+  --dsw-specific-sidebar-fill: var(--spatial-surface);
+  margin: 0;
+  color: var(--spatial-text);
+  background: var(--spatial-surface);
+}
 * { box-sizing: border-box; }
-:where(body) { margin: 0; }
 :where(main) { padding: 24px; min-width: 0; }
 :where(h1) { font-size: 22px; font-weight: 600; }
 :where(h2) { font-size: 15px; margin-top: 24px; }
 :where(p, label, button, input, select, textarea) { font-size: 14px; }
 :where(p) { line-height: 1.6; overflow-wrap: anywhere; }
-:where(button, input, select, textarea) { color: inherit; background: #1b1f2a; border: 1px solid #3c4659; border-radius: 9px; padding: 10px 14px; }
+:where(button, input, select, textarea) {
+  font-family: inherit;
+  color: inherit;
+  background: var(--spatial-surface);
+  border: 1px solid var(--spatial-control-border);
+  border-radius: var(--spatial-radius);
+  padding: 10px 14px;
+}
 :where(button) { cursor: pointer; }
-:where(button:disabled) { cursor: default; opacity: .5; }
-:where(button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible) { outline: 2px solid #8bc7ff; outline-offset: 3px; }
+:where(input, select, textarea):focus-visible {
+  outline: 2px solid var(--spatial-accent);
+  outline-offset: 3px;
+}
 :where(form) { display: grid; gap: 12px; margin-block: 16px; }
 :where(textarea) { resize: vertical; min-height: 100px; width: 100%; }
-:where(pre) { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #3c4659; border-radius: 12px; padding: 16px; font-size: 13px; }
-:where(article) { border-block-end: 1px solid #333d50; padding-block: 12px; }
+:where(pre) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--spatial-control-border);
+  border-radius: var(--spatial-radius);
+  padding: 16px;
+  font-size: 13px;
+}
+:where(article) { border-block-end: 1px solid var(--spatial-control-border); padding-block: 12px; }
 :where(article p) { white-space: pre-wrap; }
 :where(ul) { list-style: none; padding: 0; display: grid; gap: 8px; }
 :where(li button) { width: 100%; text-align: start; }
 :where(canvas) { display: block; width: 100%; max-width: 640px; height: auto; }
-[role="status"] { color: #adbad0; }
-[role="alert"] { color: #ff9ba3; }
-/* Shared service states stay on the face's surface, including inside error containers. */
-:root body #face [data-service-state="unavailable"],
-:root body #face [data-service-state="session-ended"] {
-  color: var(--muted, var(--text-muted, #adbad0));
-  background: var(--surface, var(--panel, var(--glass, #1b1f2a)));
-  border-color: var(--border, var(--line, #3c4659));
+[role='status'] { color: var(--spatial-muted); }
+[role='alert'] { color: var(--spatial-red); }
+
+/* These faces load their existing layout sheet after the shared sheet. */
+:root body #face :is(.card, .harp-panel, .harp-fence, .harp-disclosure, canvas) {
+  border-color: var(--spatial-control-border);
+  background: var(--spatial-surface);
+}
+:root body #face [data-service-state='unavailable'],
+:root body #face [data-service-state='session-ended'] {
+  color: var(--spatial-muted);
+  background: var(--spatial-surface);
+  border-color: var(--spatial-control-border);
 }

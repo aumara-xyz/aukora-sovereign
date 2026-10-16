@@ -8,8 +8,6 @@ export type Corner = 'left' | 'centre-left' | 'centre-right' | 'right';
 
 export const LANES: readonly LaneId[] = ['threads', 'surface', 'menu'];
 export const BALANCED: PaneWeights = Object.freeze([1, 1, 1]) as PaneWeights;
-/** Revealing a hidden desktop app gives it two thirds beside the threads and hides the menu. */
-export const APP_OPEN: PaneWeights = Object.freeze([1, 2, 0]) as PaneWeights;
 
 export const PANE_WEIGHTS: readonly PaneWeights[] = Object.freeze(
   Array.from({ length: 4 }, (_, left) =>
@@ -41,17 +39,17 @@ export function soleLane(lane: LaneId): PaneWeights {
   return checked(at === 0 ? 3 : 0, at === 1 ? 3 : 0, at === 2 ? 3 : 0);
 }
 
-/** An outer lane gains one third from the far side first; a lane that has the whole frame returns to balanced 1·1·1
- * in one tap (Peter, 2026-10-16: the step back to two thirds felt like a two-step crush). */
+/** An outer lane gains one third from the far side first; a lane that has the whole frame gives one third back to the
+ * centre. Every tap moves exactly one third (Prime 3673b98; Peter, 2026-10-16: never snap to 1·1·1). */
 function outer(weights: PaneWeights, side: 'left' | 'right'): PaneWeights {
   const [left, centre, right] = weights;
   if (side === 'left') {
     if (left === 0) return weights;
-    if (left === 3) return checked(1, 1, 1);
+    if (left === 3) return checked(2, 1, 0);
     return right > 0 ? checked(left + 1, centre, right - 1) : checked(left + 1, centre - 1, right);
   }
   if (right === 0) return weights;
-  if (right === 3) return checked(1, 1, 1);
+  if (right === 3) return checked(0, 1, 2);
   return left > 0 ? checked(left - 1, centre, right + 1) : checked(left, centre - 1, right + 1);
 }
 
@@ -61,6 +59,14 @@ function boundary(weights: PaneWeights, side: 'left' | 'right'): PaneWeights {
   if (centre === 0) return weights;
   if (side === 'left') return left === 0 ? checked(1, centre - 1, right) : checked(left - 1, centre + 1, right);
   return right === 0 ? checked(left, centre - 1, 1) : checked(left, centre + 1, right - 1);
+}
+
+/** Choosing an app changes only what the centre lane shows. A hidden centre lane takes one third from the menu (or,
+ * with no menu, from the threads); the menu stays until the owner pushes it out with its corner. */
+export function revealCentre(weights: PaneWeights): PaneWeights {
+  const [left, centre, right] = weights;
+  if (centre > 0) return weights;
+  return right > 0 ? checked(left, 1, right - 1) : checked(left - 1, 1, right);
 }
 
 /** The composition after a lane edge is used. An edge of a hidden lane does nothing. */
