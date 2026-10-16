@@ -812,35 +812,46 @@ fn apply_binding(
 }
 
 impl DurableSessions {
-    /// Verify the host claim and persist its consumption with the binding session.
-    pub fn consume_host_claim(
+    /// Open AUMLOK's claim store in this session directory; old admissions cannot bootstrap it.
+    pub fn open_claim_store(
         &mut self,
-        request: crate::claim::ClaimRequest,
+        directory: &std::path::Path,
         commitment: &aumlok::claim::HostClaimCommitment,
+    ) -> Result<aumlok::claim::SqliteClaimStore> {
+        let _lock = self.lock()?;
+        let state = self.load()?;
+        let bootstrap_allowed = state.epoch == 0
+            && parse_binding(&state.binding)? == BindingState::Unclaimed
+            && state.subject.is_none()
+            && state.records.is_empty();
+        aumlok::claim::SqliteClaimStore::open(
+            &directory.join("claim-v1.sqlite3"),
+            &self.directory,
+            self.node,
+            commitment,
+            bootstrap_allowed,
+        )
+    }
+
+    /// AUMLOK has durably spent this claim; failure here never reopens it.
+    pub fn admit_host_claim(
+        &mut self,
+        admission: aumlok::claim::ClaimAdmission,
         now_ms: u64,
     ) -> Result<SessionRecord> {
-        let crate::claim::ClaimRequest {
-            node,
-            token,
-            session_digest,
-            session_origin,
-            expires_at_ms,
-        } = request;
-        let token = Zeroizing::new(token);
+        if !admission.matches_directory(&self.directory)? {
+            return Err(FRONTDOOR_SESSION_REQUIRED);
+        }
+        let (node, session_digest, session_origin, expires_at_ms) = admission.into_parts();
         let _lock = self.lock()?;
         let mut state = self.load()?;
-        if state.epoch != 0
-            || parse_binding(&state.binding)? != BindingState::Unclaimed
-            || state.subject.is_some()
-            || !state.records.is_empty()
-        {
-            return Err(canon::codes::AUMLOK_CLAIM_SPENT);
+        if parse_binding(&state.binding)? != BindingState::Unclaimed {
+            return Err(FRONTDOOR_SESSION_REQUIRED);
         }
-        commitment.verify(token.as_slice())?;
         let record = SessionRecord {
             token_digest: session_digest,
             node,
-            origin: session_origin,
+            origin: Origin::parse(&session_origin)?,
             subject: None,
             owner_epoch: 0,
             scope: SessionScope::BindingOnly,

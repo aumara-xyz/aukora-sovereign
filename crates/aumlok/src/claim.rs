@@ -81,3 +81,8 @@ impl HostClaimCommitment {
         Ok(())
     }
 }
+
+#[cfg(unix)]
+mod store;
+#[cfg(unix)]
+pub use store::{ClaimAdmission, ClaimStore, SqliteClaimStore};
