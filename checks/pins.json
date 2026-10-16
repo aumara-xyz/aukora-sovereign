@@ -120,6 +120,7 @@
  "crates/wasmcell/cell/probes/invalid-utf8-probe.wasm": "11af1bf829307ee9f99eb9f6bc0639ecf01b5373816aa5bc833b206350da8ef1",
  "crates/wasmcell/cell/probes/noncanonical-json-probe.wasm": "9c65776fc1e6b398f637fb8b5b49f7d388fd228c661c49ad652ecb78221fdf49",
  "immune/ANTIBODIES.tsv": "1ada0197297750a6fe994124fa7227ddd59466f31764f750e6e1d6768420cdb7",
+ "portal/bloom/person-bloom-v2.json": "f10350c60cbbcfbca4c63407635b009ef7fa703a7a1bc1b4855721253ef2f725",
  "spec/CARRY-LIST.md": "0406152d31d4a7468aa1bf4fea2cfc1325343943c02c589c9da825ee8d7352a6",
  "spec/CONTRACTS.md": "498fc8bdb9e779425864a40a22f89c373aaf329568164682ede9102a2f80a301",
  "spec/COVERAGE-2026-10-15.md": "97a24547742943b9a8a7f9c0e303ffae84332145fe3f4c36dac653eaa49576ce",
