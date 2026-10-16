@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-import urllib.parse
 from dataclasses import dataclass
 
 import core
@@ -62,29 +61,16 @@ def admit(action, name, path=EXISTING_NODES):
 
 
 def _host_entry(token):
-    explicit = token.startswith("host=")
-    value = token[5:] if explicit else token.strip("(),;\"'")
-    if "://" in value:
-        try:
-            parsed = urllib.parse.urlsplit(value)
-            hostname = parsed.hostname
-            valid = (parsed.scheme in ("https", "http") and parsed.username is None
-                     and parsed.password is None and (parsed.port is None or 1 <= parsed.port <= 65535))
-        except ValueError:
-            valid, hostname = False, None
-        if not valid or not core.is_hostname(hostname):
-            core.refuse("guard", "existing-host-invalid")
-        return hostname
-    hostname = value.lower().rstrip(".")
-    if core.is_hostname(hostname):
-        return hostname
-    if explicit:
+    if not token.startswith("host="):
+        return None
+    hostname = token[5:].lower().rstrip(".")
+    if not core.is_hostname(hostname):
         core.refuse("guard", "existing-host-invalid")
-    return None
+    return hostname
 
 
 def _listed_hosts(path, listed):
-    """After each node name, accept host=HOST, a hostname or an HTTP(S) URL as host inventory.
+    """After each node name, accept only explicit host=HOST tokens as host inventory.
 
     Entries are whitespace-separated; host= must have a nonempty valid value in the same token.
     Other prose is ignored. Every listed node needs at least one host before custom hosts are admitted.

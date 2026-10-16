@@ -114,7 +114,14 @@ class ClaimOutput:
         self.written = False
         self.identity = None
         if path is None:
-            if not sys.stdout.isatty():
+            # No file: the controlling terminal only, never stdout, so a pipe, log or wrapper never sees the secret.
+            try:
+                self.descriptor = os.open(os.path.join(os.sep, "dev", "tty"),
+                                          os.O_WRONLY | os.O_NOCTTY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            except OSError:
+                core.refuse("spawn", "claim-out-required")
+            if not os.isatty(self.descriptor):
+                self.close()
                 core.refuse("spawn", "claim-out-required")
             return
         try:
@@ -132,10 +139,10 @@ class ClaimOutput:
             core.refuse("spawn", "claim-out-unwritable")
 
     def deliver(self, link):
-        if self.descriptor is None:
-            if not sys.stdout.isatty():
+        if self.path is None:
+            if self.descriptor is None or not os.isatty(self.descriptor):
                 core.refuse("spawn", "claim-out-required")
-            print(link, flush=True)
+            core.write_all(self.descriptor, (link + "\n").encode("ascii"))
             self.written = True
             return
         info = os.fstat(self.descriptor)
@@ -176,8 +183,12 @@ def check_claim_output(options):
             core.refuse("spawn", "claim-out-invalid")
         if os.path.lexists(path):
             core.refuse("spawn", "claim-out-exists")
-    elif not options.get("dry") and not sys.stdout.isatty():
-        core.refuse("spawn", "claim-out-required")
+    elif not options.get("dry"):
+        try:
+            terminal = os.open(os.path.join(os.sep, "dev", "tty"), os.O_WRONLY | os.O_NOCTTY | os.O_CLOEXEC)
+        except OSError:
+            core.refuse("spawn", "claim-out-required")
+        os.close(terminal)
 
 
 def parse(argv):
