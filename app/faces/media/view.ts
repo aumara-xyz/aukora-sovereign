@@ -2,7 +2,6 @@
 // The Media face. No media service stands behind it: nothing typed here is sent, saved or generated,
 // and the face has no field for a key or any other credential. The draft lives in memory until the
 // frame closes.
-import { showServiceState } from "../../core/service-state.js";
 import { el, icon } from "./dom.js";
 
 type Mode = "image" | "video";
@@ -60,9 +59,7 @@ export function mountMedia(root: HTMLElement, signal: AbortSignal): void {
   let seconds = 8;
   let sound = true;
 
-  const status = el("p", "media-status");
-  status.id = "media-status";
-  showServiceState(status, "app:service-unavailable");
+  const status = el("p", "media-status", "Not connected. This app has no media service. Nothing typed here is sent, saved or generated, and no key is asked for.");
   status.setAttribute("role", "status");
 
   const draftPanel = el("section", "media-panel");
@@ -106,18 +103,18 @@ export function mountMedia(root: HTMLElement, signal: AbortSignal): void {
   const audioField = field("Generate audio", audio);
   audioField.classList.add("media-switch");
   const model = el("div", "media-field");
-  const modelStatus = el("span", "media-model");
-  showServiceState(modelStatus, "broker:model-unavailable");
-  model.append(el("span", "", "Model"), modelStatus);
+  model.append(el("span", "", "Model"), el("span", "media-model", "None connected"));
   const controls = el("div", "media-controls");
   controls.append(model, field("Aspect ratio", ratio), field("Resolution", resolution), durationField, audioField);
   editor.append(promptLabel, prompt, controls);
   const generate = el("button", "media-generate");
   generate.type = "button";
   generate.disabled = true;
-  generate.setAttribute("aria-describedby", "media-status");
+  generate.setAttribute("aria-describedby", "media-reason");
   generate.append(icon("lock"), el("span", "", "Generate"));
-  draftPanel.append(draftTitle, tabs, editor, generate);
+  const reason = el("p", "media-reason", "Generation is unavailable until a media service is connected.");
+  reason.id = "media-reason";
+  draftPanel.append(draftTitle, tabs, editor, generate, reason);
 
   const previewPanel = el("section", "media-panel");
   previewPanel.setAttribute("aria-labelledby", "media-preview-title");

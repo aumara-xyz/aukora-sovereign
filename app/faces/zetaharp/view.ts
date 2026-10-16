@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { clearServiceState, showServiceState } from "../../core/service-state.js";
 import { clampHeight, heightWindow, MAX_HEIGHT, MIN_HEIGHT, nearestCrossing, requireHeight, sum, term, termCount } from "./math.js";
 import type { WindowData } from "./math.js";
 import { drawChart, drawFlower, drawTorus, drawTunnel } from "./scene.js";
@@ -49,6 +48,11 @@ function panel(title: string): HTMLElement {
   const heading = element("h2", "", title);
   node.append(heading);
   return node;
+}
+
+function code(error: unknown): string {
+  return error instanceof Error && /^zetaharp:[a-z0-9-]+$/.test(error.message)
+    ? error.message : "zetaharp:unavailable";
 }
 
 export function mountHarp(root: HTMLElement, parentSignal: AbortSignal): void {
@@ -270,7 +274,7 @@ export function mountHarp(root: HTMLElement, parentSignal: AbortSignal): void {
   function fail(error: unknown): void {
     life.abort();
     status.setAttribute("role", "alert");
-    showServiceState(status, error);
+    status.textContent = `Unavailable · ${code(error)}`;
     for (const control of root.querySelectorAll("button, input")) (control as HTMLInputElement).disabled = true;
   }
 
@@ -328,8 +332,8 @@ export function mountHarp(root: HTMLElement, parentSignal: AbortSignal): void {
   }
 
   function goToInput(): void {
-    try { move(heightControl.valueAsNumber, true); clearServiceState(status); status.textContent = ""; }
-    catch (error) { showServiceState(status, error); }
+    try { move(heightControl.valueAsNumber, true); status.textContent = ""; }
+    catch (error) { status.textContent = code(error); }
   }
   play.addEventListener("click", () => { paused = !paused; dirty = true; syncPlay(); }, { signal });
   speedControl.addEventListener("input", () => { speed = 10 ** speedControl.valueAsNumber; dirty = true; syncPlay(); }, { signal });
@@ -349,8 +353,8 @@ export function mountHarp(root: HTMLElement, parentSignal: AbortSignal): void {
     try {
       if (sounding) { sounding = false; await sound.disable(); }
       else { await sound.enable(); sounding = !signal.aborted && revision === audioRevision; }
-      if (!signal.aborted) clearServiceState(status); status.textContent = "";
-    } catch (error) { sounding = false; if (!signal.aborted) showServiceState(status, error); }
+      if (!signal.aborted) status.textContent = "";
+    } catch (error) { sounding = false; if (!signal.aborted) status.textContent = code(error); }
     finally {
       audioBusy = false;
       if (!signal.aborted) {
@@ -372,9 +376,9 @@ export function mountHarp(root: HTMLElement, parentSignal: AbortSignal): void {
   scrubber.addEventListener("input", () => move(clampHeight(10 ** scrubber.valueAsNumber), true), { signal });
   termControl.addEventListener("change", () => {
     const n = termControl.valueAsNumber;
-    if (!Number.isInteger(n) || n < 1 || n > termCount(height)) { showServiceState(status, "zetaharp:term-range"); return; }
+    if (!Number.isInteger(n) || n < 1 || n > termCount(height)) { status.textContent = "zetaharp:term-range"; return; }
     options.selected = n;
-    clearServiceState(status); status.textContent = "";
+    status.textContent = "";
     dirty = true;
   }, { signal });
   find.addEventListener("click", () => {
@@ -392,7 +396,7 @@ export function mountHarp(root: HTMLElement, parentSignal: AbortSignal): void {
     } catch (error) { fail(error); }
   }, { signal });
   jump.addEventListener("click", () => {
-    if (crossingTarget === null) { showServiceState(status, "zetaharp:crossing-unavailable"); return; }
+    if (crossingTarget === null) { status.textContent = "zetaharp:crossing-unavailable"; return; }
     move(crossingTarget, true);
   }, { signal });
   referenceZero.addEventListener("click", () => {

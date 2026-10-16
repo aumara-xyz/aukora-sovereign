@@ -59,7 +59,7 @@ export class LearningStore {
       this.notice = "Progress is local to this browser; it is never an approval or an Aura record.";
     } catch (error) {
       this.notice = error instanceof Error && error.message === "lingwa:progress-invalid"
-        ? "Saved progress refused. This session uses memory only."
+        ? "lingwa:progress-invalid · Saved progress was refused. This session uses memory only."
         : "Browser storage is unavailable in this sandbox. Progress lasts until this frame closes.";
     }
   }
@@ -69,7 +69,7 @@ export class LearningStore {
     try { this.storage.setItem(KEY, JSON.stringify(this.data)); }
     catch {
       this.storage = undefined;
-      this.notice = "Browser storage unavailable. Changes last until this frame closes.";
+      this.notice = "lingwa:storage-unavailable · Changes now last only until this frame closes.";
     }
   }
   completed(day: number): boolean { return this.data.completed.includes(day); }

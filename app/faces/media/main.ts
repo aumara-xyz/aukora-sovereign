@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { showServiceState } from "../../core/service-state.js";
 // Media has no granted service, so it opens no channel: it only checks that the shell is its parent.
 import { FACE_CATALOG } from "../catalog.js";
 import { mountMedia } from "./view.js";
@@ -26,6 +25,7 @@ if (root) {
     if (new URL(document.referrer).origin === "null") throw new Error("app:shell-required");
     mountMedia(root, life.signal);
   } catch (error) {
-    showServiceState(status, error);
+    const code = error instanceof Error && /^[a-z][a-z0-9-]*:[a-z0-9-]+$/.test(error.message) ? error.message : "app:service-unavailable";
+    status.textContent = `Unavailable · ${code}`;
   }
 }
