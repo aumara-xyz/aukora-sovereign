@@ -38,7 +38,8 @@ pub struct Host {
     assets: Arc<Mutex<Assets>>,
     pub runtime: Arc<crate::adapters::runtime::RuntimeAdapter>,
     pub health: Arc<crate::health::HealthCollector>,
-    data: crate::data::HostData,
+    data: Arc<crate::data::HostData>,
+    live_data: crate::data::live::RuntimeData,
     broker: Arc<crate::adapters::BrokerAdapter>,
     faces: crate::faces::host::HostFaces,
     approvals: crate::approvals::ApprovalFeed,
@@ -197,7 +198,13 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         assets.clone(),
         Arc::new(crate::adapters::runtime::UnavailableGuestPlan),
     ));
-    let data = crate::data::HostData::new(transcripts, health.clone(), ledger.clone(), state.node)?;
+    let data = Arc::new(crate::data::HostData::new(
+        transcripts,
+        health.clone(),
+        ledger.clone(),
+        state.node,
+    )?);
+    let live_data = crate::data::live::RuntimeData::new(data.clone());
     let host = Arc::new(Host {
         identity: Mutex::new(crate::identity::Identity::open(
             ledger.clone(),
@@ -217,6 +224,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         runtime,
         health,
         data,
+        live_data,
         broker,
         faces,
         runtime_refusal: Mutex::new(None),
@@ -331,6 +339,7 @@ impl Host {
         let at = now()?;
         self.with_release(|_| Ok(()))?;
         if endpoint == frontdoor::fd4::DataEndpoint::Event {
+            self.live_data.pump(at, &self.runtime)?;
             return self
                 .data
                 .dispatch(session, endpoint, &body.canonical_bytes(), at);
@@ -341,10 +350,11 @@ impl Host {
             return self.service_read(session, body, at);
         }
         self.with_release(|_| Ok(()))?;
-        self.data.submit_owner_command(
+        self.live_data.submit(
             session,
             &body.canonical_bytes(),
             at,
+            &self.runtime,
             self.broker.slot.admitted().is_none(),
         )
     }
@@ -392,9 +402,21 @@ impl Host {
             frontdoor::api::service_reads::authorize_data(release, field("body")?)
         })?;
         self.data.submit_generated(session, at, |_| {
-            let value = self
-                .faces
-                .dispatch_extended(session, &read, &self.documents)?;
+            let value = if read.service() == "aumlok" && read.method() == "status" {
+                if !matches!(
+                    read.params().view(),
+                    canon::json::ValueView::Object(fields) if fields.is_empty()
+                ) {
+                    return Err(codes::FRAME_INVALID_FIELD);
+                }
+                self.identity
+                    .try_lock()
+                    .map_err(|_| codes::SUPERVISOR_STATE)?
+                    .status(session.record(), at)?
+            } else {
+                self.faces
+                    .dispatch_extended(session, &read, &self.documents)?
+            };
             self.with_release(|_| Ok(()))?;
             let reply = Value::object(vec![
                 (

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Session-scoped data queues. Every output is encoded by canon before enqueueing.
 
+pub mod live;
+
 use crate::{adapters::HostLedger, faces::health::HealthRead, health::HealthCollector};
 use canon::{
     codes,
@@ -174,6 +176,91 @@ fn response(bytes: Vec<u8>) -> Result<http::Response<Vec<u8>>> {
 }
 
 impl HostData {
+    fn runtime_admit(&self, session: &BoundSession<'_>, now: u64) -> Result<PrincipalScope> {
+        let record = session.record();
+        let scope = PrincipalScope {
+            subject: record.subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
+            epoch: record.owner_epoch,
+        };
+        if record.scope != frontdoor::session::SessionScope::Shell
+            || record.expires_at_ms <= now
+            || self.ledger.binding()? != BindingState::Bound(scope)
+        {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        let mut queues = self.queues.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+        queues.retain(|_, queue| queue.expires > now && queue.scope == scope);
+        if !queues.contains_key(&record.token_digest) && queues.len() >= 64 {
+            return Err(codes::FRAME_STREAM_LIMIT);
+        }
+        let queue = queues.entry(record.token_digest).or_insert_with(|| Queue {
+            scope,
+            expires: record.expires_at_ms,
+            bytes: 0,
+            events: VecDeque::new(),
+        });
+        if queue.scope != scope || queue.expires != record.expires_at_ms {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        if !runtime_room(queue) {
+            return Err(codes::FRAME_STREAM_LIMIT);
+        }
+        Ok(scope)
+    }
+
+    fn runtime_enqueue_many(
+        &self,
+        token: Digest32,
+        scope: PrincipalScope,
+        now: u64,
+        events: Vec<Vec<u8>>,
+        validate: impl FnOnce() -> Result<()>,
+    ) -> Result<bool> {
+        if self.ledger.binding()? != BindingState::Bound(scope) {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        let mut queues = self.queues.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+        let queue = queues.get_mut(&token).ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+        if queue.scope != scope || queue.expires <= now {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        if events.is_empty() || events.len() > MAX_QUEUED_FRAMES
+            || events.iter().any(|bytes| bytes.len() > canon::frame::MAX_FRAME_BYTES)
+        {
+            return Err(codes::FRAME_STREAM_LIMIT);
+        }
+        let bytes = events.iter().map(Vec::len).sum::<usize>();
+        if queue.events.len() + events.len() > MAX_QUEUED_FRAMES
+            || queue.bytes + bytes > MAX_QUEUED_BYTES
+        {
+            return Ok(false);
+        }
+        validate()?;
+        queue.bytes += bytes;
+        queue.events.extend(events);
+        Ok(true)
+    }
+
+    fn runtime_reserve_turn(&self, session: &BoundSession<'_>, now: u64) -> Result<()> {
+        self.runtime_admit(session, now)?;
+        let queues = self.queues.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
+        let queue = queues.get(&session.record().token_digest)
+            .ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?;
+        if queue.events.len() + 2 > MAX_QUEUED_FRAMES
+            || queue.bytes + 2 * canon::frame::MAX_FRAME_BYTES > MAX_QUEUED_BYTES
+        {
+            return Err(codes::FRAME_STREAM_LIMIT);
+        }
+        Ok(())
+    }
+}
+
+fn runtime_room(queue: &Queue) -> bool {
+    queue.events.len() < MAX_QUEUED_FRAMES
+        && queue.bytes + canon::frame::MAX_FRAME_BYTES <= MAX_QUEUED_BYTES
+}
+
+impl HostData {
     /// Reserves a bounded reply slot before a host-owned data operation runs.
     pub fn submit_generated(
         &self,
@@ -275,5 +362,91 @@ impl HostData {
                 body,
             })
         })
+    }
+}
+
+impl HostData {
+    async fn append_owner_turn(
+        &self,
+        scope: PrincipalScope,
+        turn: &canon::fd4::ChatTurn,
+        now: u64,
+    ) -> Result<Vec<SessionEvent>> {
+        let opened = self
+            .sessions
+            .open(
+                scope,
+                canon::session::SessionOpen {
+                    session_id: turn.session_id,
+                    after_sequence: turn.expected_sequence,
+                    limit: 1,
+                },
+            )
+            .await?;
+        if opened.summary.sequence != turn.expected_sequence || opened.summary.mode != turn.mode {
+            return Err(codes::SESSION_SEQUENCE);
+        }
+        let sequence = turn
+            .expected_sequence
+            .checked_add(1)
+            .filter(|sequence| *sequence <= canon::json::MAX_SAFE_INTEGER as u64)
+            .ok_or(codes::SESSION_SEQUENCE)?;
+        let ingress = Provenance {
+            source: Source::Owner,
+        };
+        let mut entry = canon::session::SessionEntry {
+            v: canon::session::RECORD_VERSION,
+            algorithm: canon::alg::AlgorithmId::Sha256,
+            session_id: turn.session_id,
+            sequence,
+            role: canon::session::SessionRole::Owner,
+            content: turn.text.clone(),
+            tool_calls: canon::session::Items::new(Vec::new())?,
+            tool_call_id: None,
+            provenance: ingress.clone(),
+            at_ms: now,
+            commitment: Digest32::from_bytes([0; 32]),
+        };
+        entry.commitment = supervisor::session::entry_commitment(&entry)?;
+        canon::fd4::encode_event(&Frame {
+            v: canon::fd4::VERSION,
+            id: canon::frame::FrameId::new("_".repeat(64))?,
+            provenance: ingress.clone(),
+            body: SessionEvent::Appended(canon::session::SessionAppended {
+                entry: entry.clone(),
+            }),
+        })?;
+        let appended = self
+            .sessions
+            .append(
+                scope,
+                ingress,
+                canon::session::SessionAppend {
+                    session_id: turn.session_id,
+                    expected_sequence: turn.expected_sequence,
+                    entry: entry.clone(),
+                },
+            )
+            .await?;
+        if appended.entry != entry {
+            return Err(codes::SESSION_SEQUENCE);
+        }
+        let flushed = self
+            .sessions
+            .flush(
+                scope,
+                canon::session::SessionFlush {
+                    session_id: turn.session_id,
+                    through_sequence: sequence,
+                },
+            )
+            .await?;
+        if flushed.session_id != turn.session_id || flushed.sequence != sequence {
+            return Err(codes::SESSION_SEQUENCE);
+        }
+        Ok(vec![
+            SessionEvent::Appended(appended),
+            SessionEvent::Flushed(flushed),
+        ])
     }
 }

@@ -425,3 +425,57 @@ pub(crate) fn receipt_candidate(value: &Value) -> Result<RegistrationCandidate> 
         String::from_utf8(value.canonical_bytes()).map_err(|_| refusal("store-corrupt"))?;
     parse_candidate(&encoded)
 }
+
+impl Store {
+    /// Observe prepared or unfinished refreshes without advancing their state or clock.
+    pub fn refresh_pending(
+        &self,
+        owner: &canon::authority::pending::BoundOwnerIdentity,
+        now: i64,
+    ) -> Result<bool> {
+        if !(0..=canon::json::MAX_SAFE_INTEGER).contains(&now) {
+            return Err(refusal("ceremony-data-invalid"));
+        }
+        let mut statement = self.connection.prepare(
+            "SELECT id FROM aumlok_ceremonies_v2 WHERE purpose='refresh' AND state IN ('prepared','spent') AND json_extract(context,'$.subject')=?1 AND json_extract(context,'$.epoch')=?2 LIMIT 1025",
+        ).map_err(sql)?;
+        let epoch = i64::try_from(owner.credential.binding.epoch)
+            .map_err(|_| refusal("ceremony-data-invalid"))?;
+        let mut rows = statement
+            .query(params![owner.subject.to_string(), epoch])
+            .map_err(sql)?;
+        let mut pending = false;
+        let mut count = 0;
+        while let Some(row) = rows.next().map_err(sql)? {
+            count += 1;
+            if count > 1024 {
+                return Err(refusal("ceremony-capacity"));
+            }
+            let bytes: Vec<u8> = row.get(0).map_err(sql)?;
+            let id = CeremonyId::from_bytes(
+                bytes.try_into().map_err(|_| refusal("store-corrupt"))?,
+            );
+            let refresh = read(&self.connection, &id)?;
+            if refresh.context.subject != Some(owner.subject)
+                || refresh.context.credential.as_ref()
+                    != Some(&owner.credential.binding.credential_id)
+                || refresh.context.authority.epoch != owner.credential.binding.epoch
+                || refresh.issued < 0
+                || refresh.last_seen < refresh.issued
+                || refresh.last_seen > now
+                || refresh.deadline <= refresh.issued
+                || refresh.deadline - refresh.issued > MAX_CEREMONY_MS
+            {
+                return Err(refusal("store-corrupt"));
+            }
+            let payload = refresh
+                .payload
+                .as_ref()
+                .ok_or_else(|| refusal("store-corrupt"))?;
+            codec::validate_payload(payload, CeremonyPurpose::Refresh, Some(owner.subject))?;
+            pending |= refresh.state == "spent"
+                || (refresh.state == "prepared" && refresh.deadline > now);
+        }
+        Ok(pending)
+    }
+}

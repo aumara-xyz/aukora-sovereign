@@ -418,3 +418,44 @@ fn refusal(reason: &'static str) -> canon::Refusal {
         reason,
     }
 }
+
+impl Identity {
+    /// Non-secret binding and pending-refresh data under the current owner epoch.
+    pub fn status(&self, record: &SessionRecord, now: u64) -> Result<Value> {
+        use canon::json::SafeInteger;
+        use frontdoor::session::SessionScope;
+        use supervisor::ingress::PrincipalScope;
+
+        if record.scope != SessionScope::Shell {
+            return Err(codes::AUMLOK_BINDING_REQUIRED);
+        }
+        let scope = PrincipalScope {
+            subject: record.subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
+            epoch: record.owner_epoch,
+        };
+        let now = i64::try_from(now).map_err(|_| codes::SUPERVISOR_STATE)?;
+        self.ledger.scoped(scope, |txn| {
+            let owner = txn
+                .bound_owner_identity()?
+                .ok_or(codes::AUMLOK_BINDING_REQUIRED)?;
+            if owner.subject != scope.subject || owner.credential.binding.epoch != scope.epoch {
+                return Err(codes::AUMLOK_BINDING_REQUIRED);
+            }
+            let passkeys = txn.active_owner_passkeys()?;
+            if passkeys == 0 {
+                return Err(codes::AUMLOK_BINDING_REQUIRED);
+            }
+            let refresh_due = self.store.refresh_pending(&owner, now)?;
+            Value::object(vec![
+                ("bound".to_owned(), Value::boolean(true)),
+                (
+                    "passkeys".to_owned(),
+                    Value::integer(SafeInteger::new(
+                        i64::try_from(passkeys).map_err(|_| codes::SUPERVISOR_STATE)?,
+                    )?),
+                ),
+                ("refresh_due".to_owned(), Value::boolean(refresh_due)),
+            ])
+        })
+    }
+}

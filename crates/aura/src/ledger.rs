@@ -800,3 +800,43 @@ impl Ledger {
     }
 }
 mod cold_export;
+impl LedgerTxn<'_> {
+    /// Count active passkeys only after their current bindings and signed anchors verify.
+    pub fn active_owner_passkeys(&mut self) -> Result<u64> {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+        self.active()?;
+        let bindings = {
+            let mut statement = self
+                .transaction
+                .prepare("SELECT credential,body FROM authority_bindings LIMIT 1025")
+                .map_err(sql)?;
+            let mut rows = statement.query([]).map_err(sql)?;
+            let mut bindings = Vec::new();
+            while let Some(row) = rows.next().map_err(sql)? {
+                if bindings.len() == 1024 {
+                    return Err(refusal("binding-capacity"));
+                }
+                let credential: String = row.get(0).map_err(sql)?;
+                let bytes: Vec<u8> = row.get(1).map_err(sql)?;
+                let binding = crate::storage::decode_binding(&bytes)?;
+                if credential != URL_SAFE_NO_PAD.encode(binding.credential_id.as_bytes()) {
+                    return Err(refusal("binding-context"));
+                }
+                bindings.push(binding);
+            }
+            bindings
+        };
+        let mut count = 0;
+        for binding in bindings {
+            if binding.epoch > self.state.epoch {
+                return Err(refusal("binding-context"));
+            }
+            if binding.epoch == self.state.epoch {
+                self.owner_binding(&binding.credential_id)?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+}

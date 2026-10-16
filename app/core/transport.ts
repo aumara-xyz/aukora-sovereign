@@ -138,7 +138,8 @@ export class ShellTransport implements DataTransport {
             const body = objectData(event.body);
             this.#reject(event.id as string, new Error(body.code as string));
           } else if (pending) {
-            const turn = pending.kind === 'chat.turn' && ['session.entry', 'model.start'].includes(event.kind as string);
+            const turn = pending.kind === 'chat.turn'
+              && ['session.entry', 'session.append', 'model.start'].includes(event.kind as string);
             if (pending.kind !== event.kind && !turn) throw new Error('app:unexpected-event');
             this.#resolve(event.id as string, event.kind === 'service.reply' ? objectData(event.body).value : event.body);
           }
