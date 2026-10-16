@@ -347,9 +347,18 @@ impl DurableSessions {
         .map_err(|_| FRONTDOOR_SESSION_REQUIRED)?
         .into();
         private_file(&file)?;
-        flock(&file, FlockOperation::NonBlockingLockExclusive)
-            .map_err(|_| FRONTDOOR_SESSION_REQUIRED)?;
-        Ok(file)
+        // The shell sends several requests at once. A busy lock is waited for briefly, never reported as an ended
+        // session (found on t2: a parallel request lost the race and the owner saw "sign in again").
+        for _ in 0..400 {
+            match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => return Ok(file),
+                Err(rustix::io::Errno::WOULDBLOCK) | Err(rustix::io::Errno::INTR) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(_) => return Err(FRONTDOOR_SESSION_REQUIRED),
+            }
+        }
+        Err(canon::codes::FRONTDOOR_OVERLOADED)
     }
     fn read_file(&self, name: &str) -> rustix::io::Result<File> {
         openat(
