@@ -1,0 +1,712 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "three": {
+      "repository": "https://github.com/mrdoob/three.js",
+      "pin": "r180",
+      "version": "0.180.0",
+      "license": "MIT",
+      "provenance": "three/upstream-three.json",
+      "runtimeEntry": "three/three.module.min.js"
+    },
+    "dakiniCode": {
+      "repository": "aumara-xyz/dakini-code",
+      "commit": "1fc98117a9a6234e1179bc7c5084a58ade378963",
+      "buildCommand": "npm ci && npm run build:app",
+      "runtimeEntry": "dakini-code/index.html"
+    },
+    "zetaHarp": {
+      "repository": "aumara-xyz/zeta-harp",
+      "commit": "aa1100fa56e2a86ccd181cb39d13122e62abdf9f",
+      "tree": "8c2f47d67479c19ce98e0c8d57916fd6d86feb34",
+      "runtimeEntry": "zeta-harp/index.html"
+    },
+    "aumaLingwa": {
+      "repositoryRevision": "b413a89b109900a9037a9ed725b0d1b474e4f550",
+      "runtimeEntry": "auma-lingwa/runtime/auma-lingwa.html"
+    },
+    "aumaLive": {
+      "repositoryRevision": "b413a89b109900a9037a9ed725b0d1b474e4f550",
+      "license": "AGPL-3.0-or-later",
+      "runtimeEntry": "auma-live/runtime/auma-live.html"
+    }
+  },
+  "files": {
+    "auma-lingwa/canonical/AUMA_V15_DECISIONS.md": {
+      "bytes": 17279,
+      "sha256": "036384e23e01c8fb7bd095ffcd398c74838285c7ba5ba79719e41413f861057d"
+    },
+    "auma-lingwa/canonical/auma-canon-v14.1.json": {
+      "bytes": 935768,
+      "sha256": "215de53e28287b43bebb771600375f4d4ebea4ca343bc6b56415be6b1c6d61f3"
+    },
+    "auma-lingwa/canonical/auma-canon-v15.json": {
+      "bytes": 855637,
+      "sha256": "173a12b5730abb730fc4f6456e88d0ecb558910e0fd95a334d19b52bc639fee4"
+    },
+    "auma-lingwa/canonical/auma-canon-v16.json": {
+      "bytes": 893781,
+      "sha256": "2d9ffed46912a7860b16c282d071bfed4c5555ee78c0bf8623e77d793531eb7e"
+    },
+    "auma-lingwa/canonical/README.md": {
+      "bytes": 3516,
+      "sha256": "62a6408ead5455cc8c6beb27e64f100dd78baf071a5218b17594722ed6ca8514"
+    },
+    "auma-lingwa/runtime/app/auma/auma.css": {
+      "bytes": 21749,
+      "sha256": "644a48545522b1be4f8a38c0f198ea9ca9aec1ea6190dc1b4a9f05e50291c90c"
+    },
+    "auma-lingwa/runtime/app/auma/auma.js": {
+      "bytes": 38287,
+      "sha256": "81f8ae277451a1360c58f69801c0ff12f48b9bf855781c5a50702365e2f68d36"
+    },
+    "auma-lingwa/runtime/app/auma/canon-v16.json": {
+      "bytes": 893781,
+      "sha256": "2d9ffed46912a7860b16c282d071bfed4c5555ee78c0bf8623e77d793531eb7e"
+    },
+    "auma-lingwa/runtime/app/auma/readers-v1.json": {
+      "bytes": 9344,
+      "sha256": "e4c1b35fa4087cb2f692e1c3f4a831d3ef39b22ddef21849c56634b9bda1224c"
+    },
+    "auma-lingwa/runtime/app/aura-core.js": {
+      "bytes": 13957,
+      "sha256": "571d5909687299537056e111389b6fb5e2c979e36b49a12cf50c67caceec03ab"
+    },
+    "auma-lingwa/runtime/app/style.css": {
+      "bytes": 32009,
+      "sha256": "ff4b815f47c3e3bd3e2718402427bb068b17e8a81afb4cd632d48d32c1dced4c"
+    },
+    "auma-lingwa/runtime/assets/aumara-icon-96.png": {
+      "bytes": 7925,
+      "sha256": "fec7d0bd7f007928fcb1b6866051b2c8344ec76d3211962650e3acd5f8b7e551"
+    },
+    "auma-lingwa/runtime/auma-lingwa.html": {
+      "bytes": 1044,
+      "sha256": "8d939f671d121fde40e58851c089d2b200df33c71fbf3d9a00e5aa978da7e4eb"
+    },
+    "auma-lingwa/tooling/core/tests/auraCore.test.ts": {
+      "bytes": 5563,
+      "sha256": "2b10cfb9c1f82fbd7dfbb9c0b17d9c69fb9424b9b6a30bdc70a19affccca4d73"
+    },
+    "auma-lingwa/tooling/core/tests/auraDetokenized.test.ts": {
+      "bytes": 8682,
+      "sha256": "1b4bbc9c536dd5fdb92c7773e441fb05045fd2301a05f9c6cac1a2e4277838b9"
+    },
+    "auma-lingwa/tooling/core/tests/lingwaLane.test.ts": {
+      "bytes": 4944,
+      "sha256": "471bb4c8f00ae8bbbba8ccf2ea052f154d1e1221765acf1ba4e411565f86a1af"
+    },
+    "auma-lingwa/tooling/scripts/aumaCanonLint.ts": {
+      "bytes": 9190,
+      "sha256": "8a6814737b677cd6bdae753b9d8b574ff8dd4c2c5951d4f86313966144d575d1"
+    },
+    "auma-lingwa/tooling/spatial/lingwaLane.ts": {
+      "bytes": 11468,
+      "sha256": "46c61e55365b6ff98d4bdd2b8bae55e12b0ff078efdee15fee8f2cdde11dcd74"
+    },
+    "auma-live/original-closure/authority/symbiotePaths.ts": {
+      "bytes": 7364,
+      "sha256": "892f30b0348d3b19ef53e021a6a84be16ecf93af1ea33c571cb5235917d47b91"
+    },
+    "auma-live/original-closure/convex/_generated/api.js": {
+      "bytes": 480,
+      "sha256": "f513058549831e85376f8d19cafaf2a4a770b6eb1b859fb371141f2c9dec0d70"
+    },
+    "auma-live/original-closure/convex/_generated/server.js": {
+      "bytes": 3696,
+      "sha256": "aea87b3ee367e0e870f3da81ffce8babd8ea1aea695a1e38689841aebc09a1e8"
+    },
+    "auma-live/original-closure/convex/aukoraActionRegistry.ts": {
+      "bytes": 8619,
+      "sha256": "62bfd489bde8de33aeff3e2e3975bb8a674d32a26ca217ce738e86bb4ca2f094"
+    },
+    "auma-live/original-closure/convex/aukoraConstants.ts": {
+      "bytes": 986,
+      "sha256": "63d7667dbe6c0c47ee07ebdbff5a8d216d63d43e8d73e576b9e68cb1ac23854f"
+    },
+    "auma-live/original-closure/convex/aukoraCore.ts": {
+      "bytes": 27678,
+      "sha256": "7ca52d3da4bccf55a7a8577039d646934fbb8c3f5d0fbfb281cae5272ca3a433"
+    },
+    "auma-live/original-closure/convex/aukoraMerkleLog.ts": {
+      "bytes": 13007,
+      "sha256": "c8455977353b0ace3b10ab87353dd6e8314f24939b59dfa01d274ca08069e245"
+    },
+    "auma-live/original-closure/convex/aukoraPqcSigner.ts": {
+      "bytes": 14284,
+      "sha256": "800421dad2ff8b51991cae66de1746f7489cd26d6997abe47638b1ae258de2b0"
+    },
+    "auma-live/original-closure/convex/aukoraRateLimit.ts": {
+      "bytes": 3391,
+      "sha256": "aec870aafbdeae26a60d9c3c2ea3edc567aaa5a089238cfa10e656e99f69e86e"
+    },
+    "auma-live/original-closure/convex/aukoraReceipts.ts": {
+      "bytes": 29401,
+      "sha256": "a9a0ac61d35314a557517edee1e927cc8275da14412225dece078b870ec26fd1"
+    },
+    "auma-live/original-closure/convex/aukoraRuntime.ts": {
+      "bytes": 21835,
+      "sha256": "5b09cc5fc2974d5b252467bf2849d364b434a9965887f773da3a5fcfa64e04f4"
+    },
+    "auma-live/original-closure/convex/aukoraSignedHead.ts": {
+      "bytes": 18373,
+      "sha256": "5dc93b7e7e4e78f8766f867885476344adbccbd7d81c17e1293210be4dda4079"
+    },
+    "auma-live/original-closure/convex/aukoraToken.ts": {
+      "bytes": 4295,
+      "sha256": "e2fe444fbb0c15884343c469ea846a19d779b61b763fa969ca82a2bb18dfe43c"
+    },
+    "auma-live/original-closure/convex/aumlokManifests.ts": {
+      "bytes": 29821,
+      "sha256": "77dbd5290541e821aebaf91251a6d003db887491261429684d3b7eace5256d7a"
+    },
+    "auma-live/original-closure/convex/aumlokMemory.ts": {
+      "bytes": 44250,
+      "sha256": "f247b7168ddc732367fc40c5947d3ffc5c07fb1418f548d5561633b5f81f2d30"
+    },
+    "auma-live/original-closure/convex/aumlokRootRegistry.ts": {
+      "bytes": 14550,
+      "sha256": "5b2f2ea98a39e357955c752be440b94bf340117e2bdd093d1e03b7bb4725b9f8"
+    },
+    "auma-live/original-closure/convex/popResolver.ts": {
+      "bytes": 15324,
+      "sha256": "b19a417ab2db2c81b55a76dba4db5fcd7b6ab361805ed628ad0513b58c0a84ce"
+    },
+    "auma-live/original-closure/convex/sessionResolver.ts": {
+      "bytes": 2508,
+      "sha256": "253640b8928f56a292d6584e6b552e244fb90574080b146d15247e0a5b2e542e"
+    },
+    "auma-live/original-closure/core/src/aumaWombPrompt.ts": {
+      "bytes": 15376,
+      "sha256": "c23315c0d6c4096097741e31c952fb117441c716ee622940dc3ab957e9b2d85f"
+    },
+    "auma-live/original-closure/core/src/aumlokApprovalRoot.ts": {
+      "bytes": 6289,
+      "sha256": "359c1dfcdd84a5d55e6f6c8eade617c11ebc851a0f7991147edb339aafa82430"
+    },
+    "auma-live/original-closure/core/src/aumlokBondCeremony.ts": {
+      "bytes": 19220,
+      "sha256": "5fedc8639a77681b7f4ff82dc42ae87cd0a9a21bfa40b6d5a24f239bacf1a396"
+    },
+    "auma-live/original-closure/core/src/burnDataset.ts": {
+      "bytes": 41917,
+      "sha256": "ae115992b7401c83f47448732f7407b9a3cbdb27250f3e49656667739cd48ccc"
+    },
+    "auma-live/original-closure/core/src/changeRiskClassifier.ts": {
+      "bytes": 4443,
+      "sha256": "a4f58539bb51f6dc8b45501ae351cf7ad1ad34f44ddb4d7848884f24195e9784"
+    },
+    "auma-live/original-closure/core/src/conversationDistiller.ts": {
+      "bytes": 10926,
+      "sha256": "a7a739216e65ea2537e703ff16dd2babddff5b6670f89a1edd847731c06dd998"
+    },
+    "auma-live/original-closure/core/src/conversationShadowCapture.ts": {
+      "bytes": 15513,
+      "sha256": "6a32716af69864ff83375b7e2bac6d1752bfe1135dc76c8800ba9e04a8a7d050"
+    },
+    "auma-live/original-closure/core/src/convexBrainReadonly.ts": {
+      "bytes": 13042,
+      "sha256": "d30adfc38a676ff22d9a93dbb64a3e78c6e56f25fcd1266ea3b8411048e7ff5b"
+    },
+    "auma-live/original-closure/core/src/convexBrainSnapshot.ts": {
+      "bytes": 5141,
+      "sha256": "3bbaf209959f62e60fbf71eb2b7848bc3f926d005b2ae55cf807e2ad003241a4"
+    },
+    "auma-live/original-closure/core/src/convexCanonicalPin.ts": {
+      "bytes": 9071,
+      "sha256": "05de3b60cd1c46fd96c59f6f0dcf389239fa5bade9d6829ca3beacd77a81441c"
+    },
+    "auma-live/original-closure/core/src/coreMemoryEnvelope.ts": {
+      "bytes": 11565,
+      "sha256": "eeb31ca630c0f7509e6ef6f699c5641eb088ade1039cd6f805bfa75ae920cd2d"
+    },
+    "auma-live/original-closure/core/src/externalReview.ts": {
+      "bytes": 15480,
+      "sha256": "08436d4c3c9f714143229007836d60355064518a70a7eb5b4860c8ed7b9e3197"
+    },
+    "auma-live/original-closure/core/src/focusRegister.ts": {
+      "bytes": 13056,
+      "sha256": "4daa9cf406da525f7fa22e985bfad5468c2e4ab576e5763ec064336a73e90745"
+    },
+    "auma-live/original-closure/core/src/forbiddenContent.ts": {
+      "bytes": 8195,
+      "sha256": "31a942574b0033991cb2db7d66cc72f888d41abd39c8c88354c1ecdc915ec815"
+    },
+    "auma-live/original-closure/core/src/fractalFusion.ts": {
+      "bytes": 15851,
+      "sha256": "b252ec776a71c5c2051d8f8dd0b860db874899c3a802b0098933c400d30eee61"
+    },
+    "auma-live/original-closure/core/src/fusionConfig.ts": {
+      "bytes": 21405,
+      "sha256": "a6ef5a2215b473d37adb903516aa076aa8004e0fb47abda247b1bd48d77c30ac"
+    },
+    "auma-live/original-closure/core/src/fusionSelfOpt.ts": {
+      "bytes": 8542,
+      "sha256": "a26e659247e660c3af6132516c8cd813f8b44962faea8465c7cd89e6214a6b2e"
+    },
+    "auma-live/original-closure/core/src/fusionSwarm.ts": {
+      "bytes": 2787,
+      "sha256": "1338e6ea43441b824ac55b89f2917fdc7e4d73f6e2d42a74fa5f72911160ac48"
+    },
+    "auma-live/original-closure/core/src/importGraphVerifier.ts": {
+      "bytes": 6785,
+      "sha256": "285fa476a617e764ea2ec75cb066524740c24f694e22453c89fd88f2ba87ac9e"
+    },
+    "auma-live/original-closure/core/src/kernelActionClassifier.ts": {
+      "bytes": 16297,
+      "sha256": "04627bda747af3a6202a66445db9eb03ea0689dd224c88d15c8e806a71bbfae6"
+    },
+    "auma-live/original-closure/core/src/kiraBrain.ts": {
+      "bytes": 31977,
+      "sha256": "681f6d6f1018d62e39220a3ea7c248dc9a379691cc944076d055323aa90fde06"
+    },
+    "auma-live/original-closure/core/src/memoryAppend.ts": {
+      "bytes": 12608,
+      "sha256": "2b3f966f5bce3b17a20d1b3970ae2068b1b6cbf36d395731e79ecd3bfd92ee09"
+    },
+    "auma-live/original-closure/core/src/memoryKernelTransport.ts": {
+      "bytes": 16372,
+      "sha256": "79c2b12d8070684ec3e048e99b413c58e6479647900176db73e56a0786ef71f9"
+    },
+    "auma-live/original-closure/core/src/memoryRecall.ts": {
+      "bytes": 23868,
+      "sha256": "af2d9f230ccb2a08ee59c3f7fe46854523046eb18cda79d9d49a1c53a52b01b2"
+    },
+    "auma-live/original-closure/core/src/mldsaSandboxSigner.ts": {
+      "bytes": 12554,
+      "sha256": "65015c888ec97b7cb4e2d384aa891bf47363731756013b390d79d51db6b8e488"
+    },
+    "auma-live/original-closure/core/src/opencodeWombArtifact.ts": {
+      "bytes": 22869,
+      "sha256": "2b7f7218cc0662c2db99e1c9dd667d780afc1fc969cc7d3d278c2c730c79353f"
+    },
+    "auma-live/original-closure/core/src/organismConnectivity.ts": {
+      "bytes": 18749,
+      "sha256": "6665a299f836bd126572e8556ff7c37963570edf498e63cb8cfa0cd9bde8f063"
+    },
+    "auma-live/original-closure/core/src/organismGraph.ts": {
+      "bytes": 13042,
+      "sha256": "4c0eb6ab0a44a94e561eee04f1ff85f7525b2d4a1b9b24aeda817b5015b91496"
+    },
+    "auma-live/original-closure/core/src/patchApproval.ts": {
+      "bytes": 9260,
+      "sha256": "fb1934a3590b6f681d0e2153e2427505cb14207531e4bc4263d963ecedcbc1f7"
+    },
+    "auma-live/original-closure/core/src/patchProposal.ts": {
+      "bytes": 9513,
+      "sha256": "4d743720bf41eaada4fab34e577fa056f6ce5909538bf0d3b19f659d45c8a382"
+    },
+    "auma-live/original-closure/core/src/repoReadPathResolver.ts": {
+      "bytes": 6810,
+      "sha256": "2c36ce69e1b11ed3557062de569b5ab601efc2631f15ecb2e10eaded7131670f"
+    },
+    "auma-live/original-closure/core/src/restingGlyph.ts": {
+      "bytes": 16205,
+      "sha256": "d4ab709ae0e3db4ac373160aac974c9b3fce7f133737331dcbd17e5661f8b9ac"
+    },
+    "auma-live/original-closure/core/src/sandboxApply.ts": {
+      "bytes": 16605,
+      "sha256": "39528f65bb1d9f1dcdc1b6c204e5ced6b01e3bd25a3262fd0924bca5ddb9ac91"
+    },
+    "auma-live/original-closure/core/src/sandboxApplyPermit.ts": {
+      "bytes": 6672,
+      "sha256": "1517bc2cda723b1bb010238bad8a93ed3a81421c6d3ba92d92f73e4fd4e9aa36"
+    },
+    "auma-live/original-closure/core/src/senseBus.ts": {
+      "bytes": 16068,
+      "sha256": "ecb25cbb1648f8248223f7213b0092fca8908e9b7f2db597387fca69c0f69122"
+    },
+    "auma-live/original-closure/core/src/windowsKeyCustody.ts": {
+      "bytes": 6640,
+      "sha256": "88c52805605e546c5cde114c7f2e0825a327c05a58ac910a4be3a4aaf0d2856f"
+    },
+    "auma-live/original-closure/core/src/wombForbiddenPatterns.ts": {
+      "bytes": 2051,
+      "sha256": "3da646ae615cfe79cf9f7919edaa8e02dcc9a1404cabfbefc30f32fa3a2fda57"
+    },
+    "auma-live/original-closure/core/src/wombPatchDraft.ts": {
+      "bytes": 8661,
+      "sha256": "61a74f2ed083f829ac00981da1d4daf9518cf5350b5efaba2a80afda110c6784"
+    },
+    "auma-live/original-closure/core/src/wombTargetDiscovery.ts": {
+      "bytes": 14367,
+      "sha256": "430b0ff69967bec3568a618b2cabf6011999b89bb8bf9f266ef1a0559482d0e6"
+    },
+    "auma-live/original-closure/core/tests/canonReference.test.ts": {
+      "bytes": 2898,
+      "sha256": "037d96966000d572469f33875eacbc4861baa8ae954a1162594fa026605bbf0a"
+    },
+    "auma-live/original-closure/core/tests/capabilityPreamble.test.ts": {
+      "bytes": 10197,
+      "sha256": "c0f545a3c2db4d3c52afdb7ada709499c329408e97fcf779557919e0be3e0dd3"
+    },
+    "auma-live/original-closure/core/tests/captureOrigin.test.ts": {
+      "bytes": 4487,
+      "sha256": "006da107c3def2139ab707be42bdd1080e542f95e43e4d3a6de24e5ab79581d3"
+    },
+    "auma-live/original-closure/core/tests/crossLane.test.ts": {
+      "bytes": 5627,
+      "sha256": "b335c5b6e06bc7fd75d4033779c60272c00836826e18fe04103c89d0b348b64c"
+    },
+    "auma-live/original-closure/core/tests/crossThreadRecall.test.ts": {
+      "bytes": 11764,
+      "sha256": "99837b396d7ef3b32aeb01e0e333228e21c530d47d631406cafe96cc09d492c5"
+    },
+    "auma-live/original-closure/core/tests/fieldDirectives.test.ts": {
+      "bytes": 3265,
+      "sha256": "61167e5341ed54db5b43fec4c304c6f5ac11eb7779b0596a95ace9f402aaf0b7"
+    },
+    "auma-live/original-closure/core/tests/frameGuard.test.ts": {
+      "bytes": 9449,
+      "sha256": "06dcdaffdaeebe8665d3f0cc0e1484eb99adc15328d1536eb9d5fd913118b361"
+    },
+    "auma-live/original-closure/core/tests/identityAnchor.test.ts": {
+      "bytes": 8394,
+      "sha256": "412a82bf9bd5401fbdaea7f72e9dbf5facf830cf5c2e7560af354c0a8a70afb4"
+    },
+    "auma-live/original-closure/core/tests/localPostGuard.test.ts": {
+      "bytes": 3639,
+      "sha256": "0d4ef593fde70c656a9e4f6066cbe435a909211440479f96921afb2db662a978"
+    },
+    "auma-live/original-closure/core/tests/presenceCapture.test.ts": {
+      "bytes": 2669,
+      "sha256": "826750871094c0196b91f88e777c149487f200d6635b37a2a6b081572d2dd096"
+    },
+    "auma-live/original-closure/core/tests/presenceLane.test.ts": {
+      "bytes": 545,
+      "sha256": "39651e5783e263a4a269ca6e65ae7eb5fe164daef0e213bcb4867889f5b7c0ba"
+    },
+    "auma-live/original-closure/core/tests/recallSourceRouting.test.ts": {
+      "bytes": 5658,
+      "sha256": "d38688cd57fb71bb8ba599144bcc5dc101f72bc1af0d91b0710f015d26648151"
+    },
+    "auma-live/original-closure/core/tests/recallStarvationGuard.test.ts": {
+      "bytes": 7600,
+      "sha256": "5f1f4a52d076659f0991d3f5f850d5552191b7a1da9b2c9909e674b4c413cc21"
+    },
+    "auma-live/original-closure/core/tests/recallWhyTraces.test.ts": {
+      "bytes": 6775,
+      "sha256": "0940cb696690af70e3e48c3de6e371c1d9f6fe96147eabe9c8e6880f1f1e058f"
+    },
+    "auma-live/original-closure/core/tests/recencyTier.test.ts": {
+      "bytes": 2760,
+      "sha256": "6a00c58398f727b5df4b128e5cd2043bff0a9058fe9c0ee87b045ea78c56850e"
+    },
+    "auma-live/original-closure/core/tests/shadowCaptureDoor.test.ts": {
+      "bytes": 13366,
+      "sha256": "adb02e9de6468fbb684babb73a42fe8695b0957753b6f9fd50d4964dfe4ff7d3"
+    },
+    "auma-live/original-closure/core/tests/workingFocusFrame.test.ts": {
+      "bytes": 3087,
+      "sha256": "538360e37f5b65c048e815897c21a713fc07c6878c4938c8a34553446b894177"
+    },
+    "auma-live/original-closure/scripts/memoryRecallAdapter.ts": {
+      "bytes": 4435,
+      "sha256": "1b3a707d8a75e91fa6e9dc4f3aac44dd0a5762424cd52c47b186624e6a221757"
+    },
+    "auma-live/original-closure/spatial/app/field-directives.js": {
+      "bytes": 3233,
+      "sha256": "41e1ea5801243c3ad22842511c9e1fb155c846553b216019cca3febf91017a38"
+    },
+    "auma-live/original-closure/spatial/canonReference.ts": {
+      "bytes": 3903,
+      "sha256": "2f33b1692191c6a6a058def3c0e65349488f4c54ca0b20062bcf79f7aa1fe6c8"
+    },
+    "auma-live/original-closure/spatial/capabilityMode.ts": {
+      "bytes": 4422,
+      "sha256": "4fd0b50582925c7c7e0d58cc9f6708064ef7b4377e894c13f3e4e84751cf44b0"
+    },
+    "auma-live/original-closure/spatial/capabilityPreamble.ts": {
+      "bytes": 13552,
+      "sha256": "5624e496d0791fcca62177e19fcdc7bffb49e2bc0b8d8cf6c4948bf9af238477"
+    },
+    "auma-live/original-closure/spatial/coreSession.ts": {
+      "bytes": 4878,
+      "sha256": "940bc09aefc4a1357b2af3a0f321049d658e511904fa14d4e844a8c1d4a1593e"
+    },
+    "auma-live/original-closure/spatial/crossLane.ts": {
+      "bytes": 7301,
+      "sha256": "13642ebbfd74283d78ee4796e4c8360adc3a1438e67a1b9586cad02308eb33ec"
+    },
+    "auma-live/original-closure/spatial/frameGuard.ts": {
+      "bytes": 6916,
+      "sha256": "2fbf16332a9cd74c6b3c382476f4ea1dee95a33ee05a5037ae9ffaabfa81f1ac"
+    },
+    "auma-live/original-closure/spatial/identityAnchor.ts": {
+      "bytes": 8726,
+      "sha256": "ac6057966142dc4f8dbaa10469960918d906fa2a2521903ae09d3fe100cc7bde"
+    },
+    "auma-live/original-closure/spatial/presenceLane.ts": {
+      "bytes": 19966,
+      "sha256": "847c8275012474033b899430f89c8daf9efdaa69f6fc1207a89935e019e46c5f"
+    },
+    "auma-live/original-closure/spatial/recallSource.ts": {
+      "bytes": 22749,
+      "sha256": "55feba5f7f6bd6307c505b6f6cf5f873b3a739a7d708c2fea27d938f5d505b02"
+    },
+    "auma-live/original-closure/spatial/workingFocus.ts": {
+      "bytes": 3484,
+      "sha256": "23a4bbbbc3bc21e78403d9bc9d90eb2f417d03697133d287967559bc13df2255"
+    },
+    "auma-live/runtime/app/aumalive-audio.js": {
+      "bytes": 8987,
+      "sha256": "55bf9d54d7761efbb9150a4db99c24b0ab593388a1cbb0ed73f37fb433fe9505"
+    },
+    "auma-live/runtime/app/aumalive-duplex.js": {
+      "bytes": 10974,
+      "sha256": "007a2b53cc20ff07908b841fad631249f3cf8c793587786c9feea6a6eecf9ca5"
+    },
+    "auma-live/runtime/app/aumalive-mind-choice.js": {
+      "bytes": 4463,
+      "sha256": "7020369c50a06bdbc151ca36a334219ecbd1643ca0a30f01b65e8c2b7bbcf6a0"
+    },
+    "auma-live/runtime/app/aumalive.js": {
+      "bytes": 140269,
+      "sha256": "082d708bc096315e9cf5ccf15ac4c7d6b809ad434c70b962d8e23aca236d56e3"
+    },
+    "auma-live/runtime/app/aura-trace.js": {
+      "bytes": 10213,
+      "sha256": "d47627071f1db29d89cd820cd33e8d3ceb9fd6fb9df95b45512a136bef3b9714"
+    },
+    "auma-live/runtime/app/chat-log-key.js": {
+      "bytes": 3091,
+      "sha256": "dcd8247b33d955d162e0546ae180de8cf01edecb1c4e0a8a15667b599339ec95"
+    },
+    "auma-live/runtime/app/field-directives.d.ts": {
+      "bytes": 299,
+      "sha256": "08ba8050d0e8c4cc163daa6cd5bc038b0bc6b470ac618491638a7f930d812489"
+    },
+    "auma-live/runtime/app/field-directives.js": {
+      "bytes": 3233,
+      "sha256": "41e1ea5801243c3ad22842511c9e1fb155c846553b216019cca3febf91017a38"
+    },
+    "auma-live/runtime/app/field-quality.js": {
+      "bytes": 9245,
+      "sha256": "3dc79a22777b56d9b4d8413f19f9cf482981f4a313a231dcbe6f672ee472ba4f"
+    },
+    "auma-live/runtime/app/home-session.js": {
+      "bytes": 10604,
+      "sha256": "bb6dee33d046dedd72c4c6ef3b4b0e71c7740fb1444cd7396a6efc70a49d4790"
+    },
+    "auma-live/runtime/app/lane-bridge.js": {
+      "bytes": 5647,
+      "sha256": "86301a7f917ec48eebf1ff95396e83aa60d6d85a18f7152d4adc769780ebebac"
+    },
+    "auma-live/runtime/auma-live.html": {
+      "bytes": 1339,
+      "sha256": "e478cee287dc037f03ab0ba08a4a2fa25b1fea00528ae1257ee977574792d637"
+    },
+    "auma-live/source/app/aumalive-audio.js": {
+      "bytes": 5935,
+      "sha256": "484642694c8ead403dd5253d3d999fa1f7b8f60de44027f83596c6db9d4face2"
+    },
+    "auma-live/source/app/aumalive.js": {
+      "bytes": 73320,
+      "sha256": "de1b8605681cfaaca6bd1067192c27877efa67f4ca564106614b9d99a34577c7"
+    },
+    "auma-live/source/app/field-directives.d.ts": {
+      "bytes": 299,
+      "sha256": "08ba8050d0e8c4cc163daa6cd5bc038b0bc6b470ac618491638a7f930d812489"
+    },
+    "auma-live/source/app/field-directives.js": {
+      "bytes": 3233,
+      "sha256": "41e1ea5801243c3ad22842511c9e1fb155c846553b216019cca3febf91017a38"
+    },
+    "auma-live/source/app/lane-bridge.js": {
+      "bytes": 3251,
+      "sha256": "a87f5487b00ca69c53aea9a0e4bfb76f7813c91c8a7ee8ff5fe7179bac6b28e2"
+    },
+    "auma-live/source/server/crossLane.ts": {
+      "bytes": 7301,
+      "sha256": "13642ebbfd74283d78ee4796e4c8360adc3a1438e67a1b9586cad02308eb33ec"
+    },
+    "auma-live/source/server/presenceLane.ts": {
+      "bytes": 19966,
+      "sha256": "847c8275012474033b899430f89c8daf9efdaa69f6fc1207a89935e019e46c5f"
+    },
+    "auma-live/source/voice/.gitignore": {
+      "bytes": 34,
+      "sha256": "4d276e8683705963fb80e74f3980be0a8500271558279c6a4fa89d5d358f232f"
+    },
+    "auma-live/source/voice/README.md": {
+      "bytes": 8136,
+      "sha256": "53f7c75ec53e51c98562630af20ec57ed4d354864d42210af1865094be867c43"
+    },
+    "auma-live/source/voice/requirements.txt": {
+      "bytes": 239,
+      "sha256": "2529e63300ded489a67ce5d54b780eaa1bcb685bcdb1824da79bd35017ffbd4b"
+    },
+    "auma-live/source/voice/run.sh": {
+      "bytes": 150,
+      "sha256": "63100f4e4e2a1fbe7675b4a9eec66f483b209aed7ddd088c15a7ce9498a64f36"
+    },
+    "auma-live/source/voice/setup.sh": {
+      "bytes": 3828,
+      "sha256": "b19caf789a5da739dc7b8535d0646188bf6309317b22de480987eee84bb8d72b"
+    },
+    "auma-live/source/voice/sidecar.py": {
+      "bytes": 42133,
+      "sha256": "8b28926393423e0413bf7beec60e6574396419e2fc7a75c948c5046d6c077e2b"
+    },
+    "auma-live/source/voice/test_e2e.py": {
+      "bytes": 5855,
+      "sha256": "90fd9b4f6c4d83058d7dfbfc233de2bcbbcd9cdc5dddf04369d51c71d378e3ec"
+    },
+    "auma-live/source/voice/test_fixes.py": {
+      "bytes": 7303,
+      "sha256": "5dc52f73d869d0c6321da3b3083862f873966da03bd1fca65dd53928eb0c0a3a"
+    },
+    "auma-live/source/voice/test_lazy_engines.py": {
+      "bytes": 8826,
+      "sha256": "1a7c56c3003c83c20d975158290b32612f82797e77e09dbfe070a2a3c1033912"
+    },
+    "auma-live/source/voice/test_loop.py": {
+      "bytes": 4376,
+      "sha256": "5ef792b49442429fd06c1e36618047bf69de443ad78adefcf3c1c620da7ce511"
+    },
+    "auma-live/voice/.gitignore": {
+      "bytes": 628,
+      "sha256": "2a5d7c373b58ac714eaaec86ce9bbbd7c3adb6943c8b01f9904151047fee1482"
+    },
+    "auma-live/voice/aurora_prompt.py": {
+      "bytes": 1798,
+      "sha256": "07b1c50bc2d2b458431307806edc9c1e544115750c4a0988d3880c902fab53bb"
+    },
+    "auma-live/voice/MODELS.md": {
+      "bytes": 906,
+      "sha256": "c13f3013d5a5655da0846163c7dca942c602d557cf3a452537bbcaf3f3ab452b"
+    },
+    "auma-live/voice/README.md": {
+      "bytes": 3144,
+      "sha256": "069d79e8157bf356773a342c1a764572564f7c6bd34c87338381d063f8431851"
+    },
+    "auma-live/voice/requirements.txt": {
+      "bytes": 243,
+      "sha256": "e9a0789ea82029f05e73865de391ae2c7fb68e500c7c9fdfc2fb8f470ef56de2"
+    },
+    "auma-live/voice/run.sh": {
+      "bytes": 296,
+      "sha256": "34bedd9de7a593def877701c9623742103864968ebb94d18b13f27197475e5db"
+    },
+    "auma-live/voice/setup.sh": {
+      "bytes": 3989,
+      "sha256": "5689f752285d77841d9324dcdf164f564fd950e8607820e10b8a400ed171bd87"
+    },
+    "auma-live/voice/sidecar.py": {
+      "bytes": 47269,
+      "sha256": "54e6375481b1672dd6bc9ac6a5cacfb9efaee19604c34c1b2157c814db41d8b7"
+    },
+    "auma-live/voice/test_aurora_prompt.py": {
+      "bytes": 9801,
+      "sha256": "145548e633b0a3867fcb01904ceb734b157d74ec996927c783ba9f496e318927"
+    },
+    "auma-live/voice/test_e2e.py": {
+      "bytes": 6224,
+      "sha256": "0da2ef073fa81a91281de44553add8d33d30bb5871f73dc34adccf56fe045638"
+    },
+    "auma-live/voice/test_fixes.py": {
+      "bytes": 19545,
+      "sha256": "acf8c50fb6333dfd1939b0045f0f3322a1cb0304bed37f937aee2de8f6594c60"
+    },
+    "auma-live/voice/test_lazy_engines.py": {
+      "bytes": 8826,
+      "sha256": "1a7c56c3003c83c20d975158290b32612f82797e77e09dbfe070a2a3c1033912"
+    },
+    "auma-live/voice/test_loop.py": {
+      "bytes": 4445,
+      "sha256": "cbccae928272a750048d48081dddc59d9d60f7a67cdf1b75b4d43772b66b1d58"
+    },
+    "dakini-code/assets/index-C2MMIvhO.css": {
+      "bytes": 149512,
+      "sha256": "894bc70bd3165115b62cc0ef1b0d4c77a75bee34b301cb7673d55d23c74243b1"
+    },
+    "dakini-code/assets/index-t74FFCZZ.js": {
+      "bytes": 315451,
+      "sha256": "86a20f0b66960990c79758b07506c9148e2bb66adac3951bc1ed5dd2fb16a2dc"
+    },
+    "dakini-code/assets/space-Bu4O81zr.js": {
+      "bytes": 590245,
+      "sha256": "e31cc0bffed35a44b03c9aba5a1b7d9c1673cab72578b9c605d2918e06894e4a"
+    },
+    "dakini-code/favicon.svg": {
+      "bytes": 354,
+      "sha256": "23f5768dc9a51c98a67c41120f6e690a15b14c9236cc96f3690db80855ce9226"
+    },
+    "dakini-code/index.html": {
+      "bytes": 512,
+      "sha256": "87fda9f9027637a5d3b448194ae63c8ac03480964e8aa3a853f7ca82326bdf3b"
+    },
+    "three/LICENSE": {
+      "bytes": 1081,
+      "sha256": "bfe119ea4fd413f5f7ca3fcd63adb0c4a073ed39daa2fe7d3e6b769e21272601"
+    },
+    "three/package.json": {
+      "bytes": 4635,
+      "sha256": "aa42494664dba4cf76d89c6975ee38321a402f09a048672e190bad6f13beec93"
+    },
+    "three/three.core.min.js": {
+      "bytes": 381124,
+      "sha256": "61ba0df005b05991361d040d8ff670e1aadfd0ce7aeebd1fdb0725957a8957de"
+    },
+    "three/three.module.min.js": {
+      "bytes": 338908,
+      "sha256": "e2b5ee6bccd38fd6d8a2428546b83c5f2426d84b152ef82be8055556e3b40eb6"
+    },
+    "three/upstream-three.json": {
+      "bytes": 1129,
+      "sha256": "db09ad40e2d66ab8a6a0664d2791aff202816ac281ad777e3739cc349c64a40f"
+    },
+    "zeta-harp/fold.html": {
+      "bytes": 38325,
+      "sha256": "f1d7a131d7829473f27f387b367111afbcefa79a2f96a57ee5f156f0be918e4d"
+    },
+    "zeta-harp/index.html": {
+      "bytes": 26807,
+      "sha256": "f49e098ca7624a761e472e3a2a78db06000fa98f4a8aea3841ef2e0b466fa49f"
+    },
+    "zeta-harp/js/zh-app-1-state.js": {
+      "bytes": 8089,
+      "sha256": "27ce8337e06f2856afcb9fc35757116e713d2d60cb86d97c1f89a946326abbbd"
+    },
+    "zeta-harp/js/zh-app-2-gl.js": {
+      "bytes": 17760,
+      "sha256": "7f03b39c09d3d5a963d8be3c516674e28721ace02570a926ad12b6812724a7c0"
+    },
+    "zeta-harp/js/zh-app-3-panels.js": {
+      "bytes": 20376,
+      "sha256": "35831635de0fbab9179d81cf20d83de79a50b45d7e9fe01c21a6adc48dff3bf1"
+    },
+    "zeta-harp/js/zh-app-4-audio.js": {
+      "bytes": 16097,
+      "sha256": "991dab5e1d12ff782c2ff0548b3eb209fec51ca92d243d2eb8010fe4f89ec8ec"
+    },
+    "zeta-harp/js/zh-app-5-orchestration.js": {
+      "bytes": 17140,
+      "sha256": "51a672fb24be0ece5eedd3ef3a6212d1291267678b829a5a8c2cd5a2930ce181"
+    },
+    "zeta-harp/js/zh-app-6-main.js": {
+      "bytes": 15366,
+      "sha256": "216edb7b20e98964105d1c785074215714e1cbadf71b4aef301d55976739a34a"
+    },
+    "zeta-harp/js/zh-fixtures-1.js": {
+      "bytes": 18799,
+      "sha256": "e5d3e5c3a71515419af8315cfe3d94c52b1aaba581f24167bf57ced582a02adc"
+    },
+    "zeta-harp/js/zh-fixtures-2.js": {
+      "bytes": 14445,
+      "sha256": "8292c8eb17f4dcf0caf1ac69f87853c4bf0e5aed1c638b168404c9fa525b44b4"
+    },
+    "zeta-harp/js/zh-math.js": {
+      "bytes": 4496,
+      "sha256": "ce59fc0c3876ef21df265a058f599a5c8c05f63dac6232d602adab89581b02e2"
+    },
+    "zeta-harp/README.md": {
+      "bytes": 3311,
+      "sha256": "20de49b6ec332c6904888e72ca589e96f4c8b88e7d8679db8357f4dc38755e3d"
+    },
+    "zeta-harp/UNLOCK.md": {
+      "bytes": 12687,
+      "sha256": "4ad2166d7c50bc9515b30799b162c1b23b95db9c5966bef371e44432a558498c"
+    }
+  }
+}

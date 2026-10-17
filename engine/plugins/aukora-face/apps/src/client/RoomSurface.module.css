@@ -1,0 +1,90 @@
+.menuLauncher { width: 100%; }
+
+.room.room {
+  background: var(--aukora-background);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  gap: 12px;
+  padding: 16px;
+  color: var(--aukora-text);
+  font-family: var(--dsw-font-family);
+}
+
+.messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-anchor: none;
+  padding: 4px 8px;
+}
+
+.message {
+  --speaker-color: var(--aukora-text);
+  align-self: flex-start;
+  max-width: min(525px, 82%);
+  min-width: 0;
+}
+
+.message[data-speaker='PETER'] { --speaker-color: var(--aukora-blue); align-self: flex-end; }
+.message[data-speaker='AUMA'] { --speaker-color: var(--aukora-purple); }
+.message[data-speaker='CLAUDE'] { --speaker-color: var(--aukora-gold); }
+.message[data-speaker='CODEX-DESKTOP'] { --speaker-color: var(--aukora-green); }
+.message[data-speaker='AUMA-CODEX'] { --speaker-color: var(--aukora-gold); }
+.message[data-speaker='GROK'] { --speaker-color: var(--aukora-purple); }
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 16px 4px;
+  color: var(--speaker-color);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.meta time {
+  color: var(--aukora-text-muted);
+  font-size: 11px;
+}
+
+.message[data-speaker='PETER'] .meta { justify-content: flex-end; }
+
+.bubble {
+  padding: 10px 16px;
+  border-color: color-mix(in srgb, var(--speaker-color) 30%, transparent);
+  font-size: 16px;
+  line-height: 24px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+
+.composer {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 12px 10px;
+}
+
+.composer textarea {
+  min-height: 24px;
+  max-height: 120px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--aukora-text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 24px;
+  resize: none;
+}
+
+.composer textarea:focus-visible { outline: 2px solid var(--aukora-blue); outline-offset: 4px; }
+.composer textarea[aria-invalid='true'] { outline: 2px solid var(--aukora-red-warning); outline-offset: 4px; }

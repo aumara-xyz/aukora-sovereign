@@ -1,0 +1,29 @@
+.controls { display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto; min-width: 0; }
+.mode, .vision { display: inline-flex; align-items: center; gap: 5px; height: 28px; }
+.mode { --composer-accent: var(--aukora-text-muted); }
+.mode[data-mode='0'] { --composer-accent: var(--aukora-green); }
+.mode[data-mode='1'] { --composer-accent: var(--aukora-blue); }
+.mode[data-mode='2'] { --composer-accent: var(--aukora-gold); }
+.slider { position: relative; display: inline-flex; align-items: center; flex: none; width: 28px; height: 28px; }
+.track { position: relative; display: block; box-sizing: border-box; width: 28px; height: 10px; border: 1px solid var(--aukora-border); border-radius: 999px; background: transparent; }
+.fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: inherit; background: var(--composer-accent); opacity: .7; transition: width 160ms ease; }
+.mode[data-mode='1'] .fill { width: 13px; }
+.mode[data-mode='2'] .fill { width: 22px; }
+.dot { position: absolute; top: 50%; left: 1px; width: 6px; height: 6px; border-radius: 50%; background: var(--composer-accent); transform: translate(0, -50%); transition: transform 160ms ease; }
+.mode[data-mode='1'] .dot { transform: translate(9px, -50%); }
+.mode[data-mode='2'] .dot { transform: translate(18px, -50%); }
+.mode[data-mode='-1'] .dot { visibility: hidden; }
+.range { position: absolute; inset: 0; width: 28px; height: 28px; margin: 0; opacity: 0; cursor: pointer; }
+.slider:has(.range:focus-visible) .track { outline: 2px solid var(--composer-accent); outline-offset: 3px; }
+.mode[data-disabled='true'], .vision { opacity: .5; }
+.range:disabled { cursor: default; }
+.label { width: 30px; color: var(--composer-accent); font-size: 9px; line-height: 12px; font-weight: 400; letter-spacing: .03em; white-space: nowrap; }
+.vision { --composer-accent: var(--aukora-text-muted); cursor: default; }
+.vision .label { width: auto; }
+.vision[data-vision='on'] { --composer-accent: var(--aukora-purple); }
+.vision[data-vision='on'] .dot { transform: translate(18px, -50%); }
+.vision[data-vision='on'] .fill { width: 22px; }
+.mode[data-error='true'] .track { border-color: var(--aukora-red-warning); }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .dot, .fill { transition: none; } }
+@media (forced-colors: active) { .track { border-color: CanvasText; } .dot, .fill { background: Highlight; } .vision .dot { background: GrayText; } }

@@ -1,0 +1,55 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo"
+  },
+  "files": [
+    "src/composer-mode-types.ts",
+    "src/composer-mode.ts",
+    "src/approvals-log.ts",
+    "src/client/health-model.ts",
+    "src/client/why-model.ts",
+    "src/css-modules.d.ts",
+    "src/first-run-host.ts",
+    "src/health-sample.ts",
+    "src/index.ts",
+    "src/watchdog-limit.ts",
+    "src/why-store.ts"
+  ],
+  "references": [
+    { "path": "../../core/agent" },
+    { "path": "../../interaction/commands" },
+    { "path": "../../session/session-projection" },
+    { "path": "../../sandbox/sandbox" },
+    { "path": "../../sandbox/sandbox-policy" },
+    {
+      "path": "../ui-session"
+    },
+    {
+      "path": "../ui-renderer"
+    },
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../locale"
+    },
+    {
+      "path": "../ui-slots"
+    },
+    {
+      "path": "../ui-theme"
+    },
+    {
+      "path": "../ui-primitives"
+    },
+    {
+      "path": "../../runtime-diagnostics/invariants"
+    },
+    {
+      "path": "../../host/webserver"
+    }
+  ]
+}

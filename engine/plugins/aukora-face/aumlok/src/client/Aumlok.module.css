@@ -1,0 +1,1237 @@
+.surface {
+  --aumlok-root: var(--dsw-static-spatial-mint);
+  --aumlok-unite: var(--dsw-static-spatial-blue);
+  --aumlok-rise: var(--dsw-static-spatial-violet);
+  --aumlok-anchor: var(--dsw-static-spatial-gold);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(20px, 3.2%, 48px);
+  box-sizing: border-box;
+  overflow: auto;
+  container-name: aumlok;
+  container-type: inline-size;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+}
+
+.surface[hidden] {
+  display: none;
+}
+
+.canvas {
+  width: min(100%, 1160px);
+  min-height: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.identityPanel {
+  padding: clamp(20px, 3.2%, 40px);
+  overflow: auto;
+  container-type: inline-size;
+  background: transparent;
+}
+
+.identityCard {
+  width: min(100%, 680px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: clamp(20px, 4cqi, 36px);
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 30px;
+  background: var(--aukora-surface);
+  box-shadow: 0 24px 80px #0003, inset 0 1px #ffffff08;
+}
+
+.identityHeader {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 16px;
+}
+
+.identityHeader h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(32px, 6cqi, 52px);
+  font-weight: 640;
+  letter-spacing: -0.03em;
+}
+
+.identityAvatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 82px;
+  height: 82px;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--aumlok-unite) 10%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--aumlok-unite) 35%, transparent), 0 8px 28px #0003;
+  color: var(--aumlok-unite);
+}
+.identityAvatar svg { width: 100%; height: 100%; }
+.identityAvatar > svg[viewBox='0 0 24 24'] { width: 36px; height: 36px; }
+
+.identityHeader h2 { flex: 1; }
+.identityHeader > [data-identity-verify] { flex: none; align-self: flex-start; margin-left: auto; }
+.identityNameForm { display: flex; flex: 1; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.identityNameForm input {
+  flex: 1;
+  width: 120px;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  padding: 10px;
+  color: inherit;
+  background: var(--dsw-alias-bg-layer-2);
+  font: inherit;
+}
+.identityStorageError {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: #cf695f;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.identityStorageError svg { width: 18px; height: 18px; }
+.identityScrim {
+  --aumlok-root: var(--dsw-static-spatial-mint);
+  --aumlok-unite: var(--dsw-static-spatial-blue);
+  --aumlok-rise: var(--dsw-static-spatial-violet);
+  --aumlok-anchor: var(--dsw-static-spatial-gold);
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  box-sizing: border-box;
+  background: #080615bb;
+  backdrop-filter: blur(10px);
+}
+.identitySheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  width: min(100%, 560px);
+  max-height: 90dvh;
+  font-size: 15px;
+  line-height: 1.6;
+  overflow: auto;
+  padding: 24px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 24px;
+  color: var(--dsw-alias-label-primary);
+  background: linear-gradient(145deg, #162337, #12131f 55%, #211930);
+  box-shadow: 0 20px 80px #0008;
+}
+.identitySheetHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; width: 100%; }
+.identitySheetHeader h3 { margin: 0; font-size: clamp(27px, 4vw, 34px); line-height: 1.2; letter-spacing: -0.035em; }
+.identitySheetHeader p { margin: 10px 0 0; font-size: 16px; color: var(--dsw-alias-label-secondary); }
+.identitySheet .identityAction { font-size: 15px; min-height: 44px; height: auto; padding: 10px 14px; }
+.identitySheetHeader > .identityAction { color: var(--dsw-alias-label-secondary); }
+.identityCameraFrame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 320px;
+  aspect-ratio: 1.12;
+  border: 1px solid color-mix(in srgb, var(--aumlok-unite) 35%, transparent);
+  border-radius: 22px;
+  overflow: hidden;
+  background: radial-gradient(ellipse at center, #1c2d48, #090e19 80%);
+  box-shadow: inset 0 0 45px #0005, 0 0 30px color-mix(in srgb, var(--aumlok-unite) 5%, transparent);
+}
+.identityCamera { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.identityCamera[hidden] { display: none; }
+.scanCorners { position: absolute; inset: 22px; pointer-events: none; color: var(--aumlok-unite); }
+.scanCorners i { position: absolute; width: 34px; height: 34px; border: solid currentColor; border-width: 0; filter: drop-shadow(0 0 6px currentColor); }
+.scanCorners i:nth-child(1) { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; border-top-left-radius: 12px; }
+.scanCorners i:nth-child(2) { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; border-top-right-radius: 12px; }
+.scanCorners i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px; border-bottom-left-radius: 12px; }
+.scanCorners i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 3px; border-right-width: 3px; border-bottom-right-radius: 12px; }
+.identityCameraFrame[data-scanning] .scanCorners { animation: identity-scan 2.4s ease-in-out infinite; }
+@keyframes identity-scan { 50% { opacity: 0.5; transform: scale(0.96); } }
+.scannerMessage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 44px 32px; text-align: center; color: var(--dsw-alias-label-primary); }
+.scannerMessage > svg { width: 42px; height: 42px; color: var(--aumlok-unite); }
+.scannerMessage strong { font-size: 19px; line-height: 1.4; }
+.scannerMessage p { margin: 0; max-width: 32ch; font-size: 15px; color: var(--dsw-alias-label-secondary); }
+.scannerMessage[data-warning] > svg { color: #ee958a; }
+.scannerMessage[data-live] { align-self: end; flex-direction: row; gap: 10px; margin: 0 24px 42px; padding: 10px 18px; border: 1px solid #ffffff24; border-radius: 999px; background: #080e1de6; color: #f3f6ff; }
+.scannerMessage[data-live] > svg { width: 22px; height: 22px; }
+.scannerMessage[data-live] strong { font-size: 16px; }
+.identitySheet .identityWarning { color: #ee958a; font-size: 15px; }
+.identitySheet .identityWarning svg { flex: none; }
+.identityScanned { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; padding: 22px 0; }
+.identityScanned h2 { margin: 0; max-width: 100%; overflow-wrap: anywhere; text-align: center; font-size: 27px; }
+.scannerAbout { width: 100%; border-top: 1px solid var(--dsw-alias-border-l1); }
+.scannerAbout summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0 4px; font-size: 16px; cursor: pointer; list-style: none; color: var(--aumlok-unite); }
+.scannerAbout summary::-webkit-details-marker { display: none; }
+.scannerAbout p { margin: 14px 0 0; color: var(--dsw-alias-label-secondary); font-size: 15px; }
+@media (prefers-reduced-motion: reduce) { .identityCameraFrame[data-scanning] .scanCorners { animation: none; } }
+
+.identityBind:focus-visible { outline: 2px solid var(--aumlok-unite); outline-offset: 3px; }
+
+ .identityQrHalo {
+  display: grid;
+  place-items: center;
+  width: min(100%, 362px);
+  padding: 12px;
+  box-sizing: border-box;
+  border-radius: 30px;
+  background: #f4f3f8;
+  box-shadow: 0 12px 36px #0002;
+}
+.identityQr {
+  display: grid;
+  place-items: center;
+  width: min(100%, 336px);
+  aspect-ratio: 1;
+  padding: 14px;
+  box-sizing: border-box;
+  border-radius: 20px;
+  /* The standard SVG includes its own four-module quiet zone. */
+  background: transparent;
+  color: #252047;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--aumlok-rise) 45%, transparent), 0 12px 40px #0003;
+}
+
+.identityQr img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.identityQrPending {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #25204740;
+  border-top-color: #252047;
+  border-radius: 50%;
+  animation: identity-loading 1s linear infinite;
+}
+
+@keyframes identity-loading { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .identityQrPending { animation: none; } }
+
+.identityRetry {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border: 1px solid currentColor;
+  border-radius: 14px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.identityRetry svg { width: 20px; height: 20px; }
+.identityRetry:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+
+.identityWarning { display: inline-flex; align-items: center; gap: 10px; color: #963b38; }
+.identityWarning svg { width: 20px; height: 20px; }
+
+.identityPortals { display: grid; gap: 14px; width: 100%; }
+.identityPortal {
+  --portal-color: var(--aumlok-anchor);
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--portal-color) 32%, transparent);
+  border-radius: 21px;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--portal-color) 9%, transparent), #10172480);
+  box-shadow: inset 0 1px #ffffff06, 0 8px 24px #0002;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+.identityPortal[data-identity-portal='nostr'] { --portal-color: var(--aumlok-unite); }
+.identityPortal[data-identity-portal='sharing'] { --portal-color: var(--aumlok-rise); }
+.identityPortal[data-identity-portal='sharing'] .portalContent p + p { border-top: 0; padding-top: 0; }
+.identityPortal:hover, .identityPortal[open] { border-color: color-mix(in srgb, var(--portal-color) 64%, transparent); }
+.identityPortal summary { display: flex; align-items: center; gap: 18px; min-height: 106px; padding: 20px 22px; box-sizing: border-box; cursor: pointer; list-style: none; }
+.identityPortal summary::-webkit-details-marker { display: none; }
+.identityPortal summary:focus-visible, .scannerAbout summary:focus-visible { outline: 2px solid var(--aumlok-unite); outline-offset: 4px; border-radius: 18px; }
+.portalIcon { display: grid; place-items: center; flex: none; width: 52px; height: 52px; border: 1px solid color-mix(in srgb, var(--portal-color) 32%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--portal-color) 8%, transparent); color: var(--portal-color); }
+.portalIcon svg { width: 27px; height: 27px; }
+.portalHeading { display: grid; flex: 1; min-width: 0; gap: 5px; }
+.portalHeading strong { font-size: 23px; font-weight: 610; letter-spacing: -0.025em; }
+.portalHeading > span { font-size: 15px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+.portalChevron { display: block; width: 9px; height: 9px; flex: none; margin: 0 3px 5px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); color: var(--portal-color, var(--aumlok-unite)); }
+.identityPortal[open] .portalChevron, .scannerAbout[open] .portalChevron { transform: rotate(225deg); margin-bottom: -4px; }
+.portalContent { display: grid; justify-items: start; gap: 18px; padding: 0 22px 24px; }
+.portalContent p { margin: 0; padding-top: 18px; border-top: 1px solid color-mix(in srgb, var(--portal-color) 18%, transparent); color: var(--dsw-alias-label-secondary); font-size: 16px; line-height: 1.7; }
+.portalContent code { width: 100%; min-width: 0; box-sizing: border-box; padding: 15px; border-radius: 12px; background: #0003; overflow-wrap: anywhere; user-select: all; color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family-mono, ui-monospace, monospace); font-size: 15px; line-height: 1.8; }
+.identityPortal .portalContent .identityAction[data-labeled] { color: var(--portal-color); }
+.identityPortal .portalContent .identityAction[data-result='check'] { color: var(--aumlok-root); }
+.identityPortal .portalContent .identityAction[data-result='error'] { color: #cf695f; }
+
+.identityBind {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--aumlok-anchor);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.identityActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.identityAction {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--aumlok-anchor);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.identityAction[data-labeled] { display: inline-flex; justify-content: center; gap: 9px; width: auto; height: auto; min-height: 46px; padding: 11px 18px; line-height: 1.4; }
+.identityAction[data-labeled]:last-child { color: var(--aumlok-unite); }
+
+.identityAction svg {
+  width: 20px;
+  height: 20px;
+}
+
+.identityAction:hover:not(:disabled),
+.identityAction:focus-visible {
+  border-color: var(--aumlok-anchor);
+  outline: 2px solid color-mix(in srgb, var(--aumlok-anchor) 30%, transparent);
+  outline-offset: 2px;
+}
+
+.identityAction:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.identityAction[data-result='check'],
+.identityAction[data-labeled][data-result='check'] { color: var(--aumlok-root); }
+.identityAction[data-result='error'],
+.identityAction[data-labeled][data-result='error'] { color: #cf695f; }
+
+@container (max-width: 420px) {
+  .identityHeader { flex-wrap: wrap; text-align: left; }
+  .identityHeader h2 { order: 1; flex-basis: 100%; }
+  .identityPortal summary { gap: 12px; padding: 16px; }
+  .portalHeading strong { font-size: 21px; }
+  .portalIcon { width: 42px; height: 42px; }
+  .portalContent { padding: 0 16px 20px; }
+}
+
+.hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: clamp(24px, 4cqi, 42px);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.heroCopy {
+  min-width: 0;
+}
+
+.hero p,
+.hero h2,
+.hero span,
+.phraseStage h3,
+.flow h3,
+.explanation {
+  margin: 0;
+}
+
+.hero p,
+.phraseStage h3,
+.flow h3,
+.statusBadge,
+.bandHeader,
+.anchorMeta,
+.position {
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+}
+
+.hero p {
+  overflow: hidden;
+  color: var(--aumlok-unite);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 720;
+  letter-spacing: 0.16em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero h2 {
+  margin-top: 8px;
+  overflow: hidden;
+  font-size: clamp(30px, 5cqi, 46px);
+  line-height: 1;
+  font-weight: 640;
+  letter-spacing: 0.07em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusBadge > svg { width: 18px; height: 18px; }
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 48%, transparent);
+  border-radius: 999px;
+  color: var(--aumlok-anchor);
+  background: color-mix(in srgb, var(--aumlok-anchor) 8%, transparent);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 720;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.composition {
+  display: grid;
+  /* COMPACT, per §3: the tiles and the ceremony are one screen, not two columns with air between. */
+  gap: clamp(20px, 3.4cqi, 40px);
+  padding: clamp(18px, 3cqi, 34px) 0;
+}
+
+.phraseStage,
+.flow {
+  min-width: 0;
+}
+
+.phraseStage h3,
+.flow h3 {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 720;
+  letter-spacing: 0.16em;
+}
+
+.anchorToken {
+  /* The gold anchor's own band colour, so the tile bodies above and below it are one system. */
+  --band-color: var(--aumlok-anchor);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  min-height: 88px;
+  margin-top: 14px;
+  padding: 18px 20px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 58%, transparent);
+  border-radius: 17px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--aumlok-anchor) 15%, transparent), color-mix(in srgb, var(--dsw-alias-bg-layer-2) 76%, transparent));
+  box-shadow: inset 0 0 28px color-mix(in srgb, var(--aumlok-anchor) 5%, transparent);
+}
+
+/* THE ANCHOR CARD'S SIX GOLD BOXES, IN A ROW OF THEIR OWN UNDER THE LABEL. A letter while the words
+   are on the screen, a dot once they are a binding, and an empty box before either. THE ROW IS THE
+   POINT OF Y4: these are "the six gold boxes ACROSS the top", so they stay a row while the card that
+   holds them became a column — and they start at the card's left edge rather than being pushed to the
+   far end, so the six letters read left to right in the order the anchor spells them. */
+.anchorBoxes {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.anchorBox {
+  display: grid;
+  flex: none;
+  width: 40px;
+  height: 46px;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  border-radius: 11px;
+  color: var(--aumlok-anchor);
+  background: color-mix(in srgb, var(--aumlok-anchor) 13%, transparent);
+  box-shadow: inset 0 0 14px color-mix(in srgb, var(--aumlok-anchor) 10%, transparent);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 22px;
+  line-height: 1;
+  /* Y5: THE LETTER SETTLES INTO THE BOX. `both` is what makes the stagger work honestly: the box holds
+     the keyframe's opening state while its delay runs, so box six waits its turn instead of appearing
+     filled and then fading in. */
+  animation-name: aumlok-letter-settle;
+  animation-duration: 420ms;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+
+/* AND THE SIX SETTLE ONE AFTER ANOTHER ACROSS, which is Peter's word: a stagger, not a single fade.
+   The step is small enough to read as settling rather than as a sequence of separate arrivals. */
+.anchorBoxes .anchorBox:nth-child(2) { animation-delay: 60ms; }
+.anchorBoxes .anchorBox:nth-child(3) { animation-delay: 120ms; }
+.anchorBoxes .anchorBox:nth-child(4) { animation-delay: 180ms; }
+.anchorBoxes .anchorBox:nth-child(5) { animation-delay: 240ms; }
+.anchorBoxes .anchorBox:nth-child(6) { animation-delay: 300ms; }
+
+.anchorDot {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentcolor;
+  box-shadow: 0 0 12px color-mix(in srgb, currentcolor 46%, transparent);
+}
+
+/* X8'S FIELD: one handle, above the tiles, first on a new machine. It is drawn in the anchor's own
+   gold so it reads as part of the phrase stage rather than as another band, and it is deliberately
+   the WIDEST input on the screen: a handle is typed once and then never again on this machine. */
+.handleField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.handleLabel {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.handleInput {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  border-radius: 11px;
+  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 82%, transparent);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 16px;
+  letter-spacing: 0.08em;
+}
+
+.handleInput:focus {
+  border-color: color-mix(in srgb, var(--aumlok-anchor) 82%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--aumlok-anchor) 34%, transparent);
+  outline-offset: 1px;
+}
+
+.handleInput:disabled {
+  opacity: 0.6;
+}
+
+.handleHeading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; margin-bottom: 22px; }
+.phraseStage .handleHeading h3 { color: var(--dsw-alias-label-primary); font-size: clamp(25px, 3.6cqi, 32px); font-weight: 610; line-height: 1.3; letter-spacing: -0.035em; }
+.handleLocked { min-width: 0; overflow-wrap: anywhere; font-size: 18px; font-weight: 580; line-height: 1.5; }
+
+.handleHint {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.anchorInput {
+  width: 100%;
+  min-width: 0;
+  height: 46px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  border-radius: 11px;
+  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 82%, transparent);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 16px;
+  letter-spacing: 0.12em;
+}
+
+.anchorInput:focus {
+  border-color: color-mix(in srgb, var(--aumlok-anchor) 82%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--aumlok-anchor) 34%, transparent);
+  outline-offset: 1px;
+}
+
+.anchorMeta {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.anchorMeta strong {
+  color: var(--aumlok-anchor);
+  font-size: 12px;
+  line-height: 17px;
+  letter-spacing: 0.11em;
+}
+
+.anchorMeta span {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 15px;
+  letter-spacing: 0.04em;
+}
+
+.wordMask {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.wordMask i {
+  display: block;
+  flex: none;
+  border-radius: 50%;
+  background: currentcolor;
+  box-shadow: 0 0 12px color-mix(in srgb, currentcolor 46%, transparent);
+}
+
+/* The anchor's six dots stay the gold ones: same body, the tile that carries the anchor's colour. */
+.anchorToken .wordMask i {
+  width: 9px;
+  height: 9px;
+}
+
+.bands {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 18px;
+}
+
+.phraseBand {
+  --band-color: var(--aumlok-unite);
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--band-color) 34%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--band-color) 76%, transparent);
+  border-radius: 15px;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--band-color) 10%, transparent), color-mix(in srgb, var(--dsw-alias-bg-layer-2) 55%, transparent));
+}
+
+/* THE THREE BANDS, IN PETER'S OWN ORDER: green (ROOT), blue (UNITE), purple (RISE). The tone is the
+   band's own declared property, so the colour a person sees and the tone a court measures are one
+   fact rather than two lists that can drift. */
+.phraseBand[data-aumlok-tone='green'] {
+  --band-color: var(--aumlok-root);
+}
+
+.phraseBand[data-aumlok-tone='blue'] {
+  --band-color: var(--aumlok-unite);
+}
+
+.phraseBand[data-aumlok-tone='purple'] {
+  --band-color: var(--aumlok-rise);
+}
+
+.bandHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.bandHeader strong {
+  color: var(--band-color);
+  font-size: 12px;
+  line-height: 17px;
+  letter-spacing: 0.12em;
+}
+
+.bandHeader span {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bandRows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 9px;
+}
+
+.phraseRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  height: 44px;
+  padding: 0 12px 0 8px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--band-color) 22%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
+  /* Y5: THE ROW FADES IN, and it only ever fades: "subtle" is Peter's word, so nothing here travels,
+     grows or turns. `both` is for the same reason as above — the row is invisible until its turn. */
+  animation-name: aumlok-row-settle;
+  animation-duration: 380ms;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+
+/* AND THE SIX FADE IN DOWN THE SPINE, row after row, each a little after the one above it. THE
+   SELECTORS REACH ACROSS THE BANDS, which is the point: a band's two rows are its own children, so a
+   per-band stagger would restart the delay at every band and the spine would fade in as three separate
+   pairs rather than as one column. The sixth row's turn is 600ms — five quiet steps, then done. */
+.bandRows .phraseRow:nth-child(2) { animation-delay: 120ms; }
+.phraseBand:nth-child(2) .bandRows .phraseRow:nth-child(1) { animation-delay: 240ms; }
+.phraseBand:nth-child(2) .bandRows .phraseRow:nth-child(2) { animation-delay: 360ms; }
+.phraseBand:nth-child(3) .bandRows .phraseRow:nth-child(1) { animation-delay: 480ms; }
+.phraseBand:nth-child(3) .bandRows .phraseRow:nth-child(2) { animation-delay: 600ms; }
+
+.position {
+  width: 12px;
+  color: var(--dsw-alias-label-dimmed);
+  font-size: 9px;
+  line-height: 12px;
+  text-align: right;
+}
+
+/* THE SMALL GOLD BOX BESIDE EACH ROW'S WORD, holding that word's FIRST letter while the word is on
+   the screen and nothing at all once the words are gone: the six initials spell the anchor. */
+.initialBox {
+  display: grid;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 52%, transparent);
+  border-radius: 8px;
+  color: var(--aumlok-anchor);
+  background: color-mix(in srgb, var(--aumlok-anchor) 10%, transparent);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.wordMask {
+  min-width: 0;
+  flex: 1;
+  color: var(--band-color);
+}
+
+.wordMask i {
+  width: 6px;
+  height: 6px;
+  opacity: 0.64;
+}
+
+/* ONE SET OF SEVEN TILES. The layout never changes; what a tile carries is the state. */
+.tileEmpty {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px dashed color-mix(in srgb, var(--band-color) 30%, transparent);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-dimmed);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tileWord {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--band-color);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tileInput {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--band-color) 52%, transparent);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 82%, transparent);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+}
+
+.tileInput:focus {
+  border-color: color-mix(in srgb, var(--band-color) 78%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--band-color) 34%, transparent);
+  outline-offset: 1px;
+}
+
+.runtimePosture {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-top: 14px;
+}
+
+.runtimePosture > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.runtimePosture strong {
+  color: var(--aumlok-anchor);
+  font-size: 15px;
+  line-height: 21px;
+  font-weight: 610;
+}
+
+.runtimePosture span {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.missingBinding {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.controlProjection {
+  display: grid;
+  gap: 10px;
+  margin: 2px 0 0;
+}
+
+.controlProjection > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(112px, 0.34fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 18%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--aumlok-anchor) 4%, transparent);
+}
+
+.controlProjection dt {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 9px;
+  line-height: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.controlProjection dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.controlProjection code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.flow h3 {
+  margin-bottom: 14px;
+}
+
+/* ---- the in-app ceremony request ------------------------------------------------
+   The one control on this screen that asks for something rather than reading it.
+   It lives in the flow column, under the steps that describe where the ceremony
+   runs, because that is the question it answers: the ceremony is real, and this
+   is the one place the app can ask for it to be opened. */
+.ceremonyAction {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px 17px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 38%, transparent);
+  border-radius: 15px;
+  background: linear-gradient(125deg, color-mix(in srgb, var(--aumlok-anchor) 11%, transparent), color-mix(in srgb, var(--dsw-alias-bg-layer-2) 58%, transparent));
+}
+
+.ceremonyAction button {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 18px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  border-radius: 999px;
+  color: var(--aumlok-anchor);
+  background: color-mix(in srgb, var(--aumlok-anchor) 12%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 610;
+}
+
+.ceremonyAction button:hover:enabled {
+  background: color-mix(in srgb, var(--aumlok-anchor) 19%, transparent);
+}
+
+/* A ceremony is running. The label says so, and the button refuses a second one
+   rather than starting it on top of the first. */
+.ceremonyAction button:disabled {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-dimmed);
+  background: var(--dsw-alias-bg-layer-2);
+  cursor: not-allowed;
+}
+
+/* Y3's "GIVE ME ANOTHER", AND IT IS DELIBERATELY NOT A BUTTON TO LOOK AT OR TO BE.
+   Peter asks for it before binding, as many times as the person likes, and he asks in the same breath
+   that the screen keeps ONE big button per state — so this is small, unpressed-looking and set apart
+   from the ceremony's own control: no fill, no pill, no 46px hit area, just the words and a faint
+   underline that answers the pointer. The element is a span with `role="button"` (see the surface) so
+   X6's one-`<button>` rule holds while a keyboard can still reach it: the focus ring is the browser's
+   own, and it is the only affordance this control claims. */
+.redraw {
+  align-self: flex-start;
+  padding: 2px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--aumlok-anchor) 34%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.redraw:hover {
+  border-color: color-mix(in srgb, var(--aumlok-anchor) 62%, transparent);
+  color: var(--aumlok-anchor);
+}
+
+.ceremonyRefusal {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+/* The shell's own refusal code, shown verbatim instead of being reworded. */
+.ceremonyRefusal code {
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-error);
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.boundReceipt {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 35%, transparent);
+  border-radius: 22px;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--aumlok-anchor) 8%, transparent), #11182580);
+}
+.phraseStage .boundLine { margin: 0; color: var(--aumlok-anchor); font-size: 24px; line-height: 1.3; font-weight: 610; letter-spacing: -0.025em; }
+.boundExplanation { margin: 12px 0 16px; color: var(--dsw-alias-label-secondary); font-size: 15px; line-height: 1.7; }
+.boundRoot { display: block; overflow-wrap: anywhere; color: var(--aumlok-unite); font-family: var(--dsw-font-family-mono, ui-monospace, monospace); font-size: 14px; line-height: 1.8; }
+.boundReceipt .ceremonyAction { margin-top: 22px; padding: 0; border: 0; background: none; }
+.boundReceipt .ceremonyAction button { min-height: 48px; font-size: 16px; }
+
+/* PETER'S STEP BEFORE ANYTHING IS BOUND: the last moment at which saying the words out loud can save
+   the identity, and the box that arms the button. */
+.confirm {
+  display: flex;
+  padding: 12px 13px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 52%, transparent);
+  border-radius: 12px;
+  flex-direction: column;
+  gap: 10px;
+  background: color-mix(in srgb, var(--aumlok-anchor) 8%, transparent);
+}
+
+.confirmWarning {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 560;
+}
+
+.confirmRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.confirmRow input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--aumlok-anchor);
+}
+
+/* THE EXPLANATION, short and straight, where the ceremony's own controls are. */
+.flow {
+  position: relative;
+  padding: clamp(24px, 3cqi, 36px);
+  border: 1px solid color-mix(in srgb, var(--aumlok-rise) 23%, transparent);
+  border-radius: 26px;
+  background: var(--aukora-surface);
+  box-shadow: inset 0 1px #ffffff06;
+}
+.flow h3 { color: var(--dsw-alias-label-primary); font-size: clamp(28px, 3.8cqi, 37px); line-height: 1.2; letter-spacing: -0.035em; font-weight: 610; margin-bottom: 26px; }
+.boundaryArt { position: relative; width: 120px; height: 94px; margin-bottom: 24px; display: grid; place-items: center; }
+.boundaryArt span { position: absolute; width: 80px; height: 80px; border: 1px solid; border-radius: 50%; color: var(--aumlok-anchor); transform: rotate(-30deg) scaleX(0.6); box-shadow: 0 0 24px #e4be7310; }
+.boundaryArt span:nth-child(2) { transform: rotate(30deg) scaleX(0.8); color: var(--aumlok-unite); opacity: 0.65; }
+.boundaryArt span:nth-child(3) { transform: rotate(80deg); color: var(--aumlok-rise); opacity: 0.5; }
+.boundaryArt > svg { position: relative; width: 27px; height: 27px; padding: 12px; color: var(--aumlok-anchor); background: #161e2c; border-radius: 50%; }
+.explanation { display: grid; gap: 22px; color: var(--dsw-alias-label-secondary); font-size: 15.5px; line-height: 1.85; }
+.explanation p { margin: 0; }
+.explanation p:first-child { color: var(--dsw-alias-label-primary); font-size: 17px; line-height: 1.8; }
+.explanation p:nth-child(4) { padding-left: 18px; border-left: 2px solid color-mix(in srgb, var(--aumlok-anchor) 65%, transparent); color: var(--dsw-alias-label-primary); }
+.boundaryClosing { margin: 28px 0 0; padding-top: 24px; border-top: 1px solid color-mix(in srgb, var(--aumlok-anchor) 24%, transparent); color: var(--aumlok-anchor); font-size: 22px; line-height: 1.5; letter-spacing: -0.02em; }
+
+/* A LOST PHRASE MEANS A NEW INSTANCE, said where the words are rather than in a footnote. */
+.warning {
+  margin: 0;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 42%, transparent);
+  border-radius: 11px;
+  color: var(--dsw-alias-label-secondary);
+  background: color-mix(in srgb, var(--aumlok-anchor) 7%, transparent);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: right;
+}
+
+.menuItem:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.menuItemActive {
+  border-color: var(--dsw-alias-border-l1);
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.menuCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-end;
+  flex-direction: column;
+}
+
+.menuCopy strong {
+  width: 100%;
+  overflow: hidden;
+  font-size: var(--dsh-spatial-menu-title-size, 14px);
+  line-height: var(--dsh-spatial-menu-title-line-height, 20px);
+  font-weight: 570;
+  text-overflow: ellipsis;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.menuCopy span {
+  width: 100%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsh-spatial-menu-description-size, 12px);
+  line-height: var(--dsh-spatial-menu-description-line-height, 18px);
+  text-overflow: ellipsis;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@container aumlok (min-width: 760px) {
+  .composition {
+    grid-template-columns: minmax(360px, 1.08fr) minmax(300px, 0.92fr);
+    align-items: start;
+  }
+
+  .flow {
+    position: sticky;
+    top: 0;
+  }
+}
+
+@container aumlok (max-width: 520px) {
+  .surface {
+    padding: 18px;
+  }
+
+  .hero {
+    gap: 14px;
+  }
+
+  .hero h2 {
+    font-size: 30px;
+  }
+
+}
+
+/* ── Y5: A QUIET CEREMONY, AND THE PIECE OF MARKUP IT HANGS ON ───────────────────────────────
+   Peter's Y5, verbatim: "Make it feel like a ceremony: a subtle reveal as the words appear (letters
+   settling into the gold boxes, rows fading in down the spine) and a quiet confirmation when bound.
+   Respect reduced-motion. Nothing flashy."
+
+   WHY THE REVEAL IS DRIVEN BY THESE SPANS RATHER THAN BY A CLICK. The words are drawn by a ceremony
+   that may ask a SEPARATE PROCESS for them, so the moment they arrive is not a moment this stylesheet
+   can observe: an animation restarted on a state change would need script, and a script-driven reveal
+   is a reveal that can desynchronise from the words it is revealing. The boxes do not exist before the
+   words do — they are rendered only at the face where a letter belongs in them — so mounting IS the
+   arrival, and CSS alone can settle them into place. These two markers carry no styling of their own;
+   they are the hooks that make "the words are on the screen" a thing a court or a probe can see. */
+[data-aumlok-reveal='words'] { display: contents; }
+
+@keyframes aumlok-letter-settle {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes aumlok-row-settle {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* REDUCED-MOTION, AND IT IS NOT A SHORTER ANIMATION. A person who has asked their machine for less
+   motion has asked for none, so both names are switched off outright rather than sped up: a 40ms fade
+   is still a fade, and "respect reduced-motion" is not "respect it a bit". The declarations the
+   animations ride on are named individually because the two elements carry different durations, and
+   `animation: none` on its own would leave those durations behind to apply to anything added later. */
+@media (prefers-reduced-motion: reduce) {
+  .anchorBox,
+  .anchorBoxes .anchorBox:nth-child(2),
+  .anchorBoxes .anchorBox:nth-child(3),
+  .anchorBoxes .anchorBox:nth-child(4),
+  .anchorBoxes .anchorBox:nth-child(5),
+  .anchorBoxes .anchorBox:nth-child(6) {
+    animation: none;
+    animation-name: none;
+  }
+  .phraseRow,
+  .bandRows .phraseRow:nth-child(2),
+  .phraseBand:nth-child(2) .bandRows .phraseRow:nth-child(1),
+  .phraseBand:nth-child(2) .bandRows .phraseRow:nth-child(2),
+  .phraseBand:nth-child(3) .bandRows .phraseRow:nth-child(1),
+  .phraseBand:nth-child(3) .bandRows .phraseRow:nth-child(2) {
+    animation: none;
+    animation-name: none;
+  }
+}
+
+
+.handleLockedWrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 10px 17px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--aumlok-unite) 62%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--aumlok-unite) 8%, transparent);
+  color: var(--aumlok-unite);
+  box-shadow: inset 0 0 18px color-mix(in srgb, var(--aumlok-unite) 5%, transparent);
+}
+.handleLockedWrap > svg { width: 18px; height: 18px; flex: none; }
+.identityAvatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 18px; }
+.identityAvatarControls { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: none; }
+.identityAvatarButton { padding: 0; border: 0; border-radius: 18px; background: transparent; cursor: pointer; }
+.identityAvatarButton:focus-visible { outline: 2px solid var(--aumlok-unite); outline-offset: 3px; }
+.identityAvatarControls > .identityAction { min-width: 28px; min-height: 28px; padding: 3px; }
+
+/* The shell owns the page; shared surfaces belong only to cards. */
+.handleHeading { --band-color: var(--aumlok-unite); width: 100%; box-sizing: border-box; padding: 15px; border: 1px solid color-mix(in srgb, var(--band-color) 34%, transparent); border-left: 3px solid color-mix(in srgb, var(--band-color) 76%, transparent); border-radius: 15px; background: linear-gradient(100deg, color-mix(in srgb, var(--band-color) 10%, transparent), color-mix(in srgb, var(--dsw-alias-bg-layer-2) 55%, transparent)); }
+.handleHeading .handleLabel { display: block; font-size: 12px; color: var(--aumlok-unite); }
+.phraseStage .handleHeading h3 { margin: 4px 0 0; font-size: 28px; }
+.handleTools { display: flex; gap: 8px; align-items: center; color: var(--aumlok-unite); font-size: 12px; }
+.handleTools svg { width: 20px; height: 20px; }
+.anchorMeta { flex: 1; min-width: 0; }
+.anchorBoxes { flex: 1; }
+.anchorBox { flex: 1; min-width: 22px; }
+.explanationHeader { gap: 10px; margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.flow .explanationHeader h3 { font-size: 22px; margin: 0; letter-spacing: -.025em; }
+.explanationHeader img { flex: none; }
+.boundaryClosing { border: 1px solid color-mix(in srgb, var(--aumlok-anchor) 58%, transparent); border-radius: 17px; padding: 18px 20px; font-size: clamp(16px, 1.8cqi, 22px); white-space: nowrap; }
+@container aumlok (max-width: 520px) { .boundaryClosing { white-space: normal; } }
+@container aumlok (max-width: 520px) { .anchorToken { flex-direction: column; align-items: stretch; } .anchorBoxes { width: 100%; } }
+
+.phraseStage { container-type: inline-size; container-name: phrase; }
+@container phrase (max-width: 520px) { .anchorToken { flex-direction: column; align-items: stretch; } .anchorBoxes { width: 100%; } }
