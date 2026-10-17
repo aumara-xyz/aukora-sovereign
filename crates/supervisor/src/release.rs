@@ -314,6 +314,11 @@ pub(crate) fn floor_cli(arguments: &[std::ffi::OsString]) -> Result<()> {
         return Err(refuse("release-floor-usage"));
     }
     let config = crate::config::NodeConfig::load(Path::new(path))?;
+    // A node with no floor yet (a fresh install, before the supervisor's first start) has nothing to follow, and this
+    // step must never create the node's identity or its ledger: only `serve` does that.
+    if std::fs::symlink_metadata(config.state_root.join("floor").join("floor-state.json")).is_err() {
+        std::process::exit(3);
+    }
     let state = crate::state::HostState::open(&config.state_root, &config.node)?;
     let ledger = HostLedger::open(
         &config.state_root.join("aura.sqlite3"),
