@@ -15,7 +15,8 @@ fn usage() -> Refusal {
 /// socket is 0660: the service's group may connect, in a 2750 directory of that group; every request still needs a
 /// token). Without `--state` the live `~/aukora-memory/kira` is used, except in a test, which must name its own
 /// (`under_test`). `--rotate` replaces every earlier token of the agent; `revoke` marks the agent revoked and removes all
-/// its tokens. Both take effect on the running service's next request.
+/// its tokens. Both take effect on the running service's next request. `revoke` refuses the last live owner
+/// (`kira:last-owner`): register a second owner first, or minting would be refused for good.
 ///
 /// `register`, `token`, `revoke` and `import` change who may act or what the store holds, so once the store has an
 /// owner they require `--owner-token-file PATH`: a

@@ -263,6 +263,17 @@ impl SharedStore {
         Ok(owners > 0)
     }
 
+    /// Whether `name` is a live owner and no other live owner exists. Revoking it would leave a store that has an
+    /// owner (so credentials need the owner's token) but no live owner token: minting refused for good.
+    pub fn is_last_live_owner(&self, name: &str) -> Result<bool> {
+        let count = |sql_text: &str| -> Result<i64> {
+            self.db.query_row(sql_text, params![name], |r| r.get(0)).map_err(sql)
+        };
+        let this = count("SELECT count(*) FROM agents WHERE owner = 1 AND revoked_at IS NULL AND name = ?1")?;
+        let others = count("SELECT count(*) FROM agents WHERE owner = 1 AND revoked_at IS NULL AND name != ?1")?;
+        Ok(this > 0 && others == 0)
+    }
+
     /// Marks an agent revoked at `at` (an earlier revocation time stands). It can no longer write or authenticate;
     /// its notes stay readable (quarantine is the separate act that withdraws them).
     pub fn revoke_agent(&self, name: &str, at: u64) -> Result<()> {

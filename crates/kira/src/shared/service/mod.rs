@@ -319,6 +319,11 @@ pub fn require_owner(dir: &Path, owner_token_file: Option<&Path>) -> Result<()> 
 pub fn revoke(dir: &Path, name: &str) -> Result<()> {
     agent_name(name)?;
     let state = State::open(dir)?;
+    // The last live owner cannot be revoked: with no live owner token, `register` and `token` are refused for good.
+    // Register a second owner first (the owner's token mints it), then revoke the old one.
+    if state.store.is_last_live_owner(name)? {
+        return Err(refuse("last-owner"));
+    }
     state.store.revoke_agent(name, now())?;
     let mut tokens = load_tokens(dir)?;
     tokens.retain(|_, holder| holder != name);

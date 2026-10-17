@@ -83,9 +83,16 @@ fn minting_credentials_needs_the_owners_token_file_once_an_owner_exists() {
     assert_eq!(call(&f.state, token.trim(), "whoami", json!({}))["result"]["name"], "claude");
     run(&["register", "dot", "--owner-token-file", &owner_file, "--token-file", &f.dir.join("dot.tok").to_string_lossy()]).unwrap();
     assert!(key_path(&f.dir, "dot").exists());
-    // A revoked owner's token no longer opens it.
+    // The last live owner cannot be revoked (it would lock minting for good); a second owner makes it possible.
+    assert_eq!(revoke(&f.dir, "peter"), Err(refuse("last-owner")));
+    assert_eq!(call(&f.state, &f.owner, "whoami", json!({}))["result"]["owner"], true);
+    run(&["register", "ed", "--owner", "--owner-token-file", &owner_file, "--token-file", &f.dir.join("ed.tok").to_string_lossy()]).unwrap();
+    let ed_file = file("ed.owner.tok", fs::read_to_string(f.dir.join("ed.tok")).unwrap().trim());
+    // A revoked owner's token no longer opens it; the one owner left is now the last.
     revoke(&f.dir, "peter").unwrap();
     assert_eq!(run(&["token", "claude", "--owner-token-file", &owner_file]), Err(refuse("owner-token-refused")));
+    assert_eq!(revoke(&f.dir, "ed"), Err(refuse("last-owner")));
+    run(&["token", "claude", "--owner-token-file", &ed_file]).unwrap();
 }
 
 /// Bench D10/D11 (Grok, 2026-10-17): `revoke` and `import` ran with no owner file, so any process of the same user
