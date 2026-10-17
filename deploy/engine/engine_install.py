@@ -112,6 +112,13 @@ def preconditions():
     egress = core.validate_policy(core.read_regular(CONFIG + "/egress.json", 256 * 1024, "engine-install"))
     if not any(p["host"] == "api.deepseek.com" and p["port"] == 443 for p in egress["providers"]):
         core.refuse("engine-install", "egress-lacks-deepseek")
+    # The door fetches its allowlisted hosts as the service user too: each must be pinned, or an approved web_fetch
+    # ends resolve-failed (O10; engine.py install pins them first).
+    door = json.loads(core.read_regular(release_file("engine/door-policy-v1.json.in"), 64 * 1024, "engine-install")
+                      .replace(b"@AUMA_UID@", b"0"))
+    pinned = {p["host"] for p in egress["providers"] if p["port"] == 443}
+    if door.get("classes", {}).get("net") != "deny" and not set(door.get("net", {}).get("hosts", [])) <= pinned:
+        core.refuse("engine-install", "egress-lacks-door-host")
     caddyfile = core.read_regular("/etc/caddy/Caddyfile", 1 << 20, "engine-install").decode("utf-8", "replace")
     if caddyfile.count("# BEGIN AUKORA SOVEREIGN ") != 1:
         core.refuse("engine-install", "not-a-vm-node")  # an LXD host's shared Caddy is not ours to extend

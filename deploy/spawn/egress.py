@@ -37,8 +37,11 @@ def resolve(host, port):
     return [str(ip) for ip in public[:core.MAX_ADDRESSES]]
 
 
-def build(epoch, relay_urls, provider_names):
-    """Canonical policy bytes. Each relay and provider gets its own pinned address list."""
+def build(epoch, relay_urls, provider_names, hosts=()):
+    """Canonical policy bytes. Each relay and provider gets its own pinned address list. `hosts` are further names
+    the node's service user must reach on PORT: the engine door's allowlisted web_fetch hosts (deploy/engine/NODE.md
+    O10). They are pinned exactly like a provider (an entry, /etc/hosts lines, a firewall set), so the door resolves
+    them without a resolver, as the broker does the provider."""
     relays, seen = [], set()
     for url in relay_urls:
         key = core.relay_key(url)
@@ -50,6 +53,15 @@ def build(epoch, relay_urls, provider_names):
         if name not in PROVIDERS:
             core.refuse("egress", "provider")
         providers.append({"host": PROVIDERS[name], "port": PORT, "addresses": resolve(PROVIDERS[name], PORT)})
+    for host in dict.fromkeys(hosts):
+        if not core.is_hostname(host) or host in PROVIDERS.values():
+            core.refuse("egress", "host")
+        providers.append({"host": host, "port": PORT, "addresses": resolve(host, PORT)})
     raw = core.canonical({"v": core.EGRESS_VERSION, "epoch": epoch, "relays": relays, "providers": providers})
     core.validate_policy(raw)
     return raw
+
+
+def pinned_hosts(policy):
+    """The names in a policy that are not one of the broker's providers (the door's hosts), in policy order."""
+    return [rule["host"] for rule in policy["providers"] if rule["host"] not in PROVIDERS.values()]

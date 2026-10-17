@@ -487,7 +487,9 @@ def refresh_egress(admission, name, options):
             core.refuse("spawn", "unknown-node")
         with host.Lock(root):
             current = core.validate_policy(plan.state.get("egress.json").encode("utf-8"))
-            policy = egress.build(current["epoch"] + 1, options["relay"], options["provider"])
+            # The engine door's hosts (engine.py egress) stay pinned, re-resolved, whatever the flags name.
+            policy = egress.build(current["epoch"] + 1, options["relay"], options["provider"],
+                                  egress.pinned_hosts(current))
             plan.state.put("egress.json", policy.decode("utf-8"))  # a retry then uses the next epoch, never this one
             path = os.path.join(scratch, "egress.json")
             core.atomic_write(path, policy, 0o600)
