@@ -82,14 +82,25 @@ def probe_prepare(rid):
     if os.path.isdir(os.path.join(LIVE_STATE, "floor")):
         shutil.rmtree(os.path.join(state, "floor"))
         copy_owned(os.path.join(LIVE_STATE, "floor"), os.path.join(state, "floor"), uid)
+    # The unit's UMask (0077) applies to this root step too: the modes are set, not asked for.
     os.makedirs(PROBE_CONFIG, mode=0o755, exist_ok=True)
+    os.chmod(PROBE_CONFIG, 0o755)
     config = os.path.join(PROBE_CONFIG, rid)
     shutil.rmtree(config, ignore_errors=True)
     os.mkdir(config, 0o755)
+    os.chmod(config, 0o755)
     for name in ("node.json", "gate-targets-v1.json"):
-        if os.path.lexists(os.path.join(r.CONFIG, name)):
-            core.atomic_write(os.path.join(config, name), core.read_regular(os.path.join(r.CONFIG, name), 1 << 20,
-                                                                            "node-release"), 0o644)
+        if not os.path.lexists(os.path.join(r.CONFIG, name)):
+            continue
+        raw = core.read_regular(os.path.join(r.CONFIG, name), 1 << 20, "node-release")
+        if name == "node.json":
+            # The configuration names files beside itself (claim, egress policy): they name the copy's folder now,
+            # which holds neither (the probe never reads them).
+            node = core.parse_json(raw, "node-release", 1 << 20)
+            node["claim_commitment"] = os.path.join(config, "claim.sha256")
+            node["egress_policy"] = os.path.join(config, "egress.json")
+            raw = core.canonical(node)
+        core.atomic_write(os.path.join(config, name), raw, 0o644)
 
 
 def journal_lines(invocation, main_pid):

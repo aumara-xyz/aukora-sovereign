@@ -251,7 +251,7 @@ class Upgrade(unittest.TestCase):
         db.close()
         os.makedirs(node_release.CONFIG)
         with open(node_release.CONFIG + "/node.json", "wb") as target:
-            target.write(b"{}")
+            target.write(core.canonical({"claim_commitment": "/etc/aukora/claim.sha256", "egress_policy": "/etc/aukora/egress.json"}))
         run = os.path.join(release_probe.PROBE_RUN, self.new[0])
         os.makedirs(run, mode=0o700)
         os.chmod(run, 0o700)
@@ -267,7 +267,9 @@ class Upgrade(unittest.TestCase):
         copy = sqlite3.connect(state + "/aura.sqlite3")
         self.assertEqual(copy.execute("select x from t").fetchall(), [(1,)])
         copy.close()
-        self.assertTrue(os.path.exists(os.path.join(release_probe.PROBE_CONFIG, self.new[0], "node.json")))
+        with open(os.path.join(release_probe.PROBE_CONFIG, self.new[0], "node.json"), "rb") as copied:
+            node = json.loads(copied.read())
+        self.assertEqual(node["claim_commitment"], os.path.join(release_probe.PROBE_CONFIG, self.new[0], "claim.sha256"))
         # Root's record: passed only on success, exit 0 and exactly one stdout line, `probe ok <its digest>`, from
         # the run's main process (read from the journal).
         good = {"SERVICE_RESULT": "success", "EXIT_CODE": "exited", "EXIT_STATUS": "0",
