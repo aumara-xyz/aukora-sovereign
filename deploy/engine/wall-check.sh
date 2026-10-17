@@ -33,6 +33,7 @@ expect_fail "/proc/1/environ unreadable" cat /proc/1/environ
 expect_fail "profile is read-only" sh -c 'echo x > /engine-home/profiles/aukora/cordis.patch.yml'
 expect_fail "closure is read-only" sh -c 'echo x > /engine-home/profiles/aukora/node_modules/@aukora/door/package.json'
 expect_fail "home patch cannot be replaced" sh -c 'echo "[]" > /engine-home/x && mv -f /engine-home/x /engine-home/cordis.patch.yml'
+inside rm -f /engine-home/x >/dev/null 2>&1  # the probe's own file (the engine may create files in its home)
 expect_fail "node_modules guard cannot be filled" mkdir /engine-home/node_modules/@deepseek-ai
 expect_fail "door socket folder is not writable" sh -c 'echo x > /run/aukora-door/x'
 expect_fail "bridge folder is capped (2 MiB refused)" sh -c 'head -c 2097152 /dev/zero > /run/aukora-engine-io/.cap; r=$?; rm -f /run/aukora-engine-io/.cap; exit $r'

@@ -47,6 +47,12 @@ install -d -o root -g root -m 0755 "$HOME_DIR/profiles" "$PROFILE" "$HOME_DIR/no
 for file in package.json cordis.yml cordis.patch.yml pnpm-workspace.yaml; do
     install -o root -g root -m 0644 "/opt/aukora/current/deploy/engine/profile/$file" "$PROFILE/$file"
 done
+# The harness rewrites the profile's root config (cordis.yml) with its own constant empty list on every boot, before
+# it loads anything (DSH 0.2.1-alpha.5 prepareProfile; the node rehearsal's first start died on EACCES here). That one
+# file is the engine group's to write; the folder stays root's, so nothing can be renamed or added, and this step
+# resets it every start. The composition's authority is the --patch overlay, applied after it.
+chgrp "$AUMA_GID" "$PROFILE/cordis.yml"
+chmod 0664 "$PROFILE/cordis.yml"
 # >>> home-patch (tests/deploy/test_engine_install.py runs this block alone)
 # The home's user patch. Root never opens a name the engine could have chosen (Codex review of the node commit,
 # finding 1: a planted `cordis.patch.yml.new -> /etc/aukora/node.json` once made this step overwrite a host file):

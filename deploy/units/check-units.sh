@@ -53,21 +53,24 @@ done
 # An engine node (deploy/engine/NODE.md): Kira and its model servers run as kira with nothing else; the engine unit is
 # started only by the supervisor, so it carries no install section and is not checked for enablement.
 if [ -f /etc/aukora/engine-v1.json ]; then
-    # [GUESS] systemctl show's spelling of an empty bounding set and of the address families (LINUX, not run yet).
+    # systemctl show's spelling (systemd 255, node rehearsal 2026-10-17): IPAddressDeny=any reads back as
+    # "::/0 0.0.0.0/0", address families in its own order, an empty bounding set as nothing.
     kira_properties="User=kira NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes PrivateTmp=yes PrivateDevices=yes
-RestrictNamespaces=yes MemoryDenyWriteExecute=yes IPAddressDeny=any PrivateNetwork=yes CapabilityBoundingSet="
+RestrictNamespaces=yes MemoryDenyWriteExecute=yes PrivateNetwork=yes CapabilityBoundingSet="
     for unit in aukora-kira.service aukora-kira-embed.service aukora-kira-rerank.service; do
         # shellcheck disable=SC2086
-        check_unit "$unit" 3.0 $kira_properties "RestrictAddressFamilies=AF_UNIX AF_INET"
+        check_unit "$unit" 3.0 $kira_properties "IPAddressDeny=::/0 0.0.0.0/0" "RestrictAddressFamilies=AF_INET AF_UNIX"
     done
     check_unit aukora-openshell-gateway.service 6.0 NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes \
-        PrivateTmp=yes PrivateDevices=yes RestrictNamespaces=yes IPAddressDeny=any \
+        PrivateTmp=yes PrivateDevices=yes RestrictNamespaces=yes "IPAddressDeny=::/0 0.0.0.0/0" \
         CapabilityBoundingSet=cap_net_bind_service
     for unit in aukora-kira.service aukora-kira-embed.service aukora-kira-rerank.service aukora-engine-fence.service \
         aukora-openshell-gateway.service; do
         systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
     done
-    systemctl is-enabled --quiet aukora-engine.service 2>/dev/null && fail aukora-engine.service "enabled: only the supervisor may start it"
+    # A unit with no install section is "static" (and `is-enabled --quiet` succeeds for it): only "static" is right.
+    state=$(systemctl is-enabled aukora-engine.service 2>/dev/null) || true
+    [ "$state" = static ] || fail aukora-engine.service "is-enabled says '$state': only the supervisor may start it"
 fi
 
 [ "$failed" = 0 ] && echo 'units ok'

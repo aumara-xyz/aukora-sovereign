@@ -5,7 +5,9 @@ with the door as the engine's only way out. This file is the design and the runb
 the wall is the one that passed the wall test (`~/aukora-memory/review/WALL-TEST-2026-10-17.md`, OpenShell 0.1.4,
 enforce, docker compute driver).
 
-Marks: **RAN** = executed for this branch (on the Mac unless stated); **LINUX** = runs only on the node, not run yet;
+Marks: **RAN** = executed for this branch (on the Mac unless stated); **NODE** = ran on the first real node, Claude's
+rehearsal of 2026-10-17 (`aukora-rehearsal`, Nebius cpu 4 vCPU / 16 GiB, release acc7a35; report
+`~/aukora-memory/review/node-bringup-2026-10-17.patch`); **LINUX** = runs only on the node, not run yet;
 **GUESS** = not verified against the real tool.
 
 ## 1. What runs where
@@ -45,8 +47,9 @@ Hot reload and creator mode are never loaded and never approvable (`floor::plugi
 ## 3. The plugin fingerprint gate, end to end
 
 - **Staged**: `/opt/aukora-engine/plugins/<folder>` (root-owned) from `engine-plugins.tar` (`build_plugins.py`,
-  byte-reproducible: two builds gave the same SHA-256, RAN). Twelve packages: `@aukora/door`, the nine faces
-  (`@aukora/face-<name>`), `@aukora/dsh-plugin-foundation`, `@aukora/face-bundle` (the composition patch).
+  byte-reproducible: two builds gave the same SHA-256, RAN and NODE). Thirteen packages: `@aukora/door`,
+  `@aukora/kira` (Kira 2's tools, every call through the door), the nine faces (`@aukora/face-<name>`),
+  `@aukora/dsh-plugin-foundation`, `@aukora/face-bundle` (the composition patch).
 - **Fingerprinted** by the supervisor, read-only (`engine_plugins::discover`): every file's path, executable bit, size,
   SHA-256, under a domain.
 - **Approved** by the owner's passkey on the owner origin: the generic content card shows the exact set bytes.
@@ -67,11 +70,15 @@ Hot reload and creator mode are never loaded and never approvable (`floor::plugi
 The OpenShell policy is the wall test's, verbatim (`openshell-policy.yaml`), plus four NODE lines, each marked there:
 `/engine-home` (the harness home), `/run/aukora-engine-io` (bridge socket + launch line), `/run/aukora-broker` (the
 model broker socket, section 7) and the resolver posture.
-`run_as_user` is the engine user's uid; `network_policies: {}`; Landlock `hard_requirement`.
+`run_as_user` and `run_as_group` are the engine user's uid and its own gid (they differ: 994/984 on the node);
+`network_policies: {}`; Landlock `hard_requirement`. The pre-start renders the policy from the ACTIVE release on every
+start; `engine-run.sh verify` holds `openshell policy get --full -o json` to that file (NODE: an empty
+`network_policies` is left out of OpenShell's payload, and the table form prints `Status:       Effective`).
 
 Mounts (`engine-run.sh`): `/opt/aukora-engine` → `/engine` ro (node, pinned harness, in-wall scripts);
 `/opt/rust` ro; `/var/lib/aukora-engine/work` → `/work` rw; `/var/lib/aukora-engine/home` → `/engine-home` rw;
-`/run/aukora-door` rw (folder 0711 aukora, so not engine-writable); `/run/aukora-broker` rw (the same); `/run/aukora-engine/io` (1 MiB tmpfs) rw;
+`/run/aukora-door` rw (folder 0711 aukora, so not engine-writable); `/run/aukora-broker` rw (the same); `/run/aukora-engine/io` rw
+(a 1 MiB host tmpfs, `run-aukora\x2dengine-io.mount`; wall-check proves 2 MiB is refused, NODE);
 `/etc/aukora/engine/resolv.conf` → `/etc/resolv.conf` ro. Never: `/etc/aukora`, `/var/lib/aukora*`, the Kira socket,
 the docker socket.
 
@@ -80,18 +87,25 @@ its home (RAN: observed on the Mac boot), so the home is writable. It is root-ow
 root:auma): the engine can create its own files but cannot rename or delete root-owned entries, which are re-asserted by
 `engine-prestart.sh` before every start: `profiles/` and `profiles/aukora/` (profile template + the closure),
 `cordis.patch.yml` (`[]`), and an empty root-owned `node_modules/` guard so module resolution cannot walk up into
-an engine-made package. `@deepseek-ai` resolves through one root-made link in the closure to the pinned install.
+an engine-made package. One file in the profile is the engine group's to write: `profiles/aukora/cordis.yml`, which the
+harness rewrites with its own constant empty list on every boot before loading anything (NODE: the first start died on
+EACCES there); the pre-start resets it each start and the folder stays root's. `@deepseek-ai` resolves through one root-made link in the closure to the pinned install.
 The authority overlay (`authority.patch.yml`) is passed with `--patch`, after every layer the engine can write: it
 mounts the door with the node's values and disables `hmr`, `client-hmr`, the plugin manager (three rows), the web
-terminal (two rows), desktop telemetry, open-in-app (two rows) and the harness-dev context. RAN: `dsh --dump-config`
-composes with every row in place, and `dsh web` boots the composition (all twelve packages from the closure).
+terminal (two rows), desktop telemetry, open-in-app (two rows) and the harness-dev context; mounts Kira 2's tools after
+the door; caps the DeepSeek adapter's inline images (4 MiB, quantum 2 MiB: NODE, the adapter refuses to activate
+when its default 10 MiB quantum exceeds the cap, which a config dump never shows); and sets the apps face's Sovereign
+switches off (row 6). RAN: `dsh --dump-config` composes with every row in place; NODE: `dsh web` boots the composition
+inside the wall with all thirteen packages and no entry failing to activate.
 
 **DNS posture (the wall test's one residual, B03).** Three layers: the sandbox's `/etc/resolv.conf` names 127.0.0.1
 (nothing listens there); Docker's daemon resolver forwards only to 192.0.2.53 (`docker-daemon.json`); the host fence
 (`aukora-engine-fence.nft`) drops 192.0.2.53 and any port 53/853 traffic from a container network. Names the engine
 needs cross through the door, which resolves them itself. `wall-check.sh` proves it from inside the sandbox:
 `getent hosts example.com`, node `dns.lookup`, `dns.resolve4`, a direct query to 127.0.0.11 and to 1.1.1.1 must all
-fail (LINUX).
+fail. NODE: `wall ok`. (How it works in 0.1.4: the sandbox container has `NetworkMode none`; names resolved in the wall
+test through OpenShell's transparent DNS in the supervisor container, using the sandbox's resolv.conf nameserver. With
+127.0.0.1 there, every lookup fails; without it, the same probe resolves: both RAN on the wall-test VM.)
 
 ## 5. The front door and the engine origin
 
@@ -217,57 +231,97 @@ needed and not wired.
 
 ## 8. Runbook: spawn a node and run the ceremony
 
-Operator machine unless marked. Nothing here was run against a host.
+Every step below ran on the node rehearsal of 2026-10-17 (Claude's own test node, software passkey, a fake model key)
+with the commands as written; what differed there is said. Three machines: the **operator's Mac**, the **artifact
+VM** (Linux, docker.io, the wall test's VM: builds the artifacts and the release; the Mac's disk never holds the ~1 GB
+stage) and the **node** (a fresh Nebius VM made by `spawn.sh`). `R` = this repository on each machine.
 
-**A. Artifacts (once per pin set).** On the rehearsal VM that ran the wall test:
-1. `npm install --save-exact --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.5` with node 24.11.1 in an empty folder;
-   `tar --sort=name --owner=0 --group=0 --mtime=@0 -czf dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz package.json package-lock.json node_modules`.
-2. Tar the OpenShell 0.1.4 `openshell` and `openshell-gateway` binaries → `openshell-0.1.4-linux-x64.tar.gz`; `docker save`
-   the sandbox image the wall test used → `openshell-sandbox-image.tar`; tar `/opt/rust` → `rust-1.99.1-x86_64-unknown-linux-gnu.tar.gz`.
-3. Copy the exact `openshell sandbox create …` and `openshell-gateway …` command lines from that VM's shell history into
-   `engine-run.sh` `create()` and `aukora-openshell-gateway.service` (both GUESS today; keep the mounts and the policy path).
-4. Download node-v24.11.1-linux-x64.tar.xz and llama-b10621-bin-ubuntu-x64.zip; `python3 -B deploy/engine/engine.py pin FILE`
-   for every artifact; fill every `sha256` in `engine-pins.json`. The installer refuses while any is null.
+**A. Artifacts (once per pin set), on the artifact VM**, in `~/art` (`~/art/stage` collects the five operator files):
+1. Node: `curl -sSfLO https://nodejs.org/dist/v24.11.1/node-v24.11.1-linux-x64.tar.xz` and its `SHASUMS256.txt`;
+   `grep " node-v24.11.1-linux-x64.tar.xz$" SHASUMS256.txt | sha256sum -c`; unpack to `~/art/node24`.
+2. The harness: `mkdir ~/art/dsh && cd ~/art/dsh` (the folder must be named `dsh`: the lockfile records it), then with
+   `PATH=~/art/node24/bin:$PATH`: `npm install --save-exact --ignore-scripts --no-audit --no-fund @deepseek-ai/dsh@0.2.1-alpha.5`;
+   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -czf ~/art/stage/dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz package.json package-lock.json node_modules`.
+3. OpenShell: download `openshell_0.1.4-1_amd64.deb` and `openshell-checksums-sha256.txt` from
+   `https://github.com/NVIDIA/OpenShell/releases/download/v0.1.4/`, check it, `dpkg-deb -x` it, put `usr/bin/openshell` and
+   `usr/bin/openshell-gateway` in a folder `openshell-0.1.4`, then
+   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - openshell-0.1.4 | gzip -n -9 > ~/art/stage/openshell-0.1.4-linux-x64.tar.gz`.
+4. Images: `sudo docker save -o ~/art/stage/openshell-sandbox-image.tar node:24-bookworm ghcr.io/nvidia/openshell/sandbox:0.1.4 ghcr.io/nvidia/openshell/supervisor:0.1.4`
+   (all three: the docker driver runs the sandbox runtime and the supervisor images beside the sandbox image, with
+   `image_pull_policy = "never"`).
+5. Rust: `RUSTUP_HOME=~/art/rustup CARGO_HOME=~/art/cargohome rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown --no-self-update`;
+   in `~/art/rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu`:
+   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - . | gzip -n -9 > ~/art/stage/rust-1.99.1-x86_64-unknown-linux-gnu.tar.gz`.
+6. llama.cpp: `llama-b10621-bin-ubuntu-x64.tar.gz` (a tar.gz; GitHub's asset digest is the pin). The installer
+   downloads it, node and the two models itself, over HTTPS, against the pins.
+7. `python3 -B R/deploy/engine/engine.py pin FILE` for each; fill `engine-pins.json` (sha256 and bytes). A changed pin
+   is a reviewed commit. Steps 2, 4 and 5 and the plugins give the same bytes when repeated.
 
-**B. Plugins.** Build the face (`engine/plugins/aukora-face/build-face.py --dsh <disposable DSH checkout at dsh-v0.2.1-alpha.5>`),
-then `python3 -B -I deploy/engine/build_plugins.py --dsh <DSH install> --faces engine/plugins/aukora-face --node <node 24.11.1> --out OUT --tar STAGE/engine-plugins.tar`.
-`sovereign engine fingerprint --from OUT` prints the set the owner will approve; keep it for step D6.
+**B. Plugins.** On the Mac (the disposable harness checkout `~/face-scratch-dsh/src` at `dsh-v0.2.1-alpha.5` lives
+there), with node 24.11.1 and pnpm on PATH: `python3 engine/plugins/aukora-face/build-face.py --dsh ~/face-scratch-dsh/src`.
+Copy the built libs to the artifact VM's checkout of the same commit (`COPYFILE_DISABLE=1 tar -cf faces.tar
+engine/plugins/aukora-face/*/lib engine/plugins/aukora-foundation/lib`), then there:
+`python3 -B -I deploy/engine/build_plugins.py --dsh ~/art/dsh --faces engine/plugins/aukora-face --node ~/art/node24/bin/node --out ~/art/plugins-out --tar ~/art/stage/engine-plugins.tar`
+(twice into two folders and `cmp` the tars: equal). After C1, `bin/sovereign engine fingerprint --from ~/art/plugins-out`
+from the release prints the set (thirteen names, the door `authority: true`) and its pin; `sha256` of its first line is
+the `new_sha256` the plugin-set card must show. Keep both for D4.
 
 **C. Release and node.**
-1. Commit (pins, plugins are not in git), `scripts/reproduce.sh build COMMIT OUT --twice`.
-2. `deploy/spawn/spawn.sh create NAME --on nebius-vm --release OUT --public-ip … --spend-ok --claim-out CLAIM` with
-   `AUKORA_VM_HOURLY_ESTIMATE` set. The VM needs **≥4 vCPU, ≥16 GiB, ≥80 GiB disk** (two 0.6 GB models resident, docker,
-   the harness, builds): `vm.py` picks the smallest preset with 2 vCPU/8 GiB and a 40 GiB disk today. Open item O1.
-3. Put the artifacts from A in `STAGE/` beside `engine-plugins.tar`;
-   `python3 -B deploy/engine/engine.py install NAME --stage STAGE --dry-run`, then without `--dry-run`. It prints the
-   engine host. On the node it enables the fences, docker, the gateway, the model servers, Kira, extends Caddy with the
-   engine host and restarts the supervisor. The engine does not start.
-4. On the node, as root: `deploy/units/check-units.sh`; `systemctl status aukora-kira aukora-openshell-gateway`;
+1. Commit (pins; plugins are not in git). On the artifact VM (Linux; it needs the wasm32 target for the app build:
+   `rustup target add wasm32-unknown-unknown --toolchain 1.99.1`, and `cargo fetch --locked` once):
+   `PATH=~/art/node24/bin:$PATH R/scripts/reproduce.sh build COMMIT ~/art/release --twice` (about 12 minutes on 4 vCPU).
+   Copy `release.json` and `release.tar` (about 50 MB) to the Mac.
+2. On the Mac, with the Nebius settings (`deploy/README.md`) and
+   `AUKORA_VM_HOURLY_ESTIMATE` (cpu 4 vCPU / 16 GiB: about 0.12 USD/h with the 80 GiB disk and the address),
+   `AUKORA_NEBIUS_SECURITY_GROUP_ID` (a group admitting 22 from the operator, and 80 and 443 for a public node: Nebius's
+   default group admits every port) and, for a disposable node, `AUKORA_VM_DELETE_AFTER=YYYY-MM-DD`:
+   `deploy/spawn/spawn.sh create NAME --on nebius-vm --release DIR --provider deepseek --spend-ok --claim-out CLAIM`.
+   `--provider deepseek` is required: it pins `api.deepseek.com` in the node's egress, and the engine installer refuses
+   without it. The VM is the smallest CPU preset with 4 vCPU and 16 GiB, 80 GiB disk (O1). The tenant's public IPv4
+   quota (3 on the rehearsal's tenant) must have room. About 4 minutes.
+3. The stage, VM to VM (never through the Mac): put a throwaway key's public half in the node's
+   `~ubuntu/.ssh/authorized_keys`, copy `~/art/stage/*` from the artifact VM to the node's private address, then on the
+   node `sudo install -d -m 0700 /root/aukora-engine-stage` and `sudo install -m 0600` each file into it; remove the key.
+   On the Mac: `python3 -B deploy/engine/engine.py install NAME --stage-on-node --dry-run`, then without `--dry-run`
+   (about 5 minutes). It enables the fences, docker, the gateway (mTLS, its own PKI), the bridge tmpfs, the model
+   servers, Kira, extends Caddy with the engine host and restarts the supervisor. The engine does not start.
+4. On the node, as root: `sh /opt/aukora/current/deploy/units/check-units.sh` (NODE: `units ok`);
+   `systemctl is-active aukora-kira aukora-openshell-gateway 'run-aukora\x2dengine-io.mount'`;
    `journalctl -u aukora-sovereign | grep engine:` shows `awaiting-owner-binding`.
 
 **D. The ceremony (the owner, with the passkey device).**
 1. Open the claim link from `CLAIM` (`https://<shell>/#claim=…`); the operator then deletes the file.
-2. Bind: create the passkey on the owner origin, as today.
-3. Approve the release: the release card on the owner origin. Journal: `engine: door-not-configured` must NOT appear;
-   `engine: awaiting-plugin-set-approval` appears.
-4. Approve the plugin set: a critical card for `engine/plugin-set.json`. Compare its bytes with B's fingerprint output
-   (twelve names, the door `authority: true`). Passkey.
-5. Journal: `engine: running`. `systemctl status aukora-engine` active; on the node `deploy/engine/wall-check.sh`
-   must print `wall ok` (DNS probes included).
-6. Open `https://<shell>/engine/open` in the signed-in browser: the Spatial face loads on `engine.<shell>`.
-7. The model key and budget (section 7): open `https://<shell>/engine/model-key` in the signed-in browser and type
-   **your own** DeepSeek key (nobody else enters, prints or stores it; it is never written to a file). The page
-   shows a fingerprint (12 hex digits). On the approvals, two critical cards: `engine/model-key.json` (its
-   `key_sha256` must begin with that fingerprint) and `engine/model-budget.json` (the terms from
-   `model-broker-v1.json`). Passkey both. Journal: `model-broker: call … completed …` on Auma's first turn; a call
-   before both approvals is refused in the engine's chat with the reason. After any supervisor restart the key is
-   gone (memory only): enter the same key again; it activates without a new card.
-8. Crossings: ask Auma for a `web_fetch` of an allowlisted host: a door ask card appears on the owner origin (the
-   starter slider asks for `net` without a grant); approve; the repeated call runs. `kira_remember` / `kira_recall` go through
-   the door with the non-owner token (`kira_quarantine_source` is refused).
-9. Negative checks: change one byte in `/opt/aukora-engine/plugins/aukora-door/lib/index.js` → within 5 s the engine
-   stops (`authority-plugin-changed`) and a new card appears; restore the byte (or approve, deliberately not) → it
-   starts again. Revoke the owner session or re-bind → `https://engine.<shell>` answers 403 at once.
+2. Bind: create the passkey on the owner origin, as today. Journal: `engine: awaiting-plugin-set-approval`
+   (NODE: the installed release is the floor's starting release, so the engine waits on the plugin set first;
+   `door-not-configured` never appears).
+3. Cards pop up one after another (also under Approvals): the release ("Approve the installed release as the owner's
+   release floor", `release_sha256` = the release id from C1), `engine/model-budget.json` (the terms from
+   `model-broker-v1.json`; proposed at start, before any key) and the plugin set. Approve the release.
+4. Approve the plugin set: the critical card for `engine/plugin-set.json`; its `new_sha256` must equal the sha256 of
+   the fingerprint's set line from B. Passkey.
+5. Journal: `engine: running`, said only once the unit is active, i.e. after `engine-run.sh verify` passed. On the
+   node `sh /opt/aukora/current/deploy/engine/wall-check.sh` prints `wall ok` (NODE: 27 probes, DNS included).
+6. Open `https://<shell>/engine/open` in the signed-in browser: the Spatial face loads on `engine.<shell>` (NODE).
+7. The model key and budget: open `https://<shell>/engine/model-key`, type **your own** DeepSeek key (nobody else
+   enters, prints or stores it; never in a file). The page shows a fingerprint (12 hex digits); the
+   `engine/model-key.json` card's `key_sha256` must begin with it; approve it and the budget card. A new chat needs a
+   workspace first (New Chat, Choose workspace, Add workspace, Open: `/work`). Journal on Auma's first turn:
+   `model-broker: call … completed …` (NODE with a fake key: `provider-refused`, the harness recorded DeepSeek's own
+   HTTP 401 "Authentication Fails": engine, bridge, broker and provider all reached). After a supervisor restart the
+   key is gone (memory only): enter the same key again; the page says it is already approved (NODE).
+   **Not yet usable for chat: the engine origin does not forward WebSocket upgrades (501) and the harness client's
+   live connection is a WebSocket, so replies and history never show in the UI (O9).**
+8. Crossings: a `web_fetch` of an allowlisted host raises a door ask card (`door/ask-NN.json`: tool, class, call
+   digest); approve; the repeated call runs once (NODE: the door then failed `resolve-failed`, O10). `kira_remember` /
+   `kira_recall` go through the door with the non-owner token after an ask card each (the starter slider asks for
+   memory too; NODE: remembered, recalled with the real embed and rerank models); `kira_quarantine_source` is refused
+   `owner-only`. A host off the allowlist is refused `host-not-allowed` without a card.
+9. Negative checks: append a byte to `/opt/aukora-engine/plugins/aukora-door/lib/index.js` → within 5 s the engine
+   stops (`authority-plugin-changed`; NODE: 1 s, sandbox removed) and a plugin-set card appears with the approved set
+   as its base; restore the byte (or approve, deliberately not) → it starts again (NODE: 4 s). On the engine origin:
+   no or a forged cookie 401, a ticket by fetch or a spent ticket 403, `?token=` 404, an upgrade 501, a service worker
+   403 (NODE). Re-bind or a release change → 403 (the engine session is checked against the binding and the floor,
+   not against the shell session: O12).
 
 **Stop / roll back.** `systemctl stop aukora-sovereign` stops the engine too (`PartOf`). Remove `/etc/aukora/engine-v1.json`
 and restart the supervisor to run the node without an engine. Upgrades: a new release changes the binary, so the floor
@@ -289,14 +343,16 @@ pending, not an error); `engine_plugins` (bootstrap set, one candidate set, hash
 `--group-socket`; `build_plugins.py` (reproducible), the profile, the authority overlay (composed and booted with the
 real harness on the Mac); the release now ships `deploy/engine`; the inventory gains `engine/plugin-set.json`.
 
-LINUX (written, not run): the model broker's socket, peer check and in-wall bridge, `engine_install.py`, `engine.py install`, `engine-prestart.sh`, `engine-run.sh`,
-`wall-check.sh`, all units, the polkit rule, tmpfiles, the nft fence, `systemctl` from the supervisor, the sticky-home
-protections, the Kira units, Caddy's engine block.
+NODE (ran on the rehearsal node): `engine_install.py` via `engine.py install --stage-on-node`, `engine-prestart.sh`,
+`engine-run.sh` (create, verify, delete), `wall-check.sh` (`wall ok`), the units (`check-units.sh`: `units ok`), the
+polkit rule (the supervisor starts and stops the engine), tmpfiles, the bridge tmpfs mount, the nft fence (a non-root,
+non-65534 user is refused at :690; only kira reaches 8771/8772), the mTLS gateway, the sticky-home protections, the
+Kira units with the pinned models, Caddy's engine block, the model broker's socket and peer check behind the in-wall
+bridge (a call reached DeepSeek), the door in the supervisor (asks, grants, refusals), the engine origin's ticket
+flow. On Linux under umask 002: `cargo test -p supervisor door` (108), `-p broker engine_link` (12),
+`-p supervisor engine` (25), `-p supervisor build::` (24), `tests/deploy` (6): all pass (O6).
 
-GUESS: the `openshell sandbox create` mount/policy/image flags, the gateway's `--config` flag and `listen` key,
-`openshell policy get` output shape in `verify`, the JWT key type (ed25519), the llama.cpp release asset name, the model
-download URLs (the SHA-256 pins are what count), and that disabling the listed harness rows leaves the rest booting
-on Linux as it did on the Mac.
+RAN on the wall-test VM, not the node: the DNS control (the same probe resolves without the node's resolv.conf).
 
 Not built: the face's own owner-approval surfaces pointing at the owner origin;
 `door/standing-grants.json` as a gate target (the slider runs on the starter, no grants); an inventory sync for nodes
@@ -304,21 +360,38 @@ installed before this branch (they refuse `engine-install: inventory-lacks-engin
 
 ## 10. Open items
 
-- **O1** VM size: `vm.py` `smallest_preset` and `BOOT_DISK_GIB = "40"` are pinned deploy code; the engine node needs a
-  larger preset and disk (an `AUKORA_NEBIUS_PRESET` override, reviewed).
-- **O2** The exact OpenShell argv (runbook A3), and how the 0.1.4 CLI is pointed at the gateway's endpoint
-  (127.0.0.1:690 since the Grok review; the wall test used another port) and verifies it: until the CLI
-  authenticates the gateway itself, the privileged port and the fence are what keep an impostor out.
-- **O3** Gateway auth: the wall test ran `allow_unauthenticated_users=true` on a dev gateway; this config sets false. If
-  0.1.4 cannot authenticate the local CLI otherwise, choose before the first public node (loopback-only either way).
+Closed by the node rehearsal: **O1** (vm.py picks 4 vCPU / 16 GiB / 80 GiB), **O2** (the wall test's argv; the CLI is
+the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated_users = false`), **O6** (above).
+
 - **O4** `deploy/engine/*` is in the release (so the owner's release approval covers it) but not in `checks/run.py`'s
   `DEPLOY_PINS`; pin `engine_install.py` and `engine.py` once reviewed.
 - **O5** The plugin-set pin in `ProtectedState` (floor schema change + Aura migration) instead of the audit file.
-- **O6** Re-run `cargo test -p supervisor door` and `cargo test -p broker engine_link` on the node (the SO_PEERCRED
-  path is Linux-only), as the wall test asked.
 - **O7** The model key is memory only (the `KeyInbox`; disk persistence was reserved for later): every supervisor
-  restart needs the owner to enter it again. Persisting it (a 0600 file in the broker's state, as the archive's
-  keystore did) is Peter's call.
+  restart needs the owner to enter it again (NODE: re-entering it activates it without a card). Persisting it (a
+  0600 file in the broker's state, as the archive's keystore did) is Peter's call.
 - **O8** The budget's prices in `engine_install.py` (`MODEL_BUDGET`) are placeholders above DeepSeek's published
   prices, and the model names are the harness's catalog (`deepseek-flash`, `deepseek-v4-pro`), not checked against
-  the live API. Set both before the first node; the owner approves whatever terms the file holds.
+  the live API (NODE: the harness asked for `deepseek-flash`; DeepSeek answered 401 to the fake key before judging
+  the name). Set both before the first node; the owner approves whatever terms the file holds.
+- **O9** WebSocket forwarding (BLOCKS THE PRODUCT TEST). The engine origin answers an upgrade 501; the harness web
+  client's live connection is a WebSocket ("connection lost, retry #N"), so a sent message reaches the model but
+  neither the reply nor the session history ever shows ("Loading history…"). Build the forwarding (same session and
+  ticket checks, per-message limits) before an owner can talk to Auma in the browser.
+- **O10** The door's net hosts are not in the node's egress policy: the service user's firewall admits only pinned
+  relays and providers and no resolver, so an approved `web_fetch` of an allowlisted host ends `resolve-failed`.
+  The door's `net.hosts` need pinned addresses (an egress entry per host, or the door resolving through pinned
+  `/etc/hosts` entries) in the same reviewed policy.
+- **O11** The release floor: the installed release counted as approved before the owner's release card (the engine
+  waited on the plugin set, not the release); and `release_approved()` is false on any error reading the floor, so a
+  transient `floor:locked` stopped a running engine for 5 s and would end engine-origin sessions (403). Decide whether
+  the first start needs the owner's release card, and keep "cannot read now" apart from "not approved".
+- **O12** The engine-origin session (12 h) is checked against the binding and the release floor, not against the
+  owner's shell session: signing out of the shell does not end it. Tie it to the shell session, or say so.
+- **O13** Cards: every string on a card shows `\u0020` for spaces, and the budget and model-key cards carry a false
+  "NOTE repeats words to pressure you … APPROVE-spam pattern" warning (their own notes repeat "deepseek", "the", "key").
+- **O14** The Kira plugin's session start reads `aukora:self` with `kira_get`, which the starter slider turns into an
+  owner card on every new session; the `@aukora/kira` row's slots may want a standing grant, or none at start.
+- **O15** DeepSeek's 401 names the last four characters of the key ("****xxxx"); the broker's echo guard scans 12-byte
+  windows, so those four reach the engine. Small; redact the provider's message or widen the guard.
+- **O16** Nebius: the tenant's public IPv4 quota is 3 (pilot, the wall-test VM and an unassigned 2026-10-09 address
+  held it; the rehearsal took the wall-test VM's address). The node's VM needs one.

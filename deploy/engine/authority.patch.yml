@@ -61,6 +61,10 @@
     baseURL: http://127.0.0.1:3081
     apiKeyEnv: DEEPSEEK_API_KEY
     maxInlineRequestImageBytes: 4194304
+    # The adapter refuses to activate if its image quantum (10 MiB by default) exceeds the inline cap (node
+    # rehearsal: "inlineImageOffloadByteQuantum must not exceed maxInlineRequestImageBytes"; a config dump never
+    # activates the adapter, so the Mac composition run did not see it).
+    inlineImageOffloadByteQuantum: 2097152
     filesApiTimeoutMs: 5000
 
 # 5. The harness's request extensions that would upload the session log and the plugin inventory to the provider:

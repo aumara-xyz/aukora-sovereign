@@ -25,6 +25,9 @@ ExecStartPre=/opt/aukora/current/deploy/engine/engine-prestart.sh
 ExecStart=/opt/aukora/current/deploy/engine/engine-run.sh create
 ExecStartPost=/opt/aukora/current/deploy/engine/engine-run.sh verify
 ExecStopPost=/opt/aukora/current/deploy/engine/engine-run.sh delete
+# The OpenShell CLI exits 143 when systemd stops it with SIGTERM: that is a clean stop, not a failure (node rehearsal:
+# every stop left the unit failed, which the supervisor rightly reads as "the sandbox may still be up").
+SuccessExitStatus=143
 Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=180s
