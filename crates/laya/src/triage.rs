@@ -53,7 +53,9 @@ fn note_needs_review(bytes: &[u8]) -> bool {
     let Ok(text) = core::str::from_utf8(bytes) else {
         return true;
     };
-    if !text.is_ascii()
+    // Ordinary Unicode (em-dashes, accents, other scripts) is fine; text-direction overrides and invisible
+    // characters that can make a note read differently than it is stored are not.
+    if text.chars().any(|c| matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200B}'..='\u{200F}' | '\u{2060}' | '\u{FEFF}'))
         || bytes
             .iter()
             .any(|byte| byte.is_ascii_control() && !matches!(byte, b'\n' | b'\t'))
@@ -387,4 +389,16 @@ fn add_count(total: &mut u64, amount: u64) -> crate::Result<()> {
         .checked_add(amount)
         .ok_or(crate::refuse("benchmark-overflow"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod unicode_tests {
+    use super::note_needs_review;
+
+    #[test]
+    fn ordinary_unicode_passes_and_direction_tricks_escalate() {
+        assert!(!note_needs_review("Phase 2 — clean seed, café, 日本語".as_bytes()));
+        assert!(note_needs_review("pay \u{202E}evil".as_bytes()));
+        assert!(note_needs_review("zero\u{200B}width".as_bytes()));
+    }
 }
