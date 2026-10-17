@@ -10,7 +10,7 @@
  * READ-ONLY. Stub data only in the preview (the one preview switch); on a node every cell is Undetermined (no report
  * reaches the view yet) and the view says "Not connected yet". Nothing here can change anything.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   AppHeader, AppSurface, FieldTable, Footnote, isPreviewComposition, Lead, PortalButton, PortalCell, PortalGrid,
@@ -23,6 +23,8 @@ import {
 import { CHECKS, CORNERS, CORNER_CELLS, CUBES, type OrganWire } from './tables.ts'
 import { readAuraStub, stepStub } from './stub.ts'
 import { PentoraFigure } from './PentoraFigure.tsx'
+import { absorbSessions, PREVIEW_TURN, PREVIEW_TURN_MS, type LivePulse, type LiveState } from './activity.ts'
+import type {} from '../../activity/types.ts'
 import { isEditableTarget } from '../escape.ts'
 
 export type AuraPentoraSurfaceProps = PropsRuntime<'shell.surface'>
@@ -109,14 +111,104 @@ function OrganDetail({ organ, view, connected }: { readonly organ: OrganWire; re
   )
 }
 
+/** Organ name for a live row. */
+function organWords(organ: LivePulse['organ']): string {
+  return organ === null ? 'the whole figure' : ORGAN_FACTS[organ].title
+}
+
+/** What Auma is doing, as it happens: every row is a real session event, or a scripted preview row marked so. */
+function LivePortal({ live }: { readonly live: LiveState }) {
+  const [openLive, setOpenLive] = useState(false)
+  const rows = [...live.pulses].reverse().slice(0, 24)
+  const real = live.pulses.filter(p => p.source === 'session').length
+  const scripted = live.pulses.length - real
+  const summary = live.working ? `Auma is at work · ${String(live.pulses.length)} events seen`
+    : live.pulses.length === 0 ? 'nothing since you opened this view; it moves when Auma works' : `${String(live.pulses.length)} events since you opened this view`
+  return (
+    <PortalButton tone="violet" icon="model" title="Live activity" summary={summary}
+      badge={live.working ? <StatusPill tone="violet">working</StatusPill> : scripted > 0 && real === 0 ? <StatusPill tone="gold">preview</StatusPill> : undefined}
+      expanded={openLive} onToggle={setOpenLive}>
+      <Lead>Each row is one event from a session's log, without its content: a tool's name, a model call, a door decision. The cube it belongs to flashes and loosens, then settles. AUMLOK and Network have no session events: their live activity is not connected yet.</Lead>
+      <RecordList>
+        {rows.length === 0 ? <RecordRow tone="muted" title="Nothing yet" summary="the next turn, tool call or approval appears here" /> : rows.map(pulse => (
+          <RecordRow key={pulse.id} tone={pulse.organ === null ? 'muted' : ORGAN_FACTS[pulse.organ].tone} title={pulse.label}
+            summary={`${organWords(pulse.organ)} · ${pulse.session} · ${ago(pulse.at)}`}
+            status={pulse.source === 'preview' ? <StatusPill tone="gold">preview</StatusPill>
+              : pulse.outcome === 'door-refused' ? <StatusPill tone="muted">refused</StatusPill>
+                : pulse.outcome === 'door-asked' ? <StatusPill tone="gold">asked</StatusPill>
+                  : pulse.outcome === 'error' ? <StatusPill tone="gold">failed</StatusPill> : undefined} />
+        ))}
+      </RecordList>
+    </PortalButton>
+  )
+}
+
+/** The explanation, behind its own portal at the top. */
+function HowItWorks({ connected }: { readonly connected: boolean }) {
+  const rows: readonly (readonly [string, string])[] = [
+    ['The five cubes', 'Five organs: AUMLOK (gold), Gate & Aura (blue), Kira (violet), Network (mint), Body (silver). Canon pins each organ to one cube.'],
+    ['Edges and face dots', 'Each organ\'s 18 private checks: the 12 edges (at their midpoints) and the 6 face centres of its cube.'],
+    ['Corner dots', 'The 20 corners are checks two organs share; each is verified only when both sides agree.'],
+    ['Colours', 'Bright: verified. Faint and dashed: undetermined. Red: failed. These are health cells, not the Pentora fingerprint.'],
+    ['A pulse along an edge', 'That edge\'s check was observed in the last 20 seconds.'],
+    ['A cube drifting out of true', 'Its share of undetermined and failed cells: all verified sits locked in true.'],
+    ['A cube flashing and shaking loose', 'Auma just did something that organ handles: a model call or a tool through the door (Body), a Kira read or write (Kira), an approval or a door ask (Gate & Aura). It fades in seconds.'],
+    ['Faster turning', 'A turn is open: Auma is at work. When it ends, the figure settles into its current state.'],
+    ['Not connected yet', `${connected ? '' : 'The health snapshot does not reach this view on a node yet, so every cell is undetermined. '}AUMLOK and Network have no live events in a session.`],
+  ]
+  return <>{rows.map(([title, text]) => <Lead key={title}><b>{title}.</b> {text}</Lead>)}</>
+}
+
 /**
  * Render the always-mounted Aura Coherence surface.
  * @param props - composed shell-surface props.
  * @returns the surface element tree.
  */
-export function AuraPentoraSurface({ activeSurface, closeSurface }: AuraPentoraSurfaceProps) {
+export function AuraPentoraSurface({ activeSurface, closeSurface, useSessions }: AuraPentoraSurfaceProps) {
   const active = activeSurface === AURA_SURFACE
   const preview = useMemo(() => isPreviewComposition(), [])
+  const [howOpen, setHowOpen] = useState(false)
+
+  // LIVE: the sessions' content-free activity projections (real on a node and in the preview alike).
+  const sessions = useSessions(state => state)
+  const entries = useMemo(() => sessions.ids.map(id => ({
+    id,
+    title: sessions.byId[id]?.displayTitle ?? id,
+    activity: sessions.byId[id]?.projectionValues?.auraActivity,
+  })), [sessions.byId, sessions.ids])
+  const baselines = useRef(new Map<string, number>())
+  const liveRef = useRef<LiveState>({ pulses: [], working: false })
+  const previewWorking = useRef(false)
+  const [live, setLive] = useState<LiveState>(liveRef.current)
+  const publish = (next: LiveState) => { if (next !== liveRef.current) { liveRef.current = next; setLive(next) } }
+  useEffect(() => {
+    publish(absorbSessions(liveRef.current, baselines.current, entries, Date.now(), previewWorking.current))
+  }, [entries])
+
+  // PREVIEW ONLY: a scripted turn every 25 s while the page is open, marked "preview" on every row it adds.
+  useEffect(() => {
+    if (!preview || !active) return
+    const timers: ReturnType<typeof setTimeout>[] = []
+    let round = 0
+    const play = () => {
+      round++
+      previewWorking.current = true
+      publish({ ...liveRef.current, working: true })
+      for (const [delay, organ, label, outcome] of PREVIEW_TURN) {
+        timers.push(setTimeout(() => {
+          const pulse: LivePulse = { id: `preview:${String(round)}:${String(delay)}:${label}`, organ, at: Date.now(), label, session: 'preview turn', source: 'preview', ...(outcome === undefined ? {} : { outcome }) }
+          publish({ pulses: [...liveRef.current.pulses, pulse].slice(-60), working: liveRef.current.working })
+        }, delay))
+      }
+      timers.push(setTimeout(() => {
+        previewWorking.current = false
+        publish({ ...liveRef.current, working: entries.some(e => e.activity?.turnOpen === true) })
+      }, PREVIEW_TURN_MS + 200))
+    }
+    timers.push(setTimeout(play, 4000))
+    const every = setInterval(play, 25_000)
+    return () => { timers.forEach(clearTimeout); clearInterval(every); previewWorking.current = false }
+  }, [preview, active])
   const [view, setView] = useState<AuraHealthView>(() => (preview ? readAuraStub(Date.now()) : absentHealth()))
   const [open, setOpen] = useState<number | null>(null)
   const connected = view.source === 'stub' || view.sequence > 0
@@ -157,8 +249,12 @@ export function AuraPentoraSurface({ activeSurface, closeSurface }: AuraPentoraS
           { text: posture.word, tone: posture.tone },
         ]}
       />
-      <PentoraFigure view={view} active={active} focus={open !== null && open < cells ? open : null} />
-      <Lead>{AURA_COPY.legend}</Lead>
+      <PortalButton tone="violet" icon="aura" title="How it works" summary="what the shapes, colours and movement mean"
+        expanded={howOpen} onToggle={setHowOpen}>
+        <HowItWorks connected={connected} />
+      </PortalButton>
+      <PentoraFigure view={view} active={active} focus={open !== null && open < cells ? open : null} live={liveRef} />
+      <LivePortal live={live} />
       <PortalGrid open={open !== null}>
         {shown.map((slot) => {
           if (slot === cells) {

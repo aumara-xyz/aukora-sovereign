@@ -122,7 +122,6 @@ export const AURA_COPY = {
   readOnly: 'Read-only',
   stub: 'Preview data',
   notConnected: 'Not connected yet',
-  legend: 'Each cube is an organ. Its edges and faces are its 18 checks; the 20 corners are checks two organs share. Bright: verified. Faint and dashed: undetermined. Red: failed. A pulse runs along an edge whose check was observed in the last 20 seconds.',
   emptyLead: 'Not connected yet. This node does not serve its health snapshot to the view yet; nothing here is made up. These are the checks canon registers, and each will light when its report arrives.',
   footnote: 'This view only reads. Health cells are not the Pentora fingerprint; nothing here grants anything.',
 } as const

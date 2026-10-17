@@ -203,6 +203,11 @@ removed from `checks/pins.json`.
 - Data: the same seam as Sovereignty. Stub only in the preview (`isPreviewComposition()`); on a node every cell is
   Undetermined/`missing` (canon's absent report) and the view says "Not connected yet". The node's real source is the
   supervisor face contract `health.snapshot` (immune's canonical HealthSnapshot); the engine origin cannot read it yet.
+- Live reaction (round 2): the host registers `auraActivity` (`settings/src/activity/projection.ts`), a content-free fold
+  of turn / step / reply / tool call (by name, with aukora-door's classify table) / tool result (the door's
+  `AukoraDoorRefusal` refused or `ask:*`) / approval / posture events onto organs (Body, Kira, Gate & Aura; AUMLOK and
+  Network have no session events: not connected). The client pulses a cube only for events newer than its first sight of
+  a session; a turn in progress turns the figure faster. A scripted turn plays in the preview only, every row badged.
 - Cheap: one SVG (120 lines, 50 dots), structure rendered by React once per snapshot, coordinates moved by a 30 fps
   requestAnimationFrame loop that stops while hidden; one still frame under reduced motion.
 

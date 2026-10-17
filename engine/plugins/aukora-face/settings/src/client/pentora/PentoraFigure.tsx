@@ -11,6 +11,9 @@
  *   cube colour   the organ (AUMLOK gold, Gate & Aura blue, Kira violet, Network mint, Body silver)
  *   cube drift    coherence: a cube whose cells are all verified sits locked in true (the onboarding lock); the
  *                 more of its cells are undetermined or failed, the further it drifts out of true
+ *   live flash    Auma's work, from the sessions' live activity: an event lights its organ's cube (edges swell,
+ *                 the cube shakes loose a little) and the energy fades in seconds; while a turn is open the whole
+ *                 figure turns faster and leans further; when the turn ends it settles back to its state
  *
  * CHEAP: one SVG of 120 lines and 110 dots; React renders the structure and the states once per snapshot, and a
  * requestAnimationFrame loop at 30 frames a second only moves coordinates. It stops while the surface is hidden or
@@ -20,6 +23,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { AuraHealthView, CellReport } from './model.ts'
 import { ORGANS, ORGAN_FACTS, PULSE_WINDOW_MS, organTally } from './model.ts'
 import { CORNER_CELLS, CUBES, POINTS } from './tables.ts'
+import { energyOf, type LiveState } from './activity.ts'
 import css from './Pentora.module.css'
 
 const TILT = 0.5
@@ -53,10 +57,12 @@ function useStill(): boolean {
  * @param props.active - false while the surface is hidden: the loop stops.
  * @param props.focus - the organ whose portal is open: its cube stays lit, the others step back.
  */
-export function PentoraFigure({ view, active, focus }: {
+export function PentoraFigure({ view, active, focus, live }: {
   readonly view: AuraHealthView
   readonly active: boolean
   readonly focus: number | null
+  /** The live state, read every frame (a ref, so events never re-render the figure). */
+  readonly live: { readonly current: LiveState }
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const viewRef = useRef(view)
@@ -77,21 +83,26 @@ export function PentoraFigure({ view, active, focus }: {
     let frame = 0
     let last = 0
     let angle = 0.7
+    let work = 0
     const born = performance.now()
     const draw = (now: number, moving: boolean) => {
       const t = now - born
       const ramp = moving ? Math.min(1, t / 3500) : 0
-      const tilt = TILT + 0.32 * Math.sin(t / 4700) * ramp
+      const tilt = TILT + (0.32 + 0.18 * work) * Math.sin(t / 4700) * ramp
       const roll = 0.24 * Math.sin(t / 7300 + 1) * ramp
       const breath = 1 + 0.035 * Math.sin(t / 1900) * ramp
       const fresh = viewRef.current
+      // LIVE: each organ's energy from Auma's recent events; activity with no organ wakes every cube a little.
+      const energy = moving ? energyOf(live.current, Date.now()) : new Map()
+      const wake = 0.35 * (energy.get(null) ?? 0)
+      const lit = ORGANS.map(organ => Math.min(1.4, (energy.get(organ) ?? 0) + wake))
       const offsets = ORGANS.map((organ, c) => {
         // COHERENCE: all verified = locked in true (0); undetermined cells loosen it a little, failed ones a lot.
         const tally = organTally(fresh, organ)
-        const drift = Math.min(1, (tally.undetermined * 0.5 + tally.failed * 3) / 26) * Math.max(ramp, still ? 1 : 0)
+        const drift = Math.min(1, (tally.undetermined * 0.5 + tally.failed * 3) / 26) * Math.max(ramp, still ? 1 : 0) + 0.9 * (lit[c] ?? 0)
         return [
-          drift * 0.075 * Math.sin(t * 0.0007 * (1 + 0.31 * c) + c * 1.7),
-          1 + drift * 0.035 * Math.cos(t * 0.0009 + c * 2.3),
+          drift * 0.075 * Math.sin(t * 0.0007 * (1 + 0.31 * c) * (1 + 2 * (lit[c] ?? 0)) + c * 1.7),
+          1 + drift * 0.035 * Math.cos(t * 0.0009 * (1 + 2 * (lit[c] ?? 0)) + c * 2.3),
         ] as const
       })
       const at = (g: number, cube: number): Projected => {
@@ -100,6 +111,7 @@ export function PentoraFigure({ view, active, focus }: {
       }
       for (const line of edges) {
         const cube = Number(line.dataset.cube)
+        const flash = Math.min(1, lit[cube] ?? 0)
         const [x1, y1] = at(Number(line.dataset.a), cube)
         const [x2, y2] = at(Number(line.dataset.b), cube)
         line.setAttribute('x1', x1.toFixed(2))
@@ -111,8 +123,11 @@ export function PentoraFigure({ view, active, focus }: {
           const seen = fresh.private[Number(line.dataset.slot)]?.observed_at_ms ?? null
           const since = seen === null ? Infinity : Date.now() - seen
           const pulse = moving && since < PULSE_WINDOW_MS ? (1 - since / PULSE_WINDOW_MS) * (0.55 + 0.45 * Math.sin(t / 260)) : 0
-          line.style.strokeOpacity = pulse > 0 ? String(0.09 + 0.5 * pulse) : ''
-          line.style.strokeWidth = pulse > 0 ? `${String(6 + 8 * pulse)}px` : ''
+          const glow = Math.max(pulse, 0.7 * flash)
+          line.style.strokeOpacity = glow > 0.01 ? String(0.09 + 0.42 * glow) : ''
+          line.style.strokeWidth = glow > 0.01 ? `${String(6 + 6 * glow)}px` : ''
+        } else {
+          line.style.strokeWidth = flash > 0.01 ? `${String(1.2 + 0.9 * flash)}px` : ''
         }
       }
       for (const dot of dots) {
@@ -129,7 +144,9 @@ export function PentoraFigure({ view, active, focus }: {
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick)
       if (document.hidden || now - last < FRAME_MS) return
-      angle += (last === 0 ? 0 : now - last) * 0.55 / 6400
+      // While a turn is open the figure turns faster; when it ends the speed eases back (no jump).
+      work += ((live.current.working ? 1 : 0) - work) * 0.04
+      angle += (last === 0 ? 0 : now - last) * (0.55 + 1.1 * work) / 6400
       last = now
       draw(now, true)
     }

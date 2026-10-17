@@ -16,6 +16,7 @@
 import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-session-projection'
+import { auraActivityProjectionDefinition } from './activity/projection.ts'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { fileURLToPath } from 'node:url'
@@ -130,8 +131,11 @@ export function readAuraEvidence(_releaseRoot: string): Promise<object> {
     'the Aura evidence projection ran a program and is not part of the Sovereign composition'))
 }
 
-/** Register the settings namespace and the evidence route. (The tesseract's session projection is gone with it.) */
+/** Register Aura's live-activity projection, the settings namespace, and the evidence route. */
 export function apply(ctx: Context): void {
+  ctx.inject(['sessionProjections'], (projectionCtx) => {
+    projectionCtx.sessionProjections.register(auraActivityProjectionDefinition)
+  })
   ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
   // Optional on purpose: a composition with no web server still gets the projection and
   // the settings namespace, rather than withholding the whole face over a route.
