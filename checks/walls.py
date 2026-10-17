@@ -39,7 +39,8 @@ TEST_PATH = (r"(^|/)(test|tests|__tests__|benches)/|(^|/)tests\.rs$|(^|/)test\.(
 JS_BAD = (r"(?<![\w$.])eval\s*\(|(?<![\w$.])Function\s*\(|\bnew\s+Function\b|\bset(Timeout|Interval)\s*\(\s*[\"'`]|"
           r"\.(inner|outer)HTML\b|\[\s*[\"'`](inner|outer)HTML[\"'`]\s*\]|\binsertAdjacentHTML\b|\bcreateContextualFragment\b|"
           r"\bsrcdoc\b|\bdocument\s*\.\s*write(ln)?\s*\(|\bimport\s*\(\s*[\"'`]data:|constructor\s*\.\s*constructor|"
-          r"\b(window|globalThis|self)\s*\[")
+          r"\b(window|globalThis|self)\s*\[|"
+          r"\bdangerouslySetInnerHTML\b|\b(set|parse)HTMLUnsafe\b|\bDOMParser\b|\bsetAttribute\s*\(\s*[\"'`]on")
 HTML_BAD = (r"<script(?![^>]*\bsrc\s*=)(?![^>]*\btype\s*=\s*[\"']application/json[\"'])[^>]*>|<script[^>]*\bsrc\s*=[^>]*>\s*[^<\s]|"
             r"\son[a-z]+\s*=|(href|src|action|formaction|xlink:href)\s*=\s*[\"']?\s*javascript:")
 ABI = r"\bextern\s*(\"\"\s*)?\{|\bglobal_asm\b|\basm\s*!|#!?\[\s*(link|link_name)\b|\bextern\s+crate\b|\buse\s+(::)?(std|core|alloc)\s+as\b"

@@ -8,6 +8,8 @@ python3 -B checks/run.py
 # The engine installer's extraction and the engine pre-start's home patch (the root-run deploy code that touches
 # archives and engine-writable folders).
 python3 -B -m unittest discover -s tests/deploy -p 'test_*.py'
+# The source walls themselves (checks/walls.py), probed on samples.
+python3 -B -m unittest discover -s tests/checks -p 'test_*.py'
 # The stranger's verifier: the standalone verify.py must match its sources, and the pinned vectors replay through both
 # the Rust aukora-verify and the Python twin (known divergences are listed in scripts/verifier-vectors-known.json).
 python3 -B tools/verify/build.py --check
