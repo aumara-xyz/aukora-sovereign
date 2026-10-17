@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Installed by engine_install.py as /etc/systemd/system/var-lib-containerd.mount. containerd's root on its own
+# fixed-size ext4 image (fallocated, no discard: its blocks are held; its own inode table). Docker 29 keeps the images
+# and every container's writable layer here, the sandbox's /sandbox included (OpenShell reserves that path and the
+# engine can write it), so a byte or inode filler there stops at this filesystem and never reaches the host's root
+# filesystem, where the supervisor, Kira and the gateway write (Codex review of node/pre-launch).
+[Unit]
+Description=AUKORA containerd disk (fixed-size image for images and container layers)
+Before=containerd.service
+
+[Mount]
+What=/var/lib/aukora-containerd.img
+Where=/var/lib/containerd
+Type=ext4
+Options=loop,noatime
+
+[Install]
+WantedBy=multi-user.target

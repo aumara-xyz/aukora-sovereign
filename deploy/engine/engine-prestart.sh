@@ -55,6 +55,10 @@ done
 # disk under the supervisor, Kira and the gateway (Auma's review R3). Without it, no start.
 [ "$(findmnt -n -o FSTYPE --target /var/lib/aukora-engine 2>/dev/null)" = ext4 ] && mountpoint -q /var/lib/aukora-engine ||
     fail "the engine's disk is not its own bounded filesystem"
+# containerd's root (the images and the sandbox's container layer, where /sandbox lives) likewise: its own blocks and
+# inodes (engine_install.py, var-lib-containerd.mount; Codex review of node/pre-launch).
+[ "$(findmnt -n -o FSTYPE --target /var/lib/containerd 2>/dev/null)" = ext4 ] && mountpoint -q /var/lib/containerd ||
+    fail "containerd's root is not its own bounded filesystem"
 # 3 first: the closure is built inside the profile.
 install -d -o root -g "$AUMA_GID" -m 1770 "$HOME_DIR"
 for name in profiles node_modules; do

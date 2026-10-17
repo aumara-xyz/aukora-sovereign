@@ -292,6 +292,20 @@ class EngineDisk(unittest.TestCase):
             engine_install.engine_disk_bytes(40 * gib, 20 * gib)
         self.assertEqual(str(caught.exception), "engine-install:disk-too-small")
 
+    def test_containerds_disk_is_a_tenth_within_six_and_twelve_gib(self):
+        gib = engine_install.GIB
+        self.assertEqual(engine_install.containers_disk_bytes(77 * gib, 62 * gib), 7 * gib)
+        self.assertEqual(engine_install.containers_disk_bytes(40 * gib, 30 * gib), 6 * gib)
+        self.assertEqual(engine_install.containers_disk_bytes(500 * gib, 480 * gib), 12 * gib)
+        with self.assertRaises(core.Refusal):
+            engine_install.containers_disk_bytes(40 * gib, 10 * gib)
+        with open(os.path.join(ROOT, "deploy", "engine", "aukora-containerd-disk.mount"), encoding="utf-8") as handle:
+            unit = handle.read()
+        self.assertIn("What=" + engine_install.CONTAINER_IMAGE + "\n", unit)
+        self.assertIn("Where=" + engine_install.CONTAINER_DISK + "\n", unit)
+        self.assertIn("Before=containerd.service\n", unit)
+        self.assertEqual(engine_install.CONTAINER_UNIT, "var-lib-containerd.mount")
+
     def test_the_unit_mounts_the_image_over_the_engine_folder_without_suid_or_devices(self):
         with open(os.path.join(ROOT, "deploy", "engine", "aukora-engine-disk.mount"), encoding="utf-8") as handle:
             unit = handle.read()

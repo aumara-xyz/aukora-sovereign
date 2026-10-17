@@ -60,6 +60,12 @@ IO_MOUNT = "/etc/systemd/system/run-aukora\\x2dengine-io.mount"
 ENGINE_DISK = "/var/lib/aukora-engine"
 ENGINE_IMAGE = "/var/lib/aukora-engine.img"
 DISK_UNIT = "var-lib-aukora\\x2dengine.mount"
+# containerd's root (Docker 29 keeps images and every container's writable layer there, the sandbox's /sandbox
+# included) on its own fixed-size filesystem too, with its own blocks and inodes (aukora-containerd-disk.mount).
+CONTAINER_DISK = "/var/lib/containerd"
+CONTAINER_IMAGE = "/var/lib/aukora-containerd.img"
+CONTAINER_UNIT = "var-lib-containerd.mount"
+CONTAINER_DROPIN = "/etc/systemd/system/containerd.service.d/aukora-disk.conf"
 GIB = 1 << 30
 BROKER_SOCKET = "/run/aukora-broker/broker.sock"
 # The engine's model budget the supervisor proposes for the owner's passkey (deploy/engine/NODE.md section 7). The
@@ -422,38 +428,69 @@ def engine_disk_bytes(total, free):
     return size
 
 
-def prepare_engine_disk():
-    """Mount the engine's fixed-size disk over /var/lib/aukora-engine (made once; an existing workspace is copied in and
-    the old folder kept beside it, never deleted)."""
-    if os.path.ismount(ENGINE_DISK):
+def containers_disk_bytes(total, free):
+    """A tenth of the root filesystem, at least 6 GiB (the three pinned images take about 1.8) and at most 12 GiB, and
+    only if the host keeps at least 8 GiB free beside it."""
+    size = min(max(total // 10 // GIB, 6), 12) * GIB
+    if free < size + 8 * GIB:
+        core.refuse("engine-install", "disk-too-small")
+    return size
+
+
+def prepare_disk(where, image, unit, template, sizing, label):
+    """Mount a fixed-size ext4 image over `where` (made once; what is already there is copied in and the old folder kept
+    beside it as `.pre-disk`, never deleted). Its blocks are held (fallocate, no discard) and it has its own inodes."""
+    if os.path.ismount(where):
         return
-    if not os.path.exists(ENGINE_IMAGE):
+    if not os.path.exists(image):
         stat = os.statvfs("/var/lib")
-        size = engine_disk_bytes(stat.f_blocks * stat.f_frsize, stat.f_bavail * stat.f_frsize)
-        run(["fallocate", "-l", str(size), ENGINE_IMAGE])
-        os.chmod(ENGINE_IMAGE, 0o600)
+        size = sizing(stat.f_blocks * stat.f_frsize, stat.f_bavail * stat.f_frsize)
+        run(["fallocate", "-l", str(size), image])
+        os.chmod(image, 0o600)
         # nodiscard: mke2fs discards a device by default, which on a loop file punches holes and gives the reserved
         # blocks back to the host (found live: a 30 GiB image held 250 MB). The second fallocate fills any hole left.
-        run(["mkfs.ext4", "-q", "-F", "-m", "0", "-E", "nodiscard", "-L", "aukora-engine", ENGINE_IMAGE])
-        run(["fallocate", "-l", str(size), ENGINE_IMAGE])
-        held = os.stat(ENGINE_IMAGE)
+        run(["mkfs.ext4", "-q", "-F", "-m", "0", "-E", "nodiscard", "-L", label, image])
+        run(["fallocate", "-l", str(size), image])
+        held = os.stat(image)
         if held.st_blocks * 512 < held.st_size:
             core.refuse("engine-install", "engine-disk-not-reserved")
-    core.atomic_write("/etc/systemd/system/" + DISK_UNIT,
-                      core.read_regular(release_file("engine/aukora-engine-disk.mount"), 4096, "engine-install"), 0o644)
+    core.atomic_write("/etc/systemd/system/" + unit, core.read_regular(release_file(template), 4096, "engine-install"),
+                      0o644)
     aside = None
-    if os.path.isdir(ENGINE_DISK) and os.listdir(ENGINE_DISK):
-        aside = ENGINE_DISK + ".pre-disk"
+    if os.path.isdir(where) and os.listdir(where):
+        aside = where + ".pre-disk"
         if os.path.lexists(aside):
             core.refuse("engine-install", "engine-disk-aside-exists")
-        os.rename(ENGINE_DISK, aside)
-    os.makedirs(ENGINE_DISK, mode=0o755, exist_ok=True)
+        os.rename(where, aside)
+    os.makedirs(where, mode=0o755 if where == ENGINE_DISK else 0o711, exist_ok=True)
     run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", "--now", DISK_UNIT])
-    if not os.path.ismount(ENGINE_DISK):
+    run(["systemctl", "enable", "--now", unit])
+    if not os.path.ismount(where):
         core.refuse("engine-install", "engine-disk-not-mounted")
     if aside:
-        run(["cp", "-a", "--", aside + "/.", ENGINE_DISK + "/"])
+        run(["cp", "-a", "--", aside + "/.", where + "/"])
+
+
+def prepare_engine_disk():
+    """The engine's fixed-size disk over /var/lib/aukora-engine (/work and the harness home)."""
+    prepare_disk(ENGINE_DISK, ENGINE_IMAGE, DISK_UNIT, "engine/aukora-engine-disk.mount", engine_disk_bytes, "aukora-engine")
+
+
+def prepare_containers_disk():
+    """containerd's root on its own fixed-size disk, so a filler in the sandbox's container layer (/sandbox, which
+    OpenShell reserves and the engine can write) runs out of blocks or inodes there, never on the host's root
+    filesystem (Codex review of node/pre-launch: empty files exhausted host inodes below any byte floor). docker and
+    containerd are stopped while it is moved in, and containerd then requires the mount."""
+    if os.path.ismount(CONTAINER_DISK):
+        return
+    run(["systemctl", "stop", "docker.socket", "docker.service", "containerd.service"])
+    prepare_disk(CONTAINER_DISK, CONTAINER_IMAGE, CONTAINER_UNIT, "engine/aukora-containerd-disk.mount",
+                 containers_disk_bytes, "aukora-containerd")
+    os.makedirs(os.path.dirname(CONTAINER_DROPIN), mode=0o755, exist_ok=True)
+    core.atomic_write(CONTAINER_DROPIN, b"# engine_install.py: containerd's root is its own fixed-size disk.\n"
+                      b"[Unit]\nRequiresMountsFor=/var/lib/containerd\n", 0o644)
+    run(["systemctl", "daemon-reload"])
+    run(["systemctl", "start", "containerd.service", "docker.service"])
 
 
 def configure_gateway_pki():
@@ -596,6 +633,7 @@ def main(argv):
     run(["systemctl", "enable", "--now", "aukora-engine-fence.service"])
     # Docker's own resolver forwards only into 192.0.2.53, which the fence drops (the DNS posture). Nothing else in
     # Docker's defaults changes: the wall test held on them.
+    prepare_containers_disk()
     os.makedirs("/etc/docker", mode=0o755, exist_ok=True)
     core.atomic_write("/etc/docker/daemon.json",
                       core.read_regular(release_file("engine/docker-daemon.json"), 4096, "engine-install"), 0o644)

@@ -69,6 +69,8 @@ RestrictNamespaces=yes MemoryDenyWriteExecute=yes PrivateNetwork=yes CapabilityB
         systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
     done
     mountpoint -q /var/lib/aukora-engine || fail var-lib-aukora-engine.mount "the engine's disk is not mounted"
+    mountpoint -q /var/lib/containerd || fail var-lib-containerd.mount "containerd's disk is not mounted"
+    systemctl is-enabled --quiet var-lib-containerd.mount || fail var-lib-containerd.mount "not enabled for the next boot"
     # A unit with no install section is "static" (and `is-enabled --quiet` succeeds for it): only "static" is right.
     for unit in aukora-engine.service aukora-engine-cleanup.service; do
         state=$(systemctl is-enabled "$unit" 2>/dev/null) || true

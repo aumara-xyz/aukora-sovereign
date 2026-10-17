@@ -609,9 +609,11 @@ which the engine names) or the cheaper per-call total only; and what the health 
 
 **P2, found live after it landed.** Two holes in the disk bound, both closed in the P2 commit:
 - `/sandbox`: OpenShell refuses a mount there, the engine can write it (uid 994, Landlock allows the workdir), and it
-  is the container's layer on the host disk. Closed by a host-disk floor (15% of the root filesystem, at least
-  8 GiB): `engine-run.sh create` refuses to start below it, and `aukora-engine-diskguard.service` (`engine-run.sh
-  watch`, one quiet loop, a check every 5 s) stops a running engine; the stop removes the sandbox and its layer. NODE: a
+  is the container's layer on the host disk. First answered by a host-disk floor (15% of the root filesystem, at
+  least 8 GiB): `engine-run.sh create` refuses to start below it, and `aukora-engine-diskguard.service` (`engine-run.sh
+  watch`, one quiet loop, a check every 5 s) stops a running engine; the stop removes the sandbox and its layer. That
+  floor counted blocks only and cannot reserve anything against a fast writer (Codex review): the bound is now
+  containerd's own disk, below ("P2c"), and the floor is the second line. NODE: a
   `dd` into `/sandbox` from inside the wall (about 43 MB/s on this disk) took the host from 31 to 11 GB free; at the
   floor the guard said `the host disk is below its floor; stopping the engine`, the stop took 56 s (docker removing a
   20 GB layer), the disk was back at 31 GB free, and the supervisor's controller started the engine again
@@ -626,3 +628,18 @@ which the engine names) or the cheaper per-call total only; and what the health 
 umask 002, at 791de25: `cargo test -p supervisor -p frontdoor -p laya -p broker -p gate -p floor` (sovereign 187 + 1
 ignored, frontdoor 5, laya 44, broker 13, gate 17, floor 7) and `tests/deploy` (11): all pass. The two later changes
 (the guard, nodiscard) are shell and installer only: `sh -n`, the deploy unit tests, and the live run above.
+
+**P2c. containerd's root is its own disk (Codex review of node/pre-launch, HIGH).** Docker 29 here runs the containerd
+image store (`docker info`: driver `overlayfs`, `io.containerd.snapshotter.v1`): the images and every container's
+writable layer, the sandbox's `/sandbox` included, live in `/var/lib/containerd`. The guard above watched blocks only,
+so empty files in `/sandbox` could exhaust the host's inodes (ext4) while bytes stayed above the floor, and the
+supervisor, the gate and the owner services would then fail with ENOSPC. Now `/var/lib/containerd` is a fixed-size
+ext4 image with its own inode table (`aukora-containerd-disk.mount`, a tenth of the root filesystem, 6..12 GiB,
+fallocated without discard; `containerd.service` `RequiresMountsFor` it; the installer moves existing content in with
+docker and containerd stopped), the pre-start refuses without it, `check-units.sh` checks it, and the guard's floor
+gains inodes (10% of the root filesystem's, at least 100,000) as its second line. NODE (7 GiB image, 458,752 inodes,
+the three images in it): from inside the wall, a node loop of empty files in `/sandbox` stopped `ENOSPC` after
+421,836 files with containerd's filesystem at 0 inodes free, while the host's root filesystem kept 10,057,942 free
+inodes (unchanged), a file could still be made in `/var/lib/aukora`, the shell's worst answer was 14 ms and the engine,
+Kira and the supervisor stayed active; a `dd` into `/sandbox` stopped at containerd's 5.2 GB with the host's free
+space unchanged (24,132 MB). Both fillers removed, the filesystem was back where it began.

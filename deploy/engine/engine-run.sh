@@ -54,29 +54,32 @@ limits() {
     [ "$ENGINE_MEMORY_MIB" -ge 1536 ] || { echo "engine-run: too little memory for the engine and its host" >&2; return 1; }
 }
 
-# The host's own disk (the root filesystem, where docker keeps the sandbox container's layer): OpenShell reserves
-# /sandbox, the engine can write there (Landlock allows the workdir) and it is not on the engine's own disk, so a filler
-# there would fill the host's. Below the floor (15% of the filesystem, at least 8 GiB) the engine does not start, and
-# the guard (aukora-engine-diskguard.service: `engine-run.sh watch`, a check every 5 s) stops a running one; stopping
-# removes the sandbox and its layer, which gives the space back. Found live on the rehearsal node (node/pre-launch).
+# The host's own disk, a second line behind the first. The sandbox's container layer (OpenShell's reserved /sandbox,
+# which the engine can write) is on containerd's own fixed-size filesystem, bytes and inodes (engine_install.py), so a
+# filler there stops at that filesystem. If anything still reaches the host's root filesystem, below its floor (15%
+# of the blocks and at least 8 GiB, 10% of the inodes and at least 100,000) the engine does not start, and the guard
+# (aukora-engine-diskguard.service: `engine-run.sh watch`, a check every 5 s) stops a running one. A polling floor
+# reserves nothing against a fast writer: the bounded filesystems are the bound, this is the alarm that acts.
 host_disk_ok() {
-    set -- $(df -Pk /var/lib/docker | awk 'NR == 2 {print $2, $4}')
-    [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+    set -- $(df -Pk / | awk 'NR == 2 {print $2, $4}') $(df -Pi / | awk 'NR == 2 {print $2, $4}')
+    [ -n "${4:-}" ] || return 1
     floor=$(($1 * 15 / 100))
     [ "$floor" -ge 8388608 ] || floor=8388608
-    [ "$2" -ge "$floor" ]
+    inodes=$(($3 / 10))
+    [ "$inodes" -ge 100000 ] || inodes=100000
+    [ "$2" -ge "$floor" ] && [ "$4" -ge "$inodes" ]
 }
 
 guard() {
     host_disk_ok && return 0
     systemctl is-active --quiet aukora-engine.service || return 0
-    echo "engine-run: the host disk is below its floor; stopping the engine (its sandbox and layer are removed)" >&2
+    echo "engine-run: the host disk is below its floor (blocks or inodes); stopping the engine" >&2
     systemctl stop --no-block aukora-engine.service
 }
 
 create() {
     limits || exit 1
-    host_disk_ok || { echo "engine-run: the host disk is below its floor (15%, at least 8 GiB free); not starting" >&2; exit 1; }
+    host_disk_ok || { echo "engine-run: the host disk is below its floor (blocks or inodes); not starting" >&2; exit 1; }
     exec /usr/local/bin/openshell sandbox create --name "$NAME" --from "$SANDBOX_IMAGE" --policy "$POLICY" \
         --driver-config-json "$MOUNTS" --no-auto-providers --no-tty \
         --cpu "${ENGINE_CPU_MILLI}m" --memory "${ENGINE_MEMORY_MIB}Mi" \
