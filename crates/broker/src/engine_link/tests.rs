@@ -304,6 +304,24 @@ async fn a_streamed_reply_with_thinking_and_a_tool_call_passes_through_unchanged
     rig.assert_no_key_anywhere();
 }
 
+/// Tool output cut in the middle of an emoji: the harness writes the half as a `\ud83d` escape, and resends it with
+/// every later call. The broker reads it as U+FFFD instead of refusing the whole session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lone_surrogate_in_the_history_is_read_as_a_replacement_character_not_refused() {
+    let rig = rig(Reply::Sse(tool_call_stream(10)), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+    let text = String::from_utf8(harness_request("deepseek-flash", 100)).unwrap();
+    let body = text.replace("a.rs", "cut \\ud83d | whole \\ud83d\\ude00 | text \\\\ud800");
+    assert!(serde_json::from_str::<serde_json::Value>(&body).is_err(), "serde_json alone refuses this body");
+    let (status, reply, _) = rig.call(body.into_bytes()).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+    let sent = rig.seen.lock().unwrap().requests[0].1.clone();
+    let sent: serde_json::Value = serde_json::from_slice(&sent).unwrap();
+    assert_eq!(
+        sent["messages"][2]["content"][0]["content"],
+        "cut \u{fffd} | whole \u{1f600} | text \\ud800\nb.rs"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nothing_is_sent_without_an_approved_key_and_budget_or_for_a_request_the_broker_does_not_forward() {
     let ok = budget(1_000_000, 200_000, 100);

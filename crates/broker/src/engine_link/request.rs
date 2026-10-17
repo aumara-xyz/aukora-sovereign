@@ -46,7 +46,15 @@ pub fn check(raw: &[u8], budget: &Budget, max_bytes: usize) -> Result<Checked, L
     if raw.len() > max_bytes {
         return Err(refuse::too_large());
     }
-    let value: Value = serde_json::from_slice(raw).map_err(|_| refuse::bad_request("request-not-json"))?;
+    let value: Value = match serde_json::from_slice(raw) {
+        Ok(value) => value,
+        // The harness's `JSON.stringify` writes a lone surrogate (tool output cut in the middle of an emoji) as an
+        // escape JavaScript reads back, and serde_json does not: without this, every later call of the session, which
+        // resends the same history, would be refused. Each such escape reads as U+FFFD, as lossy decoding would.
+        Err(_) => replace_lone_surrogates(raw)
+            .and_then(|fixed| serde_json::from_slice(&fixed).ok())
+            .ok_or_else(|| refuse::bad_request("request-not-json"))?,
+    };
     let Value::Object(mut body) = value else { return Err(refuse::bad_request("request-not-object")) };
     let mut dropped = Vec::new();
     let names: Vec<String> = body.keys().cloned().collect();
@@ -111,5 +119,79 @@ impl Checked {
     pub fn finish(mut self, max_tokens: u64) -> Result<Vec<u8>, LinkRefusal> {
         self.body.insert("max_tokens".into(), Value::from(max_tokens));
         serde_json::to_vec(&Value::Object(self.body)).map_err(|_| refuse::bad_request("request-not-json"))
+    }
+}
+
+fn hex4(raw: &[u8], at: usize) -> Option<u16> {
+    let digits = raw.get(at..at + 4)?;
+    digits.iter().all(u8::is_ascii_hexdigit).then(|| {
+        digits.iter().fold(0u16, |sum, digit| sum * 16 + (*digit as char).to_digit(16).unwrap_or(0) as u16)
+    })
+}
+
+/// A copy of `raw` in which every unpaired surrogate escape (`\uD800`..`\uDFFF` not forming a high-then-low pair)
+/// inside a string reads `\ufffd`; the same length, so every bound computed from `raw` still holds. None if there
+/// is none. Escapes are followed as a JSON string reads them (`\\u` is a backslash and a `u`, not an escape).
+fn replace_lone_surrogates(raw: &[u8]) -> Option<Vec<u8>> {
+    let mut out = raw.to_vec();
+    let (mut changed, mut in_string, mut at) = (false, false, 0);
+    while at < raw.len() {
+        match (in_string, raw[at]) {
+            (false, b'"') => in_string = true,
+            (true, b'"') => in_string = false,
+            (true, b'\\') => {
+                if raw.get(at + 1) == Some(&b'u') {
+                    if let Some(unit) = hex4(raw, at + 2) {
+                        let paired = (0xD800..0xDC00).contains(&unit)
+                            && raw.get(at + 6..at + 8) == Some(b"\\u".as_slice())
+                            && hex4(raw, at + 8).is_some_and(|low| (0xDC00..0xE000).contains(&low));
+                        if paired {
+                            at += 12;
+                            continue;
+                        }
+                        if (0xD800..0xE000).contains(&unit) {
+                            out[at + 2..at + 6].copy_from_slice(b"fffd");
+                            changed = true;
+                        }
+                        at += 6;
+                        continue;
+                    }
+                }
+                at += 2;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    changed.then_some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_lone_surrogates as fix;
+
+    #[test]
+    fn only_unpaired_surrogate_escapes_are_rewritten_and_only_inside_strings() {
+        let fixed = |text: &str| fix(text.as_bytes()).map(|bytes| String::from_utf8(bytes).unwrap());
+        assert_eq!(fixed(r#"{"a":"x\ud83dy"}"#).as_deref(), Some(r#"{"a":"x\ufffdy"}"#));
+        assert_eq!(fixed(r#"["\ude00","\uDBFF"]"#).as_deref(), Some(r#"["\ufffd","\ufffd"]"#));
+        // A pair stays a pair; a high followed by a non-low is lone; a lone one after a pair is still caught.
+        assert_eq!(fixed(r#"["\ud83d\ude00"]"#), None);
+        assert_eq!(fixed(r#"["\ud83d\u0041"]"#).as_deref(), Some(r#"["\ufffd\u0041"]"#));
+        assert_eq!(fixed(r#"["\ud83d\ude00\ude00"]"#).as_deref(), Some(r#"["\ud83d\ude00\ufffd"]"#));
+        // `\\ud800` is a backslash and the text "ud800"; an escaped quote does not end the string.
+        assert_eq!(fixed(r#"["\\ud800"]"#), None);
+        assert_eq!(fixed(r#"["\"\ud800"]"#).as_deref(), Some(r#"["\"\ufffd"]"#));
+        // Outside a string it is not an escape, and a truncated or non-hex one is left for the parser to refuse.
+        assert_eq!(fixed(r#"{"a":1} \ud800"#), None);
+        assert_eq!(fixed(r#"["\ud8"#), None);
+        assert_eq!(fixed(r#"["\uzzzz"]"#), None);
+        // The result parses, and the length is unchanged.
+        let raw = br#"{"a":"\ud800 tail"}"#;
+        assert!(serde_json::from_slice::<serde_json::Value>(raw).is_err());
+        let fixed = fix(raw).unwrap();
+        assert_eq!(fixed.len(), raw.len());
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&fixed).unwrap()["a"], "\u{fffd} tail");
     }
 }
