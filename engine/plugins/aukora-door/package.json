@@ -1,0 +1,22 @@
+{
+  "name": "@aukora/door",
+  "version": "0.1.0",
+  "description": "AUKORA door plugin for the DeepSeek Harness: the bytes that were judged are the bytes that run, and every crossing is executed by the Rust door",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24.11.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "0.2.1-alpha.5"
+  }
+}

@@ -1,0 +1,237 @@
+{
+ "domain": "aukora:door-call:v1",
+ "vectors": [
+  {
+   "name": "simple",
+   "tool": "read",
+   "args": {
+    "file_path": "notes.txt"
+   },
+   "canonical": "{\"file_path\":\"notes.txt\"}",
+   "args_canonical_b64": "eyJmaWxlX3BhdGgiOiJub3Rlcy50eHQifQ==",
+   "digest_sha256": "b8d0b8fc9a40e324e015fe2d36da0f14978c5520247d26c451e07d41a3c0abf7"
+  },
+  {
+   "name": "empty-object",
+   "tool": "todo_write",
+   "args": {},
+   "canonical": "{}",
+   "args_canonical_b64": "e30=",
+   "digest_sha256": "950bf7ee45989d0d40c2ffd3a526f2c121703a7e6c38f82c2298708b42c4e046"
+  },
+  {
+   "name": "key-order-and-nesting",
+   "tool": "edit",
+   "args": {
+    "b": 1,
+    "a": [
+     true,
+     null,
+     {
+      "z": 0,
+      "y": -5
+     }
+    ],
+    "c": ""
+   },
+   "canonical": "{\"a\":[true,null,{\"y\":-5,\"z\":0}],\"b\":1,\"c\":\"\"}",
+   "args_canonical_b64": "eyJhIjpbdHJ1ZSxudWxsLHsieSI6LTUsInoiOjB9XSwiYiI6MSwiYyI6IiJ9",
+   "digest_sha256": "ed5cbc1a2fd91e96a371981f0329ad7e9d7503a94e40de128ef1aef271c5beff"
+  },
+  {
+   "name": "utf16-key-order",
+   "tool": "write",
+   "args": {
+    "\ue000": 1,
+    "\ud800\udc00": 2,
+    "a": 3
+   },
+   "canonical": "{\"a\":3,\"\ud800\udc00\":2,\"\ue000\":1}",
+   "args_canonical_b64": "eyJhIjozLCLwkICAIjoyLCLugIAiOjF9",
+   "digest_sha256": "993c2178a1fd376bc73fcbb3a7eb891178669941962089957b242db49f735ac3"
+  },
+  {
+   "name": "escapes",
+   "tool": "bash",
+   "args": {
+    "command": "a\"b\\c\n\t\b\f\r\u0001\u001f\u007f\u2028 end"
+   },
+   "canonical": "{\"command\":\"a\\\"b\\\\c\\n\\t\\b\\f\\r\\u0001\\u001f\u007f\u2028 end\"}",
+   "args_canonical_b64": "eyJjb21tYW5kIjoiYVwiYlxcY1xuXHRcYlxmXHJcdTAwMDFcdTAwMWZ/4oCoIGVuZCJ9",
+   "digest_sha256": "98c9b71128758fd6013f5651957fcb3c1591d447bb1683a10f2aae23f4166288"
+  },
+  {
+   "name": "safe-integers",
+   "tool": "grep",
+   "args": {
+    "hi": 9007199254740991,
+    "lo": -9007199254740991,
+    "zero": 0
+   },
+   "canonical": "{\"hi\":9007199254740991,\"lo\":-9007199254740991,\"zero\":0}",
+   "args_canonical_b64": "eyJoaSI6OTAwNzE5OTI1NDc0MDk5MSwibG8iOi05MDA3MTk5MjU0NzQwOTkxLCJ6ZXJvIjowfQ==",
+   "digest_sha256": "4e1f699973f1acdf7bc42cf79485148f0598a441d498ee6c3e0ae9a8d25987cb"
+  },
+  {
+   "name": "empty-containers",
+   "tool": "glob",
+   "args": {
+    "a": [],
+    "b": {},
+    "c": [
+     [],
+     {}
+    ]
+   },
+   "canonical": "{\"a\":[],\"b\":{},\"c\":[[],{}]}",
+   "args_canonical_b64": "eyJhIjpbXSwiYiI6e30sImMiOltbXSx7fV19",
+   "digest_sha256": "8539f21a0407ff31d49c5eaf013c9e7e223efbedeaf7dfed74051ec9fd1a7d7a"
+  },
+  {
+   "name": "unicode-tool-and-text",
+   "tool": "ex\u00e9cute",
+   "args": {
+    "text": "caf\u00e9 \ud83d\ude00 \u4e2d\u6587"
+   },
+   "canonical": "{\"text\":\"caf\u00e9 \ud83d\ude00 \u4e2d\u6587\"}",
+   "args_canonical_b64": "eyJ0ZXh0IjoiY2Fmw6kg8J+YgCDkuK3mlocifQ==",
+   "digest_sha256": "5f62210796e919ab850f076151a7e44adb87d7cad9240ca6b8c3f0fa9e30807e"
+  },
+  {
+   "name": "depth-64",
+   "tool": "run_code",
+   "args": {
+    "deep": [
+     [
+      [
+       [
+        [
+         [
+          [
+           [
+            [
+             [
+              [
+               [
+                [
+                 [
+                  [
+                   [
+                    [
+                     [
+                      [
+                       [
+                        [
+                         [
+                          [
+                           [
+                            [
+                             [
+                              [
+                               [
+                                [
+                                 [
+                                  [
+                                   [
+                                    [
+                                     [
+                                      [
+                                       [
+                                        [
+                                         [
+                                          [
+                                           [
+                                            [
+                                             [
+                                              [
+                                               [
+                                                [
+                                                 [
+                                                  [
+                                                   [
+                                                    [
+                                                     [
+                                                      [
+                                                       [
+                                                        [
+                                                         [
+                                                          [
+                                                           [
+                                                            [
+                                                             [
+                                                              [
+                                                               [
+                                                                [
+                                                                 [
+                                                                  [
+                                                                   1
+                                                                  ]
+                                                                 ]
+                                                                ]
+                                                               ]
+                                                              ]
+                                                             ]
+                                                            ]
+                                                           ]
+                                                          ]
+                                                         ]
+                                                        ]
+                                                       ]
+                                                      ]
+                                                     ]
+                                                    ]
+                                                   ]
+                                                  ]
+                                                 ]
+                                                ]
+                                               ]
+                                              ]
+                                             ]
+                                            ]
+                                           ]
+                                          ]
+                                         ]
+                                        ]
+                                       ]
+                                      ]
+                                     ]
+                                    ]
+                                   ]
+                                  ]
+                                 ]
+                                ]
+                               ]
+                              ]
+                             ]
+                            ]
+                           ]
+                          ]
+                         ]
+                        ]
+                       ]
+                      ]
+                     ]
+                    ]
+                   ]
+                  ]
+                 ]
+                ]
+               ]
+              ]
+             ]
+            ]
+           ]
+          ]
+         ]
+        ]
+       ]
+      ]
+     ]
+    ]
+   },
+   "canonical": "{\"deep\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+   "args_canonical_b64": "eyJkZWVwIjpbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1sxXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dfQ==",
+   "digest_sha256": "b6ca24b3d0c0336d311873fe4f39948bf28daaf446305bd9b61167408c1bedf0"
+  }
+ ]
+}
