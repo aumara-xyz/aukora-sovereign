@@ -9,6 +9,8 @@ use base64::{
 use canon::authority::{OwnerAssertion, OwnerAuthorization, OwnerBinding, OwnerOperation};
 
 mod retained;
+#[cfg(test)]
+mod grant_link_tests;
 
 pub const COLD_PROOF_V2_SCHEMA: &str = "aukora-aura-cold-proof-v2";
 
