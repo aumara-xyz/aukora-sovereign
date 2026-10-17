@@ -27,8 +27,18 @@ use super::{FactRecorder, Owner, Pairing, Recorded};
 struct Facts(Mutex<Vec<Value>>);
 
 impl FactRecorder for Facts {
-    fn record(&self, _: &SubjectId, body: &Value) -> Result<Recorded> {
+    fn frontier(&self) -> Result<u64> {
+        Ok(41 + self.0.lock().expect("facts").len() as u64)
+    }
+
+    fn record(&self, _: &SubjectId, body: &Value, since: u64) -> Result<Recorded> {
         let mut rows = self.0.lock().expect("facts");
+        if let Some(index) = rows.iter().position(|row| row.get("receipt") == body.get("receipt")) {
+            let sequence = 42 + index as u64;
+            if sequence > since {
+                return Ok(Recorded { sequence, entry: Digest32::sha256(&rows[index].canonical_bytes()) });
+            }
+        }
         rows.push(body.clone());
         Ok(Recorded {
             sequence: 41 + rows.len() as u64,

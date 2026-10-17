@@ -67,8 +67,16 @@ pub struct Owner {
 }
 
 /// Where the node writes the one Aura fact per spent receipt.
+///
+/// The append is idempotent: the pairing store persists `frontier()` before the first
+/// append, and `record` looks, inside the same Aura transaction, for a copresence fact
+/// with the same `receipt` after that sequence before it appends. A crash after the Aura
+/// commit and before the store's acknowledgement therefore returns the existing fact.
 pub trait FactRecorder {
-    fn record(&self, subject: &SubjectId, body: &Value) -> Result<Recorded>;
+    /// Sequence of the last committed Aura record (0 for an empty ledger).
+    fn frontier(&self) -> Result<u64>;
+    /// The fact for `body.receipt` recorded after `since`, appended now if there is none.
+    fn record(&self, subject: &SubjectId, body: &Value, since: u64) -> Result<Recorded>;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -202,6 +210,7 @@ impl Pairing {
             state: "open".into(),
             verdict: None,
             fact: None,
+            aura_floor: None,
             aura_sequence: None,
             aura_entry: None,
         };
@@ -333,7 +342,18 @@ impl Pairing {
         };
         let body = canon::json::parse_strict(fact.as_bytes())?;
         let subject = SubjectId::parse(&row.subject)?;
-        match recorder.record(&subject, &body) {
+        let since = match row.aura_floor {
+            Some(floor) => floor,
+            None => match recorder.frontier() {
+                // Durable before any append, so a retry searches from the same point.
+                Ok(floor) => store.set_floor(&row.id, floor)?,
+                Err(refusal) => {
+                    eprintln!("copresence: pairing fact pending: {}:{}", refusal.organ, refusal.reason);
+                    return Ok(row);
+                }
+            },
+        };
+        match recorder.record(&subject, &body, since) {
             Ok(recorded) => {
                 store.recorded(&row.id, recorded.sequence, &recorded.entry.to_string())?;
                 store.by_id(&row.id)?.ok_or(refuse("store"))

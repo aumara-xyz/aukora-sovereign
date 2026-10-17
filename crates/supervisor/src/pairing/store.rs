@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS pairings(
   receipt TEXT CHECK(receipt IS NULL OR length(receipt)=64),
   verdict TEXT,
   fact TEXT,
+  aura_floor INTEGER CHECK(aura_floor IS NULL OR aura_floor>=0),
   aura_sequence INTEGER,
   aura_entry TEXT);
 CREATE INDEX IF NOT EXISTS pairings_subject ON pairings(subject,state);
@@ -100,14 +101,17 @@ pub(super) struct Row {
     pub state: String,
     pub verdict: Option<String>,
     pub fact: Option<String>,
+    pub aura_floor: Option<u64>,
     pub aura_sequence: Option<u64>,
     pub aura_entry: Option<String>,
 }
 
 const COLUMNS: &str = "id,subject,epoch,session,initiator_key,joiner_key,context,created_ms,expires_ms,\
-attempts,state,receipt,verdict,fact,aura_sequence,aura_entry";
+attempts,state,receipt,verdict,fact,aura_sequence,aura_entry,aura_floor";
 
-fn row(value: &rusqlite::Row<'_>) -> rusqlite::Result<(Row, i64, i64, i64, i64, Option<i64>)> {
+type Parts = (Row, i64, i64, i64, i64, Option<i64>, Option<i64>);
+
+fn row(value: &rusqlite::Row<'_>) -> rusqlite::Result<Parts> {
     Ok((
         Row {
             id: value.get(0)?,
@@ -123,6 +127,7 @@ fn row(value: &rusqlite::Row<'_>) -> rusqlite::Result<(Row, i64, i64, i64, i64, 
             state: value.get(10)?,
             verdict: value.get(12)?,
             fact: value.get(13)?,
+            aura_floor: None,
             aura_sequence: None,
             aura_entry: value.get(15)?,
         },
@@ -131,11 +136,13 @@ fn row(value: &rusqlite::Row<'_>) -> rusqlite::Result<(Row, i64, i64, i64, i64, 
         value.get(8)?,
         value.get(9)?,
         value.get(14)?,
+        value.get(16)?,
     ))
 }
 
-fn finish_row(parts: (Row, i64, i64, i64, i64, Option<i64>)) -> Result<Row> {
-    let (mut row, epoch, created, expires, attempts, sequence) = parts;
+fn finish_row(parts: Parts) -> Result<Row> {
+    let (mut row, epoch, created, expires, attempts, sequence, floor) = parts;
+    row.aura_floor = floor.map(unsigned).transpose()?;
     row.epoch = unsigned(epoch)?;
     row.created_ms = unsigned(created)?;
     row.expires_ms = unsigned(expires)?;
@@ -386,6 +393,21 @@ impl Store {
             }
         }
         transaction.commit().map_err(sql)
+    }
+
+    /// Persists the Aura sequence the fact search starts after; the first value stays.
+    pub fn set_floor(&self, id: &str, floor: u64) -> Result<u64> {
+        self.db
+            .execute(
+                "UPDATE pairings SET aura_floor=?2 WHERE id=?1 AND state='spent' AND aura_floor IS NULL",
+                params![id, ms(floor)?],
+            )
+            .map_err(sql)?;
+        let stored: Option<i64> = self
+            .db
+            .query_row("SELECT aura_floor FROM pairings WHERE id=?1", [id], |row| row.get(0))
+            .map_err(sql)?;
+        unsigned(stored.ok_or(refuse("store"))?)
     }
 
     pub fn recorded(&self, id: &str, sequence: u64, entry: &str) -> Result<()> {

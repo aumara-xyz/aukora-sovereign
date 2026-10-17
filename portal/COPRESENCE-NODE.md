@@ -113,7 +113,12 @@ One nonauthorizing `boot.facts` row per spent receipt, actor `copresence` (the s
 `aukora:copresence-pairing:v1`: `evidenceOnly`, `pairing`, `node`, `owner`, `ownerEpoch`, `context` (SHA-256 of the
 context bytes), `receipt` (verified core digest), `receiptBytes` (SHA-256), `method`, `tA`, `tB`, `devices`.
 The spend commits first, so a receipt can never be accepted twice; a crash between the spend and the fact leaves the
-fact pending and the next status read appends it.
+fact pending and the next status read appends it. The append is idempotent: before the first attempt the store
+persists the Aura frontier (`aura_floor`), and each attempt, inside one Aura transaction, first looks for a
+copresence fact with the same `receipt` after that sequence and returns it. A crash after the Aura commit and before
+the store's acknowledgement therefore never yields a second fact (tests: `a_crash_after_the_aura_commit_never_appends_
+the_fact_twice`, and `a_retried_append_returns_the_committed_fact` against a real ledger). This is a `boot.facts`
+row for now; an own Aura kind with its migration is on the open list.
 
 ## Interface for `ui/owner/pairing-port.ts`
 
@@ -135,7 +140,8 @@ export const pairingPort: PairingPort | null = createNodePairingPort();
 
 ## What ran
 
-- `cargo test -p supervisor --bin sovereign pairing`: 10 tests with real P-256 receipts (spend once, replay, wrong context,
+- `cargo test -p supervisor --bin sovereign pairing`: 13 tests (including two crash-injection tests and one against a
+  real Aura ledger); with real P-256 receipts (spend once, replay, wrong context,
   wrong node, stranger key, stale and future frames, tampered signature, attempt bound, single-use and expiring join,
   session separation, pending fact settled once, reopen).
 - `cargo test -p frontdoor --lib`: portal paths on the owner surface only; pairing routes; phone page headers.

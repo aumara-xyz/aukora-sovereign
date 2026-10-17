@@ -9,9 +9,15 @@ use std::cell::RefCell;
 
 const T0: u64 = 1_800_000_000_000;
 
+/// A ledger stand-in with the real contract: lookup after `since`, else append.
+/// `crash` makes the next append commit and then fail, as a crash before the
+/// pairing store's acknowledgement would look to the organ.
 struct Facts {
     rows: RefCell<Vec<(SubjectId, Value)>>,
     fail: std::cell::Cell<bool>,
+    crash: std::cell::Cell<bool>,
+    others: std::cell::Cell<u64>,
+    since: RefCell<Vec<u64>>,
 }
 
 impl Facts {
@@ -19,19 +25,43 @@ impl Facts {
         Self {
             rows: RefCell::new(Vec::new()),
             fail: std::cell::Cell::new(false),
+            crash: std::cell::Cell::new(false),
+            others: std::cell::Cell::new(100),
+            since: RefCell::new(Vec::new()),
         }
     }
 }
 
 impl FactRecorder for Facts {
-    fn record(&self, subject: &SubjectId, body: &Value) -> Result<Recorded> {
+    fn frontier(&self) -> Result<u64> {
         if self.fail.get() {
             return Err(refuse("aura-unavailable"));
         }
+        Ok(self.others.get() + self.rows.borrow().len() as u64)
+    }
+
+    fn record(&self, subject: &SubjectId, body: &Value, since: u64) -> Result<Recorded> {
+        if self.fail.get() {
+            return Err(refuse("aura-unavailable"));
+        }
+        self.since.borrow_mut().push(since);
         let mut rows = self.rows.borrow_mut();
+        let base = self.others.get();
+        for (index, (_, row)) in rows.iter().enumerate() {
+            let sequence = base + index as u64 + 1;
+            if sequence > since && row.get("receipt") == body.get("receipt") {
+                return Ok(Recorded {
+                    sequence,
+                    entry: Digest32::sha256(&row.canonical_bytes()),
+                });
+            }
+        }
         rows.push((*subject, body.clone()));
+        if self.crash.replace(false) {
+            return Err(refuse("crashed-after-commit"));
+        }
         Ok(Recorded {
-            sequence: 100 + rows.len() as u64,
+            sequence: base + rows.len() as u64,
             entry: Digest32::sha256(&body.canonical_bytes()),
         })
     }
@@ -372,4 +402,43 @@ fn the_store_survives_reopening_and_still_refuses_the_spent_receipt() {
     assert_eq!(reopened.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap_err().reason, "receipt-spent");
     let other_node = Pairing::open(&world._dir.0.join("pairing.sqlite3"), NodeId::from_bytes([1; 16]), "https://owner.example.org");
     assert_eq!(other_node.err().unwrap().reason, "store-node");
+}
+
+#[test]
+fn a_crash_after_the_aura_commit_never_appends_the_fact_twice() {
+    let world = world();
+    let (owner, phone) = (Device::new(1), Device::new(2));
+    let (id, _, context) = joined(&world, &owner, &phone);
+    let now = T0 + 20_000;
+    let bytes = receipt(world.node, &context, &owner, &phone, now / 1000 - 1, now / 1000);
+    // Other records land in Aura between the spend and the retries.
+    world.facts.crash.set(true);
+    let verdict = world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
+    assert!(matches!(field(&verdict, "recorded").view(), ValueView::Null));
+    assert_eq!(world.facts.rows.borrow().len(), 1);
+    // The process restarts: a new organ on the same store, then two status reads.
+    let reopened = Pairing::open(&world._dir.0.join("pairing.sqlite3"), world.node, "https://owner.example.org").unwrap();
+    for _ in 0..2 {
+        let status = reopened.owner_status(&world.owner, &id, now, &world.facts).unwrap();
+        let recorded = field(field(&status, "verdict"), "recorded");
+        assert!(matches!(field(recorded, "sequence").view(), ValueView::Integer(n) if n.get() == 101));
+    }
+    assert_eq!(world.facts.rows.borrow().len(), 1);
+    // Every search started after the frontier that was stored before the first append.
+    assert!(world.facts.since.borrow().iter().all(|since| *since == 100));
+}
+
+#[test]
+fn the_search_floor_is_stored_before_any_append_and_kept() {
+    let world = world();
+    let (owner, phone) = (Device::new(1), Device::new(2));
+    let (id, _, context) = joined(&world, &owner, &phone);
+    let now = T0 + 20_000;
+    let bytes = receipt(world.node, &context, &owner, &phone, now / 1000 - 1, now / 1000);
+    world.facts.crash.set(true);
+    world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
+    // The ledger moves on; the floor must not.
+    world.facts.others.set(100);
+    world.pairing.owner_status(&world.owner, &id, now, &world.facts).unwrap();
+    assert_eq!(*world.facts.since.borrow(), vec![100, 100]);
 }
