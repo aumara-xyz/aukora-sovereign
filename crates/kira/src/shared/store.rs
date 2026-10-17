@@ -803,7 +803,12 @@ impl SharedStore {
             .map_err(sql)?;
         for seq in seqs {
             if let Some(note) = self.load(seq)? {
-                if note.superseded_by.is_none() && !note.quarantined && may_write_slot(slot, &note.author_name, note.author_owner) {
+                // The `slot` column only finds candidates; the signed `d` tag decides, like the author and epoch.
+                if note.meta.slot.as_deref() == Some(slot)
+                    && note.superseded_by.is_none()
+                    && !note.quarantined
+                    && may_write_slot(slot, &note.author_name, note.author_owner)
+                {
                     return Ok(Some(note));
                 }
             }

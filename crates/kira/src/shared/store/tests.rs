@@ -408,6 +408,13 @@ fn slots_take_only_their_writers_and_read_the_newest_live_one() {
     s.db.execute("UPDATE agents SET owner = 0 WHERE name = 'grok'", []).unwrap();
     assert_eq!(s.slot(SELF_SLOT).unwrap().unwrap().event.id, mine.event.id);
     assert!(s.slot(RESUME_SLOT).unwrap().is_none());
+    // The `slot` column is not signed: pointing an ordinary owner note at the self file through the column alone
+    // does not make it the head, because the signed `d` tag names no slot.
+    let plain = s.append(sign(&owner, &draft("an ordinary owner note about lunch", "builders"), Review::Remembered, 7)).unwrap();
+    s.db.execute("UPDATE events SET slot = ?1 WHERE seq = ?2", params![SELF_SLOT, plain.seq]).unwrap();
+    assert_eq!(s.slot(SELF_SLOT).unwrap().unwrap().event.id, mine.event.id);
+    s.db.execute("UPDATE events SET slot = ?1 WHERE seq = ?2", params![RESUME_SLOT, plain.seq]).unwrap();
+    assert!(s.slot(RESUME_SLOT).unwrap().is_none());
 }
 
 #[test]
