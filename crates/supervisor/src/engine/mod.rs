@@ -21,6 +21,7 @@ mod access;
 pub mod closure;
 mod control;
 mod proxy;
+mod socket;
 
 use crate::host::Host;
 use canon::{Refusal, Result};
@@ -84,7 +85,12 @@ pub struct Engine {
     access: Mutex<access::Access>,
     dsh_cookie: Mutex<Option<String>>,
     status: Mutex<&'static str>,
+    /// Open WebSockets on the engine origin (each holds one).
+    sockets: Arc<tokio::sync::Semaphore>,
 }
+
+/// At most this many WebSockets are open on the engine origin at once.
+const MAX_SOCKETS: usize = 16;
 
 impl Engine {
     /// `None` when the node has no `engine-v1.json`. A present but bad file is a refusal (logged by the caller; the
@@ -97,6 +103,7 @@ impl Engine {
             access: Mutex::new(access::Access::default()),
             dsh_cookie: Mutex::new(None),
             status: Mutex::new("starting"),
+            sockets: Arc::new(tokio::sync::Semaphore::new(MAX_SOCKETS)),
         })))
     }
 

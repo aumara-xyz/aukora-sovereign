@@ -11,10 +11,14 @@
 //! - Out: the harness's status, body and headers minus every `Set-Cookie` and CORS header, plus a frame and referrer
 //!   policy: the engine's pages cannot frame or be framed, and cannot set cookies on the engine origin.
 //!
-//! Upgrades (WebSocket) are not forwarded: the web terminal is removed from the composition (NODE.md).
+//! - WebSocket: the harness client's live connection (`/api/remote.mux`, NODE.md O9) is the one upgrade forwarded,
+//!   with the same admission as a request plus an Origin that must be exactly the engine origin; the frames are
+//!   relayed and checked one by one (`socket.rs`: sizes, masking, no extensions), and the socket is closed when the
+//!   session ends (sign-out, binding, release), when the engine stops, or after a minute without a frame. Any other
+//!   upgrade (the web terminal's, which the composition removes) is refused.
 
 use super::access::{self, ENTER_PREFIX};
-use super::{refuse, Engine};
+use super::{refuse, socket, Engine};
 use crate::host::{Host, ReleaseStanding};
 use canon::Result;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -191,7 +195,7 @@ async fn harness_session(engine: &Engine) -> Result<String> {
 }
 
 /// The clock, or nothing: a clock that cannot be read refuses the request (Grok review, part 3 #3).
-fn now() -> Option<u64> {
+pub(super) fn now() -> Option<u64> {
     crate::host::now().ok().filter(|now| *now > 0)
 }
 
@@ -203,10 +207,13 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     if host_header != engine.config.host || request.headers().get_all("host").iter().count() != 1 {
         return text(StatusCode::MISDIRECTED_REQUEST, "wrong host\n");
     }
-    if request.headers().contains_key("upgrade") {
-        return text(StatusCode::NOT_IMPLEMENTED, "upgrades are not forwarded\n");
-    }
+    let upgrade = socket::asks_upgrade(request.headers());
     let Some(target) = admit_target(request.uri()) else { return text(StatusCode::NOT_FOUND, "not found\n") };
+    if upgrade {
+        if let Err(reason) = socket::admit_upgrade(request.method(), request.headers(), &target, &engine.config.host) {
+            return text(reason.status(), reason.message());
+        }
+    }
     // The browser asks for a service worker's script with `Service-Worker: script`. None is ever served here, so no
     // engine page can install one to watch the owner's navigations (and read a ticket in flight; Grok review, part 4 #1).
     if request.headers().contains_key("service-worker") {
@@ -215,7 +222,7 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     let Some(now) = now() else { return text(StatusCode::SERVICE_UNAVAILABLE, "clock unavailable\n") };
     let lifetime = engine.config.session_hours * 3_600_000;
     if let Some(ticket) = target.strip_prefix(ENTER_PREFIX) {
-        if request.method() != http::Method::GET || !top_level_navigation(request.headers()) {
+        if upgrade || request.method() != http::Method::GET || !top_level_navigation(request.headers()) {
             return text(StatusCode::FORBIDDEN, "Open the engine from your node (https://<your node>/engine/open).\n");
         }
         let redeemed = engine.access.lock().map_err(|_| refuse("engine-state")).and_then(|mut access| access.redeem(ticket, now, lifetime));
@@ -263,12 +270,96 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
             );
         }
     }
+    if upgrade {
+        let bearer = bearer.unwrap_or_default();
+        return websocket(host, engine, request, &target, grant, bearer).await;
+    }
     relay(&engine, request, &target).await
+}
+
+/// Forward an admitted WebSocket upgrade: the harness must switch protocols first (with its own cookie and the
+/// browser's key, no extension), then the browser gets the 101 and the two upgraded streams are spliced with every
+/// frame checked (`socket::splice`). The session is re-checked while the socket is open.
+async fn websocket(
+    host: Arc<Host>,
+    engine: Arc<Engine>,
+    mut request: Request<Incoming>,
+    target: &str,
+    grant: access::Grant,
+    bearer: String,
+) -> Response<Body> {
+    if !engine.is_running() {
+        return text(StatusCode::SERVICE_UNAVAILABLE, "The engine is starting or stopped. Try again in a moment.\n");
+    }
+    let Ok(slot) = engine.sockets.clone().try_acquire_owned() else {
+        return text(StatusCode::SERVICE_UNAVAILABLE, "Too many open engine connections.\n");
+    };
+    let Ok(harness) = harness_session(&engine).await else {
+        return text(StatusCode::SERVICE_UNAVAILABLE, "The engine is starting or stopped. Try again in a moment.\n");
+    };
+    let mut forward = Request::builder().method("GET").uri(target);
+    for name in FORWARD.iter().filter(|name| **name != "content-length") {
+        for value in request.headers().get_all(*name) {
+            forward = forward.header(*name, value);
+        }
+    }
+    for name in ["sec-websocket-key", "sec-websocket-version"] {
+        if let Some(value) = request.headers().get(name) {
+            forward = forward.header(name, value);
+        }
+    }
+    let Ok(forward) = forward
+        .header("host", &engine.config.host)
+        .header("cookie", &harness)
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .body::<Body>(Empty::new().map_err(|never| match never {}).boxed())
+    else {
+        return text(StatusCode::BAD_REQUEST, "\n");
+    };
+    let Ok(stream) = tokio::net::UnixStream::connect(&engine.config.web_socket).await else {
+        return text(StatusCode::BAD_GATEWAY, "The engine did not answer.\n");
+    };
+    let Ok((mut sender, connection)) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await else {
+        return text(StatusCode::BAD_GATEWAY, "The engine did not answer.\n");
+    };
+    tokio::spawn(async move {
+        let _ = connection.with_upgrades().await;
+    });
+    let reply = match tokio::time::timeout(HEADER_DEADLINE, sender.send_request(forward)).await {
+        Ok(Ok(reply)) => reply,
+        _ => return text(StatusCode::BAD_GATEWAY, "The engine did not answer.\n"),
+    };
+    if reply.status() == StatusCode::UNAUTHORIZED {
+        // A restarted harness: exchange again on the next request.
+        if let Ok(mut cookie) = engine.dsh_cookie.lock() {
+            *cookie = None;
+        }
+    }
+    let Some(accept) = socket::switched(reply.status(), reply.headers()) else {
+        return text(StatusCode::BAD_GATEWAY, "The engine refused the live connection.\n");
+    };
+    let harness_side = hyper::upgrade::on(reply);
+    let browser_side = hyper::upgrade::on(&mut request);
+    let watch = socket::Watch { host, engine: engine.clone(), grant, bearer };
+    tokio::spawn(async move {
+        let _slot = slot;
+        if let (Ok(browser), Ok(harness)) = (browser_side.await, harness_side.await) {
+            socket::splice(TokioIo::new(browser), TokioIo::new(harness), watch).await;
+        }
+    });
+    let mut response: Response<Body> = Response::new(Empty::new().map_err(|never| match never {}).boxed());
+    *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+    let headers = response.headers_mut();
+    headers.insert("upgrade", http::HeaderValue::from_static("websocket"));
+    headers.insert("connection", http::HeaderValue::from_static("Upgrade"));
+    headers.insert("sec-websocket-accept", accept);
+    response
 }
 
 /// Whether an engine session may still be served.
 #[derive(Debug, PartialEq, Eq)]
-enum Admitted {
+pub(super) enum Admitted {
     Yes,
     /// The binding changed or the owner's release approval is gone: the session ends.
     Ended,
@@ -282,7 +373,7 @@ enum Admitted {
 /// Re-checked on every request: the owner scope is still the node's binding, the shell session that minted the engine
 /// session is still live, and the running release is the one the owner approved. A floor or session store that cannot
 /// be read is tried again briefly and is never taken for an answer.
-async fn still_admitted(host: &Host, grant: &access::Grant, now: u64) -> Admitted {
+pub(super) async fn still_admitted(host: &Host, grant: &access::Grant, now: u64) -> Admitted {
     if !matches!(host.ledger.binding(), Ok(BindingState::Bound(bound)) if bound == grant.scope) {
         return Admitted::Ended;
     }
@@ -370,7 +461,8 @@ pub async fn serve(host: Arc<Host>, engine: Arc<Engine>) -> Result<()> {
             });
             let mut server = hyper::server::conn::http1::Builder::new();
             server.timer(hyper_util::rt::TokioTimer::new()).header_read_timeout(HEADER_DEADLINE).max_buf_size(64 * 1024);
-            let _ = server.serve_connection(TokioIo::new(stream), service).await;
+            // Upgrades: the one WebSocket route is answered 101 and spliced (socket.rs); the slot is held until then.
+            let _ = server.serve_connection(TokioIo::new(stream), service).with_upgrades().await;
         });
     }
 }
@@ -422,6 +514,7 @@ mod tests {
             access: std::sync::Mutex::new(access::Access::default()),
             dsh_cookie: std::sync::Mutex::new(None),
             status: std::sync::Mutex::new("running"),
+            sockets: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
