@@ -21,7 +21,7 @@ which every row answers to. AUKORA Light carries the same file.
 | M8 | Home base: a website on request; an app from the store | NOT YET |
 
 ## How it is built (Peter, 2026-10-15)
-- **Fresh, every line.** The archive and Prime are the cheat sheet; nothing is copied. Only data comes over as it is,
+- **Fresh, every line.** The archive and Prime are the cheat sheet; nothing is copied (superseded by Part 1, Peter 2026-10-16). Only data comes over as it is,
   pinned by hash in `checks/pins.json`.
 - **Code goes to main, and main is tested after it lands**: on a fresh node, then attacked by every major AI. Nothing
   goes public before it survives that.
