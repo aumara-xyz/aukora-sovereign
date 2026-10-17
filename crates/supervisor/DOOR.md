@@ -116,13 +116,22 @@ The policy file is **not** installed by default: enabling the door is the operat
 Add `"standing": {"policy_file": "/abs", "grants_file": "/abs"}` (both optional) to the door policy and a class the policy
 would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider`, applied in `src/door/standing.rs`):
 
-- Rust's floor comes from the owner's setting (`ask`, `risky` or `limits`), the live standing grants and today's counts;
+- Rust's floor comes from the owner's setting (`ask`, `risky`, `limits` or `trusted`), the live standing grants and today's counts;
   Laya's deterministic escalation can only raise it (`max(floor, laya)`); nothing in it approves. Only a "clear" runs the
   call without an owner request; everything else becomes an `ask`. `deny` stays `deny`, and the door's own checks (host
   allowlist, memory ceilings) run first, so a refused call spends nothing and is never asked about.
-- `ask`: every call asks. `risky`: net and memory (the routine classes) clear inside a live grant; every other class asks.
-  `limits`: any grantable class clears inside a live grant and today's per-class and per-grant counts, then asks again.
-  `plugin`, `persist`, `shell-interactive` and `unknown` can never be granted and ask under every setting.
+- The composer shows the setting as "Risk 1-4": `ask` (1), `risky` (2, the default and the shipped starter), `limits` (3)
+  and `trusted` (4). `ask`: every call asks. `risky`: net and memory (the routine classes) clear inside a live grant;
+  every other class asks. `limits`: any grantable class clears inside a live grant and today's per-class and per-grant
+  counts, then asks again. `trusted`: any grantable class (net, memory, mcp, delegate, fs-outside within the granted
+  prefixes) clears inside a live grant with NO daily count; the grant's own scope, its window (seven days at most) and
+  its revocation are the only bounds, and every clear is still written to `autoclear.jsonl`. `plugin`, `persist`,
+  `shell-interactive` and `unknown` can never be granted and ask under every setting, `trusted` included.
+- Moving to a higher number is a loosening. The setting lives in the slider policy file (`"setting":"trusted"`, a new
+  value there only: the permission codec `PermissionBody` and its pinned vectors keep their three spellings and refuse
+  `trusted`), which is the critical gate target `door/slider-policy.json`, so loosening takes the owner's passkey like any
+  critical change. The owner card for it is the generic content card (the old text and the new, side by side); only the
+  `door/ask-NN.json` slots get the door's ask card.
 - A grant (`laya::grant`) names one class and what inside it (hosts for `net`, `read` / `write:<lane>` for `memory`,
   servers, providers, path prefixes), a window of at most seven days and a per-day count. It is non-onward (no field
   creates or widens a grant, and the closed memory lanes cannot be named), and revoking narrows without a passkey.
@@ -131,7 +140,9 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
 - Files: root-owned, not group- or world-writable, read like the policy and re-read when they change. No policy file means
   the shipped starter (`crates/laya/data/starter-slider-v1.json`, "only risky things", pinned by sha256); a bad policy
   file means "ask for everything"; a missing or bad grants file means no grants. Counts are appended to
-  `autoclear.jsonl` (synced before the call runs; compacted to today's lines at start; past 4 MiB nothing clears).
+  `autoclear.jsonl` (synced before the call runs; compacted to today's lines at start and emptied when the UTC day turns;
+  past 4 MiB nothing clears). The slider's clock never goes backwards: an instant earlier than one already seen is read as
+  the later one, so a clock step back cannot revive an expired grant or move today's counts to yesterday.
 - Not done: the node does not yet read the grants from the applied gate target; the installer writes the two files.
 
 ## Deployment requirements (the code cannot check these)

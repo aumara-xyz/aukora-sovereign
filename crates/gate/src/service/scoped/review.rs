@@ -89,7 +89,7 @@ impl<S: TargetStore> ScopedGate<S> {
         {
             site_facts(&self.config, &proposal)?
         } else if action == OwnerOperation::Apply
-            && proposal.request.target.as_str().starts_with(crate::door::TARGET_PREFIX)
+            && proposal.request.target.as_str().starts_with(crate::door::ASK_PREFIX)
         {
             door_facts(&proposal)?
         } else if action == OwnerOperation::Apply

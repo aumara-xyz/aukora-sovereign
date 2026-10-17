@@ -54,6 +54,9 @@ struct Counts {
     usage: Usage,
     log: File,
     bytes: u64,
+    /// The latest instant the slider has seen, so a clock that steps back (or a call that sampled the time before it
+    /// waited for the lock) cannot revive an expired grant or move today's counts back a day.
+    last_ms: i64,
 }
 
 pub struct Standing {
@@ -90,6 +93,7 @@ impl Standing {
         log.read_to_string(&mut text).map_err(|_| refuse("door-state"))?;
         let today = slider::day_of(now_ms());
         let mut usage = Usage::default();
+        let mut last_ms = 0;
         let mut kept = String::new();
         for line in text.lines() {
             // A line that does not parse is dropped: it can only lose a count, which makes the door ask less often at
@@ -98,6 +102,7 @@ impl Standing {
             let (Some(at), Some(class), Some(grant)) = (event["at_ms"].as_i64(), event["class"].as_str(), event["grant"].as_str()) else { continue };
             let (Some(class), Ok(grant)) = (CrossingClass::from_wire(class), canon::digest::Digest32::from_hex(grant)) else { continue };
             if slider::day_of(at) == today {
+                last_ms = last_ms.max(at);
                 usage.record(class, grant, at);
                 kept.push_str(line);
                 kept.push('\n');
@@ -111,7 +116,7 @@ impl Standing {
             std::fs::rename(&tmp, &path).map_err(|_| refuse("door-state"))?;
             log = open_append(&path)?;
         }
-        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(Counts { usage, log, bytes: kept.len() as u64 }) })
+        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(Counts { usage, log, bytes: kept.len() as u64, last_ms }) })
     }
 
     fn load(&self, policy_stamp: Stamp, grants_stamp: Stamp) -> Loaded {
@@ -141,6 +146,13 @@ impl Standing {
     pub fn settle(&self, crossing: &Crossing, now: i64, preflight: impl FnOnce() -> std::result::Result<(), String>) -> Settled {
         let (policy, grants) = self.current();
         let mut counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = now.max(counts.last_ms);
+        counts.last_ms = now;
+        // A new day starts the log afresh: yesterday's lines are not needed and, under `trusted` (no count to run out),
+        // would only grow toward the size at which nothing clears any more.
+        if slider::day_of(now) > counts.usage.day() && counts.log.set_len(0).is_ok() {
+            counts.bytes = 0;
+        }
         let decision = slider::judge(&policy, &grants, &counts.usage, crossing, now);
         let (Floor::AutoClear, Some(grant)) = (decision.floor, decision.grant) else { return Settled::Ask };
         if let Err(code) = preflight() {
@@ -259,6 +271,107 @@ mod tests {
         drop(first);
         let again = open_standing(&dir, Some(grants), None);
         assert!(matches!(again.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn policy_file(dir: &Path, setting: SliderSetting) -> PathBuf {
+        let mut policy = slider::starter().unwrap();
+        policy.setting = setting;
+        let path = dir.join("slider.json");
+        write_private(&path, &policy.canonical_bytes().unwrap());
+        path
+    }
+
+    #[test]
+    fn trusted_clears_inside_a_live_grant_with_no_count_and_only_there() {
+        let dir = temp("trusted");
+        let (grants, id) = grant_file(&dir, CrossingClass::Memory, &["read"], 2);
+        let standing = open_standing(&dir, Some(grants.clone()), Some(policy_file(&dir, SliderSetting::Trusted)));
+        let now = now_ms();
+        // The grant says two a day; trusted does not count, so ten clear, and each is logged against the grant.
+        for _ in 0..10 {
+            assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Clear));
+        }
+        let log = std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap();
+        assert_eq!(log.lines().count(), 10);
+        assert!(log.lines().all(|line| line.contains(&id.to_string())));
+        // No grant for the lane: the setting grants nothing by itself.
+        assert!(matches!(standing.settle(&Crossing::new(CrossingClass::Memory, "write:notes"), now, || Ok(())), Settled::Ask));
+        // The same grant under "limits" runs out after two.
+        let limits = temp("trusted-control");
+        let (grants, _) = grant_file(&limits, CrossingClass::Memory, &["read"], 2);
+        let control = open_standing(&limits, Some(grants), Some(policy_file(&limits, SliderSetting::WithinTodayLimits)));
+        let results: Vec<_> = (0..4).map(|_| matches!(control.settle(&read_crossing(), now, || Ok(())), Settled::Clear)).collect();
+        assert_eq!(results, [true, true, false, false]);
+        // Plugin crossings never clear, under trusted either.
+        assert!(matches!(standing.settle(&Crossing::new(CrossingClass::Plugin, "x@y"), now, || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(limits);
+    }
+
+    #[test]
+    fn a_trusted_clear_still_stops_when_the_grant_is_revoked_or_the_door_would_refuse() {
+        let dir = temp("trusted-stop");
+        let (grants, id) = grant_file(&dir, CrossingClass::Memory, &["read"], 1);
+        let standing = open_standing(&dir, Some(grants.clone()), Some(policy_file(&dir, SliderSetting::Trusted)));
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Err("lane-closed".to_owned())), Settled::Refuse(_)));
+        assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap(), "");
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Clear));
+        let mut set = GrantSet::parse(&std::fs::read(&grants).unwrap()).unwrap();
+        assert!(set.revoke(id));
+        std::fs::remove_file(&grants).unwrap();
+        write_private(&grants, &set.canonical_bytes().unwrap());
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_clock_that_steps_back_cannot_revive_an_expired_grant_or_reset_the_day() {
+        let dir = temp("clock");
+        let now = now_ms();
+        // A grant that expires one minute from now.
+        let grant = DoorGrant {
+            class: CrossingClass::Memory,
+            scope: vec!["read".to_owned()],
+            per_day: 5,
+            not_before: now - 1_000,
+            expires_at: now + 60_000,
+            nonce: canon::ids::ProposalId::from_bytes([9; 16]),
+        };
+        let path = dir.join("grants.json");
+        write_private(&path, &GrantSet::default().with_grant(grant).unwrap().canonical_bytes().unwrap());
+        let standing = open_standing(&dir, Some(path), Some(policy_file(&dir, SliderSetting::Trusted)));
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Clear));
+        // Past the expiry, nothing clears; stepping the clock back to before it changes nothing.
+        assert!(matches!(standing.settle(&read_crossing(), now + 120_000, || Ok(())), Settled::Ask));
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_new_day_starts_the_log_afresh() {
+        let dir = temp("newday");
+        // Fixed times, so the day turn is certain: day 40 at one second past midnight, and a grant live for three days.
+        let day = |n: i64| n * DAY_MS + 1_000;
+        let grant = DoorGrant {
+            class: CrossingClass::Memory,
+            scope: vec!["read".to_owned()],
+            per_day: 5,
+            not_before: day(40) - 1_000,
+            expires_at: day(40) + 3 * DAY_MS,
+            nonce: canon::ids::ProposalId::from_bytes([9; 16]),
+        };
+        let path = dir.join("grants.json");
+        write_private(&path, &GrantSet::default().with_grant(grant).unwrap().canonical_bytes().unwrap());
+        let standing = open_standing(&dir, Some(path), Some(policy_file(&dir, SliderSetting::Trusted)));
+        for _ in 0..3 {
+            assert!(matches!(standing.settle(&read_crossing(), day(40), || Ok(())), Settled::Clear));
+        }
+        assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap().lines().count(), 3);
+        // Tomorrow the grant is still live and the log holds only tomorrow's line.
+        assert!(matches!(standing.settle(&read_crossing(), day(41), || Ok(())), Settled::Clear));
+        let log = std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap();
+        assert_eq!(log.lines().count(), 1, "{log}");
         let _ = std::fs::remove_dir_all(dir);
     }
 

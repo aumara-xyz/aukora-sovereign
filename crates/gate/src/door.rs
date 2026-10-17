@@ -12,6 +12,9 @@ use canon::Result;
 
 /// Targets under this prefix belong to the door; the guest can neither propose to them nor rename them.
 pub const TARGET_PREFIX: &str = "door/";
+/// The door's ask slots (`door/ask-NN.json`) hold ask records and get the ask card. The other `door/` targets (the
+/// slider policy, the standing grants) are ordinary critical content proposals and get the generic content card.
+pub const ASK_PREFIX: &str = "door/ask-";
 /// The `kind` member of every record.
 pub const KIND: &str = "aukora-door-ask-v1";
 /// A record is refused above this size, so it always fits the target's `max_bytes` (16,384 as installed).
@@ -174,7 +177,7 @@ mod tests {
     #[test]
     fn the_installed_ask_slots_are_valid_target_names() {
         for slot in 0..8 {
-            let name = format!("{TARGET_PREFIX}ask-{slot:02}.json");
+            let name = format!("{ASK_PREFIX}{slot:02}.json");
             assert_eq!(crate::target::TargetId::new(name.clone()).unwrap().as_str(), name);
         }
     }

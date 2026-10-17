@@ -581,3 +581,50 @@ fn a_whoami_that_does_not_say_plainly_who_the_token_is_stops_the_call() {
     assert_eq!(stub.join().unwrap().len(), 2);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn under_trusted_a_granted_memory_read_runs_every_time_with_no_owner_request() {
+    use laya::grant::{DoorGrant, GrantSet, DAY_MS};
+    use laya::{slider, CrossingClass, SliderSetting};
+    let dir = temp("trusted-door");
+    let write_private = |path: &Path, bytes: &[u8]| {
+        std::fs::write(path, bytes).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    let now = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()).unwrap();
+    let grant = DoorGrant {
+        class: CrossingClass::Memory,
+        scope: vec!["read".to_owned()],
+        per_day: 1,
+        not_before: now - 1_000,
+        expires_at: now + DAY_MS,
+        nonce: canon::ids::ProposalId::from_bytes([4; 16]),
+    };
+    let grants = dir.join("grants.json");
+    write_private(&grants, &GrantSet::default().with_grant(grant).unwrap().canonical_bytes().unwrap());
+    let mut slider_policy = slider::starter().unwrap();
+    slider_policy.setting = SliderSetting::Trusted;
+    let slider_file = dir.join("slider.json");
+    write_private(&slider_file, &slider_policy.canonical_bytes().unwrap());
+    let token = dir.join("door.token");
+    write_private(&token, b"door-token\n");
+    let extra = format!(
+        ",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}},\"standing\":{{\"policy_file\":\"{}\",\"grants_file\":\"{}\"}}",
+        dir.join("kira.sock").display(),
+        token.display(),
+        slider_file.display(),
+        grants.display()
+    );
+    let text = policy_text(&dir.join("state"), "{\"mode\":\"peercred\",\"uids\":[1001]}", "\"memory\":\"allow\"", &extra);
+    let stub = kira_stub(&dir, vec![agent(), found(), found(), found()]);
+    let door = Door::open(Policy::parse(&text).unwrap()).unwrap();
+    // The grant says one a day; trusted does not count. Three reads, three runs, no owner request.
+    for id in ["t-1", "t-2", "t-3"] {
+        assert!(matches!(call(&door, id, "kira_recall", RECALL, "memory"), Decision::Allow { .. }), "{id}");
+    }
+    // A write lane no grant names still asks.
+    let write = "{\"capture\":\"model-generated\",\"form\":\"fact\",\"lane\":\"notes\",\"privacy\":\"builders\",\"scope\":\"auma\",\"subject\":\"s\",\"text\":\"x\"}";
+    assert_eq!(ask_code(&call(&door, "t-4", "kira_remember", write, "memory")), "ask-memory");
+    assert_eq!(stub.join().unwrap().len(), 4);
+    let _ = std::fs::remove_dir_all(dir);
+}

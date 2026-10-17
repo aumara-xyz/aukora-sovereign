@@ -150,8 +150,9 @@ impl GateAdapter {
         note: String,
         bytes: Vec<u8>,
     ) -> ServiceFuture<'_, ProposalId> {
-        // Only a door target, and only a record the gate itself can read back (shape and call digest).
-        if !target.starts_with(gate::door::TARGET_PREFIX) {
+        // Only an ask slot, and only a record the gate itself can read back (shape and call digest). The slider policy
+        // and the standing grants are proposed by the owner path, not here.
+        if !target.starts_with(gate::door::ASK_PREFIX) {
             return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
         }
         if let Err(refusal) = gate::door::read(&bytes) {

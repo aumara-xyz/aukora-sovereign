@@ -34,9 +34,13 @@ pub enum SliderSetting {
     AskEverything,
     AskRisky,
     WithinTodayLimits,
+    /// "Risk 4": a live standing grant clears any grantable crossing with no daily count. The grant itself (its scope,
+    /// its window of at most seven days, its revocation) is the only bound, and the never-standing classes still ask.
+    Trusted,
 }
 
 impl SliderSetting {
+    /// The three spellings of the pinned permission codec (`PermissionBody`, Row 36); `trusted` is not one of them.
     pub fn from_wire(value: &str) -> Result<Self> {
         match value {
             "ask" => Ok(Self::AskEverything),
@@ -46,22 +50,38 @@ impl SliderSetting {
         }
     }
 
+    /// The four spellings of the slider policy file (`SliderPolicy`): the three above and `trusted`. The permission
+    /// codec and its pinned vectors keep their three; the new value exists in the slider policy file only.
+    pub fn from_policy_wire(value: &str) -> Result<Self> {
+        match value {
+            "trusted" => Ok(Self::Trusted),
+            _ => Self::from_wire(value),
+        }
+    }
+
     pub const fn wire_name(self) -> &'static str {
         match self {
             Self::AskEverything => "ask",
             Self::AskRisky => "risky",
             Self::WithinTodayLimits => "limits",
+            Self::Trusted => "trusted",
         }
     }
 
     /// Whether this setting lets a crossing of this risk clear without asking, given a live grant for it. `ask`
     /// clears nothing; `risky` clears routine crossings only; `limits` clears any grantable crossing (the grant and
-    /// today's counts still bound it). A setting never grants anything by itself.
+    /// today's counts still bound it); `trusted` clears any grantable crossing too, with no count. A setting never
+    /// grants anything by itself.
     pub const fn clears(self, risk: Risk) -> bool {
         match (self, risk) {
             (Self::AskEverything, _) | (Self::AskRisky, Risk::Risky) => false,
-            (Self::AskRisky, Risk::Routine) | (Self::WithinTodayLimits, _) => true,
+            (Self::AskRisky, Risk::Routine) | (Self::WithinTodayLimits | Self::Trusted, _) => true,
         }
+    }
+
+    /// Whether today's counts bound the crossings this setting clears.
+    pub const fn counts(self) -> bool {
+        !matches!(self, Self::Trusted)
     }
 
     /// A setting change cannot authorize any effect; loosening requires C5.
@@ -74,6 +94,7 @@ impl SliderSetting {
             Self::AskEverything => 0,
             Self::AskRisky => 1,
             Self::WithinTodayLimits => 2,
+            Self::Trusted => 3,
         }
     }
 }
@@ -366,6 +387,19 @@ mod tests {
             consumed_count: if ask { 0 } else { 2 },
             revoked: false,
         }
+    }
+
+    #[test]
+    fn the_permission_codec_keeps_its_three_settings_and_refuses_trusted() {
+        let bytes = |mode: &str| format!("{{\"expires_at\":2000,\"kinds\":[\"put\"],\"max_count\":1,\"mode\":\"{mode}\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"targets\":[\"theme.json\"],\"v\":1}}");
+        assert!(PermissionBody::parse(bytes("limits").as_bytes()).is_ok());
+        assert_eq!(PermissionBody::parse(bytes("trusted").as_bytes()).unwrap_err().reason, "unknown-setting");
+        // Nor can a body carry it when built in code.
+        let mut body = PermissionBody::parse(bytes("limits").as_bytes()).unwrap();
+        body.mode = SliderSetting::Trusted;
+        assert!(body.canonical_bytes().is_err());
+        assert_eq!(SliderSetting::from_policy_wire("trusted").unwrap(), SliderSetting::Trusted);
+        assert_eq!(SliderSetting::from_wire("trusted").unwrap_err().reason, "unknown-setting");
     }
 
     #[test]

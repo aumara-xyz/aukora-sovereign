@@ -252,7 +252,7 @@ impl Approver for GateApprover {
         let note = note(ask);
         for attempt in 0..2 {
             for slot in 0..TARGET_POOL {
-                let target = format!("{}ask-{slot:02}.json", gate::door::TARGET_PREFIX);
+                let target = format!("{}{slot:02}.json", gate::door::ASK_PREFIX);
                 match block_on(self.gate.propose_door(scope, target, note.clone(), bytes.clone())) {
                     Ok(id) => return Ok(id.to_string()),
                     // Not in the inventory: the node was installed without the door's targets.

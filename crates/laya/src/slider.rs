@@ -2,13 +2,18 @@
 //! The slider for the door's crossings: Rust computes a floor from the owner's setting, grants and today's counts;
 //! Laya's escalation can only raise it (`max(floor, laya)`); nothing here approves anything.
 //!
-//! The three settings are distinct:
-//! - `ask`: every crossing asks, whatever grants exist.
-//! - `risky`: only risky classes ask. A routine class clears only inside a live standing grant (and its counts).
-//! - `limits`: any grantable class clears inside a live grant and today's counts, risky ones included; once a
+//! The four settings (the composer's "Risk 1-4") are distinct:
+//! - `ask` (1): every crossing asks, whatever grants exist.
+//! - `risky` (2, the default): only risky classes ask. A routine class clears only inside a live standing grant (and
+//!   its counts).
+//! - `limits` (3): any grantable class clears inside a live grant and today's counts, risky ones included; once a
 //!   count is spent, the crossing asks again.
+//! - `trusted` (4): any grantable class clears inside a live grant with NO count. The grant's own scope, its window
+//!   (seven days at most) and its revocation are the bounds, and a grant exists only because the owner's passkey
+//!   approved it.
 //!
 //! A class that cannot be granted (`plugin`, `persist`, `shell-interactive`, `unknown`) asks under every setting.
+//! Moving to a higher number is a loosening and takes the owner's passkey; Laya can only raise the floor.
 
 use std::collections::BTreeMap;
 
@@ -99,7 +104,8 @@ impl SliderPolicy {
         }
     }
 
-    /// `{"classes":[{"class":..,"per_day":..,"risk":..}],"setting":"ask|risky|limits","v":1}`, classes in name order.
+    /// `{"classes":[{"class":..,"per_day":..,"risk":..}],"setting":"ask|risky|limits|trusted","v":1}`, classes in name
+    /// order.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
         let bad = || refuse("policy-schema");
@@ -139,7 +145,7 @@ impl SliderPolicy {
                 },
             });
         }
-        let policy = Self { setting: SliderSetting::from_wire(text(&value, "setting").ok_or_else(schema)?)?, classes };
+        let policy = Self { setting: SliderSetting::from_policy_wire(text(&value, "setting").ok_or_else(schema)?)?, classes };
         policy.validate()?;
         Ok(policy)
     }
@@ -180,6 +186,11 @@ pub fn day_of(now_ms: i64) -> i64 {
 }
 
 impl Usage {
+    /// The UTC day these counts are for (0 before anything was recorded).
+    pub fn day(&self) -> i64 {
+        self.day
+    }
+
     fn today(&self, now_ms: i64) -> bool {
         self.day == day_of(now_ms)
     }
@@ -206,8 +217,8 @@ impl Usage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decision {
     pub floor: Floor,
-    /// Why, in a word the door can log: `clear`, `ask-everything`, `never-standing`, `risky-class`, `class-cap`,
-    /// `no-grant`, `grant-exhausted`, `clock`, `laya`.
+    /// Why, in a word the door can log: `clear`, `clear-trusted`, `ask-everything`, `never-standing`, `risky-class`,
+    /// `class-cap`, `no-grant`, `grant-exhausted`, `clock`, `laya`.
     pub reason: &'static str,
     /// The grant to count the crossing against, when it auto-clears.
     pub grant: Option<Digest32>,
@@ -242,6 +253,13 @@ pub fn decide(policy: &SliderPolicy, grants: &GrantSet, usage: &Usage, crossing:
     let rule = policy.rule(class);
     if !policy.setting.clears(rule.risk.max(class.risk())) {
         return Decision::ask("risky-class");
+    }
+    if !policy.setting.counts() {
+        // Trusted: the live grant that covers this crossing clears it, whatever has been cleared today.
+        return match grants.matching(crossing, now_ms).next() {
+            Some((id, _)) => Decision { floor: Floor::AutoClear, reason: "clear-trusted", grant: Some(id) },
+            None => Decision::ask("no-grant"),
+        };
     }
     if rule.per_day == 0 || usage.class_used(class, now_ms) >= rule.per_day {
         return Decision::ask("class-cap");
@@ -357,17 +375,83 @@ mod tests {
     }
 
     #[test]
-    fn the_three_settings_really_differ_on_the_same_crossing() {
+    fn the_settings_really_differ_on_the_same_crossings() {
         let (g, u) = (grants(), Usage::default());
         let mcp = Crossing::new(CrossingClass::Mcp, "github");
-        let floors: Vec<_> = [SliderSetting::AskEverything, SliderSetting::AskRisky, SliderSetting::WithinTodayLimits]
+        let floors: Vec<_> = [SliderSetting::AskEverything, SliderSetting::AskRisky, SliderSetting::WithinTodayLimits, SliderSetting::Trusted]
             .into_iter()
             .map(|setting| (judge(&policy(setting), &g, &u, &net(), NOW).floor, judge(&policy(setting), &g, &u, &mcp, NOW).floor))
             .collect();
         assert_eq!(
             floors,
-            [(Floor::Ask, Floor::Ask), (Floor::AutoClear, Floor::Ask), (Floor::AutoClear, Floor::AutoClear)]
+            [(Floor::Ask, Floor::Ask), (Floor::AutoClear, Floor::Ask), (Floor::AutoClear, Floor::AutoClear), (Floor::AutoClear, Floor::AutoClear)]
         );
+    }
+
+    #[test]
+    fn trusted_clears_inside_a_live_grant_with_no_count_and_limits_does_not() {
+        let g = grants();
+        let net_grant = g.matching(&net(), NOW).next().unwrap().0;
+        let mut usage = Usage::default();
+        // Far past the grant's own two and the class's own cap: thirty clears in a day.
+        for _ in 0..30 {
+            usage.record(CrossingClass::Net, net_grant, NOW);
+        }
+        let limits = judge(&policy(SliderSetting::WithinTodayLimits), &g, &usage, &net(), NOW);
+        assert_eq!((limits.floor, limits.reason), (Floor::Ask, "grant-exhausted"));
+        let trusted = judge(&policy(SliderSetting::Trusted), &g, &usage, &net(), NOW);
+        assert_eq!((trusted.floor, trusted.reason), (Floor::AutoClear, "clear-trusted"));
+        assert_eq!(trusted.grant, Some(net_grant));
+        // A risky class whose policy cap is zero (the starter's) clears too: under trusted the count is not asked.
+        let mut p = starter().unwrap();
+        p.setting = SliderSetting::Trusted;
+        assert_eq!(p.rule(CrossingClass::Mcp).per_day, 0);
+        let mcp = judge(&p, &g, &Usage::default(), &Crossing::new(CrossingClass::Mcp, "github"), NOW);
+        assert_eq!((mcp.floor, mcp.reason), (Floor::AutoClear, "clear-trusted"));
+    }
+
+    #[test]
+    fn trusted_still_needs_a_live_grant_that_covers_the_crossing() {
+        let p = policy(SliderSetting::Trusted);
+        let (g, u) = (grants(), Usage::default());
+        // No grant for the host, the lane or the server; a grant for another class never covers.
+        assert_eq!(judge(&p, &g, &u, &Crossing::new(CrossingClass::Net, "crates.io"), NOW).reason, "no-grant");
+        assert_eq!(judge(&p, &g, &u, &Crossing::new(CrossingClass::Memory, "write:other"), NOW).reason, "no-grant");
+        assert_eq!(judge(&p, &g, &u, &Crossing::new(CrossingClass::Delegate, "docs.rs"), NOW).reason, "no-grant");
+        // Not yet live, expired, revoked: nothing.
+        assert_eq!(judge(&p, &g, &u, &net(), NOW - 2_000).reason, "no-grant");
+        assert_eq!(judge(&p, &g, &u, &net(), NOW + 4 * DAY_MS).reason, "no-grant");
+        let mut revoked = grants();
+        let id = revoked.grants()[0].id().unwrap();
+        assert!(revoked.revoke(id));
+        assert_eq!(judge(&p, &revoked, &u, &net(), NOW).reason, "no-grant");
+        // No grants at all: trusted is not a grant.
+        assert_eq!(judge(&p, &GrantSet::default(), &u, &net(), NOW).reason, "no-grant");
+        assert_eq!(judge(&p, &g, &u, &net(), -1).reason, "clock");
+        // Laya still raises a trusted clear to an ask.
+        let look_alike = GrantSet::default().with_grant(grant(CrossingClass::Net, &["xn--e1afmkfd.example.org"], 5)).unwrap();
+        let crossing = Crossing::new(CrossingClass::Net, "xn--e1afmkfd.example.org");
+        assert_eq!(decide(&p, &look_alike, &u, &crossing, NOW).floor, Floor::AutoClear);
+        assert_eq!(judge(&p, &look_alike, &u, &crossing, NOW).reason, "laya");
+    }
+
+    #[test]
+    fn the_four_settings_are_ordered_by_what_they_loosen() {
+        let order = [SliderSetting::AskEverything, SliderSetting::AskRisky, SliderSetting::WithinTodayLimits, SliderSetting::Trusted];
+        for (i, setting) in order.iter().enumerate() {
+            for (j, previous) in order.iter().enumerate() {
+                assert_eq!(setting.loosens(*previous), i > j, "{} after {}", setting.wire_name(), previous.wire_name());
+            }
+        }
+        // The policy file carries "trusted" and round-trips it; a pinned-codec spelling that is not a setting still fails.
+        let mut p = starter().unwrap();
+        p.setting = SliderSetting::Trusted;
+        let bytes = p.canonical_bytes().unwrap();
+        assert!(String::from_utf8(bytes.clone()).unwrap().contains("\"setting\":\"trusted\""));
+        assert_eq!(SliderPolicy::parse(&bytes).unwrap(), p);
+        assert!(p.loosens(SliderSetting::WithinTodayLimits) && !p.loosens(SliderSetting::Trusted));
+        let text = String::from_utf8(STARTER_BYTES.to_vec()).unwrap();
+        assert!(SliderPolicy::parse(text.replace("\"setting\":\"risky\"", "\"setting\":\"Trusted\"").as_bytes()).is_err());
     }
 
     #[test]
@@ -390,7 +474,7 @@ mod tests {
 
     #[test]
     fn classes_that_cannot_be_granted_ask_under_every_setting() {
-        for setting in [SliderSetting::AskEverything, SliderSetting::AskRisky, SliderSetting::WithinTodayLimits] {
+        for setting in [SliderSetting::AskEverything, SliderSetting::AskRisky, SliderSetting::WithinTodayLimits, SliderSetting::Trusted] {
             for class in [CrossingClass::Plugin, CrossingClass::Persist, CrossingClass::ShellInteractive, CrossingClass::Unknown] {
                 let d = judge(&policy(setting), &grants(), &Usage::default(), &Crossing::new(class, "x"), NOW);
                 assert_eq!(d.floor, Floor::Ask, "{} {}", setting.wire_name(), class.wire_name());
