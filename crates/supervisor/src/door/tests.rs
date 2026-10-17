@@ -5,10 +5,13 @@ use super::wire::test_line as line;
 use super::*;
 use std::io::BufRead;
 
+/// A private (0700) folder whatever the umask: the door rightly refuses a socket folder others can write, and a
+/// group-writable umask (002, as on the Linux test VM) made three start tests fail there and one hang.
 fn temp(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("aukora-door-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     dir
 }
 
@@ -339,20 +342,31 @@ fn found() -> serde_json::Value {
 
 /// A stand-in for the Kira service: it answers the connections that come, one scripted reply each, and yields the
 /// request lines it saw. The door asks `whoami` before its first memory call, so a script starts with `agent()`.
+/// A Kira stand-in answering `replies` in order. It waits at most 10 s for each caller and then returns what it got,
+/// so a door that never asks (a refused start) fails the test's assertions instead of hanging it.
 fn kira_stub(dir: &Path, replies: Vec<serde_json::Value>) -> std::thread::JoinHandle<Vec<String>> {
     let listener = UnixListener::bind(dir.join("kira.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
     std::thread::spawn(move || {
-        replies
-            .into_iter()
-            .map(|reply| {
-                let (stream, _) = listener.accept().unwrap();
-                let mut text = String::new();
-                std::io::BufReader::new(stream.try_clone().unwrap()).read_line(&mut text).unwrap();
-                let mut stream = stream;
-                writeln!(stream, "{reply}").unwrap();
-                text
-            })
-            .collect()
+        let mut lines = Vec::new();
+        for reply in replies {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break Some(stream),
+                    Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                    Err(_) => break None,
+                }
+            };
+            let Some(stream) = stream else { break };
+            stream.set_nonblocking(false).unwrap();
+            let mut text = String::new();
+            std::io::BufReader::new(stream.try_clone().unwrap()).read_line(&mut text).unwrap();
+            let mut stream = stream;
+            writeln!(stream, "{reply}").unwrap();
+            lines.push(text);
+        }
+        lines
     })
 }
 
