@@ -15,7 +15,7 @@ fn tools(owner: bool) -> Value {
     let capture = if owner {
         json!({"type": "string", "enum": ["owner-typed", "owner-signed", "tool-observed", "web-derived", "model-generated"], "description": "How you came to know it. Only owner-typed or owner-signed notes can be a decision, charter, ruling, self or resume."})
     } else {
-        json!({"type": "string", "enum": ["tool-observed", "web-derived", "model-generated"], "description": "How you came to know it. tool-observed stands only with at least one source id; anything else is filed as model-generated. Decisions, charters, rulings, self and resume are the owner's only."})
+        json!({"type": "string", "enum": ["web-derived", "model-generated"], "description": "How you came to know it: web-derived if any of it came from the web, else model-generated. A note citing a web-derived note is web-derived. Decisions, charters, rulings, self and resume are the owner's only."})
     };
     let mut remember = json!({
             "text": text("The statement to remember: one fact, observation or decision, in plain words."),
@@ -190,7 +190,7 @@ mod tests {
             assert_eq!(names, TOOLS[..5]);
             let remember = &tools[0]["inputSchema"]["properties"];
             assert!(remember.get("owner_signed").is_none());
-            assert_eq!(remember["capture"]["enum"], json!(["tool-observed", "web-derived", "model-generated"]));
+            assert_eq!(remember["capture"]["enum"], json!(["web-derived", "model-generated"]));
         }
         let owner = list(Ok(json!({"owner": true})));
         assert_eq!(owner.as_array().unwrap().len(), 6);

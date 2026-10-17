@@ -34,7 +34,7 @@ fn call(state: &Mutex<State>, token: &str, method: &str, params: Value) -> Value
 
 fn note(text: &str, privacy: &str) -> Value {
     json!({"text": text, "subject": "test", "scope": "builders", "lane": "evidence", "form": "fact",
-           "privacy": privacy, "capture": "tool-observed"})
+           "privacy": privacy, "capture": "model-generated"})
 }
 
 #[test]
@@ -185,17 +185,34 @@ fn local_notes_are_withheld_from_non_owners() {
 }
 
 #[test]
-fn agent_captures_are_clamped_and_commitments_are_the_owners() {
+fn agent_captures_never_rise_and_commitments_are_the_owners() {
     let f = fixture();
     let (owner, claude) = (f.owner.clone(), f.claude.clone());
     let plain = call(&f.state, &claude, "remember", note("the kettle was descaled", "builders"));
     assert_eq!(plain["result"]["capture"], "model-generated", "{plain}");
-    let mut sourced = note("the kettle was descaled on Sunday", "builders");
-    sourced["sources"] = json!([plain["result"]["id"]]);
-    assert_eq!(call(&f.state, &claude, "remember", sourced)["result"]["capture"], "tool-observed");
+    let plain_id = plain["result"]["id"].clone();
+    // tool-observed needs a receipt the service can verify, and there is none: refused, with or without sources.
+    let mut observed = note("the kettle was descaled on Sunday", "builders");
+    observed["capture"] = json!("tool-observed");
+    assert_eq!(call(&f.state, &claude, "remember", observed.clone())["error"], "kira:capture-unverified");
+    observed["sources"] = json!([plain_id]);
+    assert_eq!(call(&f.state, &claude, "remember", observed)["error"], "kira:capture-unverified");
+    // web-derived is kept as claimed (it used to be filed as model-generated, a rise in trust).
     let mut web = note("the kettle manual says monthly", "builders");
     web["capture"] = json!("web-derived");
-    assert_eq!(call(&f.state, &claude, "remember", web)["result"]["capture"], "model-generated");
+    let web = call(&f.state, &claude, "remember", web);
+    assert_eq!(web["result"]["capture"], "web-derived", "{web}");
+    // Citing a web-derived note makes a model-generated one web-derived; citing a model-generated note changes nothing.
+    let mut derived = note("so we descale monthly", "builders");
+    derived["sources"] = json!([web["result"]["id"], plain_id]);
+    assert_eq!(call(&f.state, &claude, "remember", derived)["result"]["capture"], "web-derived");
+    let mut cites_plain = note("descaled twice now", "builders");
+    cites_plain["sources"] = json!([plain_id]);
+    assert_eq!(call(&f.state, &claude, "remember", cites_plain)["result"]["capture"], "model-generated");
+    // The owner's channel keeps its claim.
+    let mut owner_observed = note("the owner saw the kettle descaled", "builders");
+    owner_observed["capture"] = json!("tool-observed");
+    assert_eq!(call(&f.state, &owner, "remember", owner_observed)["result"]["capture"], "tool-observed");
     let mut decision = note("we descale the kettle monthly", "builders");
     decision["lane"] = json!("decision");
     assert_eq!(call(&f.state, &claude, "remember", decision.clone())["error"], "kira:note-capture-lane");
@@ -328,4 +345,98 @@ fn get_reads_a_slot_by_name_with_the_same_read_checks() {
     for id in ["aukora:other", "self:auma", "resume:", "resume:../keys", "AUKORA:SELF"] {
         assert_eq!(call(&f.state, &grok, "get", json!({"id": id}))["error"], "kira:id-invalid", "{id}");
     }
+}
+
+/// A recall gathered under the lock, then (as if while the models ran) the store changes, then the answer is read.
+fn recall_across(f: &Fixture, token: &str, query: &str, between: impl FnOnce()) -> Result<Value> {
+    let caller = lock(&f.state).caller(token).unwrap();
+    let (prepared, _) = recall_gather(&f.state, &caller, parse(json!({"query": query})).unwrap()).unwrap();
+    between();
+    let outcome = prepared.finish(None);
+    recall_answer(&f.state, &caller, &outcome)
+}
+
+#[test]
+fn a_note_that_dies_while_recall_runs_its_models_is_not_returned() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let figurine = call(&f.state, &claude, "remember", note("The figurine is on the left shelf", "builders"));
+    let figurine = figurine["result"]["id"].as_str().unwrap().to_owned();
+    // Nothing changes: found, with the note.
+    let quiet = recall_across(&f, &grok, "where is the figurine", || {}).unwrap();
+    assert_eq!(quiet["status"], "found", "{quiet}");
+    // Superseded in between: not returned as memory, and the answer is not "found".
+    let superseded = recall_across(&f, &grok, "where is the figurine", || {
+        assert_eq!(call(&f.state, &claude, "supersede", json!({"target": figurine}))["ok"], true);
+    })
+    .unwrap();
+    assert!(superseded["items"].as_array().unwrap().iter().all(|i| i["id"] != figurine.as_str()), "{superseded}");
+    assert_eq!((superseded["status"].clone(), superseded["reason"].clone()), (json!("undetermined"), json!("note-changed")));
+    // Its author quarantined in between: no text, not even a stub of it as live memory.
+    let kettle = call(&f.state, &grok, "remember", note("The kettle lives on the top shelf", "builders"));
+    let kettle = kettle["result"]["id"].as_str().unwrap().to_owned();
+    let grok_key = lock(&f.state).pubkey_of("grok").unwrap();
+    let quarantined = recall_across(&f, &claude, "where does the kettle live", || {
+        assert_eq!(call(&f.state, &owner, "quarantine_source", json!({"pubkey": grok_key}))["ok"], true);
+    })
+    .unwrap();
+    assert!(quarantined["items"].as_array().unwrap().iter().all(|i| i["id"] != kettle.as_str()), "{quarantined}");
+    assert_ne!(quarantined["status"], "found", "{quarantined}");
+    // The caller revoked in between gets nothing.
+    let lamp = call(&f.state, &claude, "remember", note("The lamp is by the window", "builders"));
+    assert_eq!(lamp["ok"], true);
+    let revoked = recall_across(&f, &claude, "where is the lamp", || revoke(&f.dir, "claude").unwrap());
+    assert_eq!(revoked.err(), Some(refuse("agent-revoked")));
+}
+
+#[test]
+fn a_note_whose_author_is_revoked_mid_recall_reads_as_a_fresh_recall_would() {
+    // Revoking an author stops its writes and its token; its notes stay readable (quarantine withdraws them). So the
+    // answer across the revoke is the same answer a recall started after it gives.
+    let f = fixture();
+    let (claude, grok) = (f.claude.clone(), f.grok.clone());
+    call(&f.state, &claude, "remember", note("The atlas is under the bed", "builders"));
+    let across = recall_across(&f, &grok, "where is the atlas", || revoke(&f.dir, "claude").unwrap()).unwrap();
+    let after = call(&f.state, &grok, "recall", json!({"query": "where is the atlas"}));
+    assert_eq!(across["items"], after["result"]["items"]);
+    assert_eq!(across["status"], after["result"]["status"]);
+}
+
+#[test]
+fn a_test_can_never_reach_the_live_namespace() {
+    // cargo runs this test binary, so it is a test however it was built, and the live default is refused.
+    assert!(under_test() && std::env::var_os("CARGO_MANIFEST_DIR").is_some());
+    assert_eq!(default_dir(), Err(refuse("state-dir-required")));
+    assert_eq!(default_epoch1(), Err(refuse("state-dir-required")));
+    // The default is resolved before any command runs: a command without --state stops there.
+    assert_eq!(cli(&[OsString::from("no-such-command")]), Err(refuse("state-dir-required")));
+    // Named explicitly, the live folder (or anything under it, or a symlink to it) is refused too. Checked on a
+    // stand-in "live" folder, so this test itself never touches the real one.
+    let tag = hex(random32().unwrap().as_ref());
+    let root = std::env::temp_dir().join(format!("kira-live-{}", &tag[..16]));
+    let live = root.join("aukora-memory").join("kira");
+    fs::create_dir_all(&live).unwrap();
+    std::os::unix::fs::symlink(&live, root.join("alias")).unwrap();
+    for dir in [live.clone(), live.join("sub"), root.join("alias"), root.join("alias").join("x"), live.join("..").join("kira")] {
+        assert_eq!(refuse_inside(&dir, &live), Err(refuse("live-state-in-test")), "{}", dir.display());
+    }
+    assert_eq!(refuse_inside(&root.join("other"), &live), Ok(()));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn a_peer_set_is_refused_where_the_kernel_cannot_name_peers() {
+    let f = fixture();
+    let socket = f.dir.join("peer.sock");
+    let set = Admission { uids: vec![1001], gids: vec![] };
+    assert_eq!(serve(&f.dir, &socket, &set), Err(refuse("peer-cred-unsupported")));
+    assert!(!socket.exists());
+    // A peer set means nothing to any other command: a usage error, before anything runs.
+    let state = f.dir.clone().into_os_string();
+    let words = ["revoke", "grok", "--peer-gids", "20", "--state"].map(OsString::from);
+    assert_eq!(cli(&[words.as_slice(), &[state.clone()]].concat()), Err(refuse("usage")));
+    let bad = ["serve", "--peer-uids", "1001,x", "--state"].map(OsString::from);
+    assert_eq!(cli(&[bad.as_slice(), &[state]].concat()), Err(refuse("usage")));
+    assert_eq!(call(&f.state, &f.grok, "whoami", json!({}))["ok"], true);
 }

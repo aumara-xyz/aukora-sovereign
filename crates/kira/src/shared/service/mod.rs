@@ -10,15 +10,17 @@
 //! quarantined note is only ever shown as a stub without its text.
 //!
 //! Trust boundary (Phase M): same-uid trust: agents running as the owner's user can read token and key files; Phase N
-//! moves keys behind a separate service uid and SO_PEERCRED. The 0600/0700 modes keep out other users, not other
-//! processes of the same user.
+//! moves keys behind a separate service uid. The 0600/0700 modes keep out other users, not other processes of the same
+//! user. On Linux `serve --peer-uids/--peer-gids` admits only the listed peers by SO_PEERCRED (peer.rs); macOS has no
+//! peer credentials, so there it stays same-uid trust.
 
 use super::hybrid::query_vector;
 use super::llama::{HttpEmbedder, HttpReranker};
 use super::note::{
     readable_slot, valid_agent_name, Capture, Form, Lane, NoteDraft, Privacy, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND,
 };
-use super::recall::{Embedder, RecallQuery, RecallStatus, Reranker};
+use super::hybrid::Prepared;
+use super::recall::{Embedder, RecallOutcome, RecallQuery, RecallStatus, Reranker};
 use super::store::{SharedStore, StoredNote};
 use canon::{Refusal, Result};
 use nostr::{Event, PublicKey, SecretKey};
@@ -85,16 +87,73 @@ fn token_hash(token: &str) -> String {
     hex(&digest)
 }
 
-/// `~/aukora-memory/kira`.
+/// `~/aukora-memory/kira`, the live store on the Mac. Never a default inside a test (see `under_test`): every test names
+/// its own state folder, and one that forgets is refused (`kira:state-dir-required`) instead of reaching the live store.
 pub fn default_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").ok_or_else(|| refuse("home-unset"))?;
-    Ok(PathBuf::from(home).join("aukora-memory").join("kira"))
+    if under_test() {
+        return Err(refuse("state-dir-required"));
+    }
+    live_dir().ok_or_else(|| refuse("home-unset"))
 }
 
-/// `~/aukora-memory/archive/epoch1-2026-10-17/notes.jsonl`.
+/// `~/aukora-memory/archive/epoch1-2026-10-17/notes.jsonl`. Refused inside a test, like `default_dir`.
 pub fn default_epoch1() -> Result<PathBuf> {
+    if under_test() {
+        return Err(refuse("state-dir-required"));
+    }
     let home = std::env::var_os("HOME").ok_or_else(|| refuse("home-unset"))?;
     Ok(PathBuf::from(home).join("aukora-memory").join("archive").join("epoch1-2026-10-17").join("notes.jsonl"))
+}
+
+/// The marker a test harness that runs the built binary (not through cargo) sets so this process counts as a test.
+pub const TEST_MARKER: &str = "KIRA_STATE_REQUIRED";
+
+/// Whether this process is a test: this crate built for `cargo test` (`cfg(test)`); any binary cargo itself launched
+/// (`cargo test`, `cargo run` and `cargo bench` set `CARGO_MANIFEST_DIR` in the child's environment, so the tests of
+/// every other crate count too); or a process started with `KIRA_STATE_REQUIRED` set. The live service is started
+/// from its own binary (`start.sh`), never by cargo, so it is none of these.
+pub fn under_test() -> bool {
+    cfg!(test) || std::env::var_os("CARGO_MANIFEST_DIR").is_some() || std::env::var_os(TEST_MARKER).is_some()
+}
+
+fn live_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("aukora-memory").join("kira"))
+}
+
+/// A path as the file system resolves it: the longest existing ancestor canonicalized, the rest appended as written.
+fn resolved(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() { path.to_owned() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let mut tail = Vec::new();
+    let mut cursor = absolute.as_path();
+    loop {
+        if let Ok(real) = cursor.canonicalize() {
+            return tail.iter().rev().fold(real, |acc: PathBuf, part| acc.join(part));
+        }
+        match (cursor.parent(), cursor.file_name()) {
+            (Some(parent), Some(name)) => {
+                tail.push(name.to_owned());
+                cursor = parent;
+            }
+            _ => return absolute,
+        }
+    }
+}
+
+/// Inside a test, a state folder in the live namespace is refused even when it is named explicitly
+/// (`kira:live-state-in-test`), so no test can open, create or serve the live store.
+fn refuse_live_in_test(dir: &Path) -> Result<()> {
+    match live_dir() {
+        Some(live) if under_test() => refuse_inside(dir, &live),
+        _ => Ok(()),
+    }
+}
+
+/// `kira:live-state-in-test` when `dir` resolves to `live` or anything under it (a symlink or `..` does not hide it).
+fn refuse_inside(dir: &Path, live: &Path) -> Result<()> {
+    if resolved(dir).starts_with(resolved(live)) {
+        return Err(refuse("live-state-in-test"));
+    }
+    Ok(())
 }
 
 fn private_dir(path: &Path) -> Result<()> {
@@ -425,6 +484,7 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 impl State {
     /// Opens (creating if needed) the state folder at mode 0700 and the store inside it. No model servers.
     pub fn open(dir: &Path) -> Result<Self> {
+        refuse_live_in_test(dir)?;
         private_dir(dir)?;
         private_dir(&dir.join(KEYS))?;
         let store = SharedStore::open(&dir.join(DB))?;
@@ -508,13 +568,15 @@ impl State {
         if !caller.owner && claimed.owner_class() {
             return Err(refuse("review-claim-refused"));
         }
-        // Any other caller's claim stands only as tool-observed with at least one source note behind it; everything
-        // else it writes is filed as model-generated.
-        let capture = if caller.owner || (claimed == Capture::ToolObserved && !p.sources.is_empty()) {
-            claimed
-        } else {
-            Capture::ModelGenerated
-        };
+        // Spec v0.3 §4: an agent's tool-observed stands only with a receipt the service itself can verify. The service
+        // verifies no execution receipt today (the door's ledger is not readable here, and a source id is a citation of
+        // another note, not a receipt), so an agent cannot claim it: refused, never silently filed as something else.
+        if !caller.owner && claimed == Capture::ToolObserved {
+            return Err(refuse("capture-unverified"));
+        }
+        // Taint inheritance (spec v0.3 §2): citing a web-derived note makes this one web-derived. Citations only ever
+        // lower an agent's claim (model-generated or web-derived); they never raise it.
+        let capture = if !caller.owner && self.cites_web(&p.sources)? { Capture::WebDerived } else { claimed };
         if p.text.len() > MAX_STATEMENT {
             return Err(refuse("statement-too-long"));
         }
@@ -545,6 +607,16 @@ impl State {
 
     /// One note by id, or the head of a slot (`aukora:self`, `aukora:resume`, `resume:<agent>`): the newest live note
     /// in it by an author allowed to write it. The same read checks either way.
+    /// Whether any cited note is web-derived. An unknown source is left to the store, which refuses it.
+    fn cites_web(&self, sources: &[String]) -> Result<bool> {
+        for source in sources.iter().filter(|s| is_hex64(s)) {
+            if self.store.get(source)?.is_some_and(|n| n.meta.capture == Capture::WebDerived) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn get(&mut self, caller: &Caller, p: GetParams) -> Result<Value> {
         let note = if is_hex64(&p.id) {
             self.store.get(&p.id)?
@@ -599,8 +671,15 @@ impl State {
 }
 
 /// Recall in three steps so no model call runs under the state lock: read the query's settings and model handles,
-/// embed the query unlocked, gather candidates locked, rerank unlocked, then re-read the returned notes locked.
+/// embed the query unlocked, gather candidates locked (`recall_gather`); rerank unlocked (`Prepared::finish`); then
+/// re-read the returned notes locked (`recall_answer`).
 fn recall(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Result<Value> {
+    let (prepared, reranker) = recall_gather(state, caller, p)?;
+    let outcome = prepared.finish(reranker.as_deref().map(|r| r as &dyn Reranker));
+    recall_answer(state, caller, &outcome)
+}
+
+fn recall_gather(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Result<(Prepared, Option<SharedReranker>)> {
     let (query, embedder, reranker) = {
         let mut s = lock(state);
         let author = match p.author {
@@ -622,23 +701,46 @@ fn recall(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Result<Valu
     let model = embedder.as_ref().map(|e| e.model_id().to_owned());
     let vector = embedder.as_deref().and_then(|e| query_vector(&query, e));
     let prepared = lock(state).store.recall_prepare(&query, model.as_deref().map(|m| (m, vector)))?;
-    let outcome = prepared.finish(reranker.as_deref().map(|r| r as &dyn Reranker));
+    Ok((prepared, reranker))
+}
+
+/// The last step, under the lock again. Anything may have happened while the models ran, so nothing from the first
+/// read is trusted: the caller is looked up again (revoked: refused; its scopes and owner flag as they are now), and
+/// every note is re-read and re-verified. A note chosen as live memory that is no longer live (superseded, or its
+/// author quarantined) is dropped; when that leaves no live note the answer is undetermined, never found. A note that
+/// was already a correction keeps its label, and a quarantined one is only ever a stub.
+fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome) -> Result<Value> {
     let s = lock(state);
+    let record = s.store.agent(&caller.pubkey)?.ok_or_else(|| refuse("token-refused"))?;
+    if record.revoked_at.is_some() {
+        return Err(refuse("agent-revoked"));
+    }
+    let caller = Caller { name: caller.name.clone(), pubkey: caller.pubkey.clone(), owner: record.owner, scopes: record.scopes };
     let mut status = outcome.status.clone();
-    let mut items = Vec::new();
+    let (mut items, mut live, mut changed) = (Vec::new(), 0usize, false);
     for item in &outcome.items {
         match s.store.get(&item.id) {
-            Ok(Some(note)) if visible(caller, &note) => {
+            Ok(Some(note)) if visible(&caller, &note) => {
+                let dead = note.quarantined || note.superseded_by.is_some();
+                if item.correction.is_none() && dead {
+                    changed = true;
+                    continue;
+                }
+                live += usize::from(item.correction.is_none());
+                let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
                 let mut shown = if note.quarantined { stub(&note) } else { note_json(&note) };
                 shown["score"] = json!(item.score);
                 shown["also_by"] = json!(item.also_by);
                 shown["also_by_ids"] = json!(item.also_by_ids);
-                shown["correction"] = json!(item.correction);
+                shown["correction"] = json!(correction);
                 items.push(shown);
             }
-            Ok(Some(_)) => {}
+            Ok(Some(_)) => changed |= item.correction.is_none(),
             Ok(None) | Err(_) => status = RecallStatus::Undetermined("note-integrity"),
         }
+    }
+    if status == RecallStatus::Found && changed && live == 0 {
+        status = RecallStatus::Undetermined("note-changed");
     }
     // Only withheld notes matched: from this caller's view nothing was found.
     if status == RecallStatus::Found && items.is_empty() {
@@ -700,11 +802,13 @@ fn read_line(reader: &mut impl BufRead, limit: usize) -> Option<String> {
 mod cli;
 mod import;
 mod mcp;
+mod peer;
 mod server;
 
 pub use cli::cli;
 pub use import::{import_epoch1, ImportReport};
 pub use mcp::{mcp, mcp_reply};
+pub use peer::Admission;
 pub use server::serve;
 
 #[cfg(test)]

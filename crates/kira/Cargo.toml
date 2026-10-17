@@ -14,7 +14,7 @@ getrandom = "=0.4.3"
 hkdf = "=0.13.0"
 icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data", "utf8_iter"] }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
-rustix = { version = "=1.1.5", features = ["fs"] }
+rustix = { version = "=1.1.5", features = ["fs", "net"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.11.1"

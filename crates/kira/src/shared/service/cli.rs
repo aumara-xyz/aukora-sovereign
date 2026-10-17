@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! `sovereign kira ...`: the command line.
 
+use super::peer::Admission;
 use super::*;
 
 fn usage() -> Refusal {
@@ -9,6 +10,9 @@ fn usage() -> Refusal {
 
 /// `sovereign kira <serve | register NAME | token NAME [--rotate] | revoke NAME | import [FILE] | mcp>` with
 /// `--state DIR`, `--socket PATH`, `--token-file PATH`, `--owner-token-file PATH`, `--scopes a,b` and `--owner`.
+/// `serve` also takes `--peer-uids 1001,1002` and `--peer-gids 2000`: on Linux only those peers are admitted
+/// (SO_PEERCRED); elsewhere asking for them refuses to start (peer.rs). Without `--state` the live
+/// `~/aukora-memory/kira` is used, except in a test, which must name its own (`under_test`).
 /// `--rotate` replaces every earlier token of the agent; `revoke` marks the agent revoked and removes all its tokens.
 /// Both take effect on the running service's next request.
 ///
@@ -21,6 +25,8 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
     let (mut words, mut state, mut socket, mut token_file, mut scopes, mut owner) = (vec![], None, None, None, None, false);
     let mut owner_token_file: Option<PathBuf> = None;
     let mut rotate = false;
+    let mut admission = Admission::default();
+    let ids = |text: String| text.split(',').map(|id| id.trim().parse::<u32>().map_err(|_| usage())).collect::<Result<Vec<u32>>>();
     let mut iter = arguments.iter();
     while let Some(argument) = iter.next() {
         let argument = argument.to_str().ok_or_else(usage)?;
@@ -33,6 +39,8 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
             "--scopes" => scopes = Some(value()?.split(',').map(str::to_owned).collect::<Vec<_>>()),
             "--owner" => owner = true,
             "--rotate" => rotate = true,
+            "--peer-uids" => admission.uids = ids(value()?)?,
+            "--peer-gids" => admission.gids = ids(value()?)?,
             flag if flag.starts_with("--") => return Err(usage()),
             word => words.push(word.to_owned()),
         }
@@ -44,7 +52,8 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
     let socket = socket.unwrap_or_else(|| dir.join(SOCKET));
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
     match words.as_slice() {
-        ["serve"] => serve(&dir, &socket),
+        ["serve"] => serve(&dir, &socket, &admission),
+        _ if admission.configured() => Err(usage()),
         ["mcp"] => mcp(&socket, &token_file.ok_or_else(usage)?),
         ["import"] | ["import", _] => {
             let file = words.get(1).map_or_else(default_epoch1, |f| Ok(PathBuf::from(f)))?;

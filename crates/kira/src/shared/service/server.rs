@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The socket server: chain check at start, a background indexer, at most 32 connections, 60 s per connection.
 
+use super::peer::{self, Admission};
 use super::*;
 use crate::shared::hybrid::index_vectors;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,8 +36,9 @@ fn env_models() -> Result<(Option<SharedEmbedder>, Option<SharedReranker>)> {
     Ok((embedder, reranker))
 }
 
-/// Binds the socket at mode 0600. A stale socket file is replaced; a live service is never displaced.
-fn bind(socket: &Path) -> Result<UnixListener> {
+/// Binds the socket at mode 0600 (0666 when a peer set is enforced by the kernel). A stale socket file is replaced; a
+/// live service is never displaced.
+fn bind(socket: &Path, by_peer: bool) -> Result<UnixListener> {
     if let Ok(meta) = fs::symlink_metadata(socket) {
         if !meta.file_type().is_socket() {
             return Err(refuse("socket-path-taken"));
@@ -47,7 +49,8 @@ fn bind(socket: &Path) -> Result<UnixListener> {
         fs::remove_file(socket).map_err(|_| refuse("socket-bind"))?;
     }
     let listener = UnixListener::bind(socket).map_err(|_| refuse("socket-bind"))?;
-    fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).map_err(|_| refuse("socket-bind"))?;
+    let mode = if by_peer { 0o666 } else { 0o600 };
+    fs::set_permissions(socket, fs::Permissions::from_mode(mode)).map_err(|_| refuse("socket-bind"))?;
     Ok(listener)
 }
 
@@ -142,8 +145,13 @@ fn indexer(state: &Mutex<State>, embedder: &dyn Embedder, wake: &Receiver<()>) {
 
 /// Serves the store on a Unix socket until killed. Model servers come from KIRA_EMBED_ADDR/KIRA_EMBED_MODEL and
 /// KIRA_RERANK_ADDR/KIRA_RERANK_MODEL; without them recall runs on keywords and reports its coverage. Refuses to
-/// start when the store's append chain does not verify end to end.
-pub fn serve(dir: &Path, socket: &Path) -> Result<()> {
+/// start when the store's append chain does not verify end to end, and when a peer set is asked for on a platform that
+/// cannot enforce it (see peer.rs).
+pub fn serve(dir: &Path, socket: &Path, admission: &Admission) -> Result<()> {
+    if admission.configured() && !peer::supported() {
+        eprintln!("kira: refusing to serve: --peer-uids/--peer-gids need SO_PEERCRED (Linux); here only same-uid trust exists");
+        return Err(refuse("peer-cred-unsupported"));
+    }
     let (embedder, reranker) = env_models()?;
     let mut state = State::open(dir)?.with_models(embedder.clone(), reranker);
     match state.store.verify_chain() {
@@ -158,7 +166,7 @@ pub fn serve(dir: &Path, socket: &Path) -> Result<()> {
             return Err(refuse("store-chain-broken"));
         }
     }
-    let listener = bind(socket)?;
+    let listener = bind(socket, admission.configured())?;
     let (wake, woken) = mpsc::channel();
     state.wake = Some(wake);
     eprintln!("kira: serving {} on {}", dir.display(), socket.display());
@@ -170,6 +178,12 @@ pub fn serve(dir: &Path, socket: &Path) -> Result<()> {
     let open = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
+        if !admission.admits(peer::of(&stream)) {
+            if stream.set_nonblocking(true).is_ok() {
+                let _ = writeln!(stream, "{}", json!({"ok": false, "error": "kira:peer-refused"}));
+            }
+            continue;
+        }
         // Only this thread adds, so the check and the add cannot race past the cap.
         if open.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
             if stream.set_nonblocking(true).is_ok() {
