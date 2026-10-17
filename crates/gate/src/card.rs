@@ -572,15 +572,20 @@ fn note_warnings(note: &str, colors: Option<(&str, &str)>) -> Vec<String> {
             ));
         }
     }
+    // Pressure words count on their second use anywhere. Any other word counts only when it is hammered: a third use
+    // within six words ("blue blue blue", "ok ok ok fine"). A plain sentence that names its subject three times
+    // ("the", "key", "deepseek" on the model-key and budget cards, NODE.md O13) is not a pattern.
+    const PRESSURE: [&str; 3] = ["approve", "urgent", "now"];
+    const SPAN: usize = 6;
     let mut repeated = Vec::new();
-    let mut counts = std::collections::BTreeMap::new();
-    for word in words {
+    let mut seen: std::collections::BTreeMap<&str, Vec<usize>> = std::collections::BTreeMap::new();
+    for (at, word) in words.into_iter().enumerate() {
         let word = if word == "approved" { "approve" } else { word };
-        let count = counts.entry(word).or_insert(0usize);
-        *count += 1;
-        if (*count >= 2 && ["approve", "urgent", "now"].contains(&word))
-            || (*count == 3 && !["approve", "urgent", "now"].contains(&word))
-        {
+        let uses = seen.entry(word).or_default();
+        uses.push(at);
+        let hammered = uses.len() >= 3 && at - uses[uses.len() - 3] < SPAN;
+        let already = repeated.contains(&word);
+        if (uses.len() >= 2 && PRESSURE.contains(&word)) || (hammered && !PRESSURE.contains(&word) && !already) {
             repeated.push(word);
         }
     }
@@ -833,4 +838,45 @@ fn color_mentions(note: &str, old: &str, new: &str) -> Vec<String> {
         })
         .map(str::to_owned)
         .collect()
+}
+
+#[cfg(test)]
+mod repeat_tests {
+    use super::*;
+
+    fn repeat_warnings(raw: &str, colors: Option<(&str, &str)>) -> Vec<String> {
+        prepare_note(raw, colors).unwrap().warnings.into_iter().filter(|w| w.contains("APPROVE-spam")).collect()
+    }
+
+    #[test]
+    fn the_repeat_warning_matches_every_prime_vector() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!("../vectors/card-prime.json")).unwrap();
+        for case in vectors["cases"].as_array().unwrap() {
+            let raw = case["raw"].as_str().unwrap();
+            let old = accent(case["old"].as_str().unwrap().as_bytes());
+            let new = accent(case["new"].as_str().unwrap().as_bytes());
+            let colors = old.as_deref().zip(new.as_deref());
+            let expected: Vec<String> = case["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|w| w.as_str().filter(|w| w.contains("APPROVE-spam")).map(str::to_owned))
+                .collect();
+            assert_eq!(repeat_warnings(raw, colors), expected, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_plain_sentence_that_names_its_subject_three_times_is_not_spam() {
+        // The supervisor's own notes on the model-key and budget cards (NODE.md O13).
+        let key = "Let the engine's model calls use the DeepSeek key you just entered: fingerprint 0123456789ab (the first \
+                   12 hex digits of key_sha256). The key itself stays in the broker; this card holds only its SHA-256.";
+        let budget = "Let the engine spend on DeepSeek: at most 5000000 in all and 200000 per call, 500 calls, models \
+                      deepseek-flash, deepseek-v4-pro, for 30 days (amounts in millionths of a US dollar; prices per million tokens)";
+        assert!(repeat_warnings(key, None).is_empty());
+        assert!(repeat_warnings(budget, None).is_empty());
+        // Hammering still is.
+        assert_eq!(repeat_warnings("the key the key the key", None).len(), 1);
+        assert_eq!(repeat_warnings("Approve this. It is fine, approve.", None).len(), 1);
+    }
 }

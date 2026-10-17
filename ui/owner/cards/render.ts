@@ -7,7 +7,8 @@ function quoted(value: string): string {
     const unit = value.charCodeAt(offset);
     if (unit === 34) result += '\\"';
     else if (unit === 92) result += "\\\\";
-    else if (unit <= 32 || unit >= 127) result += `\\u${unit.toString(16).padStart(4, "0")}`;
+    // Controls and everything outside printable ASCII are shown escaped; a plain space is shown as a space (O13).
+    else if (unit < 32 || unit >= 127) result += `\\u${unit.toString(16).padStart(4, "0")}`;
     else result += value[offset];
   }
   return `${result}"`;
