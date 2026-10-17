@@ -1,0 +1,11 @@
+# Mounts the door in a DSH profile. The values below are the shape, not a deployment: the supervisor writes the real
+# socket path and workspace roots when it starts the engine (they must match the Rust door's policy, see PROTOCOL.md),
+# and the engine cannot edit this file. An unusable value makes apply() throw, so the engine does not start with the
+# door half open.
+- insert:
+    - id: aukora-door
+      name: '@aukora/door'
+      config:
+        socketPath: /run/aukora-door/door.sock
+        workspaceRoots:
+          - /sandbox

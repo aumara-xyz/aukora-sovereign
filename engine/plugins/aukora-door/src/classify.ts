@@ -21,12 +21,15 @@ const FILE_TOOLS = new Set([
 ])
 
 /** Process and code tools: local by design (Auma executes inside the cage); their working directory is still checked. */
-const EXEC_TOOLS = new Set(['bash', 'job_kill', 'job_list', 'job_output', 'run_code'])
+const EXEC_TOOLS = new Set(['bash', 'pwsh', 'job_kill', 'job_list', 'job_output', 'run_code'])
 
 /** Session-internal tools: no file, process, network or persistence channel of their own. */
 const SESSION_TOOLS = new Set([
   'todo_write', 'ask_user_question', 'create_goal', 'get_goal', 'update_goal', 'skill', 'load_workspace_dependencies',
   'cordis_inspect_list', 'cordis_inspect_query', 'list_agents', 'list_subagent_models', 'interrupt_agent', 'send_message',
+  // Read-only queries over the engine's own persisted session history (DSH authorizes which sessions a caller may see).
+  // Listed by name, never by prefix: a future `session_*` tool that writes must not inherit `local`.
+  'session_search', 'session_event_search', 'session_trace', 'session_event_trace', 'session_event_read',
 ])
 
 /** Argument names that carry a filesystem path (string) or a list of paths (array of strings). */
@@ -65,19 +68,37 @@ function pathsInside(args: unknown, roots: readonly string[]): boolean {
   return paths.every(path => insideWorkspace(path, roots))
 }
 
+/** `present` names its files as `files[].path`, an array of objects, which the flat path keys cannot see. */
+function presentPathsInside(args: unknown, roots: readonly string[]): boolean {
+  if (!pathsInside(args, roots) || !isPlainObject(args)) return false
+  const files = args['files']
+  if (!Array.isArray(files) || files.length === 0) return false
+  return files.every(file => isPlainObject(file) && typeof file['path'] === 'string' && insideWorkspace(file['path'], roots))
+}
+
 /** The class of one call. `local` means the call may run in this process; anything else must cross the door. */
 export function classifyCall(tool: string, args: unknown, workspaceRoots: readonly string[]): CallClass {
   if (FILE_TOOLS.has(tool) || EXEC_TOOLS.has(tool)) {
     return pathsInside(args, workspaceRoots) ? 'local' : 'fs-outside'
   }
+  if (tool === 'present') return presentPathsInside(args, workspaceRoots) ? 'local' : 'fs-outside'
   if (SESSION_TOOLS.has(tool)) return 'local'
   if (tool === 'web_fetch' || tool === 'web_search') return 'net'
   if (tool.startsWith('mcp__')) return 'mcp'
   if (tool === 'plugin_manager' || tool.startsWith('plugin_') || tool.startsWith('dsh_plugin')) return 'plugin'
+  // A persistent terminal is a long-lived interactive process: what runs later (`terminal_send` text, a REPL, a
+  // debugger) is not in the bytes judged when it was opened, so it is not `bash`. Every terminal_* tool crosses, by
+  // prefix, so a new one fails closed. No executor exists for the class: it can be denied or asked, never allowed.
+  if (tool.startsWith('terminal_')) return 'shell-interactive'
   if (tool.startsWith('kira_') || tool.startsWith('memory_')) return 'memory'
   if (tool === 'schedule_create' || tool === 'schedule_update') return 'persist'
   if (tool === 'schedule_list' || tool === 'schedule_delete') return 'local'
-  if (tool === 'subagent' || tool === 'subagent_fork') {
+  // A workflow is a script: it can name a `provider` on any `agent()` call, in code this table does not parse and
+  // cannot judge from arguments, so it is always an external-delegation crossing.
+  if (tool === 'workflow') return 'delegate'
+  // `ralph` runs fresh native children; the provider is deployment configuration, not a model argument. Same rule as
+  // a subagent: an explicit `provider` argument would cross.
+  if (tool === 'subagent' || tool === 'subagent_fork' || tool === 'ralph') {
     // A native in-process child runs the same pipeline for every tool it calls. A named provider is an external
     // CLI that runs its own tools outside this pipeline, so it crosses.
     return isPlainObject(args) && !Object.hasOwn(args, 'provider') ? 'local' : 'delegate'

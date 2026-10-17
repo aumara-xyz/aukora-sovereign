@@ -29,7 +29,7 @@ export type PreDecisionLike =
   | { kind: 'ask'; reason?: string }
 
 /** Crossing classes the door understands, plus `local` which never leaves this process. */
-export type CallClass = 'local' | 'net' | 'mcp' | 'plugin' | 'memory' | 'persist' | 'delegate' | 'fs-outside' | 'unknown'
+export type CallClass = 'local' | 'net' | 'mcp' | 'plugin' | 'memory' | 'persist' | 'delegate' | 'shell-interactive' | 'fs-outside' | 'unknown'
 
 /** Static configuration, supplied by the supervisor when it starts the engine. The engine never writes it. */
 export interface DoorConfig {

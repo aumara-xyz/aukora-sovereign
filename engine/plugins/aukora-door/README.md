@@ -43,12 +43,14 @@ model-chosen `callId`.
 `src/classify.ts`. The only inputs are the tool name and the arguments. A tool's own metadata is never read.
 
 - **local:** file tools (`read`, `write`, `edit`, `str_replace_editor`, `read_image`, `glob`, `grep`,
-  `working_directory`, `lsp`) with every path argument lexically inside a workspace root; `bash`, `job_*`, `run_code`
-  (their `cwd`/`workdir` still checked); session tools (`todo_write`, `ask_user_question`, goal tools, `skill`, ...);
-  a `subagent` with no `provider`.
+  `working_directory`, `lsp`, and `present`, whose `files[].path` entries are checked) with every path argument lexically
+  inside a workspace root; `bash`, `pwsh`, `job_*`, `run_code`
+  (their `cwd`/`workdir` still checked); session tools (`todo_write`, `ask_user_question`, goal tools, `skill`, the read-only `session_*` history queries, ...);
+  a `subagent` or `ralph` with no `provider`.
 - **crossing:** `net` (`web_fetch`, `web_search`), `mcp` (`mcp__*`), `plugin` (`plugin_manager`, `plugin_*`),
-  `memory` (`kira_*`, `memory_*`), `persist` (`schedule_create`, `schedule_update`), `delegate` (a subagent with a
-  `provider`), `fs-outside` (a file tool whose path leaves the workspace), and **`unknown` for every name not listed**.
+  `memory` (`kira_*`, `memory_*`), `persist` (`schedule_create`, `schedule_update`), `delegate` (a subagent or `ralph` with a
+  `provider`, and every `workflow`: its script can name a provider in code the table cannot judge),
+  `shell-interactive` (every `terminal_*` tool: a persistent process whose later input is not in the bytes judged at open), `fs-outside` (a file tool whose path leaves the workspace), and **`unknown` for every name not listed**.
 
 Honest limits: a plugin can register a tool under a name this table calls local, and path checks are lexical (no
 symlink resolution). The OS wall is what stops harm in both cases; the table only decides which calls the door must
@@ -71,7 +73,9 @@ A bad configuration throws at load time, so the engine does not start with the d
 ## Files
 
 ```
-package.json
+package.json               main/exports -> lib/index.js, dsh.bundle.patch -> cordis.patch.yml
+cordis.patch.yml            mounts the plugin in a DSH profile (the supervisor supplies the real config)
+build.mjs                   src/*.ts -> lib/*.js, no dependencies; lib/ is build output and is not committed
 PROTOCOL.md                 the socket protocol and the Rust side's obligations
 src/index.ts                the Cordis plugin: name, inject, apply(ctx, config)
 src/door.ts                 the three hooks and the verdict store (no DSH import)
@@ -82,7 +86,7 @@ src/types.ts                shared shapes
 test/vectors.json           cross-language vectors; test/gen-vectors.py makes them (independent implementation)
 test/stub-door.ts           a stub of the Rust door (verifies like the real one must)
 test/pipeline-sim.ts        a stand-in for DSH's tool pipeline, faithful to the cited lines
-test/*.test.ts              canonical, classify, client, hostile, plugin wiring
+test/*.test.ts              canonical, classify, client, hostile, plugin wiring, build reproducibility
 ```
 
 ## Run the tests
@@ -99,7 +103,14 @@ Regenerate the vectors (Python standard library only): `python3 -B -I test/gen-v
 
 The engine's profile mounts this package and calls `apply` with the supervisor's config; Cordis passes the context.
 It needs the `tools` service (`inject = ['tools']`). The source is erasable-syntax TypeScript that Node strips at
-load; DSH loads plugins from built JavaScript, so the engine build compiles `src/` to `lib/` (not done here).
+load; Node refuses to strip types under `node_modules`, so DSH needs built JavaScript: `node build.mjs` turns `src/*.ts`
+into `lib/*.js` with Node's own `module.stripTypeScriptTypes` (no dependencies) and rewrites `.ts` specifiers to `.js`.
+`package.json` `main` and `exports["."]` point at `./lib/index.js`. `lib/` is not committed: it is a pure function of
+`src/` (`test/build.test.ts` rebuilds twice and compares bytes, and loads the result). Run the build before packaging.
+
+`cordis.patch.yml` mounts the plugin; its `socketPath` and `workspaceRoots` are placeholders in the right shape, because
+the supervisor writes the real ones and a bad value makes `apply` throw rather than start with the door half open.
+A door older than this table refuses a `shell-interactive` claim as `bad-class`: it fails closed.
 
 ## Open questions
 

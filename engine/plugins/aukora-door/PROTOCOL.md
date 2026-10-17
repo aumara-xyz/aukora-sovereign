@@ -73,7 +73,8 @@ about itself. The server re-derives its own class for the tool and uses the stri
 | `plugin` | plugin install, upgrade or removal | ask (owner fingerprint approval) |
 | `memory` | any Kira call (`kira_*`, `memory_*`) | forwarded to the memory service with the engine's identity |
 | `persist` | creating or changing a schedule (future autonomous action) | ask |
-| `delegate` | a subagent with a named external provider | ask |
+| `delegate` | a subagent or `ralph` with a named external provider; every `workflow` (its script can name a provider) | ask |
+| `shell-interactive` | a persistent terminal (`terminal_*`): what runs later is not in the bytes judged at open | deny or ask |
 | `fs-outside` | a file or working-directory argument outside the workspace roots | deny or ask |
 | `unknown` | a tool name the plugin does not know | deny or ask |
 

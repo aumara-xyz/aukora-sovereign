@@ -67,3 +67,47 @@ test('an unknown tool crosses by default', () => {
   assert.equal(classifyCall('', {}, roots), 'unknown')
   assert.equal(classifyCall('READ', { file_path: 'a' }, roots), 'unknown')
 })
+
+test('pwsh is the shell: local, with its working directory checked', () => {
+  assert.equal(classifyCall('pwsh', { command: 'Get-ChildItem', description: 'list' }, roots), 'local')
+  assert.equal(classifyCall('pwsh', { command: 'dir', workdir: '/sandbox/src' }, roots), 'local')
+  assert.equal(classifyCall('pwsh', { command: 'dir', workdir: '/' }, roots), 'fs-outside')
+})
+
+test('every terminal_* tool is a shell-interactive crossing, including ones that do not exist yet', () => {
+  for (const tool of ['terminal_open', 'terminal_send', 'terminal_read', 'terminal_signal', 'terminal_close', 'terminal_list', 'terminal_future']) {
+    assert.equal(classifyCall(tool, {}, roots), 'shell-interactive', tool)
+  }
+  assert.equal(classifyCall('terminal_open', { type: 'shell', cwd: '/sandbox' }, roots), 'shell-interactive')
+  assert.equal(classifyCall('terminal', {}, roots), 'unknown')
+})
+
+test('workflow always delegates (its script can name a provider); ralph follows the subagent rule', () => {
+  assert.equal(classifyCall('workflow', { script: 'return 1', meta: { name: 'x', description: 'y' } }, roots), 'delegate')
+  assert.equal(classifyCall('workflow', {}, roots), 'delegate')
+  assert.equal(classifyCall('ralph', { objective: 'x', maxRounds: 3 }, roots), 'local')
+  assert.equal(classifyCall('ralph', { objective: 'x', provider: 'codex' }, roots), 'delegate')
+})
+
+test('present checks every files[].path and fails closed on any other shape', () => {
+  assert.equal(classifyCall('present', { files: [{ path: 'out/report.pdf', description: 'r' }, { path: '/sandbox/a.docx' }] }, roots), 'local')
+  assert.equal(classifyCall('present', { files: [{ path: '/etc/passwd' }] }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: [{ path: 'a' }, { path: '../b' }] }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: [{ description: 'no path' }] }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: [{ path: 7 }] }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: ['a'] }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: [] }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: 'a' }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', {}, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: [{ path: 'a' }], path: '/etc' }, roots), 'fs-outside')
+  assert.equal(classifyCall('present', { files: [{ path: 'a' }] }, []), 'local')
+  assert.equal(classifyCall('present', { files: [{ path: '/sandbox/a' }] }, []), 'fs-outside')
+})
+
+test('the read-only session history queries are local, by exact name only', () => {
+  for (const tool of ['session_search', 'session_event_search', 'session_trace', 'session_event_trace', 'session_event_read']) {
+    assert.equal(classifyCall(tool, { query: 'x' }, roots), 'local', tool)
+  }
+  assert.equal(classifyCall('session_delete', {}, roots), 'unknown')
+  assert.equal(classifyCall('session_export', {}, roots), 'unknown')
+})

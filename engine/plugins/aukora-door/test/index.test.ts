@@ -28,6 +28,9 @@ test('apply registers the three hooks ahead of every other listener, plus the re
   assert.deepEqual(log.map(entry => entry.what), ['on:tools/pre-execute', 'guard', 'on:tools/execute', 'on:tools/result'])
   assert.deepEqual(log[0]?.options, { prepend: true, global: true })
   assert.deepEqual(log[2]?.options, { prepend: true, global: true })
+  // The registry dispatches tools/result on a scope-filtered carrier: without `global` a door mounted inside a scoped
+  // context would never forget the verdicts of denied or failed calls.
+  assert.deepEqual(log[3]?.options, { prepend: true, global: true })
 })
 
 test('the plugin declares its name and the service it needs', () => {

@@ -1,0 +1,2 @@
+# lib/ is build output (node build.mjs), always reproducible from src/; test/build.test.ts proves it.
+/lib/

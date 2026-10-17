@@ -38,5 +38,5 @@ export function apply(ctx: Context, config: DoorConfig): void {
   ctx.on('tools/pre-execute', ((exec: ExecLike, next: () => Promise<PreDecisionLike>) => door.preExecute(exec, next)) as never, first)
   ctx.tools.guard(((exec: Readonly<ExecLike>) => door.guard(exec)) as never)
   ctx.on('tools/execute', ((exec: ExecLike, next: () => Promise<ResultLike>) => door.execute(exec, next)) as never, first)
-  ctx.on('tools/result', ((exec: Readonly<ExecLike>) => { door.forget(exec) }) as never)
+  ctx.on('tools/result', ((exec: Readonly<ExecLike>) => { door.forget(exec) }) as never, first)
 }

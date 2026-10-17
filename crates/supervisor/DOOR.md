@@ -103,3 +103,6 @@ for `socket-permissions`.
   the platform-independent `Door::judge`/`serve_stream` tests, not by a live Linux socket. Run `cargo test -p
   supervisor door` on the Linux node before relying on it; two tests (the real socket pair) behave slightly
   differently there when a refused peer closes with unread data.
+
+## Class `shell-interactive` (2026-10-17)
+Interactive terminal tools (`terminal_*`) cross as `shell-interactive`: a persistent process takes input after the open call that nobody judged. The class has no executor, so a policy cannot allow it; an older door that does not know it refuses it as `bad-class`.

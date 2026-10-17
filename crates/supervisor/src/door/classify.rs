@@ -16,13 +16,23 @@ pub enum Class {
     Memory,
     Persist,
     Delegate,
+    ShellInteractive,
     FsOutside,
     Unknown,
 }
 
 impl Class {
-    pub const ALL: [Class; 8] =
-        [Class::Net, Class::Mcp, Class::Plugin, Class::Memory, Class::Persist, Class::Delegate, Class::FsOutside, Class::Unknown];
+    pub const ALL: [Class; 9] = [
+        Class::Net,
+        Class::Mcp,
+        Class::Plugin,
+        Class::Memory,
+        Class::Persist,
+        Class::Delegate,
+        Class::ShellInteractive,
+        Class::FsOutside,
+        Class::Unknown,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -32,6 +42,7 @@ impl Class {
             Class::Memory => "memory",
             Class::Persist => "persist",
             Class::Delegate => "delegate",
+            Class::ShellInteractive => "shell-interactive",
             Class::FsOutside => "fs-outside",
             Class::Unknown => "unknown",
         }
@@ -51,8 +62,8 @@ pub enum Derived {
 }
 
 const FILE_TOOLS: [&str; 9] = ["read", "write", "edit", "str_replace_editor", "read_image", "glob", "grep", "working_directory", "lsp"];
-const EXEC_TOOLS: [&str; 5] = ["bash", "job_kill", "job_list", "job_output", "run_code"];
-const SESSION_TOOLS: [&str; 13] = [
+const EXEC_TOOLS: [&str; 6] = ["bash", "pwsh", "job_kill", "job_list", "job_output", "run_code"];
+const SESSION_TOOLS: [&str; 18] = [
     "todo_write",
     "ask_user_question",
     "create_goal",
@@ -66,6 +77,12 @@ const SESSION_TOOLS: [&str; 13] = [
     "list_subagent_models",
     "interrupt_agent",
     "send_message",
+    // Read-only queries over the engine's own persisted session history. By name, never by prefix.
+    "session_search",
+    "session_event_search",
+    "session_trace",
+    "session_event_trace",
+    "session_event_read",
 ];
 const PATH_KEYS: [&str; 7] = ["file_path", "path", "paths", "cwd", "workdir", "directory", "dir"];
 
@@ -138,10 +155,28 @@ fn paths_inside(args: &Value, roots: &[String]) -> bool {
     true
 }
 
+/// `present` names its files as `files[].path`, an array of objects, which the flat path keys cannot see.
+fn present_paths_inside(args: &Value, roots: &[String]) -> bool {
+    if !paths_inside(args, roots) {
+        return false;
+    }
+    let Some(files) = args.get("files") else { return false };
+    match files.view() {
+        ValueView::Array(items) if !items.is_empty() => items.iter().all(|file| {
+            matches!(file.view(), ValueView::Object(_))
+                && matches!(file.get("path").map(|path| path.view()), Some(ValueView::Text(path)) if inside_workspace(path, roots))
+        }),
+        _ => false,
+    }
+}
+
 /// Derive the class of one call.
 pub fn derive(tool: &str, args: &Value, roots: &[String]) -> Derived {
     if FILE_TOOLS.contains(&tool) || EXEC_TOOLS.contains(&tool) {
         return if paths_inside(args, roots) { Derived::Local } else { Derived::Cross(Class::FsOutside) };
+    }
+    if tool == "present" {
+        return if present_paths_inside(args, roots) { Derived::Local } else { Derived::Cross(Class::FsOutside) };
     }
     if SESSION_TOOLS.contains(&tool) {
         return Derived::Local;
@@ -155,13 +190,21 @@ pub fn derive(tool: &str, args: &Value, roots: &[String]) -> Derived {
     if tool == "plugin_manager" || tool.starts_with("plugin_") || tool.starts_with("dsh_plugin") {
         return Derived::Cross(Class::Plugin);
     }
+    // A persistent terminal is a long-lived interactive process: what runs later is not in the bytes judged when it was
+    // opened, so it is not `bash`. Every terminal_* tool crosses, by prefix, so a new one fails closed.
+    if tool.starts_with("terminal_") {
+        return Derived::Cross(Class::ShellInteractive);
+    }
     if tool.starts_with("kira_") || tool.starts_with("memory_") {
         return Derived::Cross(Class::Memory);
     }
     match tool {
         "schedule_create" | "schedule_update" => Derived::Cross(Class::Persist),
         "schedule_list" | "schedule_delete" => Derived::Local,
-        "subagent" | "subagent_fork" => {
+        // A workflow script can name a provider on any agent() call, in code this table does not parse.
+        "workflow" => Derived::Cross(Class::Delegate),
+        // `ralph` runs fresh native children; the provider is deployment configuration, not a model argument.
+        "subagent" | "subagent_fork" | "ralph" => {
             if matches!(args.view(), ValueView::Object(_)) && args.get("provider").is_none() {
                 Derived::Local
             } else {
@@ -230,6 +273,26 @@ mod tests {
         assert_eq!(call("schedule_create", "{}"), Derived::Cross(Class::Persist));
         assert_eq!(call("subagent", "{\"task\":\"x\"}"), Derived::Local);
         assert_eq!(call("subagent", "{\"provider\":\"codex\"}"), Derived::Cross(Class::Delegate));
+        assert_eq!(call("pwsh", "{\"command\":\"dir\"}"), Derived::Local);
+        assert_eq!(call("pwsh", "{\"command\":\"dir\",\"workdir\":\"/\"}"), Derived::Cross(Class::FsOutside));
+        assert_eq!(call("terminal_open", "{\"type\":\"shell\"}"), Derived::Cross(Class::ShellInteractive));
+        assert_eq!(call("terminal_send", "{\"id\":\"t1\",\"text\":\"ls\"}"), Derived::Cross(Class::ShellInteractive));
+        assert_eq!(call("terminal_list", "{}"), Derived::Cross(Class::ShellInteractive));
+        assert_eq!(call("terminal_brand_new", "{}"), Derived::Cross(Class::ShellInteractive));
+        assert_eq!(call("workflow", "{\"script\":\"return 1\"}"), Derived::Cross(Class::Delegate));
+        assert_eq!(call("ralph", "{\"objective\":\"x\"}"), Derived::Local);
+        assert_eq!(call("ralph", "{\"objective\":\"x\",\"provider\":\"codex\"}"), Derived::Cross(Class::Delegate));
+        assert_eq!(call("present", "{\"files\":[{\"path\":\"out/report.pdf\"},{\"path\":\"/sandbox/a.docx\"}]}"), Derived::Local);
+        assert_eq!(call("present", "{\"files\":[{\"path\":\"/etc/passwd\"}]}"), Derived::Cross(Class::FsOutside));
+        assert_eq!(call("present", "{\"files\":[{\"path\":\"a\"},{\"path\":\"../b\"}]}"), Derived::Cross(Class::FsOutside));
+        assert_eq!(call("present", "{\"files\":[{\"description\":\"no path\"}]}"), Derived::Cross(Class::FsOutside));
+        assert_eq!(call("present", "{\"files\":[]}"), Derived::Cross(Class::FsOutside));
+        assert_eq!(call("present", "{\"files\":\"a\"}"), Derived::Cross(Class::FsOutside));
+        assert_eq!(call("present", "{}"), Derived::Cross(Class::FsOutside));
+        for tool in ["session_search", "session_event_search", "session_trace", "session_event_trace", "session_event_read"] {
+            assert_eq!(call(tool, "{\"query\":\"x\"}"), Derived::Local, "{tool}");
+        }
+        assert_eq!(call("session_delete", "{}"), Derived::Cross(Class::Unknown));
         assert_eq!(call("totally_new_tool", "{}"), Derived::Cross(Class::Unknown));
         assert_eq!(call("READ", "{\"file_path\":\"a\"}"), Derived::Cross(Class::Unknown));
     }
@@ -240,6 +303,9 @@ mod tests {
         // Newer door table: a tool the plugin calls unknown is served under the door's class.
         assert_eq!(settle("unknown", Derived::Cross(Class::Memory)), Ok(Class::Memory));
         // Any other disagreement, including a claim that a crossing is something milder, is refused.
+        assert_eq!(settle("shell-interactive", Derived::Cross(Class::ShellInteractive)), Ok(Class::ShellInteractive));
+        assert_eq!(settle("unknown", Derived::Cross(Class::ShellInteractive)), Ok(Class::ShellInteractive));
+        assert_eq!(settle("local", Derived::Cross(Class::ShellInteractive)), Err("bad-class"));
         assert_eq!(settle("memory", Derived::Cross(Class::Net)), Err("class-mismatch"));
         assert_eq!(settle("net", Derived::Cross(Class::Unknown)), Err("class-mismatch"));
         // A call the door thinks is local never needed the door.

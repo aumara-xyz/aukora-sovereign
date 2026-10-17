@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn a_policy_that_asks_for_something_unsafe_does_not_load() {
         // Allowing a class that has no executor, or fs-outside at all.
-        for class in ["fs-outside", "unknown", "mcp", "plugin", "persist", "delegate"] {
+        for class in ["fs-outside", "unknown", "mcp", "plugin", "persist", "delegate", "shell-interactive"] {
             assert!(Policy::parse(&with(&format!("\"classes\":{{\"{class}\":\"allow\"}}"))).is_err(), "{class}");
         }
         // Allowing an executor that has no configuration.
