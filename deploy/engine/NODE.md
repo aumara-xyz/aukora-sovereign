@@ -391,7 +391,9 @@ the owner approves the new one; nothing switches before that.
    `VACUUM INTO`) for a throwaway user (DynamicUser, no network, no capabilities, none of `/var/lib/aukora*`,
    `/etc/aukora`, the door, broker, engine or Kira sockets); the offered binary runs `sovereign release probe` on that
    copy; systemd kills the whole cgroup at 90 s; root (`release_probe.py finish`) records the outcome in
-   `/var/lib/aukora-release/probe/ID.json`. Journal: `release: probing the offered release …`, then `… started on a
+   `/var/lib/aukora-release/probe/ID.json`: passed only for a clean exit and exactly one stdout line in this run's
+   journal, `probe ok <digest>`. The probe starts when the owner's shell polls Approvals (that is when the running
+   release looks for an offer). Journal: `release: probing the offered release …`, then `… started on a
    copy of the state; its card can go up` or `… did not start …; no card` (tried again after 10 minutes). Only then does it raise the card "Upgrade this node to a new release"
    (`base_sha256` = the running release, `release_sha256` = the new `release.json`'s SHA-256). The engine keeps running.
 4. The owner approves it with the passkey. The floor advances in one Aura transaction; the supervisor logs
