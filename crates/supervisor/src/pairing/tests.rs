@@ -284,6 +284,35 @@ fn a_second_pairing_of_the_same_phone_updates_the_device_row() {
 }
 
 #[test]
+fn the_device_list_keeps_the_newest_devices_past_its_cap() {
+    let world = world();
+    let owner = Device::new(1);
+    let mut newest = String::new();
+    // One owner key and 130 distinct phones: 131 device rows, three more than the 128 shown.
+    for round in 0..130u64 {
+        let phone = Device::new(2 + round as u8);
+        let (id, _, context) = joined(&world, &owner, &phone);
+        let now = T0 + 20_000 + round;
+        let bytes = receipt(world.node, &context, &owner, &phone, now / 1000 - 1, now / 1000);
+        world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
+        newest = key_id(&phone.public());
+    }
+    let devices = world.pairing.devices(&world.owner.subject, &world.facts).unwrap();
+    let ValueView::Array(list) = field(&devices, "devices").view() else { panic!() };
+    assert_eq!(list.len(), 128);
+    // Oldest first, ending on the most recent pairing, which must not be hidden.
+    assert_eq!(text_of(list.last().unwrap(), "key"), newest);
+    let times: Vec<i64> = list
+        .iter()
+        .map(|row| match field(row, "firstPairedAtMs").view() {
+            ValueView::Integer(n) => n.get(),
+            _ => panic!(),
+        })
+        .collect();
+    assert!(times.windows(2).all(|pair| pair[0] <= pair[1]));
+}
+
+#[test]
 fn receipts_that_do_not_match_the_pinned_context_refuse() {
     let world = world();
     let (owner, phone, stranger) = (Device::new(1), Device::new(2), Device::new(3));

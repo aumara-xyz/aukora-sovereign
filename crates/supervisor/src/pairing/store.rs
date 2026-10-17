@@ -447,12 +447,16 @@ impl Store {
         Ok(())
     }
 
+    /// The newest 128 devices, shown oldest first: past the cap it is the oldest that drop out of
+    /// the view, never the most recent pairing.
     pub fn devices(&self, subject: &str) -> Result<Vec<DeviceRow>> {
         let mut statement = self
             .db
             .prepare(
-                "SELECT key_sha256,public_key,role,first_pairing,last_pairing,first_ms,last_ms,pairings
-                 FROM devices WHERE subject=?1 ORDER BY first_ms,key_sha256 LIMIT 128",
+                "SELECT key_sha256,public_key,role,first_pairing,last_pairing,first_ms,last_ms,pairings FROM (
+                     SELECT key_sha256,public_key,role,first_pairing,last_pairing,first_ms,last_ms,pairings
+                     FROM devices WHERE subject=?1 ORDER BY first_ms DESC,key_sha256 DESC LIMIT 128
+                 ) ORDER BY first_ms,key_sha256",
             )
             .map_err(sql)?;
         let rows = statement
