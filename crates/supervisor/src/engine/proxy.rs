@@ -74,6 +74,15 @@ fn harden(headers: &mut http::HeaderMap) {
         ("cross-origin-opener-policy", "same-origin"),
         ("cross-origin-resource-policy", "same-origin"),
         ("strict-transport-security", "max-age=31536000"),
+        // No page on the engine origin may run a WebAuthn ceremony at all (Auma's review R6, verified live on the
+        // rehearsal node 2026-10-18): the owner's passkey is already out of reach (its RP id is the owner host, which
+        // is not a suffix of engine.<shell>: the browser answers SecurityError), but without this an engine page could
+        // create and use a look-alike passkey of its own and stage a convincing fake "confirm your passkey" panel.
+        (
+            "permissions-policy",
+            "publickey-credentials-get=(), publickey-credentials-create=(), identity-credentials-get=(), \
+             otp-credentials=(), payment=()",
+        ),
     ] {
         headers.insert(name, http::HeaderValue::from_static(value));
     }
@@ -579,6 +588,7 @@ mod tests {
         assert_eq!(reply.status(), StatusCode::OK);
         assert!(reply.headers().get("set-cookie").is_none() && reply.headers().get("access-control-allow-origin").is_none());
         assert_eq!(reply.headers().get("x-frame-options").unwrap(), "DENY");
+        assert!(reply.headers().get("permissions-policy").unwrap().to_str().unwrap().contains("publickey-credentials-get=()"));
         let body = reply.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(&body[..], b"ok /api/x");
         // A harness that forgets the cookie (restarted) answers 401 once; the next request exchanges again.
@@ -599,7 +609,12 @@ mod tests {
         headers.insert("cross-origin-opener-policy", http::HeaderValue::from_static("unsafe-none"));
         headers.insert("referrer-policy", http::HeaderValue::from_static("unsafe-url"));
         headers.insert("content-security-policy", http::HeaderValue::from_static("script-src 'self'"));
+        headers.insert("permissions-policy", http::HeaderValue::from_static("publickey-credentials-get=*"));
         harden(&mut headers);
+        // The harness cannot re-enable WebAuthn on its origin: ours is the only Permissions-Policy, and it denies both.
+        let policy = headers.get_all("permissions-policy").iter().map(|v| v.to_str().unwrap()).collect::<Vec<_>>();
+        assert_eq!(policy.len(), 1);
+        assert!(policy[0].contains("publickey-credentials-get=()") && policy[0].contains("publickey-credentials-create=()"));
         assert!(headers.get("set-cookie").is_none() && headers.get("access-control-allow-origin").is_none());
         // One value each for the single-valued policies; the harness's CSP stays and ours is added beside it.
         assert_eq!(headers.get_all("cross-origin-opener-policy").iter().collect::<Vec<_>>(), ["same-origin"]);

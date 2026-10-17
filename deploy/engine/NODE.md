@@ -484,3 +484,21 @@ so no generation load was measured):
 So the node idles at about 1.6 GiB and about 12 GB of disk. A cheaper node is plausible (8 GiB, 2 vCPU, a 40 GB disk);
 4 GiB would be the floor and leaves little for a real turn's tool work (cargo inside the wall), which this rehearsal
 could not measure without a real key.
+
+## 12. Pre-launch hardening (node/pre-launch, 2026-10-18)
+
+From Auma's own red-team of the node (`~/aukora-memory/review/AUMA-DEEP-REVIEW-2026-10-17.md`), one commit each.
+
+**P1. The passkey and the engine origin (R6).** The relying-party id is the owner host, exactly (`CeremonyContext`:
+`owner.<shell>`, the RP the passkey was created for), never the shell host. WebAuthn lets a page name its own host or
+a registrable parent as `rpId`; `owner.<shell>` is neither for `engine.<shell>`. NODE, from a page on the engine
+origin of the rehearsal node (headless Chrome, software passkey): `navigator.credentials.get({rpId: "owner.<shell>"})`
+→ `SecurityError` ("not a registrable domain suffix of, nor equal to the current domain"; the browser's
+`/.well-known/webauthn` related-origin fetch on the owner host failed, 400); `rpId: "<shell>"` (the parent) →
+`NotAllowedError` (no credential there). So the owner's passkey cannot be exercised from the engine origin: refuted.
+What was true: the engine origin could run a WebAuthn ceremony of its own (`featurePolicy` allowed both, and
+`credentials.create({rp: {id: "engine.<shell>"}})` made a look-alike passkey), the raw material of a fake "confirm your
+passkey" panel. Fixed: every engine-origin reply carries one `Permissions-Policy` (ours replaces the harness's)
+denying `publickey-credentials-get`, `publickey-credentials-create`, `identity-credentials-get`, `otp-credentials` and
+`payment`; and `engine-v1.json` is refused (`engine-config-relying-party`) when the engine host equals the owner host
+or lies under it. Migration: none. The RP id did not change, so enrolled passkeys keep working.

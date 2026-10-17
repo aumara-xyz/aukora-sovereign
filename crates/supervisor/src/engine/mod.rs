@@ -61,9 +61,19 @@ pub struct EngineConfig {
 }
 
 impl EngineConfig {
-    pub fn parse(text: &str, shell_origin: &str) -> Result<Self> {
+    /// `owner_origin` is the owner's, whose host is the passkey's relying-party id (`CeremonyContext`): the engine
+    /// host must be neither that host nor under it, or a page on the engine origin could ask the browser for an
+    /// assertion of the owner's own passkey (WebAuthn lets a page use its own host or any registrable parent).
+    pub fn parse(text: &str, shell_origin: &str, owner_origin: &str) -> Result<Self> {
         let config: Self = serde_json::from_str(text).map_err(|_| refuse("engine-config"))?;
         let shell_host = shell_origin.strip_prefix("https://").ok_or_else(|| refuse("engine-config"))?;
+        let relying_party = owner_origin.strip_prefix("https://").ok_or_else(|| refuse("engine-config"))?;
+        if relying_party.is_empty()
+            || config.host == relying_party
+            || config.host.ends_with(&format!(".{relying_party}"))
+        {
+            return Err(refuse("engine-config-relying-party"));
+        }
         let absolute = [&config.plugin_root, &config.control_dir, &config.web_socket, &config.launch_file]
             .iter()
             .all(|path| path.is_absolute() && path.as_os_str().len() <= 100);
@@ -97,7 +107,7 @@ impl Engine {
     /// node keeps serving without an engine).
     pub fn load(config: &crate::config::NodeConfig) -> Result<Option<Arc<Self>>> {
         let Some(text) = config.engine_config_text()? else { return Ok(None) };
-        let config = EngineConfig::parse(&text, &config.shell_origin)?;
+        let config = EngineConfig::parse(&text, &config.shell_origin, &config.owner_origin)?;
         Ok(Some(Arc::new(Self {
             config,
             access: Mutex::new(access::Access::default()),
@@ -189,13 +199,30 @@ mod tests {
     #[test]
     fn the_engine_host_is_a_sibling_of_the_shell_host_and_everything_else_is_refused() {
         let shell = "https://n1-1-2-3-4.sslip.io";
-        assert!(EngineConfig::parse(&text("engine.n1-1-2-3-4.sslip.io", 12), shell).is_ok());
-        assert!(EngineConfig::parse(&text("n1-1-2-3-4.sslip.io", 12), shell).is_err());
-        assert!(EngineConfig::parse(&text("owner.n1-1-2-3-4.sslip.io", 12), shell).is_err());
-        assert!(EngineConfig::parse(&text("engine.n1-1-2-3-4.sslip.io", 0), shell).is_err());
+        let owner = "https://owner.n1-1-2-3-4.sslip.io";
+        assert!(EngineConfig::parse(&text("engine.n1-1-2-3-4.sslip.io", 12), shell, owner).is_ok());
+        assert!(EngineConfig::parse(&text("n1-1-2-3-4.sslip.io", 12), shell, owner).is_err());
+        assert!(EngineConfig::parse(&text("owner.n1-1-2-3-4.sslip.io", 12), shell, owner).is_err());
+        assert!(EngineConfig::parse(&text("engine.n1-1-2-3-4.sslip.io", 0), shell, owner).is_err());
         let public = text("engine.n1-1-2-3-4.sslip.io", 12).replace("127.0.0.1", "0.0.0.0");
-        assert!(EngineConfig::parse(&public, shell).is_err());
+        assert!(EngineConfig::parse(&public, shell, owner).is_err());
         let extra = text("engine.n1-1-2-3-4.sslip.io", 12).replace("{\"v\":1", "{\"v\":1,\"x\":1");
-        assert!(EngineConfig::parse(&extra, shell).is_err());
+        assert!(EngineConfig::parse(&extra, shell, owner).is_err());
+    }
+
+    #[test]
+    fn the_engine_host_is_never_under_the_passkeys_relying_party() {
+        // A deployment whose owner host (the RP id) is a parent of the engine host would let an engine page ask for
+        // the owner's own passkey: refused, whatever the shell host.
+        let config = text("engine.app.example.org", 12);
+        let refused = |owner: &str| EngineConfig::parse(&config, "https://app.example.org", owner).unwrap_err().reason;
+        assert_eq!(refused("https://example.org"), "engine-config-relying-party");
+        assert_eq!(refused("https://app.example.org"), "engine-config-relying-party");
+        assert_eq!(refused("https://engine.app.example.org"), "engine-config-relying-party");
+        assert_eq!(refused("example.org"), "engine-config");
+        // A sibling is fine: owner.<shell> is not a suffix of engine.<shell>, and engine.<shell> not of owner.<shell>.
+        assert!(EngineConfig::parse(&config, "https://app.example.org", "https://owner.app.example.org").is_ok());
+        // A look-alike that only shares a string tail is not under the RP.
+        assert!(EngineConfig::parse(&config, "https://app.example.org", "https://p.example.org").is_ok());
     }
 }
