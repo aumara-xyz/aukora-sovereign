@@ -124,7 +124,8 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         &config.approved_release_root,
         config.state_root.join("floor"),
         ledger.clone(),
-    )?;
+    )?
+    .with_anchor(&config.release_state);
     source.initialize_floor(
         &sessions,
         state.node,

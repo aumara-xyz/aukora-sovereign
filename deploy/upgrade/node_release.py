@@ -45,6 +45,9 @@ EGRESS = CONFIG + "/egress.json"
 CLAIM = CONFIG + "/claim.sha256"
 STATE = "/var/lib/aukora-release"
 ACTIVE = STATE + "/active.json"
+# Root's record of the owner's floor it last accepted (Codex review, B30): a restored older floor is never followed.
+ANCHOR = STATE + "/anchor.json"
+ANCHOR_OWNER = 0
 INSTANCE = STATE + "/instance.json"
 SEQUENCE = STATE + "/sequence.json"
 DELIVERED = STATE + "/claim-delivered"
@@ -441,17 +444,63 @@ def withdraw():
 
 
 def approved_floor(binary):
-    """The release digest the owner's floor names, read by the installed binary as the service user (it holds the
-    supervisor's state lock, so this runs only while the supervisor is stopped). None: no owner floor yet, or it could
-    not be read; never a switch."""
+    """The owner's floor as the installed binary reads it (as the service user; it holds the supervisor's state lock, so
+    this runs only while the supervisor is stopped): {digest, epoch, sequence, head, history, spent}. None: no owner
+    floor yet, or it could not be read; never a switch."""
     try:
         done = subprocess.run(["runuser", "-u", SERVICE_USER, "--", binary, "release", "floor", "--config", NODE_JSON],
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=FOLLOW_SECONDS, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
-    found = done.stdout.decode("ascii", "replace").strip()
-    return found if done.returncode == 0 and core.is_hex(found, 64) else None
+    if done.returncode != 0:
+        return None
+    try:
+        return checked_floor(json.loads(done.stdout.decode("utf-8")))
+    except (ValueError, UnicodeError, core.Refusal):
+        return None
+
+
+def checked_floor(floor):
+    keys = ("digest", "epoch", "sequence", "head", "history", "spent")
+    if (not isinstance(floor, dict) or set(floor) != set(keys) or not core.is_hex(floor["digest"], 64)
+            or not core.is_hex(floor["head"], 64) or not core.is_int(floor["epoch"], 1) or not core.is_int(floor["sequence"], 1)
+            or not isinstance(floor["history"], list) or not all(core.is_hex(d, 64) for d in floor["history"])
+            or not isinstance(floor["spent"], list) or not all(isinstance(x, str) and len(x) < 128 for x in floor["spent"])):
+        core.refuse("node-release", "floor-invalid")
+    return floor
+
+
+def read_anchor():
+    """Root's anchor, or None before root first accepted an owner floor. A damaged anchor refuses (never ignored)."""
+    if not os.path.lexists(ANCHOR):
+        return None
+    info = os.lstat(ANCHOR)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != ANCHOR_OWNER or info.st_mode & 0o022 or info.st_nlink != 1:
+        core.refuse("node-release", "anchor-invalid")
+    record = core.parse_json(core.read_regular(ANCHOR, 1 << 20, "node-release"), "node-release", 1 << 20)
+    core.exact_keys(record, ("v", "release", "floor"), "node-release", "anchor-invalid")
+    if record["v"] != 1 or not core.is_hex(record["release"], 64):
+        core.refuse("node-release", "anchor-invalid")
+    checked_floor(record["floor"])
+    return record
+
+
+def floor_relation(anchored, floor):
+    """'same', 'successor', or None (behind or divergent): the Python twin of the supervisor's check_anchor."""
+    a, c = (anchored["epoch"], anchored["sequence"]), (floor["epoch"], floor["sequence"])
+    if a == c:
+        return "same" if anchored["head"] == floor["head"] and anchored["spent"] == floor["spent"] else None
+    spent, prior = floor["spent"], anchored["spent"]
+    if c > a and len(spent) > len(prior) and spent[:len(prior)] == prior:
+        return "successor"
+    return None
+
+
+def write_anchor(floor, release):
+    """Durable (file and folder synced) before any link moves: root never follows this floor's past again."""
+    core.atomic_write(ANCHOR, core.canonical({"v": 1, "release": release, "floor": floor}), 0o644)
+    sync_directory(STATE)
 
 
 def staged_with_digest(digest):
@@ -473,20 +522,38 @@ def staged_with_digest(digest):
 def follow():
     """The supervisor's root pre-start step (ExecStartPre=-+): if the owner's floor names a staged release other than
     the current one (normally the offered release the owner just approved), make it current (previous = the old one),
-    record it as active and drop the offer. Anything else leaves the links alone. It never fails the start: the
-    supervisor then serves the release it served before (and refuses to, if the floor names another one)."""
+    record it as active and drop the offer. The floor must be root's anchored floor or a successor of it (later version,
+    the same spent approvals and more): a restored snapshot of an older floor, even one whose own history checks out,
+    is refused, so going back to an older release takes a new owner approval naming it. Anything else leaves the links
+    alone. It never fails the start: the supervisor then serves the release it served before (and refuses to, if the
+    floor names another one or is behind the anchor)."""
     with switch_lock():
         current = link_id(CURRENT)
         active = read_active()
         if current is None or active is None or active["id"] != current:
             return "unchanged"
         floor = approved_floor(trusted_verifier(current, active))
-        if floor is None or floor == active["release"]:
+        if floor is None:
             return "unchanged"
-        target = staged_with_digest(floor)
+        anchor = read_anchor()
+        if anchor is None:
+            # The first owner floor root sees must be the running release's, or have moved on from it.
+            if floor["digest"] != active["release"] and active["release"] not in floor["history"]:
+                return "refused: the floor does not follow the running release"
+        else:
+            relation = floor_relation(anchor["floor"], floor)
+            if relation is None:
+                return "refused: the floor is behind the anchored floor (restored or divergent state)"
+            if relation == "same" and anchor["release"] == active["release"]:
+                return "unchanged"
+        if floor["digest"] == active["release"]:
+            write_anchor(floor, active["release"])
+            return "unchanged (anchored)"
+        target = staged_with_digest(floor["digest"])
         if target is None:
             return "approved-release-not-staged"
         directory, manifest, digest = staged_digest(target)
+        write_anchor(floor, digest)
         point(PREVIOUS, "releases/" + current)
         point(CURRENT, "releases/" + target)
         write_active(target, manifest, digest, active["seq"], active["pointer_sha256"])

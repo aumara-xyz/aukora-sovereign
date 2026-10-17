@@ -31,6 +31,9 @@ pub struct ReleaseFiles {
     pub binary_digest: Digest32,
     floor_directory: PathBuf,
     ledger: Arc<HostLedger>,
+    /// Root's record of the floor it last accepted (`/var/lib/aukora-release/anchor.json`, written by
+    /// `node_release.py follow`). A floor behind it is a restored snapshot, never served (Codex review, B30).
+    anchor: Option<PathBuf>,
 }
 
 impl ReleaseFiles {
@@ -73,14 +76,23 @@ impl ReleaseFiles {
             binary_digest: tree.binary_digest,
             floor_directory,
             ledger,
+            anchor: None,
         })
+    }
+
+    /// The root anchor beside the release state (`release_state` is `/var/lib/aukora-release/active.json`).
+    pub fn with_anchor(mut self, release_state: &Path) -> Self {
+        self.anchor = release_state.parent().map(|folder| folder.join(ANCHOR_FILE));
+        self
     }
 
     pub fn approval(&self) -> Result<()> {
         let floor = floor::service::FloorService::open(&self.floor_directory)?;
         self.ledger.transaction(|transaction| {
             floor.probe_release_guard(transaction)?;
-            if floor.snapshot()?.floor.digest != self.release_digest {
+            let state = floor.snapshot()?;
+            check_anchor(self.anchor.as_deref(), &state)?;
+            if state.floor.digest != self.release_digest {
                 return Err(refuse("release-not-approved"));
             }
             Ok(())
@@ -96,6 +108,7 @@ impl ReleaseFiles {
         self.ledger.transaction(|transaction| {
             floor.probe_release_guard(transaction)?;
             let state = floor.snapshot()?;
+            check_anchor(self.anchor.as_deref(), &state)?;
             Ok(state.floor.digest == self.release_digest && !state.is_install_genesis())
         })
     }
@@ -334,8 +347,68 @@ pub(crate) fn floor_cli(arguments: &[std::ffi::OsString]) -> Result<()> {
     if current.is_install_genesis() {
         std::process::exit(3);
     }
-    println!("{}", current.floor.digest);
+    println!("{}", floor_anchor(&current));
     Ok(())
+}
+
+/// The anchor file root keeps beside `active.json`.
+pub(crate) const ANCHOR_FILE: &str = "anchor.json";
+
+/// What root anchors of an owner's floor: the release it names, its authority version, its head receipt, its display
+/// history and every approval it has spent (`epoch:sequence:authorization_sha256`, never pruned). A later floor
+/// extends `spent` and moves the version forward; a restored older snapshot does neither.
+pub(crate) fn floor_anchor(state: &floor::ProtectedState) -> serde_json::Value {
+    serde_json::json!({
+        "digest": state.floor.digest.to_string(),
+        "epoch": state.authority.epoch,
+        "sequence": state.authority.sequence,
+        "head": state.high_water.head.to_string(),
+        "history": state.floor.history.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "spent": state.high_water.spent.iter().map(spent_text).collect::<Vec<_>>(),
+    })
+}
+
+fn spent_text(spent: &floor::SpentApproval) -> String {
+    format!("{}:{}:{}", spent.authority.epoch, spent.authority.sequence, spent.authorization_sha256)
+}
+
+static ANCHOR_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Fail closed when the floor is behind the floor root last accepted: an older version, the same version with another
+/// head, or a spent list that does not extend root's. No anchor yet (a node before its first owner floor was
+/// followed): nothing to compare. An anchor that cannot be read refuses.
+pub(crate) fn check_anchor(path: Option<&Path>, state: &floor::ProtectedState) -> Result<()> {
+    let Some(path) = path else { return Ok(()) };
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(refuse("release-anchor")),
+    };
+    let anchored = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|value| value.get("floor").cloned())
+        .ok_or(refuse("release-anchor"))?;
+    if !anchor_is_behind_or_equal(&anchored, &floor_anchor(state)) {
+        if !ANCHOR_SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("release: the floor is behind the floor root accepted (a restored or divergent state); refusing to serve it");
+        }
+        return Err(refuse("floor-behind-anchor"));
+    }
+    Ok(())
+}
+
+/// Whether `current` is `anchored` or a successor of it (pure).
+pub(crate) fn anchor_is_behind_or_equal(anchored: &serde_json::Value, current: &serde_json::Value) -> bool {
+    let version = |value: &serde_json::Value| (value["epoch"].as_u64(), value["sequence"].as_u64());
+    let (Some(a_epoch), Some(a_sequence)) = version(anchored) else { return false };
+    let (Some(c_epoch), Some(c_sequence)) = version(current) else { return false };
+    let (Some(a_spent), Some(c_spent)) = (anchored["spent"].as_array(), current["spent"].as_array()) else {
+        return false;
+    };
+    if (c_epoch, c_sequence) == (a_epoch, a_sequence) {
+        return anchored["head"] == current["head"] && a_spent == c_spent;
+    }
+    (c_epoch, c_sequence) > (a_epoch, a_sequence) && c_spent.len() > a_spent.len() && c_spent.starts_with(a_spent)
 }
 
 fn require_release_order(published: &floor::Floor, order: &floor::ReleaseOrder) -> Result<()> {
@@ -613,5 +686,29 @@ fn refuse(reason: &'static str) -> canon::Refusal {
     canon::Refusal {
         organ: "supervisor",
         reason,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anchor_is_behind_or_equal;
+    use serde_json::json;
+
+    fn floor(sequence: u64, spent: &[u64]) -> serde_json::Value {
+        json!({"epoch": 1, "sequence": sequence, "head": format!("{sequence:064x}"),
+               "spent": spent.iter().map(|n| format!("1:{n}:e")).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn a_floor_behind_or_beside_roots_anchor_is_refused() {
+        let anchored = floor(20, &[10, 20]);
+        assert!(anchor_is_behind_or_equal(&anchored, &floor(20, &[10, 20])), "the anchored floor itself");
+        assert!(anchor_is_behind_or_equal(&anchored, &floor(30, &[10, 20, 30])), "a successor");
+        assert!(!anchor_is_behind_or_equal(&anchored, &floor(10, &[10])), "a restored older snapshot");
+        assert!(!anchor_is_behind_or_equal(&anchored, &floor(30, &[10, 29])), "divergent");
+        let mut other_head = floor(20, &[10, 20]);
+        other_head["head"] = json!("0");
+        assert!(!anchor_is_behind_or_equal(&anchored, &other_head), "same version, other head");
+        assert!(!anchor_is_behind_or_equal(&json!({}), &floor(20, &[10, 20])), "an unreadable anchor");
     }
 }

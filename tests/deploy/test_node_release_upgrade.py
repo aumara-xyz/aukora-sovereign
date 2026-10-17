@@ -45,6 +45,8 @@ class Upgrade(unittest.TestCase):
             mock.patch.object(node_release, "OFFERED", root + "/offered"),
             mock.patch.object(node_release, "STATE", state),
             mock.patch.object(node_release, "ACTIVE", state + "/active.json"),
+            mock.patch.object(node_release, "ANCHOR", state + "/anchor.json"),
+            mock.patch.object(node_release, "ANCHOR_OWNER", os.getuid()),
             # Root-only checks, stubbed: the lock's ownership, the installed binary's hash, systemd.
             mock.patch.object(node_release, "switch_lock", contextlib.nullcontext),
             mock.patch.object(node_release, "trusted_verifier", lambda rid, active: "/bin/sovereign-" + rid),
@@ -57,12 +59,19 @@ class Upgrade(unittest.TestCase):
         mock.patch.object(node_release, "approved_floor", self.read_floor).start()
         self.old = self.stage("a" * 40)
         self.new = self.stage("b" * 40)
+        self.third = self.stage("c" * 40)
         node_release.point(node_release.CURRENT, "releases/" + self.old[0])
         node_release.write_active(self.old[0], self.old[1], self.old[2], 0, None)
 
     def tearDown(self):
         mock.patch.stopall()
         shutil.rmtree(self.scratch)
+
+    @staticmethod
+    def make_floor(release, sequence, spent, history=()):
+        """An owner floor as `sovereign release floor` prints it: `spent` approvals, newest last."""
+        return {"digest": release[2], "epoch": 1, "sequence": sequence, "head": format(sequence, "064x"),
+                "history": [r[2] for r in history], "spent": ["1:%d:%s" % (n, "e" * 64) for n in spent]}
 
     def read_floor(self, binary):
         self.asked.append(binary)
@@ -88,8 +97,10 @@ class Upgrade(unittest.TestCase):
         self.assertEqual(node_release.offer(self.new[0]), self.new[0])
         self.assertEqual(node_release.link_id(node_release.OFFERED), self.new[0])
         self.assertEqual(node_release.link_id(node_release.CURRENT), self.old[0], "offering switches nothing")
-        # The floor still names the running release (card not approved, declined, or expired): nothing moves.
-        self.floor = self.old[2]
+        # The floor still names the running release (card not approved, declined, or expired): nothing moves, and
+        # root anchors that floor.
+        self.floor = self.make_floor(self.old, 10, [10])
+        self.assertEqual(node_release.follow(), "unchanged (anchored)")
         self.assertEqual(node_release.follow(), "unchanged")
         # No owner floor yet, or it could not be read: nothing moves either.
         self.floor = None
@@ -101,7 +112,7 @@ class Upgrade(unittest.TestCase):
 
     def test_follow_switches_to_the_release_the_owner_approved(self):
         node_release.offer(self.new[0])
-        self.floor = self.new[2]
+        self.floor = self.make_floor(self.new, 20, [10, 20], [self.old])
         self.assertEqual(node_release.follow(), "switched to " + self.new[0])
         self.assertEqual(node_release.link_id(node_release.CURRENT), self.new[0])
         self.assertEqual(node_release.link_id(node_release.PREVIOUS), self.old[0])
@@ -114,11 +125,11 @@ class Upgrade(unittest.TestCase):
     def test_an_approved_release_is_followed_even_if_the_offer_was_taken_back(self):
         node_release.offer(self.new[0])
         self.assertEqual(node_release.withdraw(), "withdrawn")
-        self.floor = self.new[2]
+        self.floor = self.make_floor(self.new, 20, [10, 20], [self.old])
         self.assertEqual(node_release.follow(), "switched to " + self.new[0])
 
     def test_a_floor_naming_a_release_that_is_not_staged_switches_nothing(self):
-        self.floor = "c" * 64
+        self.floor = {**self.make_floor(self.new, 20, [10, 20], [self.old]), "digest": "f" * 64}
         self.assertEqual(node_release.follow(), "approved-release-not-staged")
         self.assertEqual(node_release.link_id(node_release.CURRENT), self.old[0])
 
@@ -126,8 +137,52 @@ class Upgrade(unittest.TestCase):
         node_release.offer(self.new[0])
         with open(os.path.join(node_release.RELEASES, self.new[0], "release.json"), "ab") as target:
             target.write(b" ")
-        self.floor = self.new[2]
+        self.floor = self.make_floor(self.new, 20, [10, 20], [self.old])
         self.assertEqual(node_release.follow(), "approved-release-not-staged")
+        self.assertEqual(node_release.link_id(node_release.CURRENT), self.old[0])
+
+    def test_a_restored_snapshot_of_an_older_floor_is_never_followed(self):
+        # Codex review (B30): A runs, root anchors A's floor; the owner approves B and the node switches; the aukora
+        # uid then restores the A-era Aura and floor (internally consistent, its approval of A valid) and restarts.
+        a_floor = self.make_floor(self.old, 10, [10])
+        self.floor = a_floor
+        node_release.follow()
+        node_release.offer(self.new[0])
+        self.floor = self.make_floor(self.new, 20, [10, 20], [self.old])
+        self.assertEqual(node_release.follow(), "switched to " + self.new[0])
+        self.floor = a_floor
+        self.assertTrue(node_release.follow().startswith("refused: the floor is behind"))
+        self.assertEqual(node_release.link_id(node_release.CURRENT), self.new[0], "never rolled back to A")
+        # A divergent floor (a later version that does not extend the spent approvals) is refused too.
+        self.floor = self.make_floor(self.old, 30, [10, 29], [self.new])
+        self.assertTrue(node_release.follow().startswith("refused"))
+        self.assertEqual(node_release.link_id(node_release.CURRENT), self.new[0])
+        # So is an anchor root did not write.
+        os.chmod(node_release.ANCHOR, 0o666)
+        with self.assertRaises(core.Refusal):
+            node_release.follow()
+
+    def test_a_then_b_then_c_and_an_owner_approved_rollback(self):
+        self.floor = self.make_floor(self.old, 10, [10])
+        node_release.follow()
+        node_release.offer(self.new[0])
+        self.floor = self.make_floor(self.new, 20, [10, 20], [self.old])
+        self.assertEqual(node_release.follow(), "switched to " + self.new[0])
+        node_release.offer(self.third[0])
+        self.floor = self.make_floor(self.third, 30, [10, 20, 30], [self.old, self.new])
+        self.assertEqual(node_release.follow(), "switched to " + self.third[0])
+        # Going back to B is a new owner approval (a later floor naming B): followed like any other step.
+        node_release.offer(self.new[0])
+        self.floor = self.make_floor(self.new, 40, [10, 20, 30, 40], [self.old, self.third])
+        self.assertEqual(node_release.follow(), "switched to " + self.new[0])
+        self.assertEqual(node_release.read_active()["id"], self.new[0])
+        with open(node_release.ANCHOR, "rb") as anchor:
+            self.assertEqual(json.loads(anchor.read())["floor"]["sequence"], 40)
+
+    def test_the_first_floor_root_sees_must_follow_the_running_release(self):
+        # No anchor yet: a floor that names another release and did not move on from the running one is refused.
+        self.floor = self.make_floor(self.new, 20, [20], [])
+        self.assertTrue(node_release.follow().startswith("refused"))
         self.assertEqual(node_release.link_id(node_release.CURRENT), self.old[0])
 
     def test_the_current_release_cannot_be_offered(self):
