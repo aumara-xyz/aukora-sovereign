@@ -46,7 +46,7 @@
   flex: none;
   width: 30px;
   height: 30px;
-  background: var(--ak-tone, var(--ak-blue));
+  background: var(--ak-icon-tone, var(--ak-tone, var(--ak-blue)));
   -webkit-mask: var(--ak-glyph, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='6.5' height='6.5' rx='1.8'/%3E%3Crect x='13.5' y='4' width='6.5' height='6.5' rx='1.8'/%3E%3Crect x='4' y='13.5' width='6.5' height='6.5' rx='1.8'/%3E%3Crect x='13.5' y='13.5' width='6.5' height='6.5' rx='1.8'/%3E%3C/svg%3E")) center / 16px 16px no-repeat, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='.5' y='.5' width='29' height='29' rx='9.5' stroke-width='1' stroke-opacity='.28'/%3E%3C/svg%3E") center / 30px 30px no-repeat;
   mask: var(--ak-glyph, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='6.5' height='6.5' rx='1.8'/%3E%3Crect x='13.5' y='4' width='6.5' height='6.5' rx='1.8'/%3E%3Crect x='4' y='13.5' width='6.5' height='6.5' rx='1.8'/%3E%3Crect x='13.5' y='13.5' width='6.5' height='6.5' rx='1.8'/%3E%3C/svg%3E")) center / 16px 16px no-repeat, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='.5' y='.5' width='29' height='29' rx='9.5' stroke-width='1' stroke-opacity='.28'/%3E%3C/svg%3E") center / 30px 30px no-repeat;
 }
@@ -135,3 +135,15 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
+
+/* Each launcher's icon in its own palette colour (the border stays the tab's): stable per app, neighbours differ,
+   one mint, blue, violet, gold run down each tab. */
+[data-slot^='shell.menu.'] > button[data-stock-app-launcher='auma-language'] { --ak-icon-tone: var(--ak-mint); }
+[data-slot^='shell.menu.'] > button[data-stock-app-launcher='auma-live'] { --ak-icon-tone: var(--ak-blue); }
+[data-slot^='shell.menu.'] > button[data-stock-app-launcher='zeta-harp'] { --ak-icon-tone: var(--ak-violet); }
+[data-slot^='shell.menu.'] > button[data-stock-app-launcher='human-graph'] { --ak-icon-tone: var(--ak-gold); }
+[data-slot^='shell.menu.'] > button[data-stock-app-launcher='media'] { --ak-icon-tone: var(--ak-mint); }
+[data-slot^='shell.menu.'] > button[data-memory-launcher] { --ak-icon-tone: var(--ak-blue); }
+[data-slot^='shell.menu.'] > button[data-messages-launcher] { --ak-icon-tone: var(--ak-violet); }
+[data-slot^='shell.menu.'] > button[data-documents-launcher] { --ak-icon-tone: var(--ak-gold); }
+[data-slot^='shell.menu.'] > button[data-user-app-launcher] { --ak-icon-tone: var(--ak-gold); }

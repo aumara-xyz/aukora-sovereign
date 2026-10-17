@@ -19,6 +19,7 @@ export function SovereigntyMenu({ activeSurface, openSurface, closeSurface }: So
       menu
       tone="blue"
       icon="sovereignty"
+      iconTone="gold"
       data-sovereignty-launcher=""
       title={SOVEREIGNTY_COPY.menuTitle}
       summary={SOVEREIGNTY_COPY.menuDescription}

@@ -18,6 +18,7 @@ export function AumlokMenu({ activeSurface, openSurface, closeSurface, t }: Auml
       menu
       tone="blue"
       icon="aumlok"
+      iconTone="mint"
       data-aumlok-launcher=""
       title={t('menu.title')}
       summary={t('menu.description')}

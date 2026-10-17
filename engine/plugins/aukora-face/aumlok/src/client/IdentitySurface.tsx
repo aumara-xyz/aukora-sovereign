@@ -14,7 +14,7 @@ export interface IdentitySurfaceInjected {
 
 export function IdentityMenu({ activeSurface, openSurface, closeSurface, t }:
   PropsRuntime<'shell.menu.system'> & PropsLocale<'aumlok'>) {
-  return <PortalButton menu tone="blue" icon="identity" data-identity-launcher=""
+  return <PortalButton menu tone="blue" icon="identity" iconTone="blue" data-identity-launcher=""
     title={t('identity.title')} summary={t('identity.description')} expanded={activeSurface === 'identity'}
     onToggle={(open) => { if (open) openSurface('identity'); else closeSurface() }} />
 }

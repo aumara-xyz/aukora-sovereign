@@ -24,8 +24,8 @@ const cx = (...values: (string | false | null | undefined)[]) => values.filter(B
 const tone = (value: Tone | undefined) => (value === undefined ? undefined : `ak-tone-${value}`)
 
 /** The 30px tile every portal carries. */
-export function IconTile({ icon }: { readonly icon: IconName | ReactNode }) {
-  return <span className="ak-icon-tile">{typeof icon === 'string' ? <AkIcon name={icon as IconName} /> : icon}</span>
+export function IconTile({ icon, tone: t }: { readonly icon: IconName | ReactNode; readonly tone?: Tone | undefined }) {
+  return <span className={cx('ak-icon-tile', tone(t))}>{typeof icon === 'string' ? <AkIcon name={icon as IconName} /> : icon}</span>
 }
 
 // ── App surface and header ─────────────────────────────────────────────────────────────────────────────────────
@@ -88,6 +88,8 @@ export interface PortalButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonE
   readonly tone?: Tone
   /** The glyph in the 30px tile. Every new portal passes one. */
   readonly icon?: IconName | ReactNode
+  /** The tile's own colour when it differs from the border's (menu launchers: border = tab, icon = per app). */
+  readonly iconTone?: Tone
   readonly title: ReactNode
   /** One line; ellipsis beyond it. Without it the button is the one-line height. */
   readonly summary?: ReactNode
@@ -116,7 +118,7 @@ export interface PortalButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonE
 
 /** The portal button. It opens in place, inside the lane it is in; it never resizes a lane. */
 export function PortalButton({
-  tone: t, icon, title, summary, badge, expanded, defaultExpanded = false, onToggle, menu = false, children, className, onClick,
+  tone: t, icon, iconTone, title, summary, badge, expanded, defaultExpanded = false, onToggle, menu = false, children, className, onClick,
   variant, subtitle, trailing, showIndicator = true, onExpandedChange, buttonClassName, contentClassName, containerProps, contentProps,
   ...button
 }: PortalButtonProps) {
@@ -149,7 +151,7 @@ export function PortalButton({
           onExpandedChange?.(!open)
         }}
       >
-        {icon === undefined || icon === null ? null : <IconTile icon={icon} />}
+        {icon === undefined || icon === null ? null : <IconTile icon={icon} tone={iconTone} />}
         <span className="ak-portal__copy">
           <span className="ak-portal__title">{title}</span>
           {twoLine ? <span className="ak-portal__summary">{line}</span> : null}

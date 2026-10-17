@@ -25,6 +25,7 @@ export function AuraCoherenceMenu({
       menu
       tone="blue"
       icon="aura"
+      iconTone="violet"
       title={t('aura.trigger')}
       summary={t('aura.menu')}
       expanded={activeSurface === 'aura-coherence'}

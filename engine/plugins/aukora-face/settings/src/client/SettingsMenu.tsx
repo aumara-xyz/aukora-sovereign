@@ -1,10 +1,15 @@
 /** Settings-section entries in the shell's right-side System menu: one launcher portal per section. */
-import { PortalButton, type IconName } from '@aukora/face-layout/client'
+import { PortalButton, type IconName, type Tone } from '@aukora/face-layout/client'
 import type { SettingsMenuComponentProps } from './shell-contract.ts'
 
 /** The glyph for each known section; a section added later gets the general one. */
 const ICON: Readonly<Record<string, IconName>> = {
   'general': 'general', 'models': 'model', 'plugins': 'plugins', 'agent-presets': 'presets', 'archived': 'archive',
+}
+
+/** Each section's icon colour, continuing the System column's mint, blue, violet, gold run (border stays blue). */
+const ICON_TONE: Readonly<Record<string, Tone>> = {
+  'general': 'gold', 'models': 'mint', 'plugins': 'blue', 'agent-presets': 'violet', 'archived': 'gold',
 }
 
 /** One line under each section's name (every launcher is the two-line form). English until the locale lands. */
@@ -40,6 +45,7 @@ export function SettingsMenu({
             menu
             tone="blue"
             icon={ICON[row.id] ?? 'general'}
+            iconTone={ICON_TONE[row.id] ?? 'gold'}
             data-settings-section={row.id}
             aria-label={row.label}
             title={row.label}
