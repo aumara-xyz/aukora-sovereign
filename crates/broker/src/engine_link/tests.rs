@@ -486,3 +486,103 @@ fn budgets_and_key_approvals_are_read_strictly() {
     assert_eq!(approval.fingerprint().len(), 12);
     assert_eq!(Budget::cost(1, 1), 1, "rounded up");
 }
+
+/// Codex review of the broker commit, finding 1: what the engine decodes is what is scanned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_key_is_caught_after_decoding_and_when_handed_out_a_few_characters_at_a_time() {
+    use serde_json::json;
+    let escaped: String = KEY.chars().map(|c| format!("\\u{:04x}", c as u32)).collect();
+    let start = tool_call_stream(10)[0].clone();
+    let text_start = event("content_block_start", json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}));
+    let delta = |index: u64, kind: &str, field: &str, piece: &str| {
+        event("content_block_delta", json!({"type":"content_block_delta","index":index,"delta":{"type":kind, field: piece}}))
+    };
+    let pieces = |field: &str, kind: &str, index: u64| -> Vec<Vec<u8>> {
+        KEY.as_bytes().chunks(5).map(|piece| delta(index, kind, field, std::str::from_utf8(piece).unwrap())).collect()
+    };
+    let tool_start = event("content_block_start", json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t","name":"fs_write","input":{}}}));
+    let tool_json = format!("{{\"text\":\"{escaped}\"}}");
+    let tool_pieces: Vec<Vec<u8>> = tool_json
+        .as_bytes()
+        .chunks(7)
+        .map(|piece| delta(1, "input_json_delta", "partial_json", std::str::from_utf8(piece).unwrap()))
+        .collect();
+    let tool_stop = event("content_block_stop", json!({"type":"content_block_stop","index":1}));
+    let cases: Vec<(&str, Vec<Vec<u8>>)> = vec![
+        // \u escapes in one text delta (written raw, so the wire never shows the key's own bytes).
+        ("escaped", vec![start.clone(), text_start.clone(),
+            format!("event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"{escaped}\"}}}}\n\n").into_bytes()]),
+        // Five characters per delta: no single event holds a 12-byte window of it.
+        ("split", [vec![start.clone(), text_start.clone()], pieces("text", "text_delta", 0)].concat()),
+        // Escaped inside a tool call's arguments, seven bytes per delta: decoded only when the block stops.
+        ("tool", [vec![start.clone(), tool_start], tool_pieces, vec![tool_stop]].concat()),
+        // The reported model, escaped.
+        ("model", vec![format!("event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"model\":\"{escaped}\",\"usage\":{{\"input_tokens\":1}}}}}}\n\n").into_bytes()]),
+    ];
+    for (name, stream) in cases {
+        let rig = rig(Reply::Sse(stream), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+        let (status, body, _) = rig.call(harness_request("deepseek-flash", 100)).await;
+        assert_eq!(status, 200, "{name}");
+        let text = String::from_utf8_lossy(&body).into_owned();
+        assert!(!text.contains(&escaped[..60]), "{name}: the escaped key was released");
+        assert!(text.contains("reply-withheld"), "{name}: {text}");
+        // Nothing of the key, decoded or not, in what the engine received.
+        let decoded: String = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str::<serde_json::Value>(data).ok())
+            .map(|value| value.to_string())
+            .collect();
+        let joined: String = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str::<serde_json::Value>(data).ok())
+            .filter_map(|value| value["delta"]["text"].as_str().map(str::to_owned))
+            .collect();
+        assert!(!decoded.contains(&KEY[3..15]) && !joined.contains(&KEY[3..15]), "{name}");
+        let receipt: serde_json::Value = serde_json::from_str(&rig.fake.receipts.lock().unwrap()[0]).unwrap();
+        assert_eq!(receipt["body"]["outcome"], "key-echo", "{name}");
+        rig.assert_no_key_anywhere();
+    }
+    // A model the budget does not name is recorded as unrecognized, never copied.
+    let mut stream = tool_call_stream(10);
+    stream[0] = String::from_utf8(stream[0].clone()).unwrap().replace("\"model\":\"deepseek-flash\"", "\"model\":\"provider-says-anything\"").into_bytes();
+    let rig = rig(Reply::Sse(stream), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+    assert_eq!(rig.call(harness_request("deepseek-flash", 100)).await.0, 200);
+    let receipt: serde_json::Value = serde_json::from_str(&rig.fake.receipts.lock().unwrap()[0]).unwrap();
+    assert_eq!(receipt["body"]["reported_model"], "unrecognized");
+}
+
+/// Codex review of the broker commit, finding 2: a torn record never swallows the next one.
+#[test]
+fn a_torn_record_is_cut_away_before_the_next_reservation_and_a_malformed_one_refuses() {
+    let dir = std::env::temp_dir().join(format!("aukora-engine-torn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    let file = dir.join("spend-v1.jsonl");
+    {
+        let log = spend::SpendLog::open(&dir).unwrap();
+        log.reserve("b", "1", |_| Ok(500)).unwrap();
+    }
+    // A crash in the middle of writing the settlement.
+    let mut torn = std::fs::read(&file).unwrap();
+    torn.extend_from_slice(b"{\"budget\":\"b\",\"id\":\"1\",\"op\":\"set");
+    std::fs::write(&file, &torn).unwrap();
+    {
+        let log = spend::SpendLog::open(&dir).unwrap();
+        assert!(std::fs::read(&file).unwrap().ends_with(b"\n"), "the torn record was cut away at open");
+        assert_eq!(log.used("b"), spend::Used { microusd: 500, requests: 1 });
+        log.reserve("b", "2", |_| Ok(700)).unwrap();
+    }
+    // A second crash before call 2 settles: both reservations are still there.
+    let log = spend::SpendLog::open(&dir).unwrap();
+    assert_eq!(log.used("b"), spend::Used { microusd: 1200, requests: 2 });
+    drop(log);
+    // A complete line that does not read: the budget is ambiguous, nothing is served.
+    let mut bad = std::fs::read(&file).unwrap();
+    bad.extend_from_slice(b"{\"budget\":\"b\",\"id\":\"3\",\"op\":\"reserve\",\"microusd\":\"lots\"}\n");
+    std::fs::write(&file, &bad).unwrap();
+    assert!(spend::SpendLog::open(&dir).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}

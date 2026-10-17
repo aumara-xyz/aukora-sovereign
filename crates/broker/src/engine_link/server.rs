@@ -2,7 +2,7 @@
 //! The listener: HTTP/1.1 on a unix socket, one engine call per request, streamed back as it arrives.
 
 use super::budget::{Budget, KeyApproval};
-use super::meter::Meter;
+use super::meter::{Meter, Stop};
 use super::{refuse, request, Link, LinkRefusal, Peer, ANTHROPIC_VERSION, FORWARDED_BETAS};
 use bytes::Bytes;
 use canon::digest::Digest32;
@@ -242,7 +242,7 @@ async fn send(
     }
     let deadline = Instant::now() + link.limits.total;
     let sent = tokio::time::timeout(link.limits.idle, builder.body(body).send()).await;
-    let meter = Meter::new(&key);
+    let meter = Meter::new(&key, &call.budget.models);
     drop(key);
     let mut response = match sent {
         Ok(Ok(response)) => response,
@@ -327,7 +327,8 @@ async fn pump(
             break Outcome::Interrupted("reply-too-large");
         }
         match meter.feed(&chunk) {
-            Err(_) => break Outcome::KeyEcho,
+            Err(Stop::KeyEcho) => break Outcome::KeyEcho,
+            Err(Stop::Unscannable) => break Outcome::Interrupted("reply-unscannable"),
             Ok(out) if out.is_empty() => {}
             Ok(out) => {
                 if sender.send(Bytes::from(out)).await.is_err() {
@@ -344,10 +345,12 @@ async fn pump(
         Outcome::Ended if recorded && meter.complete() => {
             let _ = sender.send(Bytes::from(tail)).await;
         }
-        Outcome::Cancelled | Outcome::KeyEcho => {}
+        Outcome::Cancelled => {}
         _ => {
+            // The engine learns the call ended and why, never what was withheld.
             let code = match outcome {
                 Outcome::Interrupted(code) => code,
+                Outcome::KeyEcho => "reply-withheld",
                 _ if !recorded => "receipts-unavailable",
                 _ => "provider-stream-incomplete",
             };
@@ -398,7 +401,15 @@ async fn settle(
         // The provider may have billed more than it reported: the reservation is the floor.
         _ => (measured.max(call.reserved), true),
     };
-    let receipt = receipt(call, meter, outcome, charged, unknown, link.authority.now_ms());
+    // Every field is the broker's own or an approved name; the guard still reads the whole receipt, decoded, before
+    // it goes anywhere durable.
+    let receipt = receipt(call, meter, outcome, charged, unknown, link.authority.now_ms()).and_then(|value| {
+        if meter.guard_rejects(&value.canonical_bytes()) || meter.guard_rejects(format!("{value:?}").as_bytes()) {
+            Err(canon::codes::BROKER_KEY_ECHO)
+        } else {
+            Ok(value)
+        }
+    });
     let link2 = link.clone();
     let budget_id = call.budget_id.clone();
     let id = call.id.clone();
