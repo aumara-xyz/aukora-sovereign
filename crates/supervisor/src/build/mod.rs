@@ -17,7 +17,7 @@ mod verify;
 pub use records::BuildRecords;
 pub use verify::Frozen;
 
-use gate::build::Manifest;
+use gate::build::{Manifest, Network};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
@@ -30,8 +30,11 @@ pub struct Request<'a> {
     pub manifest_sha256: &'a str,
     /// The command, literally; the first argument is a script inside `source_dir`. No shell.
     pub argv: &'a [String],
-    /// The environment it starts with, and nothing else of the caller's.
+    /// The environment it starts with, and nothing else of the caller's. `CARGO_NET_OFFLINE=true` is always in it.
     pub env: &'a [(String, String)],
+    /// The network it gets: none. The manifest says so and the owner approved it; an implementation that cannot give a
+    /// build exactly this refuses to start rather than guess.
+    pub network: Network,
     /// The pristine export, checked against the manifest; the builder mounts it read-only.
     pub source_dir: &'a Path,
     /// An empty folder the builder writes `release.json` and `release.tar` into, and nothing else.
@@ -118,6 +121,7 @@ pub fn build_approved(
         manifest_sha256: &manifest_sha256,
         argv: &manifest.recipe.argv,
         env: &manifest.env,
+        network: manifest.network,
         source_dir,
         out_dir,
     })?;
@@ -145,7 +149,7 @@ pub fn build_approved(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gate::build::{Builder as Profile, Lock, Manifest, Recipe, Source, Toolchain};
+    use gate::build::{Builder as Profile, Lock, Manifest, Network, Recipe, Source, Toolchain};
     use std::cell::RefCell;
 
     fn temp(name: &str) -> std::path::PathBuf {
@@ -166,8 +170,9 @@ mod tests {
         let manifest = Manifest {
             base_release_sha256: None,
             builder: Profile { profile: "test-builder".into(), policy_sha256: digest(0xbb) },
-            env: vec![("LC_ALL".into(), "C".into()), ("TZ".into(), "UTC".into())],
+            env: vec![("CARGO_NET_OFFLINE".into(), "true".into()), ("LC_ALL".into(), "C".into()), ("TZ".into(), "UTC".into())],
             locks: vec![Lock { path: "Cargo.lock".into(), sha256: closure::file_digest(&source, "Cargo.lock").unwrap() }],
+            network: Network::None,
             node: "t1".into(),
             recipe: Recipe {
                 argv: ["scripts/reproduce.sh", "build", "0123456789abcdef0123456789abcdef01234567", "/out"].map(String::from).to_vec(),
@@ -186,13 +191,13 @@ mod tests {
     /// Writes what `reproduce.sh` would, or something worse; records what it was given.
     #[derive(Default)]
     struct Fake {
-        seen: RefCell<Vec<(Vec<String>, Vec<(String, String)>)>>,
+        seen: RefCell<Vec<(Vec<String>, Vec<(String, String)>, Network)>>,
         mischief: &'static str,
     }
 
     impl Builder for Fake {
         fn run(&self, request: &Request<'_>) -> Result<(), &'static str> {
-            self.seen.borrow_mut().push((request.argv.to_vec(), request.env.to_vec()));
+            self.seen.borrow_mut().push((request.argv.to_vec(), request.env.to_vec(), request.network));
             let entries = verify::tests::files();
             let mut json = verify::tests::release_json(request.manifest, &entries);
             if self.mischief == "commit" {
@@ -238,8 +243,10 @@ mod tests {
         let manifest_sha = sha256_hex(&manifest.to_bytes().unwrap());
         assert!(records.is_output_of(&frozen.release_sha256, &manifest_sha));
         assert!(!records.is_output_of(&"0".repeat(64), &manifest_sha));
-        // The builder got the manifest's command and environment and nothing else.
-        assert_eq!(fake.seen.borrow().as_slice(), [(manifest.recipe.argv.clone(), manifest.env.clone())]);
+        // The builder got the manifest's command, environment and network (none, with cargo told to stay offline) and
+        // nothing else.
+        assert_eq!(fake.seen.borrow().as_slice(), [(manifest.recipe.argv.clone(), manifest.env.clone(), Network::None)]);
+        assert!(fake.seen.borrow()[0].1.contains(&("CARGO_NET_OFFLINE".to_owned(), "true".to_owned())));
     }
 
     #[test]

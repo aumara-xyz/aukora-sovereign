@@ -5,8 +5,8 @@
 //! builder then rebuilds from exactly this manifest, and only the artifact that rebuild produces can be offered for
 //! release. The manifest names the source (commit, tree and a digest over the exported files), the lockfiles, the
 //! toolchain, the recipe (the exact command and the digest of its script), the environment it starts with, the
-//! target, the builder's sandbox policy and the release it replaces. It is made by trusted code from an export that
-//! code made itself; nothing in it is a claim the engine can make.
+//! target, the network it gets (none), the builder's sandbox policy and the release it replaces. It is made by trusted
+//! code from an export that code made itself; nothing in it is a claim the engine can make.
 //!
 //! Canonical JSON with exactly these members: `base_release_sha256`, `builder`, `env`, `kind`, `locks`, `network`,
 //! `node`, `recipe`, `source`, `target`, `toolchain`, `v`.
@@ -48,6 +48,48 @@ const ENV_ALLOWED: [&str; 15] = [
 /// Which variables must be empty (a wrapper would run arbitrary code around every compiler call).
 const ENV_EMPTY: [&str; 2] = ["RUSTC_WORKSPACE_WRAPPER", "RUSTC_WRAPPER"];
 
+/// Variables whose value is one of a few exact strings, not a free pattern: a `TZ` of `:/etc/passwd` names a file, a
+/// locale names a directory of code the C library loads.
+const ENV_EXACT: [(&str, &[&str]); 3] = [("CARGO_NET_OFFLINE", &["true"]), ("LC_ALL", &["C", "C.UTF-8"]), ("TZ", &["UTC"])];
+
+/// The variable that makes cargo refuse the network. A builder with no network of its own still gets it set, so a
+/// build that reaches for a registry fails loudly instead of fetching.
+const ENV_OFFLINE: &str = "CARGO_NET_OFFLINE";
+
+fn env_value_ok(name: &str, value: &str) -> bool {
+    match ENV_EXACT.iter().find(|(known, _)| *known == name) {
+        Some((_, allowed)) => allowed.contains(&value),
+        None => {
+            value.len() <= 64
+                && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b',' | b':' | b'=' | b'+' | b'/' | b'-' | b'_'))
+                && (!ENV_EMPTY.contains(&name) || value.is_empty())
+        }
+    }
+}
+
+/// What network the build gets. A closed enum with one member: v1 builds never have any.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Network {
+    /// No network at all (the builder's wall); dependencies come from the pinned, read-only cache.
+    None,
+}
+
+impl Network {
+    /// The word on the card and in the manifest.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
+}
+
 fn bad() -> canon::Refusal {
     crate::refuse("build-manifest")
 }
@@ -59,6 +101,11 @@ fn hex(text: &str, len: usize) -> bool {
 
 fn printable(text: &str, max: usize) -> bool {
     !text.is_empty() && text.len() <= max && text.bytes().all(|b| (0x20..=0x7e).contains(&b))
+}
+
+/// One argument of the command: printable ASCII with no space, so the card's line for it is the argument and nothing else.
+fn argument(text: &str) -> bool {
+    printable(text, 256) && !text.contains(' ')
 }
 
 fn name(text: &str) -> bool {
@@ -132,6 +179,8 @@ pub struct Manifest {
     pub env: Vec<(String, String)>,
     /// Sorted by path.
     pub locks: Vec<Lock>,
+    /// The network the build gets: none. The builder is handed it in its request, not left to infer it.
+    pub network: Network,
     /// The node the approval is for (the gate binds the proposal to the node too).
     pub node: String,
     pub recipe: Recipe,
@@ -152,19 +201,16 @@ impl Manifest {
     pub fn validate(&self) -> Result<()> {
         let env_ok = self.env.windows(2).all(|pair| pair[0].0 < pair[1].0)
             && self.env.len() <= 32
-            && self.env.iter().all(|(key, value)| {
-                ENV_ALLOWED.contains(&key.as_str())
-                    && value.len() <= 64
-                    && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b',' | b':' | b'=' | b'+' | b'/' | b'-' | b'_'))
-                    && (!ENV_EMPTY.contains(&key.as_str()) || value.is_empty())
-            });
+            && self.env.iter().all(|(key, value)| ENV_ALLOWED.contains(&key.as_str()) && env_value_ok(key, value))
+            // Cargo must be told to stay offline, whatever the builder's own walls are.
+            && self.env.iter().any(|(key, value)| key == ENV_OFFLINE && value == "true");
         let locks_ok = !self.locks.is_empty()
             && self.locks.len() <= 16
             && self.locks.windows(2).all(|pair| pair[0].path < pair[1].path)
             && self.locks.iter().all(|lock| relative_path(&lock.path) && hex(&lock.sha256, 64));
         let argv_ok = (1..=16).contains(&self.recipe.argv.len())
             && relative_path(&self.recipe.argv[0])
-            && self.recipe.argv.iter().all(|arg| printable(arg, 256))
+            && self.recipe.argv.iter().all(|arg| argument(arg))
             && hex(&self.recipe.script_sha256, 64);
         let toolchain_ok = printable(&self.toolchain.cargo, 128)
             && printable(&self.toolchain.node, 64)
@@ -203,10 +249,11 @@ impl Manifest {
         lines.push(("rustc".to_owned(), self.toolchain.rustc.clone()));
         lines.push(("cargo".to_owned(), self.toolchain.cargo.clone()));
         lines.push(("node_js".to_owned(), self.toolchain.node.clone()));
-        lines.push(("command".to_owned(), self.recipe.argv.join(" ")));
+        // One line per argument: a space-joined command would show `build --skip` and `build`, `--skip` the same.
+        lines.extend(self.recipe.argv.iter().enumerate().map(|(at, arg)| (format!("argv {at}"), arg.clone())));
         lines.push(("script_sha256".to_owned(), self.recipe.script_sha256.clone()));
         lines.extend(self.env.iter().map(|(name, value)| (format!("env {name}"), value.clone())));
-        lines.push(("network".to_owned(), "none".to_owned()));
+        lines.push(("network".to_owned(), self.network.as_str().to_owned()));
         lines.push(("builder".to_owned(), self.builder.profile.clone()));
         lines.push(("builder_policy_sha256".to_owned(), self.builder.policy_sha256.clone()));
         lines
@@ -235,7 +282,7 @@ impl Manifest {
                         .collect::<Result<Vec<_>>>()?,
                 )?,
             ),
-            ("network", text("none")?),
+            ("network", text(self.network.as_str())?),
             ("node", text(&self.node)?),
             (
                 "recipe",
@@ -290,7 +337,6 @@ impl Manifest {
         )?;
         if !matches!(root.get("v").map(Value::view), Some(ValueView::Integer(version)) if version.get() == 1)
             || field(&root, "kind")? != KIND
-            || field(&root, "network")? != "none"
             || field(&root, "target")? != TARGET_TRIPLE
         {
             return Err(bad());
@@ -334,12 +380,14 @@ impl Manifest {
                 .collect::<Result<Vec<_>>>()?,
             _ => return Err(bad()),
         };
+        let network = Network::parse(&field(&root, "network")?).ok_or_else(bad)?;
         let base = field(&root, "base_release_sha256")?;
         let manifest = Manifest {
             base_release_sha256: if base == "none" { None } else { Some(base) },
             builder: Builder { profile: field(builder, "profile")?, policy_sha256: field(builder, "policy_sha256")? },
             env,
             locks,
+            network,
             node: field(&root, "node")?,
             recipe: Recipe { argv: strings(recipe.get("argv"))?, script_sha256: field(recipe, "script_sha256")? },
             source: Source { commit: field(source, "commit")?, tree: field(source, "tree")?, export_sha256: field(source, "export_sha256")? },
@@ -370,6 +418,7 @@ pub(crate) fn sample() -> Manifest {
             Lock { path: "Cargo.lock".into(), sha256: digest(0x01) },
             Lock { path: "app/package-lock.json".into(), sha256: digest(0x02) },
         ],
+        network: Network::None,
         node: "t1".into(),
         recipe: Recipe {
             argv: ["scripts/reproduce.sh", "build", "0123456789abcdef0123456789abcdef01234567", "/out", "--twice"].map(String::from).to_vec(),
@@ -416,18 +465,51 @@ mod tests {
         assert!(Manifest::parse(b"{}").is_err() && Manifest::parse(b"nope").is_err());
     }
 
+    /// The sample's environment with one more (or replaced) variable, still sorted.
+    fn env_with(name: &str, value: &str) -> Vec<(String, String)> {
+        let mut env: Vec<_> = sample().env.into_iter().filter(|(key, _)| key != name).collect();
+        env.push((name.to_owned(), value.to_owned()));
+        env.sort();
+        env
+    }
+
     #[test]
     fn the_environment_is_a_closed_list_with_closed_values() {
         let mut manifest = sample();
         for (name, value) in [("LD_PRELOAD", "/x"), ("PATH", "/bin"), ("RUSTC_WRAPPER", "evil"), ("TZ", "a b"), ("TZ", "$(id)")] {
-            manifest.env = vec![(name.into(), value.into())];
+            manifest.env = env_with(name, value);
             assert!(manifest.to_bytes().is_err(), "{name}={value}");
         }
         // Unsorted or repeated names are refused rather than reordered.
-        manifest.env = vec![("TZ".into(), "UTC".into()), ("LC_ALL".into(), "C".into())];
+        manifest.env = vec![("CARGO_NET_OFFLINE".into(), "true".into()), ("TZ".into(), "UTC".into()), ("LC_ALL".into(), "C".into())];
         assert!(manifest.to_bytes().is_err());
-        manifest.env = vec![("TZ".into(), "UTC".into()), ("TZ".into(), "UTC".into())];
+        manifest.env = vec![("CARGO_NET_OFFLINE".into(), "true".into()), ("TZ".into(), "UTC".into()), ("TZ".into(), "UTC".into())];
         assert!(manifest.to_bytes().is_err());
+    }
+
+    #[test]
+    fn the_build_is_told_to_stay_offline_and_its_locale_and_zone_name_no_file() {
+        // Review: `network` was parsed and dropped, `CARGO_NET_OFFLINE=false` was allowed, and `TZ=:/etc/passwd` passed.
+        let mut manifest = sample();
+        assert_eq!(manifest.network, Network::None);
+        manifest.env = env_with("CARGO_NET_OFFLINE", "false");
+        assert!(manifest.to_bytes().is_err(), "offline=false");
+        manifest.env = sample().env.into_iter().filter(|(key, _)| key != "CARGO_NET_OFFLINE").collect();
+        assert!(manifest.to_bytes().is_err(), "offline missing");
+        manifest.env = vec![];
+        assert!(manifest.to_bytes().is_err(), "env empty");
+        for (name, value) in [("TZ", ":/etc/passwd"), ("TZ", "Europe/Oslo"), ("TZ", "utc"), ("TZ", ""), ("LC_ALL", "en_US.UTF-8"), ("LC_ALL", "/tmp/locale"), ("LC_ALL", "")] {
+            manifest.env = env_with(name, value);
+            assert!(manifest.to_bytes().is_err(), "{name}={value}");
+        }
+        manifest.env = env_with("LC_ALL", "C.UTF-8");
+        let bytes = manifest.to_bytes().unwrap();
+        assert_eq!(Manifest::parse(&bytes).unwrap(), manifest);
+        // The same refusals on the read path: bytes the owner would be shown, edited to carry them, do not parse.
+        let good = String::from_utf8(sample().to_bytes().unwrap()).unwrap();
+        for changed in [good.replace("\"CARGO_NET_OFFLINE\":\"true\"", "\"CARGO_NET_OFFLINE\":\"false\""), good.replace("\"TZ\":\"UTC\"", "\"TZ\":\":/etc/passwd\"")] {
+            assert!(Manifest::parse(changed.as_bytes()).is_err(), "{changed}");
+        }
     }
 
     #[test]
@@ -440,6 +522,12 @@ mod tests {
         let mut manifest = sample();
         manifest.recipe.argv.push("tab\there".into());
         assert!(manifest.to_bytes().is_err());
+        // A space in any slot is refused, not just the first: `["build --skip"]` must not read as `["build", "--skip"]`.
+        for arg in ["build --skip", " build", "build ", "a\nb", "a\u{a0}b", "a\u{7f}b", ""] {
+            let mut manifest = sample();
+            manifest.recipe.argv[1] = arg.into();
+            assert!(manifest.to_bytes().is_err(), "{arg:?}");
+        }
         manifest.recipe.argv = vec![];
         assert!(manifest.to_bytes().is_err());
     }
@@ -470,7 +558,19 @@ mod tests {
         assert_eq!(label("lock app/package-lock.json"), Some(&*"02".repeat(32)));
         assert_eq!(label("env RUSTC_WRAPPER"), Some(""));
         assert_eq!(label("env TZ"), Some("UTC"));
-        assert_eq!(label("command"), Some("scripts/reproduce.sh build 0123456789abcdef0123456789abcdef01234567 /out --twice"));
+        assert_eq!(label("command"), None, "the command is no longer one joined line");
+        let argv: Vec<_> = lines.iter().filter(|(label, _)| label.starts_with("argv ")).map(|(label, text)| (label.as_str(), text.as_str())).collect();
+        assert_eq!(
+            argv,
+            [
+                ("argv 0", "scripts/reproduce.sh"),
+                ("argv 1", "build"),
+                ("argv 2", "0123456789abcdef0123456789abcdef01234567"),
+                ("argv 3", "/out"),
+                ("argv 4", "--twice"),
+            ]
+        );
+        assert_eq!(label("env CARGO_NET_OFFLINE"), Some("true"));
         assert_eq!(label("network"), Some("none"));
         assert_eq!(Manifest { base_release_sha256: None, ..sample() }.card_lines()[1].1, "none (first release)");
         // Labels are unique, so none can hide another.
@@ -479,6 +579,21 @@ mod tests {
         names.sort();
         names.dedup();
         assert_eq!(names.len(), before);
+    }
+
+    #[test]
+    fn two_different_commands_never_show_the_same_card() {
+        // Review: `["build --skip", ...]` and `["build", "--skip", ...]` both rendered `build --skip`. The first is now
+        // refused; and where two argument lists are both valid, their cards differ line for line.
+        let mut spaced = sample();
+        spaced.recipe.argv = ["scripts/reproduce.sh", "build --skip", "0123456789abcdef0123456789abcdef01234567", "/out"].map(String::from).to_vec();
+        assert!(spaced.to_bytes().is_err());
+        let mut split = sample();
+        split.recipe.argv = ["scripts/reproduce.sh", "build", "--skip", "0123456789abcdef0123456789abcdef01234567", "/out"].map(String::from).to_vec();
+        let mut joined = sample();
+        joined.recipe.argv = ["scripts/reproduce.sh", "build--skip", "0123456789abcdef0123456789abcdef01234567", "/out"].map(String::from).to_vec();
+        assert_ne!(split.card_lines(), joined.card_lines());
+        assert_ne!(split.to_bytes().unwrap(), joined.to_bytes().unwrap());
     }
 
     #[test]

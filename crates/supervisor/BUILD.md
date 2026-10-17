@@ -33,9 +33,9 @@ number in it. The owner's card shows every line.
 | `source.export_sha256` | digest over every exported file: path, executable bit, length, SHA-256 (`build/closure.rs`) | the source the builder reads is the source approved; refuses symlinks, devices, `.git` |
 | `locks` | path and SHA-256 of `Cargo.lock`, `app/APP-LOCK.json`, ... | dependency set (crates.io checksums in `Cargo.lock` then bind each crate's bytes) |
 | `toolchain` | `rustc -Vv`, `cargo -V`, `node --version`, verbatim | a different compiler is a different manifest; `release.json`'s toolchain line must equal it |
-| `recipe.argv`, `recipe.script_sha256` | the one command, literally, and its script's digest | no shell, no extra step; the script is also inside the export digest |
-| `env` | name/value pairs from a closed list of 15 names (`CARGO_*` profile settings, `LC_ALL`, `TZ`, `SOURCE_DATE_EPOCH`, ...); wrappers must be empty | `LD_PRELOAD`, `PATH`, `RUSTC_WRAPPER=...` and friends cannot be smuggled in; the builder clears everything else |
-| `network` | `none` (the only value v1 accepts) | no fetch during the build; dependencies come from the pinned cache |
+| `recipe.argv`, `recipe.script_sha256` | the one command, literally, and its script's digest | no shell, no extra step; the script is also inside the export digest. Every argument is printable ASCII with no space, and the card shows one line per argument (`argv 0`, `argv 1`, ...), so two different argument lists can never read the same |
+| `env` | name/value pairs from a closed list of 15 names (`CARGO_*` profile settings, `LC_ALL`, `TZ`, `SOURCE_DATE_EPOCH`, ...); wrappers must be empty; `CARGO_NET_OFFLINE=true` is required, `TZ` is `UTC` and `LC_ALL` is `C` or `C.UTF-8` (exact strings, so neither can name a file) | `LD_PRELOAD`, `PATH`, `RUSTC_WRAPPER=...` and friends cannot be smuggled in; the builder clears everything else; cargo is told to stay offline even if the sandbox's own wall failed |
+| `network` | `none` (the only value v1 accepts), kept on `Manifest` as the closed enum `Network::None` and handed to the builder in `Request.network` | no fetch during the build; dependencies come from the pinned cache; a builder that cannot give a build exactly this has a type to match on and refuses |
 | `target` | `x86_64-unknown-linux-gnu` | what the node runs |
 | `builder.profile`, `builder.policy_sha256` | the sandbox's name and the digest of its *effective* policy | the approval says which walls the build ran inside |
 | `base_release_sha256` | the release this replaces, or `none` | approval is for a replacement of one thing, not "a release" |
@@ -85,7 +85,7 @@ manifest that produced it (and its card says so).
 | builder swaps or adds output after it "finished" | exactly two plain files, each read once into memory (5); nothing re-reads the folder |
 | output inconsistent with this manifest | commit, target and the `rustc` + node line of `release.json` equal the manifest's (6). This is consistency only: every one of those strings is written by the builder, so a hostile builder passes it. Provenance rests on the sandbox and on a second, independent builder; `cargo -V` and rustc's host/LLVM lines are not in `release.json` and are not compared. Records are written only after (6) |
 | the verified bytes differ from what is installed | the caller installs `Frozen`'s bytes, never the folder; `ReleaseFiles::open` rechecks the running binary |
-| a release nobody built from an approved manifest is offered | `is_output_of` (a torn or edited record line can lose a record, never make one) |
+| a release nobody built from an approved manifest is offered | `is_output_of`. `builds.jsonl` is a hash chain (`records.rs`): each line is exactly `{"chain_sha256","manifest_sha256","release_sha256"}` where the first is the SHA-256 of a fixed label, the previous line's chain value and the pair. `open` accepts only those exact lines in that chain and refuses the whole file for anything else (hand-written or extra-key line, edited digit, inserted, moved, dropped-from-the-middle or repeated line); a last line with no newline was never acknowledged and is cut off. Cutting lines off the end can only lose records. The chain holds no secret, so it does not stop a writer who recomputes it: that writer is kept out by the open (no final symlink, a regular file with one name, owned by this user, not group/other-writable, in a folder only this user can change, at most 4 MiB, all checked on the descriptor) and by the builder having no access to the node's state |
 | an old approval reused for a later build | `build_approved` refuses a manifest for another node (`node-differs`) or one approved against a release that is no longer the installed one (`base-differs`). The gate alone does not: `approved_manifest()` returns the last applied bytes forever. The release hook in section 7 checks the same two things |
 
 Not closed by this module: the builder reading something it should not (that is the sandbox), a reproducibility gap
@@ -126,9 +126,12 @@ is pinned in `checks/run.py` (`DEPLOY_PINS`), so the change is a pin update plus
 `cargo test -p gate build` and `cargo test -p supervisor build`: manifest round trip and every refusal (env names and
 values, recipe path, locks, digests, size); closure (same files same digest, any change another, framing, symlink,
 `.git`, control characters); verifier against a tar writer and against the tar and `release.json` that
-`reproduce.sh`'s own `write_tar` and `manifest_for` wrote (including long names); `build_approved` with a scripted
-builder (changed source, lock, script never reach the builder; build that touches its input; extra, linked,
-wrong-commit, swapped output; dirty output folder; garbage manifest); records across restart and torn lines.
+`reproduce.sh`'s own `write_tar` and `manifest_for` wrote (including long names, which are held to the same path rule
+as listed names); `build_approved` with a scripted builder (changed source, lock, script never reach the builder; build
+that touches its input; extra, linked, wrong-commit, swapped output; dirty output folder; garbage manifest; the builder
+is handed `Network::None` and `CARGO_NET_OFFLINE=true`); records across restart, a torn last line, and every forged,
+edited, inserted, moved or repeated line (the whole file is refused), plus the file checks (link, mode, second name,
+writable folder, size).
 
 Not run: any real build, any sandbox, any gate proposal. The card's lines are unit-tested (`Manifest::card_lines`:
 one line per input, unique labels); the review branch that renders them and the adapter calls are compile-checked only.

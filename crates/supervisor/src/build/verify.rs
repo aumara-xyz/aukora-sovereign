@@ -105,7 +105,7 @@ fn tar_files(tar: &[u8]) -> Result<Vec<(String, u32, &[u8])>, &'static str> {
         let Some(header) = tar.get(at..at + 512) else { return Err("release-tar") };
         if header.iter().all(|b| *b == 0) {
             // The end marker; only zero padding may follow.
-            return if tar[at..].iter().all(|b| *b == 0) { Ok(out) } else { Err("release-tar") };
+            return if long_name.is_none() && tar[at..].iter().all(|b| *b == 0) { Ok(out) } else { Err("release-tar") };
         }
         let sum: u64 = header.iter().enumerate().map(|(i, b)| if (148..156).contains(&i) { 32 } else { u64::from(*b) }).sum();
         if octal(&header[148..156]) != Some(sum) {
@@ -124,6 +124,10 @@ fn tar_files(tar: &[u8]) -> Result<Vec<(String, u32, &[u8])>, &'static str> {
         let name_end = name_field.iter().position(|b| *b == 0).unwrap_or(100);
         match kind {
             b'L' => {
+                // One long name belongs to the one entry after it.
+                if long_name.is_some() {
+                    return Err("release-tar");
+                }
                 let name = data.split(|b| *b == 0).next().unwrap_or_default();
                 long_name = Some(String::from_utf8(name.to_vec()).map_err(|_| "release-tar")?);
             }
@@ -136,6 +140,11 @@ fn tar_files(tar: &[u8]) -> Result<Vec<(String, u32, &[u8])>, &'static str> {
                     Some(name) => name,
                     None => String::from_utf8(name_field[..name_end].to_vec()).map_err(|_| "release-tar")?,
                 };
+                // Whichever field it came from, the name is held to the same rule as the names `release.json` lists: a
+                // long name with `..` or a leading `/` must not reach an installer that joins it onto a folder.
+                if !gate::build::relative_path(&name) {
+                    return Err("release-tar");
+                }
                 let mode = u32::try_from(octal(&header[100..108]).ok_or("release-tar")?).map_err(|_| "release-tar")?;
                 out.push((name, mode, data));
             }
@@ -203,6 +212,11 @@ pub mod tests {
 
     /// A GNU-format tar the way `reproduce.sh` writes one (names over 100 bytes use an `L` entry).
     pub fn tar(entries: &[(&str, u32, &[u8])]) -> Vec<u8> {
+        tar_with(entries, false)
+    }
+
+    /// The same, optionally with a long-name entry for every file, whatever its length.
+    pub fn tar_with(entries: &[(&str, u32, &[u8])], always_long: bool) -> Vec<u8> {
         fn header(name: &str, kind: u8, mode: u32, size: usize) -> [u8; 512] {
             let mut block = [0u8; 512];
             let bytes = name.as_bytes();
@@ -226,7 +240,7 @@ pub mod tests {
         }
         let mut out = Vec::new();
         for (name, mode, data) in entries {
-            if name.len() > 100 {
+            if always_long || name.len() > 100 {
                 let mut long = name.as_bytes().to_vec();
                 long.push(0);
                 out.extend_from_slice(&header("././@LongLink", b'L', 0, long.len()));
@@ -265,12 +279,13 @@ pub mod tests {
     }
 
     pub fn manifest() -> Manifest {
-        use gate::build::{Builder, Lock, Recipe, Source, Toolchain};
+        use gate::build::{Builder, Lock, Network, Recipe, Source, Toolchain};
         Manifest {
             base_release_sha256: None,
             builder: Builder { profile: "test-builder".into(), policy_sha256: "bb".repeat(32) },
-            env: vec![("TZ".into(), "UTC".into())],
+            env: vec![("CARGO_NET_OFFLINE".into(), "true".into()), ("TZ".into(), "UTC".into())],
             locks: vec![Lock { path: "Cargo.lock".into(), sha256: "01".repeat(32) }],
+            network: Network::None,
             node: "t1".into(),
             recipe: Recipe { argv: vec!["scripts/reproduce.sh".into(), "build".into()], script_sha256: "cc".repeat(32) },
             source: Source { commit: "0123456789abcdef0123456789abcdef01234567".into(), tree: "fedcba9876543210fedcba9876543210fedcba98".into(), export_sha256: "dd".repeat(32) },
@@ -341,6 +356,32 @@ pub mod tests {
         let sum: u32 = link[..512].iter().enumerate().map(|(i, b)| if (148..156).contains(&i) { 32 } else { u32::from(*b) }).sum();
         link[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
         assert_eq!(verify(&manifest(), json, link).unwrap_err(), "release-tar");
+    }
+
+    #[test]
+    fn every_name_in_the_tar_is_held_to_the_rule_for_listed_names_long_ones_too() {
+        // Review: names from a GNU long-link entry were used as they came. One that climbs out (`bin/../bin/sovereign`
+        // collapses to a listed name once an installer joins it) is refused at the parser, short or long.
+        let entry = |name| [(name, 0o755, &b"x"[..])];
+        for name in ["bin/../bin/sovereign", "/bin/sovereign", "bin//sovereign", "./bin/sovereign", "bin/sov ereign", "bin/sovereign/", "../x"] {
+            for always_long in [false, true] {
+                assert_eq!(tar_files(&tar_with(&entry(name), always_long)).unwrap_err(), "release-tar", "{name} long={always_long}");
+            }
+        }
+        // A good name is read back the same way from either field.
+        for always_long in [false, true] {
+            let bytes = tar_with(&entry("bin/sovereign"), always_long);
+            let found = tar_files(&bytes).unwrap();
+            assert_eq!(found.iter().map(|(name, _, _)| name.as_str()).collect::<Vec<_>>(), ["bin/sovereign"]);
+        }
+        // A long name that never meets its file, or two in a row, is not a plain list of files either.
+        let good = tar_with(&entry("bin/sovereign"), true);
+        let mut twice = good[..1024].to_vec();
+        twice.extend_from_slice(&good);
+        assert_eq!(tar_files(&twice).unwrap_err(), "release-tar");
+        let mut dangling = good[..1024].to_vec();
+        dangling.resize(dangling.len() + 1024, 0);
+        assert_eq!(tar_files(&dangling).unwrap_err(), "release-tar");
     }
 
     #[test]
