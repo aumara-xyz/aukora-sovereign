@@ -28,8 +28,12 @@ The need is decided from the effect: every applied change must rest on exactly o
 consumed approval of the same operation (else `REWRITTEN gate-reference` at the apply), and a
 consume is free of the owner only when it names a well-formed use of an owner-signed grant
 that is in the same ledger. A missing, null or unlinked standing reference never means "no
-owner needed". Not checked: a standing grant's scope, count and revocation, and rows
-(broker grants, memory permissions) whose approvals this verifier cannot yet link.
+owner needed". Not checked: a standing grant's scope, count and revocation.
+
+Rows built from an owner's passkey proof that neither the node's export nor this verifier can
+yet link to a retained assertion (`broker.grant`, `broker.revoke`, `kira.permission`) are
+`verifier:owner-provenance` at their row, whoever wrote them: a ledger holding one is never
+`VERIFIED` until that linking lands.
 
 The archive's flat gate rows (a `gate.consume` or `gate.apply` whose body is not the Aura
 authority wrapper) are not verifiable: the rebuilt node never writes them, so each one is

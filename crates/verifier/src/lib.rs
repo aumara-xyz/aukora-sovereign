@@ -114,6 +114,10 @@ use format::{array, canonical, digest, field, hex32, keys, object, refusal, stri
 use std::collections::BTreeMap;
 
 const DOMAIN: &str = "aukora:aura-record:v1";
+/// Rows the node builds from an owner's passkey proof (a spend grant, its revocation, a memory permission) that neither the
+/// node's v2 export nor this verifier can yet link to a retained assertion: whoever wrote one, nothing here says the owner
+/// approved it, so each is `owner-provenance` and a ledger holding one is never `VERIFIED`.
+const UNLINKED_OWNER_KINDS: &[&str] = &["broker.grant", "broker.revoke", "kira.permission"];
 const KINDS: &[&str] = &[
     "boot.facts",
     "gate.propose",
@@ -425,6 +429,10 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
                 };
                 report.finding(verdict, code, sequence, true);
             }
+        }
+        if UNLINKED_OWNER_KINDS.contains(&kind) {
+            integrity.owner_bindings = Scope::Unchecked;
+            report.finding(Verdict::Unchecked, refusal("owner-provenance"), sequence, true);
         }
         if ["gate.consume", "gate.apply"].contains(&kind) {
             // A wrapped body is held against the retained owner assertions (the owner path) and the rows it rests on. Any

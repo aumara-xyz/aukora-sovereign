@@ -12,6 +12,8 @@ PRESENTED_HEAD_V1 = "aukora-aura-presented-head-v1"
 LEAF_CONVENTION = "rfc6962-leaf-sha256-0x00-prefixed-v1"
 AURA_DOMAIN = "aukora:aura-record:v1"
 AUTHORITY_WRAPPER = "aukora-aura-authority-body-v1"
+# Rows built from an owner's passkey proof that neither the node's v2 export nor this verifier can yet link to an assertion.
+UNLINKED_OWNER_KINDS = ("broker.grant", "broker.revoke", "kira.permission")
 MAX_SAFE_INTEGER = (1 << 53) - 1
 MAX_INPUT = 8_388_608
 KINDS = frozenset((

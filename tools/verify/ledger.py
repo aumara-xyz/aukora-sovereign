@@ -3,6 +3,7 @@ from .common import (
     AURA_DOMAIN,
     AUTHORITY_WRAPPER,
     KINDS,
+    UNLINKED_OWNER_KINDS,
     LEAF_CONVENTION,
     RETAINED_HEAD_V1,
     ROW_KEYS,
@@ -97,6 +98,8 @@ def _walk(rows, key):
         except (ValueError, TypeError, KeyError):
             raise Refusal("verifier:bundle-row-schema", number) from None
     for row in rows:
+        if row["kind"] in UNLINKED_OWNER_KINDS:
+            found.append(_finding("owner-provenance", row["seq"]))  # an owner proof this verifier cannot yet link
         if row["kind"] not in ("gate.consume", "gate.apply"):
             continue
         if row["body"].get("schema") != AUTHORITY_WRAPPER:

@@ -511,3 +511,17 @@ fn only_a_standing_use_of_an_owner_signed_grant_in_the_ledger_needs_no_assertion
     without.remove(1);
     assert!(needs(&without), "a standing use with no grant row in the ledger needs the owner");
 }
+
+#[test]
+fn a_spend_grant_a_revocation_and_a_memory_permission_are_never_bound() {
+    // Built from an owner's passkey proof, but neither the node's export nor this verifier can link them to an assertion
+    // yet, so the node alone says the owner approved them: owner-provenance at the row, never VERIFIED.
+    for kind in ["broker.grant", "broker.revoke", "kira.permission"] {
+        let payload = format!(r#"{{"proposal":"{PROPOSAL}","state":"applied"}}"#);
+        let report = unapproved(vec![fact(), (kind, "terminal", "owner", OPERATION.to_owned(), Some(payload))]);
+        assert_eq!(report.verdict(), Verdict::Unchecked, "{kind}");
+        assert_eq!(codes(&report), ["owner-provenance"], "{kind}");
+        assert_eq!(report.findings()[0].sequence, Some(2), "{kind}");
+        assert_eq!(report.integrity().owner_bindings, Scope::Unchecked, "{kind}");
+    }
+}

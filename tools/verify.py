@@ -10,6 +10,7 @@ PRESENTED_HEAD_V1 = "aukora-aura-presented-head-v1"
 LEAF_CONVENTION = "rfc6962-leaf-sha256-0x00-prefixed-v1"
 AURA_DOMAIN = "aukora:aura-record:v1"
 AUTHORITY_WRAPPER = "aukora-aura-authority-body-v1"
+UNLINKED_OWNER_KINDS = ("broker.grant", "broker.revoke", "kira.permission")
 MAX_SAFE_INTEGER = (1 << 53) - 1
 MAX_INPUT = 8_388_608
 KINDS = frozenset((
@@ -518,6 +519,8 @@ def _walk(rows, key):
         except (ValueError, TypeError, KeyError):
             raise Refusal("verifier:bundle-row-schema", number) from None
     for row in rows:
+        if row["kind"] in UNLINKED_OWNER_KINDS:
+            found.append(_finding("owner-provenance", row["seq"]))  # an owner proof this verifier cannot yet link
         if row["kind"] not in ("gate.consume", "gate.apply"):
             continue
         if row["body"].get("schema") != AUTHORITY_WRAPPER:
@@ -817,6 +820,6 @@ def main(arguments):
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         print("UNCHECKED verifier:malformed-or-unreadable")
         return 64
-__all__ = ('COLD_PROOF_V1', 'COLD_PROOF_V2', 'RETAINED_HEAD_V1', 'PRESENTED_HEAD_V1', 'LEAF_CONVENTION', 'AURA_DOMAIN', 'AUTHORITY_WRAPPER', 'MAX_SAFE_INTEGER', 'MAX_INPUT', 'KINDS', 'ROW_KEYS', 'Refusal', '_require', '_finding', 'export_version', '_cold', '_owner_key', '_standard', '_client_data', '_owner_assertion', '_owner_assertions', '_owner_standing', '_owner_payload', '_owner_effect', '_owner_linked', '_owner_needed', '_owner_required', '_owner_row', '_owner_bind', '_owner_epoch', '_integer', '_forbidden_number', '_object', '_validate', '_canonical', '_bytes', '_same', '_parse', '_hex', '_size', '_sha', '_node', '_root', '_checked_key', '_key', '_ed25519', '_schnorr', '_head', '_anchor', '_authorization', '_npub', '_nostr_binding', '_walk', '_report', 'verify_bundle', '_proof_result', 'verify_consistency', '_rows', 'verify_chain', '_event_value', '_event', 'verify_witness', '_read', '_render', '_failure', '_Arguments', 'main')
+__all__ = ('COLD_PROOF_V1', 'COLD_PROOF_V2', 'RETAINED_HEAD_V1', 'PRESENTED_HEAD_V1', 'LEAF_CONVENTION', 'AURA_DOMAIN', 'AUTHORITY_WRAPPER', 'UNLINKED_OWNER_KINDS', 'MAX_SAFE_INTEGER', 'MAX_INPUT', 'KINDS', 'ROW_KEYS', 'Refusal', '_require', '_finding', 'export_version', '_cold', '_owner_key', '_standard', '_client_data', '_owner_assertion', '_owner_assertions', '_owner_standing', '_owner_payload', '_owner_effect', '_owner_linked', '_owner_needed', '_owner_required', '_owner_row', '_owner_bind', '_owner_epoch', '_integer', '_forbidden_number', '_object', '_validate', '_canonical', '_bytes', '_same', '_parse', '_hex', '_size', '_sha', '_node', '_root', '_checked_key', '_key', '_ed25519', '_schnorr', '_head', '_anchor', '_authorization', '_npub', '_nostr_binding', '_walk', '_report', 'verify_bundle', '_proof_result', 'verify_consistency', '_rows', 'verify_chain', '_event_value', '_event', 'verify_witness', '_read', '_render', '_failure', '_Arguments', 'main')
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

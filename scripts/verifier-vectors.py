@@ -717,6 +717,11 @@ class Replay:
                                                                    {"auth": {"v": 1}, "authorization_digest": "ab" * 32})], False,
              {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": 3,
               "codes": ["verifier:owner-provenance"]}),
+            # Rows built from an owner's passkey proof that nothing here can link to an assertion (a spend grant, its
+            # revocation, a memory permission) are never "bound": owner-provenance at the row, whoever wrote them.
+            *[(kind.replace(".", "-") + "-is-not-linkable", [boot, (kind, "terminal", "owner", OPERATION, wrapped("applied"))], False,
+               {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": 2, "codes": ["verifier:owner-provenance"]})
+              for kind in ("broker.grant", "broker.revoke", "kira.permission")],
             # A flat row with no owner proof is located by both engines, at its row.
             ("flat-apply-without-proof-is-located", [boot, ("gate.propose", "intent", "owner", OPERATION, {"state": "proposed"}),
                                                      ("gate.apply", "terminal", "owner", OPERATION, {"state": "applied"})], False,

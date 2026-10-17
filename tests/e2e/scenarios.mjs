@@ -103,7 +103,11 @@ export async function m5(c) {
   const key = await relativeFile(c, 'm5-key', 'Enter the existing independently retained public signing-key file path, relative to this runner.');
   const checkpoint = await relativeFile(c, 'm5-checkpoint', 'Enter the existing independently retained covering checkpoint file path, relative to this runner.');
   const ownerKey = await relativeFile(c, 'm5-owner-key', 'Enter the existing independently retained owner passkey public-key file path (uncompressed P-256 SEC1, lowercase hex), relative to this runner; the bundle must be the v2 export.');
-  await c.verifier(bundle, key, checkpoint, 'VERIFIED', undefined, ownerKey);
+  // The node holds the M2 spend grant, which the verifier cannot yet link to its assertion (crates/verifier UNLINKED_OWNER_KINDS):
+  // UNCHECKED for that reason alone until the grant-linking follow-up lands, then VERIFIED again. Today the node's v2 export
+  // itself refuses a ledger holding a grant (crates/aura export/owner/grant_link_tests.rs), so this step is reached only
+  // after the export is fixed.
+  await c.verifier(bundle, key, checkpoint, 'UNCHECKED', undefined, ownerKey);
   for (const [id, description, verdict] of [
     ['forged-key', 'an independently prepared wrong public signing-key file', 'KEY_MISMATCH'],
     ['edited-history', 'an independently prepared canonical export with one signed row body changed and its original hash and signature retained', 'REWRITTEN'],
@@ -206,7 +210,9 @@ export async function m7(c) {
     const key = await relativeFile(c, `m7-${label}-key-file`, `Enter node ${label.toUpperCase()} independently retained public signing-key file relative path.`);
     const checkpoint = await relativeFile(c, `m7-${label}-checkpoint`, `Enter node ${label.toUpperCase()} independently retained covering checkpoint relative path.`);
     const ownerKey = await relativeFile(c, `m7-${label}-owner-key`, `Enter node ${label.toUpperCase()} independently retained owner passkey public-key file relative path (uncompressed P-256 SEC1, lowercase hex).`);
-    await c.verifier(bundle, key, checkpoint, 'VERIFIED', coveringHeads.get(label), ownerKey);
+    // Each node holds its own spend grant: UNCHECKED (owner-provenance only) until the grant-linking follow-up, then VERIFIED
+    // again; reached only once the node's v2 export can carry a grant (see m3).
+    await c.verifier(bundle, key, checkpoint, 'UNCHECKED', coveringHeads.get(label), ownerKey);
     exports.push({ bundle, key, checkpoint, ownerKey });
   }
   for (const [own, other] of [[0, 1], [1, 0]]) {
