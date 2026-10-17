@@ -356,11 +356,35 @@ pub fn crossing_of(class: Class, request: &Request) -> Option<Crossing> {
     Some(Crossing::new(crossing_class, token))
 }
 
+/// Auma's own slots, which the `@aukora/kira` plugin reads at the start of every session (`aukora:self` and
+/// `aukora:resume`, by name through `kira_get`).
+const OWN_SLOTS: [&str; 2] = ["aukora:self", "aukora:resume"];
+
+/// A read of one of Auma's own slots and nothing else: `kira_get` whose only argument is `id`, naming the slot. It
+/// writes nothing, crosses to nobody, and its result is the identity the owner already gave her; asking the owner
+/// for it on every new session teaches the owner to approve memory cards unread (NODE.md O14). Every other memory
+/// call (any recall, any other id or slot, any write) is still the slider's.
+pub fn own_slot_read(class: Class, request: &Request) -> bool {
+    if class != Class::Memory || request.tool != "kira_get" {
+        return false;
+    }
+    match request.args.view() {
+        ValueView::Object(fields) if fields.len() == 1 => {
+            matches!(request.args.get("id").map(Value::view), Some(ValueView::Text(id)) if OWN_SLOTS.contains(&id))
+        }
+        _ => false,
+    }
+}
+
 impl Door {
     /// With a slider configured, what a policy `allow` or `ask` becomes for this call; without one, the policy's own
-    /// action. `Err` is a refusal the door would give anyway.
+    /// action. `Err` is a refusal the door would give anyway. A policy `allow` of a read of Auma's own slot clears
+    /// without the slider (`own_slot_read`); a policy `ask` still asks.
     pub(super) fn settle(&self, class: Class, request: &Request, action: Action) -> std::result::Result<Action, String> {
         let (Some(standing), true) = (&self.standing, action != Action::Deny) else { return Ok(action) };
+        if action == Action::Allow && own_slot_read(class, request) {
+            return Ok(Action::Allow);
+        }
         let Some(crossing) = crossing_of(class, request) else { return Ok(Action::Ask) };
         match standing.settle(&crossing, now_ms(), || self.preflight_for_clear(class, request)) {
             Settled::Clear => Ok(Action::Allow),
@@ -447,6 +471,23 @@ mod tests {
 
     fn request(tool: &str, args: &str, class: &str) -> Request {
         super::super::wire::parse_request(&super::super::wire::test_line("c-1", tool, args, class)).unwrap()
+    }
+
+    #[test]
+    fn only_a_bare_read_of_auma_s_own_slot_skips_the_slider() {
+        assert!(own_slot_read(Class::Memory, &request("kira_get", "{\"id\":\"aukora:self\"}", "memory")));
+        assert!(own_slot_read(Class::Memory, &request("kira_get", "{\"id\":\"aukora:resume\"}", "memory")));
+        for (tool, args) in [
+            ("kira_get", "{\"id\":\"resume:grok\"}"),
+            ("kira_get", "{\"id\":\"0000000000000000000000000000000000000000000000000000000000000000\"}"),
+            ("kira_get", "{\"id\":\"aukora:self\",\"x\":1}"),
+            ("kira_get", "{\"id\":[\"aukora:self\"]}"),
+            ("kira_recall", "{\"query\":\"aukora:self\"}"),
+            ("kira_remember", "{\"id\":\"aukora:self\"}"),
+        ] {
+            assert!(!own_slot_read(Class::Memory, &request(tool, args, "memory")), "{tool} {args}");
+        }
+        assert!(!own_slot_read(Class::Net, &request("kira_get", "{\"id\":\"aukora:self\"}", "net")));
     }
 
     #[test]
@@ -790,7 +831,7 @@ mod tests {
                 let mut stream = stream;
                 if text.contains("whoami") {
                     writeln!(stream, "{}", serde_json::json!({"ok": true, "result": {"owner": false}})).unwrap();
-                } else if text.contains("recall") {
+                } else if text.contains("recall") || text.contains("\"get\"") {
                     served = 1;
                     writeln!(stream, "{}", serde_json::json!({"ok": true, "result": {"status": "found", "items": []}})).unwrap();
                     break;
@@ -835,5 +876,26 @@ mod tests {
         assert!(matches!(&decision, super::super::wire::Decision::Ask(code) if code == "ask-memory"), "{decision:?}");
         let _ = std::fs::remove_dir_all(bare);
         let _ = std::fs::remove_dir_all(granted);
+    }
+
+    #[test]
+    fn auma_s_own_slot_is_read_at_session_start_without_a_card_and_nothing_else_is() {
+        use super::super::peer::Peer;
+        use super::super::wire::test_line as line;
+        // No grant at all (the starter): reading aukora:self runs at once (O14) ...
+        let dir = temp("door-own-slot");
+        let (door, service) = memory_door(&dir, None);
+        let (_, decision) = door.judge(Peer::Uid(1001), &line("s-1", "kira_get", "{\"id\":\"aukora:self\"}", "memory"));
+        assert!(matches!(decision, super::super::wire::Decision::Allow { .. }), "{decision:?}");
+        assert_eq!(service.join().unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+        // ... while reading any other slot, or recalling, still asks the owner.
+        let dir = temp("door-other-slot");
+        let (door, service) = memory_door(&dir, None);
+        let (_, decision) = door.judge(Peer::Uid(1001), &line("s-2", "kira_get", "{\"id\":\"resume:grok\"}", "memory"));
+        assert!(matches!(&decision, super::super::wire::Decision::Ask(code) if code == "ask-memory"), "{decision:?}");
+        drop(std::os::unix::net::UnixStream::connect(dir.join("kira.sock")));
+        assert_eq!(service.join().unwrap(), 0);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
