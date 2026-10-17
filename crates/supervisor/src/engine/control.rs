@@ -19,7 +19,8 @@ use std::time::{Duration, Instant};
 use supervisor::ingress::{BindingState, PrincipalScope};
 
 const TICK: Duration = Duration::from_secs(5);
-/// A refused or expired proposal for the same bytes is raised again only after this long.
+/// How often the controller tries to raise its proposal; the gate itself holds back bytes whose card ran out of time
+/// for a day, and bytes the owner declined until the owner asks again (NODE.md O19).
 const PROPOSE_AGAIN: Duration = Duration::from_secs(600);
 /// How long a running engine is kept while the release floor cannot be read (another reader holds its lock). Nothing
 /// starts in that time, and a floor that stays unreadable longer stops it (NODE.md O11).
@@ -219,6 +220,8 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut proposed: Option<(Digest32, Instant)> = None;
     // The set the owner explicitly declined (NODE.md O19): not raised again until the owner asks again (Approvals).
     let mut declined: Option<Digest32> = None;
+    // The set whose card ran out of time: the gate holds it back for a day unless the owner asks again (log once).
+    let mut held: Option<Digest32> = None;
     let mut started_from: Option<Vec<u8>> = None;
     let mut said_failed = false;
     let mut unreadable_since: Option<Instant> = None;
@@ -279,12 +282,18 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
                 proposed = Some((digest, Instant::now()));
                 let note = "Let the engine load exactly these plugin packages (names and SHA-256 fingerprints)".to_owned();
                 match host.engine_gate().propose_plugin_set(scope, note, set.clone()).await {
-                    Ok(_) => declined = None,
+                    Ok(_) => (declined, held) = (None, None),
                     Err(refusal) if matches!(refusal.reason, "declined-unchanged" | "unchanged-decline") => {
                         if declined != Some(digest) {
                             eprintln!("engine: the owner declined this plugin set; it is raised again only when the owner asks again (Approvals)");
                         }
                         declined = Some(digest);
+                    }
+                    Err(refusal) if refusal.reason == "recently-expired" => {
+                        if held != Some(digest) {
+                            eprintln!("engine: the plugin-set card ran out of time; it is raised again within a day, or now if the owner asks again (Approvals)");
+                        }
+                        held = Some(digest);
                     }
                     Err(refusal) => {
                         eprintln!("engine: plugin-set proposal not raised: {}:{}", refusal.organ, refusal.reason)

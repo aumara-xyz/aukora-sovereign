@@ -342,6 +342,12 @@ impl<S: TargetStore> ScopedGate<S> {
             if row.authority != evidence.source_record || row.hash != evidence.digest {
                 return Err(crate::refuse("evidence-source"));
             }
+        } else if let Some((_, at)) = txn.last_expiry(digest)? {
+            // The same bytes whose card simply ran out of time: at most once a day, unless the owner asks again
+            // (which carries new evidence). Peter, 2026-10-17: no nagging, and no permanent no either.
+            if now(txn)?.saturating_sub(at) < aura::ledger::DAY_MS {
+                return Err(crate::refuse("recently-expired"));
+            }
         }
         Ok(())
     }

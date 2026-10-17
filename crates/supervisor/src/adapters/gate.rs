@@ -282,7 +282,11 @@ impl GateAdapter {
         self.submit(move |gate, host| {
             let target = host.scoped(scope, |txn| {
                 let stored = txn.proposal(&declined)?;
-                if txn.last_decline(stored.operation_digest)?.map(|row| row.proposal) != Some(declined) {
+                let digest = stored.operation_digest;
+                // Declined, or ran out of time (held back for a day): either way the owner's latest word on the bytes.
+                if txn.last_decline(digest)?.map(|row| row.proposal) != Some(declined)
+                    && txn.last_expiry(digest)?.map(|(id, _)| id) != Some(declined)
+                {
                     return Err(refuse("not-declined"));
                 }
                 Ok(stored.target)
@@ -323,11 +327,16 @@ impl GateAdapter {
             }
             let first = propose_once(gate, host, scope, target.to_owned(), note.clone(), bytes.clone(), None);
             match first {
-                Err(refusal) if refusal.reason == "declined-unchanged" || refusal.reason == "unchanged-decline" => {
+                Err(refusal)
+                    if matches!(refusal.reason, "declined-unchanged" | "unchanged-decline" | "recently-expired") =>
+                {
                     let declined = host.scoped(scope, |txn| {
                         let base = gate.target_store().observe(&TargetId::new(target.to_owned())?)?.digest;
                         let digest = proposal_digest(gate, target, base, &bytes)?;
-                        txn.last_decline(digest)?.map(|row| row.proposal).ok_or(refusal)
+                        match txn.last_decline(digest)? {
+                            Some(row) => Ok(row.proposal),
+                            None => txn.last_expiry(digest)?.map(|(id, _)| id).ok_or(refusal),
+                        }
                     })?;
                     propose_again(gate, host, scope, declined, target.to_owned(), note, bytes)
                 }
@@ -788,16 +797,23 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_card_that_ran_out_of_time_is_raised_again_with_the_same_bytes() {
+    fn a_closed_card_that_ran_out_of_time_is_held_back_a_day_unless_the_owner_asks_again() {
         let mut rig = rig("expiry", 1);
         let set = br#"{"set":"a"}"#;
         let first = rig.propose(PLUGIN, set).unwrap();
         rig.expire_all();
         assert_eq!(rig.status(first), aura::storage::ProposalStatus::Expired);
-        // Before O19 this was gate:declined-unchanged for ever.
-        let second = rig.propose(PLUGIN, set).unwrap();
+        // Before O19 this was gate:declined-unchanged for ever. Now it is held back for a day (no nagging) and the
+        // owner may ask again at once: it is listed with the declines.
+        assert!(matches!(rig.propose(PLUGIN, set), Err(refusal) if refusal.reason == "recently-expired"));
+        assert_eq!(rig.declines(), vec![(first, PLUGIN.to_owned())]);
+        let second = rig.again(first, PLUGIN, set).unwrap();
         assert_ne!(first, second);
-        assert!(rig.declines().is_empty(), "an expiry is never listed as a decline");
+        assert_eq!(rig.status(second), aura::storage::ProposalStatus::Pending);
+        assert!(rig.declines().is_empty());
+        // Other bytes are not held back.
+        rig.expire_all();
+        rig.propose(PLUGIN, br#"{"set":"b"}"#).unwrap();
     }
 
     #[test]
@@ -830,15 +846,16 @@ mod tests {
     }
 
     #[test]
-    fn a_card_asked_for_again_that_then_runs_out_of_time_frees_the_bytes() {
+    fn a_card_asked_for_again_that_then_runs_out_of_time_is_held_back_not_declined() {
         let mut rig = rig("again-expiry", 400);
         let set = br#"{"set":"a"}"#;
         let first = rig.propose(PLUGIN, set).unwrap();
         rig.decline(first).unwrap();
         rig.again(first, PLUGIN, set).unwrap();
         rig.expire_all();
-        // The owner's latest word on these bytes is "ask again", then the card lapsed: the node may raise it.
-        rig.propose(PLUGIN, set).unwrap();
+        // The owner's latest word on these bytes is "ask again", then the card lapsed: not a decline, held back for a
+        // day like any lapsed card.
+        assert!(matches!(rig.propose(PLUGIN, set), Err(refusal) if refusal.reason == "recently-expired"));
     }
 
     #[test]

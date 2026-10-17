@@ -12,6 +12,9 @@ use canon::{
 };
 use rusqlite::{params, OptionalExtension};
 
+/// How long the gate holds back the same bytes after their card ran out of time.
+pub const DAY_MS: i64 = 86_400_000;
+
 impl LedgerTxn<'_> {
     pub fn stage_proposal(&mut self, proposal: ProposalState) -> Result<()> {
         self.mutate(|this| {
@@ -165,13 +168,33 @@ impl LedgerTxn<'_> {
         Ok(Some(declined))
     }
 
+    /// The latest card for these exact bytes that simply ran out of time, when that is the latest word on them (no
+    /// decline, refusal or withdrawal since): its proposal and when it expired. The gate raises the same bytes again
+    /// at most once a day unless the owner asks again (NODE.md O19, Peter 2026-10-17).
+    pub fn last_expiry(&self, operation: OperationDigest) -> Result<Option<(ProposalId, i64)>> {
+        self.active()?;
+        type Row = (String, i64, i64, Option<String>);
+        let row: Option<Row> = self.transaction.query_row("SELECT d.proposal,d.epoch,d.sequence,d.previous_hash FROM authority_declines d JOIN authority_proposals p ON p.id=d.proposal WHERE d.operation_digest=?1 AND p.status='expired' AND d.sequence=(SELECT max(sequence) FROM authority_declines WHERE operation_digest=?1)",[operation.to_string()],
+            |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(sql)?;
+        let Some((proposal, epoch, sequence, previous)) = row else { return Ok(None) };
+        let terminal = self.record_at(AuthorityVersion {
+            epoch: unsigned(epoch)?,
+            sequence: unsigned(sequence)?,
+            previous_hash: previous.map(|v| Digest32::from_hex(&v)).transpose()?,
+        })?;
+        if field(gate_payload(&terminal.body), "reason").is_some() {
+            return Ok(None);
+        }
+        Ok(Some((ProposalId::from_hex(&proposal)?, terminal.at)))
+    }
+
     /// The owner's standing Declines among the node's own requests (targets under `engine/` and the release): for each
     /// target, its newest proposal when that proposal is one the owner declined, newest first. These are what the
     /// owner may ask for again (NODE.md O19); a request raised since (pending, applied, expired) hides the older no.
     pub fn owner_declines(&self, limit: usize) -> Result<Vec<(ProposalId, String)>> {
         self.active()?;
         let mut statement = self.transaction.prepare("SELECT d.proposal,d.target,d.operation_digest FROM authority_declines d JOIN authority_proposals p ON p.id=d.proposal \
-            WHERE p.status='refused' AND (d.target LIKE 'engine/%' OR d.target='release') \
+            WHERE p.status IN ('refused','expired') AND (d.target LIKE 'engine/%' OR d.target='release') \
             AND p.rowid=(SELECT max(q.rowid) FROM authority_proposals q WHERE q.target=d.target) ORDER BY d.sequence DESC LIMIT ?1").map_err(sql)?;
         let mut cursor = statement
             .query([i64::try_from(limit).map_err(|_| refusal("limit"))?])
@@ -184,12 +207,13 @@ impl LedgerTxn<'_> {
                 OperationDigest::from_hex(&row.get::<_, String>(2).map_err(sql)?)?,
             ));
         }
+        let now = self.services.clock.now_ms()?;
         let mut result = Vec::new();
         for (proposal, target, operation) in rows {
-            if self
-                .last_decline(operation)?
-                .is_some_and(|declined| declined.proposal == proposal)
-            {
+            let declined = self.last_decline(operation)?.is_some_and(|row| row.proposal == proposal);
+            // A card that ran out of time is listed while the day it holds its bytes back lasts.
+            let lapsed = self.last_expiry(operation)?.is_some_and(|(id, at)| id == proposal && now.saturating_sub(at) < DAY_MS);
+            if declined || lapsed {
                 result.push((proposal, target));
             }
         }

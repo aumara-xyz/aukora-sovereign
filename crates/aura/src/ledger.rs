@@ -21,6 +21,7 @@ mod floor;
 mod io;
 mod observations;
 mod proposals;
+pub use proposals::DAY_MS;
 mod recovery;
 
 /// Signing keys remain with the supervisor's signing service.
