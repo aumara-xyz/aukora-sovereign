@@ -19,9 +19,10 @@ StateDirectoryMode=0700
 UMask=0077
 # Grok review of the node commit, part 7 #1. Root, because it drives docker (whose socket is root-equivalent anyway),
 # but with nothing else: it listens on a privileged loopback port (690, openshell-gateway.toml), so no other local user
-# can bind that port during a restart gap and pose as the gateway, and the fence lets only root connect to it. The one
-# capability kept is binding that port. [GUESS] that OpenShell 0.1.4 needs no other capability or path: if the first
-# node's gateway fails under these lines, widen exactly what its journal names, in a reviewed commit.
+# can bind that port during a restart gap and pose as the gateway, and the fence lets only root and 65534 connect to it
+# (root's CLI; each sandbox's supervisor container, which OpenShell 0.1.4 runs as 65534 on the host network; both still
+# authenticate: mTLS, a sandbox-scoped JWT). The one capability kept is binding that port; the node rehearsal of
+# 2026-10-17 ran the gateway under exactly these lines (check-units.sh: units ok).
 ReadWritePaths=/run/docker.sock
 NoNewPrivileges=yes
 ProtectSystem=strict

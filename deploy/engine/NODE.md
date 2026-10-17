@@ -18,7 +18,7 @@ rehearsal of 2026-10-17 (`aukora-rehearsal`, Nebius cpu 4 vCPU / 16 GiB, release
 | `sovereign serve` (supervisor, gate, AUMLOK, Aura, frontdoor, broker, **door**, **engine controller**, **engine origin**, **model broker**) | aukora | 18080, 18081, `/run/aukora-door/door.sock`, `/run/aukora-broker/broker.sock` | Kira socket (group kira-clients), engine web socket, `systemctl start/stop aukora-engine.service` (polkit, that unit only) |
 | `sovereign kira serve` | kira | `/run/aukora-kira/kira.sock` (0660, dir 2750 kira:kira-clients) | llama servers on 127.0.0.1:8771/8772 |
 | llama-server ×2 (embed, rerank) | kira | 127.0.0.1:8771, :8772 (nft: only uid kira may connect) | nothing (IPAddressDeny=any) |
-| openshell-gateway | root (hardened unit; only CAP_NET_BIND_SERVICE) | 127.0.0.1:690 (privileged: no other user can bind it; the fence lets only root connect) | docker |
+| openshell-gateway | root (hardened unit; only CAP_NET_BIND_SERVICE) | 127.0.0.1:690 (privileged: no other user can bind it; the fence lets only root and 65534 connect: root's CLI and each sandbox's supervisor container, which OpenShell runs as 65534 on the host network; both still authenticate) | docker |
 | the engine: `node entry.mjs` → `dsh --profile aukora` | **auma** (uid ≠ root, aukora, kira), inside the sandbox | 127.0.0.1:3080 and :3081 (model bridge) *inside* the sandbox; `/run/aukora-engine-io/web.sock` (bridge) | the door socket and the broker socket; nothing else (no network, no resolver) |
 
 Keys: the owner's passkey stays on the owner's device; the node's signing keys, Aura, the gate, the claim digest and the
