@@ -473,6 +473,8 @@ fn note_json(note: &StoredNote, current: Option<String>) -> Value {
         "sources": m.sources, "slot": m.slot, "valid_from": m.valid_from, "valid_to": m.valid_to,
         "roots": note.roots, "superseded_by": note.superseded_by, "current_id": current, "quarantined": note.quarantined,
         "validity": validity(&note.meta, now()),
+        // A note that cites nothing is a root of its own: nothing in the store supports it but its author's word.
+        "lineage": if m.sources.is_empty() { "unsupported" } else { "sourced" },
     })
 }
 
@@ -788,6 +790,10 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
                 let mut shown = if note.quarantined { stub(&note) } else { note_json(&note, current_visible(&s.store, &caller, &note)) };
                 shown["score"] = json!(item.score);
+                // Others who stated the same words. Repetition is not support: see `evidence` and `roots`. `also_by`
+                // is the old name of `repeated_by`.
+                shown["repeated_by"] = json!(item.also_by);
+                shown["repeated_by_ids"] = json!(item.also_by_ids);
                 shown["also_by"] = json!(item.also_by);
                 shown["also_by_ids"] = json!(item.also_by_ids);
                 shown["correction"] = json!(correction);

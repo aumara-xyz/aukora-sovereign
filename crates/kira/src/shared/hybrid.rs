@@ -330,7 +330,7 @@ impl Evidence {
 struct Cand {
     note: StoredNote,
     /// Distinct authors of the root notes of this note's ancestry.
-    root_authors: usize,
+    root_authors: BTreeSet<String>,
     id: String,
     fused: f64,
     cosine: Option<f32>,
@@ -355,7 +355,7 @@ impl Cand {
             Evidence::OwnerWords
         } else if IMPORT_IS_EVIDENCE && meta.capture == Capture::Import {
             Evidence::ArchiveImport
-        } else if self.root_authors >= 2 && meta.capture != Capture::WebDerived {
+        } else if self.root_authors.len() >= 2 && meta.capture != Capture::WebDerived {
             Evidence::Corroborated
         } else {
             Evidence::Unverified
@@ -454,6 +454,9 @@ struct Group {
     roots: BTreeSet<String>,
     /// The strongest thing any note of the statement stands on.
     evidence: Evidence,
+    /// Authors of the roots of every note of the statement, and whether any of them is web-derived.
+    root_authors: BTreeSet<String>,
+    web: bool,
 }
 
 /// Reserved lanes, filled in this order.
@@ -580,7 +583,7 @@ impl SharedStore {
                 let note = loader.cache.remove(&seq).flatten()?;
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
                 let id = hex(note.event.id.as_bytes());
-                Some(Cand { note, root_authors: 0, id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, past: None, inherited: false })
+                Some(Cand { note, root_authors: BTreeSet::new(), id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, past: None, inherited: false })
             })
             .collect();
         cands.sort_by(|a, b| b.fused.total_cmp(&a.fused).then_with(|| a.id.cmp(&b.id)));
@@ -610,13 +613,13 @@ impl SharedStore {
             }
             if let Some(note) = loader.note(found.seq).cloned() {
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
-                live.push(Cand { id: current.to_owned(), root_authors: 0, note, fused: stale.fused, cosine: None, hit, rerank: None, past: None, inherited: true });
+                live.push(Cand { id: current.to_owned(), root_authors: BTreeSet::new(), note, fused: stale.fused, cosine: None, hit, rerank: None, past: None, inherited: true });
                 pulled += 1;
             }
         }
         history.truncate(MAX_HISTORY_CANDIDATES);
         for c in live.iter_mut().chain(history.iter_mut()) {
-            c.root_authors = self.root_authors(c.note.seq)?.len();
+            c.root_authors = self.root_authors(c.note.seq)?;
         }
         Ok(Prepared {
             text: text.to_owned(),
@@ -707,6 +710,8 @@ impl Prepared {
                 g.ids.insert(c.id.clone());
                 g.roots.extend(c.note.roots.iter().cloned());
                 g.evidence = g.evidence.max(c.provenance());
+                g.root_authors.extend(c.root_authors.iter().cloned());
+                g.web |= c.note.meta.capture == Capture::WebDerived;
                 if c.standing() < g.keep.standing() {
                     g.keep = c;
                 }
@@ -720,8 +725,17 @@ impl Prepared {
                     ids: BTreeSet::from([c.id.clone()]),
                     roots: c.note.roots.iter().cloned().collect(),
                     evidence: c.provenance(),
+                    root_authors: c.root_authors.clone(),
+                    web: c.note.meta.capture == Capture::WebDerived,
                     keep: c,
                 });
+            }
+        }
+        // Two notes that state the same thing, each rooted in a different author's observation, stand on two hands
+        // even when neither does alone.
+        for g in &mut groups {
+            if g.root_authors.len() >= 2 && !g.web {
+                g.evidence = g.evidence.max(Evidence::Corroborated);
             }
         }
         let found = groups.iter().any(|g| g.relevant);

@@ -2,6 +2,7 @@
 //! Tests for the hybrid recall pipeline.
 
 use super::*;
+use std::collections::BTreeSet;
 use crate::shared::note::{Form, NoteDraft, Privacy, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
 use nostr::{Event, SecretKey};
 
@@ -228,7 +229,7 @@ fn dedupe_keeps_the_earliest_note_and_names_every_author() {
     assert_eq!(r.items[0].author_name, "claude");
     assert_eq!(r.items[0].also_by, vec!["grok".to_string()]);
     assert_eq!(r.items[0].also_by_ids, vec![later]);
-    assert_eq!(r.items[0].roots, 2, "two independent observations, not one");
+    assert_eq!(r.items[0].roots, 1, "the same words twice are one observation repeated, not two");
 }
 
 #[test]
@@ -614,6 +615,44 @@ fn found_needs_owner_words_an_owner_review_an_owner_import_or_two_authors() {
     q.include_web = true;
     put_sourced(&mut s, &c, "So the oven runs hot.", Capture::WebDerived, vec![web_a, web_b], 14);
     assert_eq!(s.recall(&q, None, None).unwrap().status, RecallStatus::Undetermined("similar-note-unverified"));
+}
+
+/// Bench B1/B2/B3: three agents writing one identical claim got three ancestry roots (and looked like corroboration),
+/// while three genuinely independent observations got one root each.
+#[test]
+fn identical_unsourced_claims_are_one_root_repeated_not_support() {
+    let (a, b, c) = (key(), key(), key());
+    let mut s = store_with(&[("a", &a, false), ("b", &b, false), ("c", &c, false)]);
+    let claim = "The relay endpoint rotates every Monday.";
+    let ids: Vec<String> = [(&a, 1), (&b, 2), (&c, 3)].iter().map(|(k, at)| note(&mut s, k, claim, *at)).collect();
+    let roots: Vec<Vec<String>> = ids.iter().map(|id| s.get(id).unwrap().unwrap().roots).collect();
+    assert_eq!(roots, vec![vec![ids[0].clone()]; 3], "all three share the earliest note as their one root");
+    let r = s.recall(&query("when does the relay endpoint rotate", "x"), None, None).unwrap();
+    assert_eq!(r.status, RecallStatus::Undetermined("similar-note-unverified"), "repeating a claim does not verify it");
+    assert_eq!((r.items.len(), r.items[0].roots, r.items[0].evidence), (1, 1, "unverified"));
+    assert_eq!(r.items[0].also_by.len(), 2, "the repeaters are named");
+    // Three independent observations in their own words: three roots, three groups.
+    let seen: Vec<String> = [
+        (&a, "Alice saw the gate latched at nine."),
+        (&b, "Bob found the gate latch closed in the morning."),
+        (&c, "Carol noticed the gate was latched shut."),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, (k, text))| note(&mut s, k, text, 10 + i as u64))
+    .collect();
+    let distinct: BTreeSet<Vec<String>> = seen.iter().map(|id| s.get(id).unwrap().unwrap().roots).collect();
+    assert_eq!(distinct.len(), 3);
+    // A restatement that cites its source stays under that one root (B3).
+    let again = put_sourced(&mut s, &b, "The relay endpoint rotates every Monday, as noted.", Capture::ModelGenerated, vec![ids[0].clone()], 20);
+    assert_eq!(s.get(&again).unwrap().unwrap().roots, vec![ids[0].clone()]);
+    // The same statement from two authors who each cite a DIFFERENT author's observation stands on two hands.
+    let (seen_a, seen_b) = (seen[0].clone(), seen[1].clone());
+    let by_a = put_sourced(&mut s, &a, "The gate stays latched overnight.", Capture::ModelGenerated, vec![seen_b], 30);
+    let by_b = put_sourced(&mut s, &b, "The gate stays latched overnight.", Capture::ModelGenerated, vec![seen_a], 31);
+    let r = s.recall(&query("is the gate latched overnight", "x"), None, None).unwrap();
+    let item = r.items.iter().find(|i| i.id == by_a || i.id == by_b).unwrap();
+    assert_eq!((r.status, item.evidence), (RecallStatus::Found, "corroborated"));
 }
 
 /// HIGH -> MEDIUM -> LOW: the oldest note names the note that stands now, not the middle one.

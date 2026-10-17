@@ -201,11 +201,59 @@ fn upgrade_chain(db: &mut Connection) -> Result<()> {
     tx.commit().map_err(sql)
 }
 
+/// The lineage rule this build writes: 1 = every source-less note is its own root; 2 = a source-less note repeating an
+/// earlier source-less statement (same scope, privacy, epoch) shares that note's root.
+const LINEAGE_VERSION: &str = "2";
+
+/// Brings the derived `ancestry` table of a store written under lineage 1 to lineage 2. The table is derived from the
+/// events (it is not in the chain), so this rewrites no event: repeated source-less statements point at the earliest
+/// one, and every note that derived from a repeat now derives from the earliest.
+fn upgrade_lineage(db: &mut Connection) -> Result<()> {
+    let have: Option<String> = db
+        .query_row("SELECT value FROM meta WHERE key = 'lineage'", [], |r| r.get(0))
+        .optional()
+        .map_err(sql)?;
+    if have.as_deref() == Some(LINEAGE_VERSION) {
+        return Ok(());
+    }
+    let tx = db.transaction().map_err(sql)?;
+    let roots: Vec<(String, Vec<u8>, String, String, i64)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT e.id, e.statement_hash, e.scope, e.privacy, e.epoch FROM events e
+                 JOIN ancestry a ON a.seq = e.seq AND a.root = e.id WHERE e.kind = ?1 ORDER BY e.seq",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![NOTE_KIND], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows
+    };
+    let mut first: std::collections::BTreeMap<(Vec<u8>, String, String, i64), String> = std::collections::BTreeMap::new();
+    for (id, hash, scope, privacy, epoch) in roots {
+        match first.entry((hash, scope, privacy, epoch)) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(id);
+            }
+            std::collections::btree_map::Entry::Occupied(slot) => {
+                let earliest = slot.get();
+                tx.execute("UPDATE OR IGNORE ancestry SET root = ?1 WHERE root = ?2", params![earliest, id]).map_err(sql)?;
+                tx.execute("DELETE FROM ancestry WHERE root = ?1", params![id]).map_err(sql)?;
+            }
+        }
+    }
+    tx.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('lineage', ?1)", params![LINEAGE_VERSION]).map_err(sql)?;
+    tx.commit().map_err(sql)
+}
+
 impl SharedStore {
     pub fn open(path: &Path) -> Result<Self> {
         let mut db = Connection::open(path).map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
         upgrade_chain(&mut db)?;
+        upgrade_lineage(&mut db)?;
         Ok(Self { db })
     }
 
@@ -213,6 +261,7 @@ impl SharedStore {
         let mut db = Connection::open_in_memory().map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
         upgrade_chain(&mut db)?;
+        upgrade_lineage(&mut db)?;
         Ok(Self { db })
     }
 
@@ -447,7 +496,20 @@ impl SharedStore {
                     roots.extend(found);
                 }
                 if roots.is_empty() {
-                    roots.insert(id.clone());
+                    // A note that cites nothing is a root. The same statement, filed again with no source in the same
+                    // scope, privacy and epoch, is not a second observation: it takes the earlier root, so repetition
+                    // by any number of authors is one root ("repeated by"), never corroboration.
+                    let earlier: Option<String> = tx
+                        .query_row(
+                            "SELECT e.id FROM events e JOIN ancestry a ON a.seq = e.seq AND a.root = e.id
+                             WHERE e.kind = ?1 AND e.statement_hash = ?2 AND e.scope = ?3 AND e.privacy = ?4 AND e.epoch = ?5
+                             ORDER BY e.seq LIMIT 1",
+                            params![NOTE_KIND, meta.statement_hash.to_vec(), meta.scope, meta.privacy.wire(), meta.epoch as i64],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                        .map_err(sql)?;
+                    roots.insert(earlier.unwrap_or_else(|| id.clone()));
                 }
                 tx.execute(
                     "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, epoch, scope, lane, privacy, slot, statement_hash, target)
@@ -870,6 +932,44 @@ mod tests {
         let mut fake = draft("claims an unknown source", "builders");
         fake.sources = vec!["ab".repeat(32)];
         assert!(s.append(sign(&a, &fake, Review::Remembered, 3)).is_err());
+    }
+
+    #[test]
+    fn a_repeated_statement_shares_the_earliest_root_and_an_old_store_is_upgraded() {
+        let (a, b) = (key(), key());
+        let path = std::env::temp_dir().join(format!("kira-lineage-{}.sqlite", pub_hex(&key())));
+        let (first, repeat, derived, other_scope) = {
+            let mut s = SharedStore::open(&path).unwrap();
+            s.register_agent("a", &pub_hex(&a), &["builders".into(), "other".into()], false).unwrap();
+            s.register_agent("b", &pub_hex(&b), &["builders".into()], false).unwrap();
+            let first = s.append(sign(&a, &draft("the relay rotates every Monday", "builders"), Review::Remembered, 1)).unwrap();
+            let first_id = hex32(first.event.id.as_bytes());
+            let repeat = s.append(sign(&b, &draft("The relay  rotates every MONDAY", "builders"), Review::Remembered, 2)).unwrap();
+            assert_eq!(repeat.roots, vec![first_id.clone()], "the same statement, no source: the earlier root");
+            // Another scope or privacy is a different place: no shared root with a note the reader may not see.
+            let elsewhere = s.append(sign(&a, &draft("the relay rotates every Monday", "other"), Review::Remembered, 3)).unwrap();
+            assert_eq!(elsewhere.roots, vec![hex32(elsewhere.event.id.as_bytes())]);
+            let mut d = draft("so the relay was last rotated Monday", "builders");
+            d.sources = vec![hex32(repeat.event.id.as_bytes())];
+            let derived = s.append(sign(&b, &d, Review::Remembered, 4)).unwrap();
+            assert_eq!(derived.roots, vec![first_id.clone()]);
+            // Simulate a store written before lineage 2: the repeat was its own root, and the note derived from it too.
+            let (repeat_id, derived_id) = (hex32(repeat.event.id.as_bytes()), hex32(derived.event.id.as_bytes()));
+            s.db.execute("UPDATE ancestry SET root = ?1 WHERE seq = ?2", params![repeat_id, repeat.seq]).unwrap();
+            s.db.execute("UPDATE ancestry SET root = ?1 WHERE seq = ?2", params![repeat_id, derived.seq]).unwrap();
+            s.db.execute("DELETE FROM meta WHERE key = 'lineage'", []).unwrap();
+            (first_id, repeat_id, derived_id, hex32(elsewhere.event.id.as_bytes()))
+        };
+        let s = SharedStore::open(&path).unwrap();
+        assert_eq!(s.get(&repeat).unwrap().unwrap().roots, vec![first.clone()]);
+        assert_eq!(s.get(&derived).unwrap().unwrap().roots, vec![first.clone()]);
+        assert_eq!(s.get(&first).unwrap().unwrap().roots, vec![first]);
+        assert_eq!(s.get(&other_scope).unwrap().unwrap().roots, vec![other_scope.clone()]);
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = path.clone().into_os_string();
+            name.push(suffix);
+            let _ = std::fs::remove_file(name);
+        }
     }
 
     #[test]
