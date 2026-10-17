@@ -64,7 +64,6 @@ fn run() -> canon::Result<()> {
         });
     }
     let config = config::NodeConfig::load(std::path::Path::new(path))?;
-    let _ = config::CONFIG_PATH.set(std::path::PathBuf::from(path));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

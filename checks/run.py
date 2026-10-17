@@ -112,11 +112,12 @@ DEPLOY_PINS = {
     "deploy/spawn/spawn.py": "2a14406c4ffd28d415ff769ac195f47f63db2f45cb5866610584a6a0e8ff4c6c",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",
     "deploy/spawn/vm.py": "362ca1eef6cc31421423f15eedd1fcd9e19d710670203f6519b1f8058c43f53d",
-    "deploy/upgrade/node_release.py": "510bd64926322810dd52417ee142dec26f825c9723bbfbdfb85d7b7379f1f904",
+    "deploy/upgrade/node_release.py": "5ca8c266529d618509b9aa63076f34a7e699eaaf6b8920996fab11f13966bff3",
+    "deploy/upgrade/release_probe.py": "e55362fa8a8b841195c25fbebc7b1a677667bfd6ef69a678a1711f9f3162de72",
     "deploy/upgrade/pointer.py": "2ab318a7fa6426c4289da676f2a81a731e77e433992e76ed519aac171aa778d1",
     "deploy/upgrade/upgrade.py": "3b87ededc203b315c39ae42945993f1b329c03caac55a2f100caa94c349e8315",
     "deploy/upgrade/upgrade.sh": "7c2175a2233530b0f79fc50baf82fee177e40c89025a6028c141c068f5c73738",
-    "scripts/reproduce.sh": "77af84c159b32fdee12810b632de1f0eddf6268e1c92ff864bb6b1c8fca43bd4",
+    "scripts/reproduce.sh": "cead99fbad0e7035db4cc34a8cc1aa01f4a9586cc380455b0500b5a7709849fe",
 }
 COVERAGE_PINS = {
     "crates/gate/src/coverage.rs": "477d1e4c2a13f3738e20bb9c789cfd4558be01e9c7b1fedac93d341ccf39b25b",
@@ -579,8 +580,7 @@ youtube yt yun za zappos zara zero zip zm zone zuerich zw
 WIRE_SYMBOLS = frozenset({"documents.read", "kira.save"})
 PRIVATE_SUFFIXES = {"local", "lan", "internal", "intranet", "corp", "home", "private", "localdomain", "localhost", "test"}
 ADDRESS_DNS = re.compile(r"(?:^|[.-])(\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3})\.(?:sslip|nip|xip)\.io$")
-# Placeholders used in documentation are not anyone's machine: the RFC 5737 and RFC 3849 documentation ranges, the
-# unspecified address and the conventional 1.2.3.4 example.
+# Documentation placeholders are no one's machine: RFC 5737/3849 ranges, the unspecified address, 1.2.3.4.
 DOCUMENTATION_NETS = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
                                                          "2001:db8::/32", "0.0.0.0/32", "::/128", "1.2.3.4/32")]
 

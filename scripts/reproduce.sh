@@ -27,7 +27,7 @@ SCHEMA = "aukora-release-v1"
 # (package, binary, static): the guest is the only static image; the supervisor and the verifier link normally.
 BUILDS = (("supervisor", "sovereign", False), ("verifier", "aukora-verify", False), ("guest", "auma", True))
 DEPLOY_FILES = ("deploy/spawn/core.py", "deploy/spawn/caddy.py", "deploy/spawn/node_install.py",
-                "deploy/upgrade/node_release.py")
+                "deploy/upgrade/node_release.py", "deploy/upgrade/release_probe.py")
 UNITS = "deploy/units"
 # The engine's installer, policies and in-wall scripts (deploy/engine/NODE.md): every file, so the owner's release
 # approval covers what root runs and what the wall is made of.

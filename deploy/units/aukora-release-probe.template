@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The pre-swap probe of an offered release (deploy/engine/NODE.md, O20), one instance per release id. Installed as
+# /etc/systemd/system/aukora-release-probe@.service (node_release.py sync_units: a release path cannot hold '@'). The candidate is
+# unapproved code: it runs here, never in the supervisor's process tree, as a throwaway user with no network, no
+# capabilities, nothing of the node's state but a fresh copy root makes for this run, and a hard time limit after which
+# systemd kills its whole cgroup. The supervisor may only start this template (polkit, start only) and read the result
+# root writes to /var/lib/aukora-release/probe/<id>.json.
+[Unit]
+Description=AUKORA pre-swap probe of offered release %i
+After=aukora-sovereign.service
+AssertPathExists=/opt/aukora/offered
+
+[Service]
+Type=exec
+DynamicUser=yes
+# The copy (ledger snapshot, identity, floor, targets, sessions, the node's configuration) lives here, owned by the
+# throwaway user, and is removed when the probe stops.
+RuntimeDirectory=aukora-release-probe/%i
+RuntimeDirectoryMode=0700
+# Root, from the INSTALLED release's tools: check %i is the offered, staged release, then make the copy.
+ExecStartPre=+/usr/bin/python3 -B -I /opt/aukora/current/deploy/upgrade/release_probe.py prepare %i
+# The configuration copy sits in a root-owned folder (the supervisor reads its configuration only from root's files).
+ExecStart=/opt/aukora/releases/%i/bin/sovereign release probe --config /run/aukora-release-probe-config/%i/node.json --state /run/aukora-release-probe/%i/state
+# Appended, never truncated: every command of the unit opens it, and the last one reads it.
+StandardOutput=append:/run/aukora-release-probe/%i/said
+StandardError=journal
+# Root records the outcome (exit, $SERVICE_RESULT, what the candidate said) for the supervisor; runs on a timeout too.
+ExecStopPost=+/usr/bin/python3 -B -I /opt/aukora/current/deploy/upgrade/release_probe.py finish %i
+RuntimeMaxSec=90s
+TimeoutStopSec=10s
+KillMode=control-group
+TasksMax=64
+MemoryMax=2G
+
+# Nothing of the live node: its state, configuration, secrets, sockets, Kira, the engine.
+InaccessiblePaths=-/var/lib/aukora -/var/lib/private/aukora -/var/lib/aukora-release -/var/lib/aukora-kira -/var/lib/aukora-engine -/var/lib/aukora-openshell -/etc/aukora -/run/aukora -/run/aukora-door -/run/aukora-broker -/run/aukora-engine-ctl -/run/aukora-engine -/run/aukora-kira -/root
+PrivateNetwork=yes
+RestrictAddressFamilies=none
+IPAddressDeny=any
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @mount @debug @module @raw-io @reboot @swap @cpu-emulation @obsolete
+UMask=0077

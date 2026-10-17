@@ -1,5 +1,6 @@
 // The supervisor (user aukora) may start, stop, restart and reset-failed exactly one unit, the engine, and start its
-// root cleanup oneshot (engine-run.sh delete after a failed stop; Sonnet sweep C2). Nothing else.
+// root cleanup oneshot (engine-run.sh delete after a failed stop; Sonnet sweep C2), and start the pre-swap probe of an
+// offered release, one instance per release id (deploy/units/aukora-release-probe.template, O20). Nothing else.
 polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" && subject.user == "aukora") {
         var unit = action.lookup("unit");
@@ -9,6 +10,9 @@ polkit.addRule(function(action, subject) {
             return polkit.Result.YES;
         }
         if (unit == "aukora-engine-cleanup.service" && verb == "start") {
+            return polkit.Result.YES;
+        }
+        if (/^aukora-release-probe@[0-9a-f]{12}-[0-9a-f]{12}\.service$/.test(unit) && verb == "start") {
             return polkit.Result.YES;
         }
     }

@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Runs as root, as the probe unit's ExecStartPre=+ and ExecStopPost=+ (deploy/units/aukora-release-probe.template;
+deploy/engine/NODE.md O20): make the throwaway user's copy of the state for the pre-swap probe of an offered release,
+then record its outcome for the supervisor. Never touches the live state beyond reading it.
+
+  release_probe.py prepare ID | finish ID"""
+from __future__ import annotations
+
+import os
+import shutil
+import stat
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import node_release as r  # noqa: E402
+from node_release import core  # noqa: E402
+
+# The pre-swap probe (deploy/units/aukora-release-probe.template): root's copy for the throwaway user, the
+# configuration copy in a root-owned folder, and the outcome the supervisor reads.
+LIVE_STATE = "/var/lib/aukora"
+PROBE_RUN = "/run/aukora-release-probe"
+PROBE_CONFIG = "/run/aukora-release-probe-config"
+PROBE_RESULTS = r.STATE + "/probe"
+PROBE_IDENTITY = ("node-identity-v1", "aura-signing-key")
+PROBE_FOLDERS = ("floor", "targets", "browser-sessions")
+
+
+def copy_owned(source, destination, uid):
+    """Regular files and folders only (links are neither followed nor copied); folders 0700, files 0600, all the
+    throwaway user's."""
+    info = os.lstat(source)
+    if stat.S_ISDIR(info.st_mode):
+        os.mkdir(destination, 0o700)
+        os.chown(destination, uid, uid)
+        for name in sorted(os.listdir(source)):
+            copy_owned(os.path.join(source, name), os.path.join(destination, name), uid)
+    elif stat.S_ISREG(info.st_mode):
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        with os.fdopen(descriptor, "wb") as target, open(source, "rb") as origin:
+            shutil.copyfileobj(origin, target)
+            os.fchown(target.fileno(), uid, uid)
+            os.fchmod(target.fileno(), 0o600)
+
+
+def probe_prepare(rid):
+    """ExecStartPre=+ of the probe unit: the offered, staged release only; a fresh copy of what the candidate's start
+    reads, owned by the unit's throwaway user, and the configuration in a root-owned folder. Never the live state."""
+    import sqlite3
+    if r.link_id(r.OFFERED) != rid:
+        core.refuse("node-release", "probe-not-offered")
+    r.staged_digest(rid)
+    os.makedirs(PROBE_RESULTS, mode=0o755, exist_ok=True)
+    try:
+        os.unlink(os.path.join(PROBE_RESULTS, rid + ".json"))
+    except FileNotFoundError:
+        pass
+    run = os.path.join(PROBE_RUN, rid)
+    info = os.lstat(run)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid == 0 or info.st_mode & 0o077:
+        core.refuse("node-release", "probe-runtime")
+    uid, state = info.st_uid, os.path.join(run, "state")
+    os.mkdir(state, 0o700)
+    os.chown(state, uid, uid)
+    for name in PROBE_IDENTITY:
+        copy_owned(os.path.join(LIVE_STATE, name), os.path.join(state, name), uid)
+    for name in PROBE_FOLDERS:
+        if os.path.isdir(os.path.join(LIVE_STATE, name)):
+            copy_owned(os.path.join(LIVE_STATE, name), os.path.join(state, name), uid)
+    ledger = os.path.join(state, "aura.sqlite3")
+    source = sqlite3.connect("file:" + os.path.join(LIVE_STATE, "aura.sqlite3") + "?mode=ro", uri=True, timeout=5)
+    try:
+        source.execute("VACUUM INTO ?", (ledger,))
+    finally:
+        source.close()
+    os.chown(ledger, uid, uid)
+    os.chmod(ledger, 0o600)
+    # The floor again, after the ledger: the state the ledger snapshot recorded.
+    if os.path.isdir(os.path.join(LIVE_STATE, "floor")):
+        shutil.rmtree(os.path.join(state, "floor"))
+        copy_owned(os.path.join(LIVE_STATE, "floor"), os.path.join(state, "floor"), uid)
+    os.makedirs(PROBE_CONFIG, mode=0o755, exist_ok=True)
+    config = os.path.join(PROBE_CONFIG, rid)
+    shutil.rmtree(config, ignore_errors=True)
+    os.mkdir(config, 0o755)
+    for name in ("node.json", "gate-targets-v1.json"):
+        if os.path.lexists(os.path.join(r.CONFIG, name)):
+            core.atomic_write(os.path.join(config, name), core.read_regular(os.path.join(r.CONFIG, name), 1 << 20,
+                                                                            "node-release"), 0o644)
+
+
+def probe_finish(rid, environment=None):
+    """ExecStopPost=+ of the probe unit: record the outcome for the supervisor (root 0644). Passed only if the unit
+    succeeded, the candidate exited 0 and said exactly `probe ok <its release digest>`."""
+    environment = os.environ if environment is None else environment
+    digest = r.staged_digest(rid)[2]
+    said = b""
+    try:
+        said = core.read_regular(os.path.join(PROBE_RUN, rid, "said"), 4096, "node-release")
+    except core.Refusal:
+        pass
+    passed = (environment.get("SERVICE_RESULT") == "success" and environment.get("EXIT_CODE") == "exited"
+              and environment.get("EXIT_STATUS") == "0" and said == ("probe ok " + digest + "\n").encode("ascii"))
+    os.makedirs(PROBE_RESULTS, mode=0o755, exist_ok=True)
+    core.atomic_write(os.path.join(PROBE_RESULTS, rid + ".json"),
+                      core.canonical({"v": 1, "id": rid, "release": digest, "passed": passed,
+                                      "result": str(environment.get("SERVICE_RESULT", ""))[:32],
+                                      "at_ms": time.time_ns() // 1_000_000}), 0o644)
+    shutil.rmtree(os.path.join(PROBE_CONFIG, rid), ignore_errors=True)
+    return passed
+
+
+
+def main(argv):
+    if os.geteuid() != 0:
+        core.refuse("release-probe", "root-required")
+    if len(argv) != 2 or argv[0] not in ("prepare", "finish") or not r.RELEASE_ID.match(argv[1]):
+        core.refuse("release-probe", "usage")
+    if argv[0] == "prepare":
+        probe_prepare(argv[1])
+    else:
+        print("release-probe: " + ("passed" if probe_finish(argv[1]) else "failed"), file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    core.run_main("release-probe", main)

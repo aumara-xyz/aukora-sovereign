@@ -35,8 +35,6 @@ pub(crate) struct ReleaseApproval {
     /// The last verified offer (its resolved, immutable release folder and digest): a staged release never changes, so
     /// the approvals poll does not hash it again.
     verified: Arc<Mutex<Option<(PathBuf, Digest32)>>>,
-    /// The supervisor's state folder: the pre-swap probe copies it (NODE.md O20).
-    state_root: PathBuf,
     /// The pre-swap probe of each offered release: running, passed or failed (once per release; a failed release is
     /// probed again only after `PROBE_RETRY`, e.g. an approval landed while its state was copied).
     probes: Arc<Mutex<std::collections::HashMap<Digest32, (Probe, std::time::Instant)>>>,
@@ -91,7 +89,7 @@ impl Step {
 impl ReleaseFiles {
     /// `current`: the current-release link; an upgrade the operator offers is the link beside it (`offered`,
     /// written by `node_release.py offer`).
-    pub(crate) fn configure_owner_approval(&self, node: NodeId, current: &Path, state_root: &Path) -> Result<()> {
+    pub(crate) fn configure_owner_approval(&self, node: NodeId, current: &Path) -> Result<()> {
         let offered = current.parent().map(|root| root.join("offered")).ok_or(codes::SUPERVISOR_STATE)?;
         self.ledger.configure_release_approval(ReleaseApproval {
             installed: self.release_digest,
@@ -99,7 +97,6 @@ impl ReleaseFiles {
             node,
             offered,
             verified: Arc::new(Mutex::new(None)),
-            state_root: state_root.to_path_buf(),
             probes: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })?;
         Ok(())
@@ -147,14 +144,11 @@ impl ReleaseApproval {
             Some((Probe::Failed, at)) if at.elapsed() < PROBE_RETRY => return false,
             _ => {}
         }
-        let Some(config) = crate::config::CONFIG_PATH.get().cloned() else {
-            return false;
-        };
         probes.insert(digest, (Probe::Running, std::time::Instant::now()));
-        eprintln!("release: probing the offered release {digest} on a copy of this node's state");
-        let (candidate, state_root, shared) = (candidate.to_path_buf(), self.state_root.clone(), self.probes.clone());
+        eprintln!("release: probing the offered release {digest} in its own sandbox, on a copy of this node's state");
+        let (candidate, shared) = (candidate.to_path_buf(), self.probes.clone());
         let started = std::thread::Builder::new().name("release-probe".into()).spawn(move || {
-            let outcome = super::probe::run(&candidate, digest, &config, &state_root);
+            let outcome = super::probe::run(&candidate, digest);
             let state = match &outcome {
                 Ok(()) => {
                     eprintln!("release: the offered release {digest} started on a copy of the state; its card can go up");

@@ -48,6 +48,9 @@ ACTIVE = STATE + "/active.json"
 # Root's record of the owner's floor it last accepted (Codex review, B30): a restored older floor is never followed.
 ANCHOR = STATE + "/anchor.json"
 ANCHOR_OWNER = 0
+# The activation in progress (from, to): written and synced before the links move, removed once active.json agrees, so
+# a crash in between is finished at the next start instead of stranding follow (Codex re-review, finding 2).
+ACTIVATION = STATE + "/activation.json"
 INSTANCE = STATE + "/instance.json"
 SEQUENCE = STATE + "/sequence.json"
 DELIVERED = STATE + "/claim-delivered"
@@ -129,10 +132,13 @@ def sync_units(release_dir):
     source = os.path.join(release_dir, "deploy", "units")
     changed = False
     for name in sorted(os.listdir(source)):
-        if not name.endswith((".service", ".timer")):
+        if not name.endswith((".service", ".timer", ".template")):
             continue
         data = core.read_regular(os.path.join(source, name), 64 * 1024, "release")
-        destination = os.path.join(UNIT_DIR, name)
+        # A release path cannot hold '@' (the manifest's path rule): a systemd template ships as NAME.template and is
+        # installed as NAME@.service (the pre-swap probe, NODE.md O20).
+        installed = name[:-len(".template")] + "@.service" if name.endswith(".template") else name
+        destination = os.path.join(UNIT_DIR, installed)
         try:
             current = core.read_regular(destination, 64 * 1024, "release")
         except core.Refusal:
@@ -519,6 +525,46 @@ def staged_with_digest(digest):
     return None
 
 
+def activate(current, target, manifest, digest, active):
+    """Make target current: the intent first (synced), then the links, then active.json, then the intent goes."""
+    core.atomic_write(ACTIVATION, core.canonical({"v": 1, "from": current, "to": target, "release": digest,
+                                                  "seq": active["seq"], "pointer_sha256": active["pointer_sha256"]}),
+                      0o600)
+    sync_directory(STATE)
+    point(PREVIOUS, "releases/" + current)
+    point(CURRENT, "releases/" + target)
+    write_active(target, manifest, digest, active["seq"], active["pointer_sha256"])
+    os.unlink(ACTIVATION)
+    sync_directory(STATE)
+
+
+def finish_activation(anchor, active):
+    """An activation a crash interrupted: finish it when root's anchor already names its target (the anchor is
+    written first), otherwise drop it (nothing moved yet, or it named a release root never anchored)."""
+    if not os.path.lexists(ACTIVATION):
+        return None
+    intent = protected_record(ACTIVATION, ("v", "from", "to", "release", "seq", "pointer_sha256"))
+    try:
+        directory, manifest, digest = staged_digest(intent["to"])
+    except core.Refusal:
+        digest = None
+    if (intent["v"] != 1 or digest != intent["release"] or anchor is None or anchor["release"] != digest
+            or link_id(CURRENT) not in (intent["from"], intent["to"])):
+        os.unlink(ACTIVATION)
+        sync_directory(STATE)
+        return None
+    if active is not None and active["id"] == intent["to"] and link_id(CURRENT) == intent["to"]:
+        os.unlink(ACTIVATION)
+        sync_directory(STATE)
+        return None
+    point(PREVIOUS, "releases/" + intent["from"])
+    point(CURRENT, "releases/" + intent["to"])
+    write_active(intent["to"], manifest, digest, intent["seq"], intent["pointer_sha256"])
+    os.unlink(ACTIVATION)
+    sync_directory(STATE)
+    return "finished the interrupted switch to " + intent["to"]
+
+
 def follow():
     """The supervisor's root pre-start step (ExecStartPre=-+): if the owner's floor names a staged release other than
     the current one (normally the offered release the owner just approved), make it current (previous = the old one),
@@ -528,8 +574,11 @@ def follow():
     alone. It never fails the start: the supervisor then serves the release it served before (and refuses to, if the
     floor names another one or is behind the anchor)."""
     with switch_lock():
-        current = link_id(CURRENT)
         active = read_active()
+        recovered = finish_activation(read_anchor(), active)
+        if recovered:
+            return recovered
+        current = link_id(CURRENT)
         if current is None or active is None or active["id"] != current:
             return "unchanged"
         floor = approved_floor(trusted_verifier(current, active))
@@ -554,9 +603,7 @@ def follow():
             return "approved-release-not-staged"
         directory, manifest, digest = staged_digest(target)
         write_anchor(floor, digest)
-        point(PREVIOUS, "releases/" + current)
-        point(CURRENT, "releases/" + target)
-        write_active(target, manifest, digest, active["seq"], active["pointer_sha256"])
+        activate(current, target, manifest, digest, active)
         if os.path.lexists(OFFERED):
             os.unlink(OFFERED)
             sync_directory(ROOT)

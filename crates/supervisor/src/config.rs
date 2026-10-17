@@ -38,9 +38,6 @@ const NODE_FIELDS: &[&str] = &[
     "release_state",
 ];
 
-/// The path `serve` loaded its configuration from (the pre-swap probe hands it to the offered release).
-pub static CONFIG_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
     pub node: String,
