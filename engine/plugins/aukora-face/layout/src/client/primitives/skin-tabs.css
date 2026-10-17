@@ -11,3 +11,13 @@
 [role='tree'][aria-label] { --ak-tone: var(--ak-mint); }
 /* The settings pages open from the square: blue. */
 [data-settings-surface] { --ak-tone: var(--ak-blue); }
+
+/* The tab icon lights in its tab's colour when selected (AppFrame.module.css lit apps violet and yours mint). The
+   extra attributes outrank its (0,3,0) rules; `menuHeading` is the face's own module class (FRAGILE only to a rename). */
+[role='tablist'] [role='tab'][data-menu-tab='apps'][aria-selected='true'] { color: var(--ak-mint); background: color-mix(in srgb, var(--ak-mint) 12%, transparent); }
+[role='tablist'] [role='tab'][data-menu-tab='system'][aria-selected='true'] { color: var(--ak-blue); background: color-mix(in srgb, var(--ak-blue) 12%, transparent); }
+[role='tablist'] [role='tab'][data-menu-tab='yours'][aria-selected='true'] { color: var(--ak-violet); background: color-mix(in srgb, var(--ak-violet) 12%, transparent); }
+[role='tablist'] [role='tab'][data-menu-tab][aria-selected='true'] svg { fill: color-mix(in srgb, currentColor 22%, transparent); }
+div[data-menu-tab='apps'][class] [class*='_menuHeading'][class] { color: var(--ak-mint); }
+div[data-menu-tab='system'][class] [class*='_menuHeading'][class] { color: var(--ak-blue); }
+div[data-menu-tab='yours'][class] [class*='_menuHeading'][class] { color: var(--ak-violet); }
