@@ -247,6 +247,11 @@ impl Door {
         if let Err(code) = self.preflight(class, request) {
             return Decision::Deny(code);
         }
+        // The owner reads the URL as the model wrote it and the door requests the parsed one (`%2e%2e` and `\` resolve,
+        // tabs and newlines drop out): no card goes up for a URL whose two readings differ.
+        if class == Class::Net && net_url(request).is_ok_and(|url| !fetch::reads_as_written(url)) {
+            return Decision::Deny("url-not-canonical".into());
+        }
         // One ask at a time: two concurrent repeats of an approved call cannot both spend it, and one call is
         // never raised twice.
         let _turn = owner.turn.lock().unwrap_or_else(PoisonError::into_inner);

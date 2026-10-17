@@ -95,6 +95,13 @@ pub fn check_url(policy: &NetPolicy, text: &str) -> Result<Target, &'static str>
     Ok(Target { url, host, port })
 }
 
+/// Whether the URL the door will request is the text the model wrote: parsing neither resolved dot segments (even
+/// percent-encoded ones), turned `\` into `/`, dropped tabs and newlines nor re-cased the host. A bare origin may gain
+/// its `/`. An owner who reads the written URL is then reading the one that leaves.
+pub fn reads_as_written(text: &str) -> bool {
+    Url::parse(text).is_ok_and(|url| url.as_str() == text || (url.path() == "/" && url.as_str().strip_suffix('/') == Some(text)))
+}
+
 /// Resolve the host and refuse any non-public address. Returns the addresses to connect to. The lookup runs on a
 /// blocking thread under the policy deadline, so a slow resolver cannot hold the connection slot.
 pub async fn resolve_public(policy: &NetPolicy, target: &Target) -> Result<Vec<SocketAddr>, &'static str> {
@@ -192,6 +199,16 @@ mod tests {
 
     fn policy() -> NetPolicy {
         NetPolicy { hosts: vec!["docs.rs".into(), "example.org".into()], ports: vec![443], max_bytes: 4096, timeout_ms: 2000, allow_http: false, allow_private: false }
+    }
+
+    #[test]
+    fn a_url_reads_as_written_only_when_parsing_changes_nothing() {
+        for same in ["https://docs.rs/serde", "https://docs.rs", "https://docs.rs/", "https://docs.rs/a/b?q=1#f", "https://docs.rs/a%2Fb"] {
+            assert!(reads_as_written(same), "{same}");
+        }
+        for changed in ["https://docs.rs/a/%2e%2e/secret", "https://docs.rs/a/../secret", "https://docs.rs/a\\b", "https://docs.rs/a\tb", "https://DOCS.rs/x", "https://docs.rs:443/x", "https://docs.rs/a b", "not a url"] {
+            assert!(!reads_as_written(changed), "{changed:?}");
+        }
     }
 
     #[test]

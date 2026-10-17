@@ -465,6 +465,23 @@ fn a_memory_reply_too_big_for_the_frame_is_refused_with_a_reason_not_sent() {
 }
 
 #[test]
+fn no_card_goes_up_for_a_url_the_owner_would_read_differently_from_the_one_that_leaves() {
+    let dir = temp("owner-url");
+    let fake = Arc::new(Fake::default());
+    let door = owner_door(&dir, &fake, "\"net\":\"ask\"");
+    for (id, url) in [("u-1", "https://docs.rs/a/%2e%2e/secret"), ("u-2", "https://docs.rs/a\\\\b"), ("u-3", "https://DOCS.rs/serde")] {
+        let args = format!("{{\"url\":\"{url}\"}}");
+        assert_eq!(denied(&call(&door, id, "web_fetch", &args, "net")), "url-not-canonical", "{url}");
+    }
+    assert!(fake.raised.lock().unwrap().is_empty());
+    // The written URL and the requested one are the same, or only a bare origin gains its slash: asked about as usual.
+    assert_eq!(ask_code(&call(&door, "u-4", "web_fetch", "{\"url\":\"https://docs.rs/serde\"}", "net")), "ask-net");
+    assert_eq!(ask_code(&call(&door, "u-5", "web_fetch", "{\"url\":\"https://docs.rs\"}", "net")), "ask-net");
+    assert_eq!(fake.raised.lock().unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn an_open_ask_survives_a_restart_and_a_spent_approval_does_not() {
     let dir = temp("owner-restart");
     let stub = kira_stub(&dir, vec![agent(), found()]);
