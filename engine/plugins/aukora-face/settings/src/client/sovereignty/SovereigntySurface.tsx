@@ -16,9 +16,13 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { AppHeader, AppSurface, Footnote, PortalButton, PortalCell, PortalGrid, StatusPill } from '@aukora/face-layout/client'
+import {
+  AppHeader, AppSurface, Footnote, Lead, PortalButton, PortalCell, PortalGrid, RecordList, RecordRow, StatusPill,
+} from '@aukora/face-layout/client'
 import type { CategoryId, SovereigntySnapshot, Tone } from './model.ts'
-import { CATEGORY_IDS, SETTING_FACTS, SOVEREIGNTY_COPY, SOVEREIGNTY_SURFACE } from './model.ts'
+import {
+  CATEGORY_FACTS, CATEGORY_IDS, SETTING_FACTS, SOVEREIGNTY_COPY, SOVEREIGNTY_PREVIEW_GLOBAL, SOVEREIGNTY_SURFACE,
+} from './model.ts'
 import { readSovereigntyStub } from './stub.ts'
 import { approvalGroup, usd } from './format.ts'
 import { CategoryView, verdictTone } from './views.tsx'
@@ -75,6 +79,31 @@ export function faceOf(id: CategoryId, s: SovereigntySnapshot): Face {
   }
 }
 
+/** True only in the preview composition (see `SOVEREIGNTY_PREVIEW_GLOBAL`). */
+function previewPage(): boolean {
+  const page = globalThis as Partial<Record<string, unknown>>
+  const flag = page[SOVEREIGNTY_PREVIEW_GLOBAL]
+  return typeof flag === 'object' && flag !== null && (flag as { stub?: unknown }).stub === true
+}
+
+/** A portal's face on a node that does not answer yet. */
+function emptyFace(id: CategoryId): Face {
+  const facts = CATEGORY_FACTS[id]
+  return { title: facts.title, tone: facts.tone, summary: SOVEREIGNTY_COPY.notConnected, flag: null }
+}
+
+/** What opens under a portal that has nothing to show yet: the plain truth, and what will be here. */
+function EmptyView({ id }: { readonly id: CategoryId }) {
+  return (
+    <>
+      <Lead>{SOVEREIGNTY_COPY.emptyLead}</Lead>
+      <RecordList>
+        {CATEGORY_FACTS[id].willShow.map(line => <RecordRow key={line} tone="muted" title={line} />)}
+      </RecordList>
+    </>
+  )
+}
+
 function isCategory(value: string | undefined): value is CategoryId {
   return value !== undefined && (CATEGORY_IDS as readonly string[]).includes(value)
 }
@@ -87,7 +116,8 @@ function isCategory(value: string | undefined): value is CategoryId {
 export function SovereigntySurface({ activeSurface, surfaceTarget, closeSurface }: SovereigntySurfaceProps) {
   const active = activeSurface === SOVEREIGNTY_SURFACE
   // ONE READ, THEN ONLY RENDERING. The stub today; a node-backed reader of the same shape later.
-  const s = useMemo(() => readSovereigntyStub(), [])
+  // THE STUB ONLY IN THE PREVIEW. On a node `s` is null until a read-only route exists, and every portal says so.
+  const s = useMemo<SovereigntySnapshot | null>(() => (previewPage() ? readSovereigntyStub() : null), [])
   // THE OPEN PORTAL IS THIS SURFACE'S OWN STATE, NOT THE SHELL'S. Opening a portal must never move a lane, and a
   // portal is not a navigation: it never goes through the shell's `openSurface` (which, until the rule-3 fix, set
   // the pane preset and snapped a one-third lane to two-thirds). The shell's target is read once as a deep link (a menu or
@@ -117,12 +147,12 @@ export function SovereigntySurface({ activeSurface, surfaceTarget, closeSurface 
         tone="violet"
         badges={[
           { text: SOVEREIGNTY_COPY.readOnly, icon: 'lock', title: SOVEREIGNTY_COPY.footnote },
-          ...(s.source === 'stub' ? [{ text: SOVEREIGNTY_COPY.stub, tone: 'gold' as const }] : []),
+          ...(s?.source === 'stub' ? [{ text: SOVEREIGNTY_COPY.stub, tone: 'gold' as const }] : []),
         ]}
       />
       <PortalGrid open={open !== null}>
         {shown.map((id) => {
-          const face = faceOf(id, s)
+          const face = s === null ? emptyFace(id) : faceOf(id, s)
           return (
             <PortalCell key={id} data-sovereignty-category={id}>
               <PortalButton
@@ -134,7 +164,7 @@ export function SovereigntySurface({ activeSurface, surfaceTarget, closeSurface 
                 onToggle={(next) => { setOpen(next ? id : null) }}
                 badge={face.flag === null ? null : <StatusPill tone={face.flag.tone}>{face.flag.text}</StatusPill>}
               >
-                <CategoryView id={id} s={s} />
+                {s === null ? <EmptyView id={id} /> : <CategoryView id={id} s={s} />}
               </PortalButton>
             </PortalCell>
           )

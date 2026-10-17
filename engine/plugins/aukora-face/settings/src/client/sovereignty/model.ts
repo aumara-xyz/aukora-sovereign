@@ -454,7 +454,30 @@ export const SOVEREIGNTY_COPY = {
   title: 'Sovereignty',
   readOnly: 'Read-only',
   stub: 'Preview data',
+  notConnected: 'Not connected yet',
+  emptyLead: 'Not connected yet. This node does not serve these facts to the view yet; nothing here is made up. Once its read-only route exists, this shows:',
   footnote: 'This view only reads. Every change opens your passkey on the owner origin, which shows its own card.',
   ownerNote: 'opens the owner origin',
   noRoute: 'The owner origin has no screen for this yet.',
 } as const
+
+// ── On a node, until the read-only routes exist: an honest empty state per portal ────────────────────────────────
+
+/** Each portal's name, colour, and what it will show once the node answers. */
+export const CATEGORY_FACTS: Readonly<Record<CategoryId, { readonly title: string; readonly tone: Tone; readonly willShow: readonly string[] }>> = {
+  approvals: { title: 'Approvals', tone: 'gold', willShow: ['What waits for your passkey, newest first', 'The exact card you signed: target, digests, time', 'What the passkey signed, and the receipt'] },
+  risk: { title: 'Risk', tone: 'blue', willShow: ['The Laya slider level, 1 to 4', 'What clears per kind of crossing, and today\'s count', 'Standing grants and when they end'] },
+  door: { title: 'Door', tone: 'mint', willShow: ['Auma\'s recent crossings: allowed, asked, refused', 'The reason for each, and the grant it used', 'The hosts the door allows'] },
+  plugins: { title: 'Plugins', tone: 'violet', willShow: ['The approved plugin set and each fingerprint', 'Anything changed and waiting for you'] },
+  model: { title: 'Model & spending', tone: 'gold', willShow: ['The model key fingerprint', 'Budget terms, spent and left', 'A receipt for every call'] },
+  memory: { title: 'Memory', tone: 'mint', willShow: ['Agents and what they may read and write', 'Auma\'s self note', 'Quarantined sources and recent writes'] },
+  releases: { title: 'Releases', tone: 'violet', willShow: ['The installed release and whether it rebuilds identically', 'Approved builds', 'The verifier\'s verdict on the node\'s record, and why'] },
+  devices: { title: 'Devices & identity', tone: 'blue', willShow: ['AUMLOK binding and epoch', 'Your passkeys', 'Paired devices and their co-presence receipts'] },
+}
+
+/**
+ * THE PREVIEW GATE. The stub snapshot is read only when the page carries this global, and only `preview-face.py`
+ * puts it there (a preview-only host plugin, never part of a node's composition). On a node there is no global, so the
+ * view shows each portal empty and says so: it never shows made-up data as if it were the node's.
+ */
+export const SOVEREIGNTY_PREVIEW_GLOBAL = '__AUKORA_SOVEREIGNTY_PREVIEW__'
