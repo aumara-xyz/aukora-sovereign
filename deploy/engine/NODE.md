@@ -428,6 +428,10 @@ the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated
   so after `node_release.py switch` the owner cannot even reach the card. The rehearsal redeployed by re-running
   genesis (section 8, "Redeploying a bound node"). Needs: a proposal from the floor's release to the running one,
   the owner origin served from the approved (previous) release until it is approved, then `advance_approved`.
+- **O19** (NEW, found live) Closing a card without approving it declines the proposal for good: the controller's
+  re-proposal of the same plugin set ten minutes later is refused `gate:declined-unchanged`, so the engine waits on
+  `awaiting-plugin-set-approval` with no card until the bytes change (genesis 5 had to be redone). An owner who closes
+  the card by mistake cannot recover. Either Close should not decline, or a declined set needs a way back.
 - **O18** (NEW, small) A browser that lost its shell session gets no visible way to sign in: the shell hides
   `frontdoor:session-required` and the AUMLOK face's "Sign in" did not render (blank face) on the rehearsal; the walk
   posted the face's `/passkey` navigation itself. Also no sign-out button for `POST /api/session/end`.
@@ -454,6 +458,7 @@ as `engine_install.py` writes it only at install):
 |---|---|---|
 | **C2** failed unit stuck | admitted + failed: `reset-failed` then the normal start, backoff 30 s doubling to 10 min; not admitted + failed: start `aukora-engine-cleanup.service` (root oneshot: `engine-run.sh delete`, then `reset-failed`); polkit allows exactly those | root SIGKILLed the engine until systemd said "Start request repeated too quickly" (unit `failed`, Result=signal): the same tick the journal said `the engine unit failed; resetting and starting it again (next try in 30 s)`, and `running` followed; a second start-limit hit recovered the same way. The not-admitted cleanup path is unit-tested only (backoff) and its unit is `static` (`check-units.sh`: units ok) |
 | **C3** stop fallback | `engine-run.sh delete` waits 10 s, then `docker rm -f`; `TimeoutStopSec=90s` | root blocked its own connections to the gateway (:690) so OpenShell's delete could not run, then a changed door byte stopped the engine: both sandbox containers removed by the docker fallback, the unit `inactive` (not failed) 13 s after "Stopping"; the rule removed, the byte restored, `running` again. With the old 30 s wait inside a 30 s stop bound the fallback could never run |
+| **Mistral** admission | `engine-prestart.sh` and `closure.rs` enforce the control folder's and files' owner, mode, links and no-link (above, section 2); the supervisor writes them 0600 explicitly | release 07c5c0b…-843855eb (genesis 5 and 6): folder `aukora:root 750`, files `aukora:aukora 600`, 1 link; `auma` writing the file: `Permission denied`; inside the sandbox the folder does not exist. Root set the admission 0666 and restarted the engine: `engine-prestart: the admission is not the supervisor's (owner, mode or links)`, the unit failed; the controller then reset it and started it again with a fresh 0600 admission (C2), `active` |
 | **C16** docs | NODE.md section 1 and the gateway unit say the fence admits root and 65534; the stale [GUESS] is gone | — |
 
 Tests (Linux, the node, umask 002): `cargo test -p supervisor -p broker -p gate -p floor -p frontdoor` (sovereign
