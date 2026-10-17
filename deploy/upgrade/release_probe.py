@@ -6,9 +6,12 @@ then record its outcome for the supervisor. Never touches the live state beyond 
   release_probe.py prepare ID | finish ID"""
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import stat
+import subprocess
 import sys
 import time
 
@@ -89,18 +92,42 @@ def probe_prepare(rid):
                                                                             "node-release"), 0o644)
 
 
+def journal_lines(invocation, main_pid):
+    """What this run's main process wrote (stdout and stderr both reach the journal; only the exact success line
+    counts, and only if it is the one line the candidate's main process wrote to stdout)."""
+    if not re.fullmatch(r"[0-9a-f]{32}", invocation) or (main_pid and not main_pid.isdigit()):
+        return None
+    # systemd may no longer know the main pid once it exited: then every stdout line of the run counts (the root
+    # steps write nothing to stdout), which only makes the one-line rule stricter.
+    match = ["_PID=" + main_pid] if main_pid else []
+    try:
+        done = subprocess.run(["journalctl", "--no-pager", "-o", "json", "_SYSTEMD_INVOCATION_ID=" + invocation,
+                               "_TRANSPORT=stdout"] + match,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = []
+    for raw in done.stdout.decode("utf-8", "replace").splitlines()[:64]:
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            return None
+        message = entry.get("MESSAGE")
+        if not isinstance(message, str):
+            return None
+        lines.append(message)
+    return lines
+
+
 def probe_finish(rid, environment=None):
     """ExecStopPost=+ of the probe unit: record the outcome for the supervisor (root 0644). Passed only if the unit
     succeeded, the candidate exited 0 and said exactly `probe ok <its release digest>`."""
     environment = os.environ if environment is None else environment
     digest = r.staged_digest(rid)[2]
-    said = b""
-    try:
-        said = core.read_regular(os.path.join(PROBE_RUN, rid, "said"), 4096, "node-release")
-    except core.Refusal:
-        pass
+    said = journal_lines(environment.get("INVOCATION_ID", ""), environment.get("MAINPID", ""))
     passed = (environment.get("SERVICE_RESULT") == "success" and environment.get("EXIT_CODE") == "exited"
-              and environment.get("EXIT_STATUS") == "0" and said == ("probe ok " + digest + "\n").encode("ascii"))
+              and environment.get("EXIT_STATUS") == "0" and said == ["probe ok " + digest])
     os.makedirs(PROBE_RESULTS, mode=0o755, exist_ok=True)
     core.atomic_write(os.path.join(PROBE_RESULTS, rid + ".json"),
                       core.canonical({"v": 1, "id": rid, "release": digest, "passed": passed,

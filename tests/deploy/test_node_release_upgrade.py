@@ -268,19 +268,25 @@ class Upgrade(unittest.TestCase):
         self.assertEqual(copy.execute("select x from t").fetchall(), [(1,)])
         copy.close()
         self.assertTrue(os.path.exists(os.path.join(release_probe.PROBE_CONFIG, self.new[0], "node.json")))
-        # Root's record: passed only on success, exit 0 and the exact line with the release's digest.
-        good = {"SERVICE_RESULT": "success", "EXIT_CODE": "exited", "EXIT_STATUS": "0"}
-        with open(run + "/said", "wb") as said:
-            said.write(("probe ok " + self.new[2] + "\n").encode())
-        self.assertTrue(release_probe.probe_finish(self.new[0], good))
-        with open(os.path.join(release_probe.PROBE_RESULTS, self.new[0] + ".json"), "rb") as record:
-            self.assertTrue(json.loads(record.read())["passed"])
-        self.assertFalse(os.path.exists(os.path.join(release_probe.PROBE_CONFIG, self.new[0])), "config copy removed")
-        # A timeout (systemd killed the whole cgroup) fails, whatever the candidate said.
-        self.assertFalse(release_probe.probe_finish(self.new[0], {**good, "SERVICE_RESULT": "timeout", "EXIT_CODE": "killed"}))
-        with open(run + "/said", "wb") as said:
-            said.write(b"probe ok " + b"0" * 64 + b"\n")
-        self.assertFalse(release_probe.probe_finish(self.new[0], good), "another release's digest")
+        # Root's record: passed only on success, exit 0 and exactly one stdout line, `probe ok <its digest>`, from
+        # the run's main process (read from the journal).
+        good = {"SERVICE_RESULT": "success", "EXIT_CODE": "exited", "EXIT_STATUS": "0",
+                "INVOCATION_ID": "a" * 32, "MAINPID": "42"}
+        said = {"lines": ["probe ok " + self.new[2]]}
+        with mock.patch.object(release_probe, "journal_lines", lambda invocation, pid: said["lines"]):
+            self.assertTrue(release_probe.probe_finish(self.new[0], good))
+            with open(os.path.join(release_probe.PROBE_RESULTS, self.new[0] + ".json"), "rb") as record:
+                self.assertTrue(json.loads(record.read())["passed"])
+            self.assertFalse(os.path.exists(os.path.join(release_probe.PROBE_CONFIG, self.new[0])), "config copy removed")
+            # A timeout (systemd killed the whole cgroup) fails, whatever the candidate said.
+            self.assertFalse(release_probe.probe_finish(self.new[0], {**good, "SERVICE_RESULT": "timeout", "EXIT_CODE": "killed"}))
+            said["lines"] = ["probe ok " + "0" * 64]
+            self.assertFalse(release_probe.probe_finish(self.new[0], good), "another release's digest")
+            said["lines"] = ["noise", "probe ok " + self.new[2]]
+            self.assertFalse(release_probe.probe_finish(self.new[0], good), "only the one line counts")
+            said["lines"] = None
+            self.assertFalse(release_probe.probe_finish(self.new[0], good), "an unreadable journal fails")
+        self.assertIsNone(release_probe.journal_lines("not-an-id", "42"))
         # Only the offered release is probed.
         node_release.withdraw()
         with self.assertRaises(core.Refusal):

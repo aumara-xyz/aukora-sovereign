@@ -21,8 +21,9 @@ RuntimeDirectoryMode=0700
 ExecStartPre=+/usr/bin/python3 -B -I /opt/aukora/current/deploy/upgrade/release_probe.py prepare %i
 # The configuration copy sits in a root-owned folder (the supervisor reads its configuration only from root's files).
 ExecStart=/opt/aukora/releases/%i/bin/sovereign release probe --config /run/aukora-release-probe-config/%i/node.json --state /run/aukora-release-probe/%i/state
-# Appended, never truncated: every command of the unit opens it, and the last one reads it.
-StandardOutput=append:/run/aukora-release-probe/%i/said
+# What the candidate says goes to the journal; root reads this invocation's lines of the main process
+# (NODE: a file under the runtime folder cannot be opened for the root pre-start step, 209/STDOUT).
+StandardOutput=journal
 StandardError=journal
 # Root records the outcome (exit, $SERVICE_RESULT, what the candidate said) for the supervisor; runs on a timeout too.
 ExecStopPost=+/usr/bin/python3 -B -I /opt/aukora/current/deploy/upgrade/release_probe.py finish %i
