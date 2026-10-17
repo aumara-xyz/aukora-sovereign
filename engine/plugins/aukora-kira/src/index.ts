@@ -15,8 +15,8 @@
 //     `capture: "web-derived"`. A new turn or step does not clear it (the history still holds what was read); only
 //     `clearTaintAfterCompaction()`, called by a host that has proof the content left the context, does. The check
 //     refuses rather than rewriting the capture, because @aukora/door has already bound the exact arguments.
-//  4. Session-start slot injection: `aukora:self` (up to 4,096 UTF-8 bytes) and `aukora:resume` (up to 2,048
-//     UTF-8 bytes) are fetched once at session start via `kira_get` by slot name through the door and injected as
+//  4. Slot injection: `aukora:self` (up to 4,096 UTF-8 bytes) and `aukora:resume` (up to 2,048 UTF-8 bytes) are
+//     fetched at session start and again at step 1 of every turn via `kira_get` by slot name through the door and injected as
 //     `systemPrompt` sections with `interpolate: false`, outside the 4,800-char `kira_recall` budget.
 
 import { randomBytes } from 'node:crypto'
@@ -149,7 +149,9 @@ export function apply(ctx: Context, rawConfig: KiraPluginConfig = {}): KiraContr
     'agent/pre-step',
     (async (payload: { agent?: object; step?: number }, next: () => Promise<unknown>) => {
       // No taint clearing here: step 1 is the start of a turn, not proof that the web content left the context.
-      await controller.ensureSlotsLoaded()
+      // The first step of every turn reads the slots again: the controller lives as long as the engine process, and
+      // the owner may supersede or quarantine the self file, or a new resume brief may be written, between turns.
+      await controller.ensureSlotsLoaded(payload.step === 1)
       return next()
     }) as never,
     globalOnly,

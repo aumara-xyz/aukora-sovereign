@@ -392,6 +392,43 @@ test('the plugin remembers the head of each slot it loaded, and a handoff can ca
   assert.equal('expected_head' in buildRememberArgs({ text: 'x', subject: 'y' }), false, 'absent unless asked for')
 })
 
+test('the slots are read again at step 1 of every turn: a superseded self file stops being injected', async () => {
+  const handlers = new Map<string, (...args: never[]) => Promise<unknown> | unknown>()
+  let self = sampleNote({ content: 'I am Auma, version one.' })
+  let asked = 0
+  const ctx = {
+    on: (event: string, handler: (...args: never[]) => Promise<unknown> | unknown) => handlers.set(event, handler),
+    tools: {
+      register: () => undefined,
+      execute: async ({ arguments: args }: { arguments: { id: string } }) => {
+        asked += 1
+        return args.id === 'aukora:self'
+          ? { isError: false, value: self, content: [] }
+          : { isError: true, error: { message: 'kira:not-found', info: { name: 'AukoraDoorRefusal', code: 'kira:not-found' } }, content: [] }
+      },
+    },
+    systemPrompt: { section: () => undefined },
+  }
+  const controller = apply(ctx as never)
+  const preStep = handlers.get('agent/pre-step') as (payload: { agent: object; step: number }, next: () => Promise<unknown>) => Promise<unknown>
+  const next = async () => 'next'
+  const agent = {}
+  await preStep({ agent, step: 1 }, next)
+  assert.equal(controller.selfText(), 'I am Auma, version one.')
+  // Later steps of the same turn reuse the cache (no extra door call), so a turn is not slowed.
+  const before = asked
+  await preStep({ agent, step: 2 }, next)
+  assert.equal(asked, before)
+  // The owner supersedes the self file between turns; step 1 of the next turn must not inject it.
+  self = sampleNote({ content: 'I am Auma, version one.', superseded_by: '2'.repeat(64) })
+  await preStep({ agent, step: 1 }, next)
+  assert.equal(controller.selfText(), '')
+  // A newer self file replaces it.
+  self = sampleNote({ content: 'I am Auma, version two.' })
+  await preStep({ agent, step: 1 }, next)
+  assert.equal(controller.selfText(), 'I am Auma, version two.')
+})
+
 test('resolveKiraConfig validates bounds', () => {
   assert.throws(() => resolveKiraConfig({ maxSelfBytes: 10 }))
   assert.throws(() => resolveKiraConfig({ maxResumeBytes: 65_537 }))
