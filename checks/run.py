@@ -860,12 +860,14 @@ lock = json.loads((ROOT / "app/APP-LOCK.json").read_text())
 if len(lock.get("aukora_apps", [])) != 8 or len(lock.get("system", [])) != 8:
     fail("app-lock", "app/APP-LOCK.json must list Peter's 8 apps and 8 System entries")
 
-# 9. The inventory (row 127): reported here; it fails closed at the release gate, not on construction.
+# 9. The inventory (row 127): only spec/CARRY-LIST.md's presence is checked and the packet's reported. BUILD, not built: the omission
+#    check (checks/inventory/check.py) is called by nothing yet, and its packet (checks/inventory/codex-carry-v1.json,
+#    owner-records-v1.json) is not in the tree; making it a fail-closed release gate waits on Peter saving the packet.
 inventory = "spec/CARRY-LIST.md present" if (ROOT / "spec/CARRY-LIST.md").is_file() else "spec/CARRY-LIST.md MISSING"
 if not (ROOT / "spec/CARRY-LIST.md").is_file():
     fail("inventory", "spec/CARRY-LIST.md is missing")
-codex_list = sorted(ROOT.glob("checks/inventory/*.csv"))
-inventory += f"; Codex's 522-row list {'present' if codex_list else 'not saved yet (blocked)'}"
+codex_list = (ROOT / "checks/inventory/codex-carry-v1.json").is_file()
+inventory += f"; Codex's 522-row list {'present' if codex_list else 'not saved yet (blocked)'}; omission check not wired into any gate"
 
 # 10. The deploy guard's list (row 131): S1 is never touched by spawn or upgrade.
 nodes = (ROOT / "deploy/EXISTING-NODES").read_text() if (ROOT / "deploy/EXISTING-NODES").is_file() else ""
@@ -895,9 +897,8 @@ if release_dir.is_dir():
     for built in sorted(release_dir.rglob("*")):
         if built.is_file() and re.search(walls.SCANNED, built.name.lower()) and re.search(walls.PREVIEW_MARKERS, built.read_text(errors="replace")):
             fail("wall-preview-release", f"{built.relative_to(ROOT)} carries a preview-only shim")
-# 11a2. The browser wall also reads the pinned files rule 11 skips (a pin says the bytes did not change, not that they may write
-#      markup): only the files in checks/baseline.json `browser_html_allowed` are excused, each with its reason; a stale entry (file
-#      gone, unpinned, or no longer reaching) fails. Files in `copied_from_prime` keep their own exemption above.
+# 11a2. Pinned files skip rule 11, but a pin says the bytes did not change, not that they may write markup: only the files in
+#      checks/baseline.json `browser_html_allowed` (each with its reason; a stale entry fails) are excused. `copied_from_prime` keeps its own.
 browser_allowed = baseline.get("browser_html_allowed", {})
 for p in files:
     if p in scan_exempt and p not in copied and p not in browser_allowed and (ROOT / p).is_file():
