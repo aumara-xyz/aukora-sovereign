@@ -895,6 +895,21 @@ if release_dir.is_dir():
     for built in sorted(release_dir.rglob("*")):
         if built.is_file() and re.search(walls.SCANNED, built.name.lower()) and re.search(walls.PREVIEW_MARKERS, built.read_text(errors="replace")):
             fail("wall-preview-release", f"{built.relative_to(ROOT)} carries a preview-only shim")
+# 11a2. The browser wall also reads the pinned files rule 11 skips (a pin says the bytes did not change, not that they may write
+#      markup): only the files in checks/baseline.json `browser_html_allowed` are excused, each with its reason; a stale entry (file
+#      gone, unpinned, or no longer reaching) fails. Files in `copied_from_prime` keep their own exemption above.
+browser_allowed = baseline.get("browser_html_allowed", {})
+for p in files:
+    if p in scan_exempt and p not in copied and p not in browser_allowed and (ROOT / p).is_file():
+        if any(rule == "wall-browser" for rule, _ in walls.file_findings(p, (ROOT / p).read_text(errors="replace"))):
+            fail("wall-browser", f"{p} is pinned but breaks the browser wall; list it in checks/baseline.json browser_html_allowed with its reason")
+for p, reason in browser_allowed.items():
+    if not (isinstance(reason, str) and reason.strip()):
+        fail("wall-browser", f"{p} is allow-listed without a reason")
+    elif p not in scan_exempt or p not in files:
+        fail("wall-browser", f"{p} is allow-listed but is not a tracked, pinned, unedited file")
+    elif not any(rule == "wall-browser" for rule, _ in walls.file_findings(p, (ROOT / p).read_text(errors="replace"))):
+        fail("wall-browser", f"{p} no longer needs its browser_html_allowed entry")
 
 # 11b. The engine's reach (checks/walls.py `engine_findings`): TypeScript and JavaScript under engine/ may not use the network,
 #      run a program, read the environment or evaluate a string. Only the exact files in checks/baseline.json
