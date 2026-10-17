@@ -114,7 +114,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 const CONVERSATION_PANEL: PanelInfo = Object.freeze({ activePanelId: null })
 
 /** Required services for slot composition, localized chrome, and theme projection. */
-export const inject = ['slots', 'theme', 'locale', 'sessions']
+// 'remote.commands' is what the composer's Chat | Build toggle sends `/aukora-mode` through: DSH 0.2.1-alpha.5 refuses
+// `ctx.remote.commands` to a plugin that has not declared it.
+export const inject = ['slots', 'theme', 'locale', 'sessions', 'remote', 'remote.commands']
 
 /**
  * Register the spatial root shell and document theme presenter.

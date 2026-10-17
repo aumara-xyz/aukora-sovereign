@@ -52,7 +52,7 @@ export function installComposerMode(ctx: Context): void {
       handler: ({ agent, rawInput }) => {
         const requested = rawInput.trim()
         if (requested !== 'read-only' && requested !== 'workspace-write') {
-          return { kind: 'error', text: 'Required confinement allows only Chat or Build; YOLO is unavailable.' }
+          return { kind: 'error', text: 'Only Chat or Build is offered.' }
         }
         try {
           const policy = scope.sandboxPolicy.resolve({ session: agent.session, mode: requested })

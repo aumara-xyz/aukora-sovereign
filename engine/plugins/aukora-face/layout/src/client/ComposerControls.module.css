@@ -1,29 +1,52 @@
-.controls { display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto; min-width: 0; }
-.mode, .vision { display: inline-flex; align-items: center; gap: 5px; height: 28px; }
-.mode { --composer-accent: var(--aukora-text-muted); }
-.mode[data-mode='0'] { --composer-accent: var(--aukora-green); }
-.mode[data-mode='1'] { --composer-accent: var(--aukora-blue); }
-.mode[data-mode='2'] { --composer-accent: var(--aukora-gold); }
-.slider { position: relative; display: inline-flex; align-items: center; flex: none; width: 28px; height: 28px; }
-.track { position: relative; display: block; box-sizing: border-box; width: 28px; height: 10px; border: 1px solid var(--aukora-border); border-radius: 999px; background: transparent; }
-.fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: inherit; background: var(--composer-accent); opacity: .7; transition: width 160ms ease; }
-.mode[data-mode='1'] .fill { width: 13px; }
-.mode[data-mode='2'] .fill { width: 22px; }
-.dot { position: absolute; top: 50%; left: 1px; width: 6px; height: 6px; border-radius: 50%; background: var(--composer-accent); transform: translate(0, -50%); transition: transform 160ms ease; }
-.mode[data-mode='1'] .dot { transform: translate(9px, -50%); }
-.mode[data-mode='2'] .dot { transform: translate(18px, -50%); }
-.mode[data-mode='-1'] .dot { visibility: hidden; }
-.range { position: absolute; inset: 0; width: 28px; height: 28px; margin: 0; opacity: 0; cursor: pointer; }
-.slider:has(.range:focus-visible) .track { outline: 2px solid var(--composer-accent); outline-offset: 3px; }
-.mode[data-disabled='true'], .vision { opacity: .5; }
+.controls { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 0; white-space: nowrap; }
+.switch, .laya, .eye { height: 28px; }
+
+/* Chat | Build: one small switch, thin border, and the one word it shows. Knob left = Chat, right = Build. */
+.switch { --composer-accent: var(--aukora-green); display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; font: inherit; cursor: pointer; }
+.switch[data-state='build'] { --composer-accent: var(--aukora-blue); }
+.switch[data-state='other'] { --composer-accent: var(--aukora-text-muted); }
+.rail { position: relative; flex: none; box-sizing: border-box; width: 26px; height: 14px; border: 1px solid color-mix(in srgb, var(--composer-accent) 55%, transparent); border-radius: 999px; background: var(--aukora-surface); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.switch:hover:not(:disabled) .rail { border-color: color-mix(in srgb, var(--composer-accent) 70%, transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--composer-accent) 14%, transparent); }
+.knob { position: absolute; top: 50%; left: 2px; width: 8px; height: 8px; border-radius: 50%; background: var(--composer-accent); transform: translate(0, -50%); transition: left 160ms ease; }
+.switch[data-state='build'] .knob { left: 14px; }
+.switch[data-state='other'] .knob { left: 8px; }
+.word { min-width: 36px; color: var(--composer-accent); font: inherit; font-size: 11px; line-height: 14px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; text-align: start; }
+.switch:focus-visible { outline: 2px solid var(--composer-accent); outline-offset: 3px; border-radius: 8px; }
+.switch:disabled { opacity: .5; cursor: default; }
+.switch[data-error='true'] .rail { border-color: var(--aukora-red-warning); }
+
+/* Risk: four notches, 1 the most careful, each its own palette colour (1 mint, 2 blue, 3 violet, 4 gold). The knob
+   rests on the requested notch at once (--at, 0..3) and keeps the full colour, as does the word "Risk"; the fill is the
+   same colour mixed half-way toward the background. The track is 14px tall with a hairline border that nothing covers:
+   the 10px knob and the fill (also 10px) sit inside it with a 1px gap, so the outline shows at every level. While a
+   loosening waits for the passkey the knob carries a lock and the fill is dimmed further. The track is 48px inside its
+   border, so the knob travels 12px between notches. */
+.laya { display: inline-flex; align-items: center; gap: 5px; margin-inline-start: 6px; --composer-accent: var(--aukora-blue); }
+.laya[data-notch='ask'] { --composer-accent: var(--aukora-green); }
+.laya[data-notch='limits'] { --composer-accent: var(--aukora-purple); }
+.laya[data-notch='trusted'] { --composer-accent: var(--aukora-gold); }
+.name { color: var(--composer-accent); font: inherit; font-size: 11px; line-height: 14px; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; transition: color 180ms ease; }
+.layaSlider { position: relative; display: inline-flex; align-items: center; flex: none; width: 50px; height: 28px; }
+.track { position: relative; display: block; box-sizing: border-box; width: 100%; height: 14px; border: 1px solid color-mix(in srgb, var(--composer-accent) 60%, var(--aukora-border)); border-radius: 999px; background: transparent; transition: border-color 180ms ease; }
+.fill { position: absolute; left: 1px; top: 1px; bottom: 1px; width: calc(var(--at) * 12px + 5px); border-radius: 999px; background: color-mix(in srgb, var(--composer-accent) 50%, var(--aukora-background)); transition: width 160ms ease, opacity 160ms ease, background-color 180ms ease; }
+.laya[data-pending='true'] .fill { position: absolute; left: 1px; top: 1px; bottom: 1px; width: calc(var(--at) * 12px + 5px); border-radius: 999px; background: color-mix(in srgb, var(--composer-accent) 50%, var(--aukora-background)); transition: width 160ms ease, opacity 160ms ease, background-color 180ms ease; }
+.dot { position: absolute; top: 50%; left: calc(var(--at) * 12px + 1px); box-sizing: border-box; display: flex; align-items: center; justify-content: center; width: 10px; height: 10px; border: 1px solid var(--aukora-background); border-radius: 50%; background: var(--composer-accent); transform: translate(0, -50%); transition: left 160ms ease, background-color 180ms ease; }
+.notch { position: absolute; top: 50%; left: calc(var(--at) * 12px + 5px); width: 2px; height: 2px; border-radius: 50%; background: var(--aukora-text-muted); transform: translate(0, -50%); }
+.lock { width: 6px; height: 6px; fill: none; stroke: var(--aukora-background); stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+.bubble { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--composer-accent) 45%, transparent); border-radius: 8px; background: var(--aukora-surface); color: var(--composer-accent); font-size: 10px; line-height: 14px; pointer-events: none; }
+.range { position: absolute; inset: 0; width: 100%; height: 28px; margin: 0; opacity: 0; cursor: pointer; }
+.layaSlider:has(.range:focus-visible) .track { position: relative; display: block; box-sizing: border-box; width: 100%; height: 14px; border: 1px solid color-mix(in srgb, var(--composer-accent) 60%, var(--aukora-border)); border-radius: 999px; background: transparent; transition: border-color 180ms ease; }
 .range:disabled { cursor: default; }
-.label { width: 30px; color: var(--composer-accent); font-size: 9px; line-height: 12px; font-weight: 400; letter-spacing: .03em; white-space: nowrap; }
-.vision { --composer-accent: var(--aukora-text-muted); cursor: default; }
-.vision .label { width: auto; }
-.vision[data-vision='on'] { --composer-accent: var(--aukora-purple); }
-.vision[data-vision='on'] .dot { transform: translate(18px, -50%); }
-.vision[data-vision='on'] .fill { width: 22px; }
-.mode[data-error='true'] .track { border-color: var(--aukora-red-warning); }
+.laya[data-locked='true'] { opacity: .5; }
+
+/* Vision: an eye button, no box (Peter's rule for icon buttons). Open eye = on, struck through = off. */
+.eye { display: inline-flex; align-items: center; justify-content: center; width: 24px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--aukora-text-muted); cursor: pointer; transition: color 180ms ease; }
+.eye[aria-pressed='true'] { color: var(--aukora-purple); }
+.eye:hover:not(:disabled) { color: var(--aukora-purple); }
+.eye:focus-visible { outline: 2px solid var(--aukora-purple); outline-offset: 2px; }
+.eye:disabled { opacity: .5; cursor: default; }
+.eyeIcon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-@media (prefers-reduced-motion: reduce) { .dot, .fill { transition: none; } }
-@media (forced-colors: active) { .track { border-color: CanvasText; } .dot, .fill { background: Highlight; } .vision .dot { background: GrayText; } }
+@media (prefers-reduced-motion: reduce) { .dot, .fill, .knob, .rail { transition: none; } }
+@media (forced-colors: active) { .track, .rail { border-color: CanvasText; } .dot, .fill, .knob { background: Highlight; } }
