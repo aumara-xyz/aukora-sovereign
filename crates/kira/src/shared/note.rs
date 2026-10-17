@@ -53,6 +53,19 @@ impl Lane {
             _ => Err(refuse("note-lane")),
         }
     }
+
+    /// The commitment and identity lanes: only the owner's own words (`owner-typed` or `owner-signed`) may sit here.
+    pub const fn owner_only(self) -> bool {
+        matches!(self, Self::Charter | Self::Ruling | Self::Decision | Self::SelfFile | Self::Resume)
+    }
+}
+
+/// Lanes by whitelist: an owner-only lane accepts only an owner-class capture; every other capture is refused there.
+pub fn check_capture_lane(capture: Capture, lane: Lane) -> Result<()> {
+    if lane.owner_only() && !capture.owner_class() {
+        return Err(refuse("note-capture-lane"));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -159,6 +172,11 @@ impl Capture {
             _ => Err(refuse("note-capture")),
         }
     }
+
+    /// The owner's own words: only the owner channel may claim these.
+    pub const fn owner_class(self) -> bool {
+        matches!(self, Self::OwnerTyped | Self::OwnerSigned)
+    }
 }
 
 /// What an author asks to remember. The service turns it into tags and signs it with the caller's key.
@@ -236,13 +254,9 @@ impl NoteDraft {
         if self.sources.len() > MAX_SOURCES {
             return Err(refuse("note-sources"));
         }
-        // Model, web or imported material can never be filed as a commitment or as the owner's identity; imports are
-        // promoted only by an owner-signed manifest.
-        if matches!(self.capture, Capture::WebDerived | Capture::ModelGenerated | Capture::Import)
-            && matches!(self.lane, Lane::Decision | Lane::Charter | Lane::Ruling | Lane::SelfFile)
-        {
-            return Err(refuse("note-capture-lane"));
-        }
+        // By whitelist: only the owner's own words are filed as a commitment, the self file or the resume. Tool, model,
+        // web and imported material never are; imports are promoted only by an owner-signed manifest.
+        check_capture_lane(self.capture, self.lane)?;
         if let (Some(from), Some(to)) = (self.valid_from, self.valid_to) {
             if to <= from {
                 return Err(refuse("note-validity"));
@@ -367,6 +381,14 @@ mod tests {
         d.capture = Capture::ModelGenerated;
         d.lane = Lane::Decision;
         assert!(d.tags(Review::Remembered).is_err());
+        // Whitelist: tool-observed material cannot be a commitment, the self file or the resume either.
+        d.capture = Capture::ToolObserved;
+        for lane in [Lane::Charter, Lane::Ruling, Lane::Decision, Lane::SelfFile, Lane::Resume] {
+            d.lane = lane;
+            assert_eq!(d.tags(Review::Remembered), Err(refuse("note-capture-lane")));
+        }
+        d.capture = Capture::OwnerTyped;
+        assert!(d.tags(Review::Remembered).is_ok());
     }
 
     #[test]

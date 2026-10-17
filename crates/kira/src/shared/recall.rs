@@ -28,6 +28,9 @@ pub struct RecallQuery {
     pub author: Option<String>,
     /// Character budget for returned text (default 4,800).
     pub budget_chars: usize,
+    /// Whether `local` notes may be read. The service sets it for the owner only; when false, local notes are dropped
+    /// before ranking, dedupe and the found decision.
+    pub include_local: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,7 +38,8 @@ pub enum RecallStatus {
     Found,
     /// Searched a complete, healthy index and nothing cleared the threshold.
     Empty,
-    /// Could not tell: index incomplete, a model down, or integrity failure. Never reported as empty.
+    /// Could not tell: index incomplete, a model down, an integrity failure, or every relevant note over the budget.
+    /// Never reported as empty.
     Undetermined(&'static str),
 }
 
@@ -46,6 +50,8 @@ pub struct RecallItem {
     pub author_name: String,
     /// Other authors who wrote the same statement (deduped by statement hash).
     pub also_by: Vec<String>,
+    /// Ids of the other notes folded into this one by dedupe.
+    pub also_by_ids: Vec<String>,
     pub lane: String,
     pub form: String,
     pub review: String,
@@ -55,7 +61,7 @@ pub struct RecallItem {
     pub score: f32,
     /// Independent ancestry roots (computed by the store, never taken from tags).
     pub roots: usize,
-    /// "superseded" or "quarantined" when shown in the corrections lane.
+    /// "superseded" or "quarantined" when shown in the corrections lane. A quarantined item's text is empty.
     pub correction: Option<String>,
 }
 
@@ -63,6 +69,8 @@ pub struct RecallItem {
 pub struct RecallOutcome {
     pub status: RecallStatus,
     pub items: Vec<RecallItem>,
+    /// Relevant notes skipped because they did not fit the budget.
+    pub omitted: usize,
     pub indexed: u64,
     pub total: u64,
     /// sha256 (hex) of the canonical query, for the Aura receipt.

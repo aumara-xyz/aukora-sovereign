@@ -1,6 +1,7 @@
 # crates/kira
-- **Owns:** encrypted memory, cited recall, demotion (never deletion), memory permissions, the OpenViking adapter.
-- **Never owns:** authority or model calls.
+- **Owns:** encrypted memory, cited recall, demotion (never deletion), memory permissions, the OpenViking adapter, and Kira 2, AUKORA's shared memory (`src/shared`): one signed, hash-chained store that every agent on the Mac reads and writes through a local service (`sovereign kira serve`, its MCP shim, token issue, rotation and revocation). For recall, the shared memory calls local model servers (a loopback `llama-server` for embeddings and rerank).
+- **Never owns:** authority, or the model servers it calls; it never runs a model itself.
+- **Trust boundary (shared memory, Phase M):** same-uid trust: agents running as the owner's user can read token and key files; Phase N moves keys behind a separate service uid and SO_PEERCRED.
 - **May depend on:** canon, aura, nostr.
 - **Bricks:** 57, 58, 59, 60, 124 (NORTH-STAR.md).
 - **Storage:** SQLite note retention, authenticated encryption, demotion, cited recall, permissions and local indexing; Aura and key access use injected adapters.

@@ -3,27 +3,37 @@
 
 use super::*;
 
-fn tools() -> Value {
+/// The tool list for one caller. A caller that is not the owner never sees `quarantine_source`, the `owner_signed`
+/// field or the owner-class captures: what it cannot do is not offered.
+fn tools(owner: bool) -> Value {
     let text = |description: &str| json!({"type": "string", "description": description});
     let int = |description: &str| json!({"type": "integer", "description": description});
     let id = text("A note id: 64 lowercase hex characters.");
     let object = |required: &[&str], properties: Value| {
         json!({"type": "object", "required": required, "properties": properties, "additionalProperties": false})
     };
-    json!([
-        {"name": "remember", "description": "Write one note to AUKORA's shared memory, signed as you. It is remembered, never approved: memory is context, not authority.",
-         "inputSchema": object(&["text", "subject", "scope", "lane", "form", "privacy", "capture"], json!({
+    let capture = if owner {
+        json!({"type": "string", "enum": ["owner-typed", "owner-signed", "tool-observed", "web-derived", "model-generated"], "description": "How you came to know it. Only owner-typed or owner-signed notes can be a decision, charter, ruling, self or resume."})
+    } else {
+        json!({"type": "string", "enum": ["tool-observed", "web-derived", "model-generated"], "description": "How you came to know it. tool-observed stands only with at least one source id; anything else is filed as model-generated. Decisions, charters, rulings, self and resume are the owner's only."})
+    };
+    let mut remember = json!({
             "text": text("The statement to remember: one fact, observation or decision, in plain words."),
             "subject": text("A short topic label, e.g. kira-service or north-star row 12."),
             "scope": text("Where it belongs; one of your registered scopes (usually builders)."),
             "lane": {"type": "string", "enum": ["evidence", "experience", "charter", "ruling", "decision", "finding", "self", "resume"]},
             "form": {"type": "string", "enum": ["fact", "snapshot", "counterevidence"]},
             "privacy": {"type": "string", "enum": ["local", "builders", "public"], "description": "local: only the owner can read it back."},
-            "capture": {"type": "string", "enum": ["owner-typed", "owner-signed", "tool-observed", "web-derived", "model-generated"], "description": "How you came to know it. owner-typed and owner-signed are the owner's only; model or web material cannot be a decision, charter or ruling."},
+            "capture": capture,
             "sources": {"type": "array", "items": {"type": "string"}, "description": "Ids of notes this one derives from."},
             "slot": text("Optional fixed slot, e.g. aukora:resume."),
-            "valid_from": int("Unix seconds."), "valid_to": int("Unix seconds."),
-            "owner_signed": {"type": "boolean", "description": "Owner only."}}))},
+            "valid_from": int("Unix seconds."), "valid_to": int("Unix seconds.")});
+    if owner {
+        remember["owner_signed"] = json!({"type": "boolean", "description": "Sign the review as the owner."});
+    }
+    let mut list = json!([
+        {"name": "remember", "description": "Write one note to AUKORA's shared memory, signed as you. It is remembered, never approved: memory is context, not authority.",
+         "inputSchema": object(&["text", "subject", "scope", "lane", "form", "privacy", "capture"], remember)},
         {"name": "recall", "description": "Search the shared memory. Answers found, empty or undetermined (unknown, never a no), with each note's author and evidence.",
          "inputSchema": object(&["query"], json!({
             "query": text("What you want to know."),
@@ -38,7 +48,13 @@ fn tools() -> Value {
          "inputSchema": object(&["target"], json!({"target": id, "replacement": text("Id of the note that replaces it.")}))},
         {"name": "quarantine_source", "description": "Owner only: quarantine every note signed by one key; that key can no longer write.",
          "inputSchema": object(&["pubkey"], json!({"pubkey": text("The source's public key, 64 hex.")}))},
-    ])
+    ]);
+    if !owner {
+        if let Some(entries) = list.as_array_mut() {
+            entries.retain(|tool| tool["name"] != "quarantine_source");
+        }
+    }
+    list
 }
 
 fn rpc_error(id: &Value, code: i64, message: &str) -> String {
@@ -65,7 +81,11 @@ pub fn mcp_reply(line: &str, forward: &mut dyn FnMut(&str, &Value) -> std::resul
             })
         }
         "ping" => json!({}),
-        "tools/list" => json!({"tools": tools()}),
+        "tools/list" => {
+            // The service says which role this token has; anything but a clear "owner" gets the agent's list.
+            let owner = forward("whoami", &json!({})).ok().and_then(|me| me.get("owner").and_then(Value::as_bool)) == Some(true);
+            json!({"tools": tools(owner)})
+        }
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
             if !TOOLS.contains(&name) {
@@ -128,7 +148,11 @@ mod tests {
         let mut seen = Vec::new();
         let mut forward = |method: &str, params: &Value| {
             seen.push((method.to_owned(), params.clone()));
-            if method == "get" { Err("kira:not-found".to_owned()) } else { Ok(json!({"status": "empty"})) }
+            match method {
+                "get" => Err("kira:not-found".to_owned()),
+                "whoami" => Ok(json!({"name": "peter", "owner": true})),
+                _ => Ok(json!({"status": "empty"})),
+            }
         };
         let init = mcp_reply(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#, &mut forward).unwrap();
         let init: Value = serde_json::from_str(&init).unwrap();
@@ -147,7 +171,28 @@ mod tests {
         assert_eq!(reply["result"]["isError"], true);
         let unknown: Value = serde_json::from_str(&mcp_reply(r#"{"jsonrpc":"2.0","id":5,"method":"nope"}"#, &mut forward).unwrap()).unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
-        assert_eq!(seen.len(), 2);
-        assert_eq!(seen[0].1, json!({"query": "x"}));
+        assert_eq!(seen.len(), 3);
+        assert_eq!(seen[0].0, "whoami");
+        assert_eq!(seen[1].1, json!({"query": "x"}));
+    }
+
+    #[test]
+    fn an_agent_token_is_not_offered_owner_tools() {
+        let list = |reply: std::result::Result<Value, String>| {
+            let mut forward = |_: &str, _: &Value| reply.clone();
+            let text = mcp_reply(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, &mut forward).unwrap();
+            serde_json::from_str::<Value>(&text).unwrap()["result"]["tools"].clone()
+        };
+        for reply in [Ok(json!({"name": "claude", "owner": false})), Err("kira:service-unreachable".to_owned())] {
+            let tools = list(reply);
+            let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+            assert_eq!(names, TOOLS[..5]);
+            let remember = &tools[0]["inputSchema"]["properties"];
+            assert!(remember.get("owner_signed").is_none());
+            assert_eq!(remember["capture"]["enum"], json!(["tool-observed", "web-derived", "model-generated"]));
+        }
+        let owner = list(Ok(json!({"owner": true})));
+        assert_eq!(owner.as_array().unwrap().len(), 6);
+        assert!(owner[0]["inputSchema"]["properties"].get("owner_signed").is_some());
     }
 }

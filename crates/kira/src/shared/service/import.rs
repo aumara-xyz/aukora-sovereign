@@ -3,26 +3,67 @@
 
 use super::*;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ImportReport {
     pub imported: u64,
     /// Already in the store (a re-import, or the same line twice).
     pub duplicates: u64,
     pub secrets: u64,
     pub invalid: u64,
+    /// Every skipped line: (1-based line number in the file, "secret" or "invalid").
+    pub skipped: Vec<(usize, &'static str)>,
 }
 
-/// Secret-looking material, matched without regexes: key headers, nsec, an `sk-` token, or a 64+ hex run within
-/// 48 bytes of the word "key". Over-matching only skips a note.
+impl ImportReport {
+    fn skip(&mut self, line: usize, why: &'static str) {
+        if why == "secret" {
+            self.secrets += 1;
+        } else {
+            self.invalid += 1;
+        }
+        self.skipped.push((line, why));
+    }
+}
+
+fn token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/' | b'+' | b'=')
+}
+
+/// `marker` (at a word start) followed by at least `tail` token bytes: a credential, not a mention of its name.
+fn marked(text: &str, marker: &str, tail: usize) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(marker).any(|(i, _)| {
+        let starts_word = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        let rest = &bytes[i + marker.len()..];
+        starts_word && rest.iter().take_while(|b| token_byte(**b)).count() >= tail
+    })
+}
+
+/// `name` followed (after optional quotes and spaces) by `=` or `:` and a value: an assignment, not prose.
+fn assigned(lower: &str, name: &str) -> bool {
+    lower.match_indices(name).any(|(i, _)| {
+        let rest = lower[i + name.len()..].trim_start_matches(['"', '\'', ' ']);
+        rest.strip_prefix(['=', ':']).is_some_and(|value| {
+            value.trim_start_matches(['"', '\'', ' ']).bytes().take_while(|b| token_byte(*b)).count() >= 4
+        })
+    })
+}
+
+/// Secret-looking material, matched without regexes: PEM and key headers, nsec, `sk-`, GitHub (`ghp_`,
+/// `github_pat_`), AWS (`AKIA`) and Slack (`xoxb-`) tokens, a `Bearer` credential, a `password=` or `api_key`
+/// assignment, or a 64+ hex run within 48 bytes of the word "key". Over-matching only skips a note.
 fn looks_secret(text: &str) -> bool {
-    if ["PRIVATE KEY", "nsec1", "BEGIN OPENSSH"].iter().any(|m| text.contains(m)) {
+    if ["PRIVATE KEY", "nsec1", "BEGIN OPENSSH", "-----BEGIN"].iter().any(|m| text.contains(m)) {
         return true;
     }
-    let bytes = text.as_bytes();
-    if text.match_indices("sk-").any(|(i, _)| i == 0 || !bytes[i - 1].is_ascii_alphanumeric()) {
+    let tokens = [("sk-", 1), ("ghp_", 20), ("github_pat_", 20), ("AKIA", 16), ("xoxb-", 10), ("Bearer ", 16)];
+    if tokens.iter().any(|(marker, tail)| marked(text, marker, *tail)) {
         return true;
     }
     let lower = text.to_ascii_lowercase();
+    if ["password", "passwd", "api_key", "apikey"].iter().any(|name| assigned(&lower, name)) {
+        return true;
+    }
     let lower = lower.as_bytes();
     let mut i = 0;
     while i < lower.len() {
@@ -72,8 +113,14 @@ fn epoch1_kind(record: &Value, label: &str) -> String {
     kind.to_owned()
 }
 
+/// The text without C0 control characters other than tab, newline and carriage return (the event format refuses
+/// them; the archive has a few stray escapes).
+fn strip_controls(text: &str) -> String {
+    text.chars().filter(|c| *c >= ' ' || matches!(c, '\t' | '\n' | '\r')).collect()
+}
+
 fn epoch1_draft(record: &Value) -> Option<NoteDraft> {
-    let text = record.get("text")?.as_str()?.to_owned();
+    let text = strip_controls(record.get("text")?.as_str()?);
     let label = text.strip_prefix('[').and_then(|t| t.split_once(']')).map_or("", |(l, _)| l);
     let kind = epoch1_kind(record, label);
     // An import is never a commitment: charters, rulings and plan rows stay evidence until an owner-signed manifest
@@ -98,29 +145,34 @@ fn epoch1_draft(record: &Value) -> Option<NoteDraft> {
 }
 
 /// Imports the epoch-1 archive (JSON lines with a `text` field) as epoch-1 notes signed by `epoch1-import`:
-/// capture import, review remembered, privacy builders, scope builders. Secret-looking lines are skipped.
+/// capture import, review remembered, privacy builders, scope builders, and an `import_source` tag holding the
+/// sha256 of the archive file. Secret-looking lines are skipped and every skipped line is reported by number.
 pub fn import_epoch1(dir: &Path, path: &Path) -> Result<ImportReport> {
     let mut state = State::open(dir)?;
+    state.store.verify_chain()?;
     if fs::symlink_metadata(key_path(dir, IMPORT_AGENT)).is_err() {
         create_agent(dir, &state.store, IMPORT_AGENT, &["*".to_owned()], false)?;
     }
-    let text = fs::read_to_string(path).map_err(|_| refuse("import-unreadable"))?;
+    let bytes = fs::read(path).map_err(|_| refuse("import-unreadable"))?;
+    let source: [u8; 32] = Sha256::digest(&bytes).into();
+    let text = String::from_utf8(bytes).map_err(|_| refuse("import-unreadable"))?;
     let mut report = ImportReport::default();
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+    for (number, line) in text.lines().enumerate().map(|(i, l)| (i + 1, l)).filter(|(_, l)| !l.trim().is_empty()) {
         let Some(draft) = serde_json::from_str::<Value>(line).ok().as_ref().and_then(epoch1_draft) else {
-            report.invalid += 1;
+            report.skip(number, "invalid");
             continue;
         };
         if looks_secret(line) || looks_secret(&draft.text) {
-            report.secrets += 1;
+            report.skip(number, "secret");
             continue;
         }
-        let Ok(tags) = draft.tags(Review::Remembered) else {
-            report.invalid += 1;
+        let Ok(mut tags) = draft.tags(Review::Remembered) else {
+            report.skip(number, "invalid");
             continue;
         };
+        tags.push(vec!["import_source".to_owned(), hex(&source)]);
         let Ok(event) = Event::sign(state.key(IMPORT_AGENT)?, IMPORT_AT, NOTE_KIND, tags, draft.text) else {
-            report.invalid += 1;
+            report.skip(number, "invalid");
             continue;
         };
         match state.store.append(event) {

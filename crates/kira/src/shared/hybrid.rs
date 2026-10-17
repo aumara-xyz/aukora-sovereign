@@ -6,7 +6,7 @@
 //! Similarity alone never answers: every item carries its score and the status decides. A recall that cannot see
 //! its whole index, loses a model, or meets a note that fails verification says `undetermined`, never `empty`.
 
-use super::note::{Capture, Lane, Review};
+use super::note::{Capture, Lane, Privacy, Review};
 use super::recall::{Embedder, RecallItem, RecallOutcome, RecallQuery, RecallStatus, Reranker};
 use super::store::{SharedStore, StoredNote};
 use canon::{Refusal, Result};
@@ -87,6 +87,7 @@ fn cosine(query: &[f32], v: &[f32]) -> Option<f32> {
     c.is_finite().then_some(c)
 }
 
+
 /// sha256 (hex) of the query as canonical JSON: keys sorted, scopes sorted and deduplicated, defaults applied.
 fn query_digest(q: &RecallQuery, epoch: u32, budget: usize) -> Result<String> {
     let mut scopes: Vec<&str> = q.scopes.iter().map(String::as_str).collect();
@@ -97,6 +98,7 @@ fn query_digest(q: &RecallQuery, epoch: u32, budget: usize) -> Result<String> {
         ("budget_chars", serde_json::to_string(&budget)),
         ("caller", serde_json::to_string(&q.caller)),
         ("epoch", serde_json::to_string(&epoch)),
+        ("include_local", serde_json::to_string(&q.include_local)),
         ("scopes", serde_json::to_string(&scopes)),
         ("text", serde_json::to_string(&q.text)),
     ];
@@ -115,14 +117,43 @@ fn query_digest(q: &RecallQuery, epoch: u32, budget: usize) -> Result<String> {
     Ok(hex(&digest))
 }
 
-/// Loads candidate notes once each, applying the epoch, scope and author filters. A note the store cannot verify
-/// marks the whole recall undetermined and is never returned.
+/// The query text recall searches with, or a refusal for an empty or oversized query.
+fn query_text(q: &RecallQuery) -> Result<&str> {
+    let text = q.text.trim();
+    if text.is_empty() || q.text.len() > MAX_QUERY_BYTES {
+        return Err(refuse("recall-query"));
+    }
+    Ok(text)
+}
+
+/// The query's unit vector from the embedder, or None when the embedder fails. A model call: the service makes it
+/// without holding the store.
+pub fn query_vector(q: &RecallQuery, emb: &dyn Embedder) -> Option<Vec<f32>> {
+    let text = query_text(q).ok()?;
+    emb.embed(&[text]).ok().filter(|v| v.len() == 1).and_then(|mut v| unit(v.remove(0)))
+}
+
+/// Checks one embedding batch whole and scales it to unit length: one usable vector per row, all one dimension.
+pub fn index_vectors(rows: usize, vectors: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>> {
+    if vectors.len() != rows {
+        return Err(refuse("index-vector"));
+    }
+    let vectors = vectors.into_iter().map(unit).collect::<Option<Vec<_>>>().ok_or_else(|| refuse("index-vector"))?;
+    if vectors.windows(2).any(|w| w[0].len() != w[1].len()) {
+        return Err(refuse("index-vector"));
+    }
+    Ok(vectors)
+}
+
+/// Loads candidate notes once each, applying the epoch, privacy, scope and author filters. A note the store cannot
+/// verify marks the whole recall undetermined and is never returned.
 struct Loader<'a> {
     store: &'a SharedStore,
     epoch: u32,
     in_epoch: BTreeSet<i64>,
     scopes: BTreeSet<&'a str>,
     author: Option<&'a str>,
+    include_local: bool,
     cache: BTreeMap<i64, Option<StoredNote>>,
     integrity: bool,
 }
@@ -147,8 +178,11 @@ impl Loader<'_> {
         self.cache.get(&seq).and_then(Option::as_ref)
     }
 
+    /// Privacy first: a `local` note never reaches a caller who may not read it, so it cannot claim a pool place,
+    /// join a dedupe group or make the answer `found`.
     fn passes(&self, note: &StoredNote) -> bool {
-        (self.scopes.is_empty() || self.scopes.contains(note.meta.scope.as_str()))
+        (self.include_local || note.meta.privacy != Privacy::Local)
+            && (self.scopes.is_empty() || self.scopes.contains(note.meta.scope.as_str()))
             && self.author.is_none_or(|a| a == note.author_name || a.eq_ignore_ascii_case(&hex(note.event.pubkey.as_bytes())))
     }
 }
@@ -193,19 +227,35 @@ impl Cand {
         self.hit || self.cosine.is_some_and(|c| c >= COSINE_FLOOR)
     }
 
-    fn item(&self, score: f32, also_by: Vec<String>, roots: usize, correction: Option<&str>) -> RecallItem {
+    /// Which note stands for a statement, lowest first: owner-signed review, then the owner's own words, then any
+    /// other capture; the earliest within a class, the note id last.
+    fn standing(&self) -> (u8, u64, &str) {
+        let meta = &self.note.meta;
+        let trust = if meta.review == Review::OwnerSigned {
+            0
+        } else if meta.capture.owner_class() {
+            1
+        } else {
+            2
+        };
+        (trust, self.note.event.created_at, &self.id)
+    }
+
+    fn item(&self, score: f32, also_by: Vec<String>, also_by_ids: Vec<String>, roots: usize, correction: Option<&str>) -> RecallItem {
         let meta = &self.note.meta;
         RecallItem {
             id: self.id.clone(),
             author: hex(self.note.event.pubkey.as_bytes()),
             author_name: self.note.author_name.clone(),
             also_by,
+            also_by_ids,
             lane: meta.lane.wire().into(),
             form: meta.form.wire().into(),
             review: meta.review.wire().into(),
             capture: meta.capture.wire().into(),
             created_at: self.note.event.created_at,
-            text: self.note.event.content.clone(),
+            // A quarantined note is a stub: its body never resurfaces as text.
+            text: if correction == Some("quarantined") { String::new() } else { self.note.event.content.clone() },
             score,
             roots,
             correction: correction.map(str::to_owned),
@@ -213,12 +263,13 @@ impl Cand {
     }
 }
 
-/// One statement after dedupe: the earliest note stands for it, every author is kept.
+/// One statement (at one privacy level) after dedupe: the highest-standing note stands for it, every author is kept.
 struct Group {
     keep: Cand,
     score: f32,
     relevant: bool,
     names: BTreeSet<String>,
+    ids: BTreeSet<String>,
     roots: BTreeSet<String>,
 }
 
@@ -235,13 +286,35 @@ enum Slot {
     Rest,
 }
 
+/// Recall's first phase, gathered from the store: candidates and what the store said about its own health. The second
+/// phase (`finish`) reranks and assembles without the store, so a model call never runs while the store is held.
+pub struct Prepared {
+    text: String,
+    caller: String,
+    budget: usize,
+    query_digest: String,
+    live: Vec<Cand>,
+    corrections: Vec<Cand>,
+    integrity: bool,
+    embedder_down: bool,
+    index_bad: bool,
+    dense: bool,
+    indexed: u64,
+    total: u64,
+}
+
 impl SharedStore {
     /// Hybrid recall; see the module docs. `emb` adds dense candidates and `rr` reranks; either may be absent.
     pub fn recall(&self, q: &RecallQuery, emb: Option<&dyn Embedder>, rr: Option<&dyn Reranker>) -> Result<RecallOutcome> {
-        let text = q.text.trim();
-        if text.is_empty() || q.text.len() > MAX_QUERY_BYTES {
-            return Err(refuse("recall-query"));
-        }
+        query_text(q)?;
+        let dense = emb.map(|e| (e.model_id(), query_vector(q, e)));
+        Ok(self.recall_prepare(q, dense)?.finish(rr))
+    }
+
+    /// Recall's first phase. `dense` is the embedder's model id with the query vector (`query_vector`), or None
+    /// without an embedder; a None vector means the embedder was down.
+    pub fn recall_prepare(&self, q: &RecallQuery, dense: Option<(&str, Option<Vec<f32>>)>) -> Result<Prepared> {
+        let text = query_text(q)?;
         let epoch = if q.epoch == 0 { DEFAULT_EPOCH } else { q.epoch };
         let budget = if q.budget_chars == 0 { DEFAULT_BUDGET } else { q.budget_chars };
         let query_digest = query_digest(q, epoch, budget)?;
@@ -252,6 +325,7 @@ impl SharedStore {
             in_epoch,
             scopes: q.scopes.iter().map(String::as_str).collect(),
             author: q.author.as_deref(),
+            include_local: q.include_local,
             cache: BTreeMap::new(),
             integrity: false,
         };
@@ -263,12 +337,11 @@ impl SharedStore {
         let keyword = pool(&mut loader, &keyword_rows);
 
         // Dense: brute-force cosine over this epoch's vectors for the embedder's model.
-        let (mut dense, mut cosines) = (Vec::new(), HashMap::new());
+        let (mut ranked_dense, mut cosines) = (Vec::new(), HashMap::new());
         let (mut embedder_down, mut index_bad) = (false, false);
-        if let Some(emb) = emb {
-            let model = emb.model_id();
+        let has_dense = dense.is_some();
+        if let Some((model, query_vector)) = dense {
             (indexed, total) = self.coverage(model, epoch)?;
-            let query_vector = emb.embed(&[text]).ok().filter(|v| v.len() == 1).and_then(|mut v| unit(v.remove(0)));
             match query_vector {
                 None => embedder_down = true,
                 Some(qv) => {
@@ -286,14 +359,14 @@ impl SharedStore {
                         }
                     }
                     scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-                    dense = pool(&mut loader, &scored);
+                    ranked_dense = pool(&mut loader, &scored);
                 }
             }
         }
 
         // Reciprocal rank fusion.
         let mut fused: BTreeMap<i64, f64> = BTreeMap::new();
-        for list in [&keyword, &dense] {
+        for list in [&keyword, &ranked_dense] {
             for (seq, rank) in list {
                 *fused.entry(*seq).or_insert(0.0) += 1.0 / (RRF_K + *rank as f64);
             }
@@ -311,116 +384,23 @@ impl SharedStore {
         cands.sort_by(|a, b| b.fused.total_cmp(&a.fused).then_with(|| a.id.cmp(&b.id)));
 
         // Superseded and quarantined notes never stand as memory; a matching few are shown as corrections.
-        let (dead, mut live): (Vec<Cand>, Vec<Cand>) =
+        let (dead, live): (Vec<Cand>, Vec<Cand>) =
             cands.into_iter().partition(|c| c.note.quarantined || c.note.superseded_by.is_some());
         let corrections: Vec<Cand> = dead.into_iter().filter(Cand::evidence).take(MAX_CORRECTIONS).collect();
-
-        // Rerank the top live candidates.
-        let mut reranker_down = false;
-        if let Some(rr) = rr {
-            live.truncate(RERANK_TOP);
-            if !live.is_empty() {
-                let passages: Vec<&str> = live.iter().map(|c| c.note.event.content.as_str()).collect();
-                match rr.score(text, &passages) {
-                    Ok(scores) if scores.len() == live.len() && scores.iter().all(|s| s.is_finite()) => {
-                        for (c, s) in live.iter_mut().zip(scores) {
-                            c.rerank = Some(s);
-                        }
-                    }
-                    _ => reranker_down = true,
-                }
-            }
-        }
-        let reranked = rr.is_some() && !reranker_down;
-        let relevant = |c: &Cand| if reranked { c.rerank.is_some_and(|s| s >= RERANK_FLOOR) } else { c.evidence() };
-
-        // Dedupe by statement hash: the earliest note stands, every author is named, ancestry roots are unioned.
-        let mut groups: Vec<Group> = Vec::new();
-        let mut by_hash: BTreeMap<[u8; 32], usize> = BTreeMap::new();
-        for c in live {
-            let (score, is_relevant) = (c.rerank.unwrap_or(c.fused as f32), relevant(&c));
-            if let Some(&i) = by_hash.get(&c.note.meta.statement_hash) {
-                let g = &mut groups[i];
-                g.score = g.score.max(score);
-                g.relevant |= is_relevant;
-                g.names.insert(c.note.author_name.clone());
-                g.roots.extend(c.note.roots.iter().cloned());
-                if (c.note.event.created_at, &c.id) < (g.keep.note.event.created_at, &g.keep.id) {
-                    g.keep = c;
-                }
-            } else {
-                by_hash.insert(c.note.meta.statement_hash, groups.len());
-                groups.push(Group {
-                    score,
-                    relevant: is_relevant,
-                    names: BTreeSet::from([c.note.author_name.clone()]),
-                    roots: c.note.roots.iter().cloned().collect(),
-                    keep: c,
-                });
-            }
-        }
-        let found = groups.iter().any(|g| g.relevant);
-        // Only notes that clear the relevance test are returned; below-threshold notes never ride along as context.
-        groups.retain(|g| g.relevant);
-
-        // Reserved lanes. Only relevant notes claim a reserved lane; everything else competes by score.
-        let caller = q.caller.to_ascii_lowercase();
-        let slot = |g: &Group| {
-            let meta = &g.keep.note.meta;
-            if !g.relevant {
-                Slot::Rest
-            } else if meta.review == Review::OwnerSigned && matches!(meta.lane, Lane::Decision | Lane::Ruling | Lane::Charter) {
-                Slot::Commitment
-            } else if matches!(meta.capture, Capture::OwnerTyped | Capture::OwnerSigned) {
-                Slot::OwnerWords
-            } else if meta.lane == Lane::Experience && hex(g.keep.note.event.pubkey.as_bytes()) == caller {
-                Slot::OwnExperience
-            } else {
-                Slot::Rest
-            }
-        };
-        let mut ordered: Vec<(Slot, RecallItem)> = groups
-            .into_iter()
-            .map(|g| {
-                let lane = slot(&g);
-                let also_by = g.names.into_iter().filter(|n| *n != g.keep.note.author_name).collect();
-                (lane, g.keep.item(g.score, also_by, g.roots.len(), None))
-            })
-            .collect();
-        ordered.extend(corrections.iter().map(|c| {
-            let label = if c.note.quarantined { "quarantined" } else { "superseded" };
-            (Slot::Correction, c.item(c.fused as f32, Vec::new(), c.note.roots.len(), Some(label)))
-        }));
-        ordered.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.score.total_cmp(&a.1.score)).then_with(|| a.1.id.cmp(&b.1.id)));
-
-        // Fill the budget in lane order; an item that does not fit is skipped, never cut.
-        let mut used = 0;
-        let mut items = Vec::new();
-        for (_, item) in ordered {
-            let size = item.text.chars().count();
-            if used + size <= budget {
-                used += size;
-                items.push(item);
-            }
-        }
-
-        let status = if loader.integrity {
-            RecallStatus::Undetermined("integrity")
-        } else if embedder_down {
-            RecallStatus::Undetermined("embedder-down")
-        } else if reranker_down {
-            RecallStatus::Undetermined("reranker-down")
-        } else if emb.is_some() && (indexed < total || index_bad) {
-            RecallStatus::Undetermined("index-incomplete")
-        } else if found {
-            RecallStatus::Found
-        } else {
-            RecallStatus::Empty
-        };
-        if status == RecallStatus::Empty {
-            items.clear();
-        }
-        Ok(RecallOutcome { status, items, indexed, total, query_digest })
+        Ok(Prepared {
+            text: text.to_owned(),
+            caller: q.caller.to_ascii_lowercase(),
+            budget,
+            query_digest,
+            live,
+            corrections,
+            integrity: loader.integrity,
+            embedder_down,
+            index_bad,
+            dense: has_dense,
+            indexed,
+            total,
+        })
     }
 
     /// Embed every note that has no vector under `emb.model_id()`, `batch` notes per call (clamped to 1..=256).
@@ -442,14 +422,7 @@ impl SharedStore {
             }
             last = end.0;
             let texts: Vec<&str> = rows.iter().map(|(_, body)| body.as_str()).collect();
-            let vectors = emb.embed(&texts)?;
-            if vectors.len() != rows.len() {
-                return Err(refuse("index-vector"));
-            }
-            let vectors = vectors.into_iter().map(unit).collect::<Option<Vec<_>>>().ok_or_else(|| refuse("index-vector"))?;
-            if vectors.windows(2).any(|w| w[0].len() != w[1].len()) {
-                return Err(refuse("index-vector"));
-            }
+            let vectors = index_vectors(rows.len(), emb.embed(&texts)?)?;
             for ((seq, _), vector) in rows.iter().zip(&vectors) {
                 self.put_embedding(*seq, model, vector)?;
             }
@@ -457,6 +430,131 @@ impl SharedStore {
         }
     }
 }
+
+impl Prepared {
+    /// Recall's second phase, without the store: rerank (a model call), dedupe, reserved lanes and the budget.
+    pub fn finish(self, rr: Option<&dyn Reranker>) -> RecallOutcome {
+        let Prepared { text, caller, budget, query_digest, mut live, corrections, integrity, embedder_down, index_bad, dense, indexed, total } =
+            self;
+        // Rerank the top live candidates.
+        let mut reranker_down = false;
+        if let Some(rr) = rr {
+            live.truncate(RERANK_TOP);
+            if !live.is_empty() {
+                let passages: Vec<&str> = live.iter().map(|c| c.note.event.content.as_str()).collect();
+                match rr.score(&text, &passages) {
+                    Ok(scores) if scores.len() == live.len() && scores.iter().all(|s| s.is_finite()) => {
+                        for (c, s) in live.iter_mut().zip(scores) {
+                            c.rerank = Some(s);
+                        }
+                    }
+                    _ => reranker_down = true,
+                }
+            }
+        }
+        let reranked = rr.is_some() && !reranker_down;
+        let relevant = |c: &Cand| if reranked { c.rerank.is_some_and(|s| s >= RERANK_FLOOR) } else { c.evidence() };
+
+        // Dedupe by statement hash within one privacy level: the highest-standing note stands, every author and note
+        // id is named, ancestry roots are unioned.
+        let mut groups: Vec<Group> = Vec::new();
+        let mut by_hash: BTreeMap<([u8; 32], &'static str), usize> = BTreeMap::new();
+        for c in live {
+            let (score, is_relevant) = (c.rerank.unwrap_or(c.fused as f32), relevant(&c));
+            let key = (c.note.meta.statement_hash, c.note.meta.privacy.wire());
+            if let Some(&i) = by_hash.get(&key) {
+                let g = &mut groups[i];
+                g.score = g.score.max(score);
+                g.relevant |= is_relevant;
+                g.names.insert(c.note.author_name.clone());
+                g.ids.insert(c.id.clone());
+                g.roots.extend(c.note.roots.iter().cloned());
+                if c.standing() < g.keep.standing() {
+                    g.keep = c;
+                }
+            } else {
+                by_hash.insert(key, groups.len());
+                groups.push(Group {
+                    score,
+                    relevant: is_relevant,
+                    names: BTreeSet::from([c.note.author_name.clone()]),
+                    ids: BTreeSet::from([c.id.clone()]),
+                    roots: c.note.roots.iter().cloned().collect(),
+                    keep: c,
+                });
+            }
+        }
+        let found = groups.iter().any(|g| g.relevant);
+        // Only notes that clear the relevance test are returned; below-threshold notes never ride along as context.
+        groups.retain(|g| g.relevant);
+
+        // Reserved lanes. Only relevant notes claim a reserved lane; everything else competes by score.
+        let slot = |g: &Group| {
+            let meta = &g.keep.note.meta;
+            if !g.relevant {
+                Slot::Rest
+            } else if meta.review == Review::OwnerSigned && matches!(meta.lane, Lane::Decision | Lane::Ruling | Lane::Charter) {
+                Slot::Commitment
+            } else if matches!(meta.capture, Capture::OwnerTyped | Capture::OwnerSigned) {
+                Slot::OwnerWords
+            } else if meta.lane == Lane::Experience && hex(g.keep.note.event.pubkey.as_bytes()) == caller {
+                Slot::OwnExperience
+            } else {
+                Slot::Rest
+            }
+        };
+        let mut ordered: Vec<(Slot, RecallItem)> = groups
+            .into_iter()
+            .map(|g| {
+                let lane = slot(&g);
+                let also_by = g.names.into_iter().filter(|n| *n != g.keep.note.author_name).collect();
+                let also_by_ids = g.ids.into_iter().filter(|id| *id != g.keep.id).collect();
+                (lane, g.keep.item(g.score, also_by, also_by_ids, g.roots.len(), None))
+            })
+            .collect();
+        ordered.extend(corrections.iter().map(|c| {
+            let label = if c.note.quarantined { "quarantined" } else { "superseded" };
+            (Slot::Correction, c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), Some(label)))
+        }));
+        ordered.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.score.total_cmp(&a.1.score)).then_with(|| a.1.id.cmp(&b.1.id)));
+
+        // Fill the budget in lane order; an item that does not fit is skipped, never cut, and a skipped relevant
+        // note is counted in `omitted`.
+        let (mut used, mut items, mut omitted, mut kept_live) = (0, Vec::new(), 0, 0);
+        for (_, item) in ordered {
+            let size = item.text.chars().count();
+            if used + size <= budget {
+                used += size;
+                kept_live += usize::from(item.correction.is_none());
+                items.push(item);
+            } else if item.correction.is_none() {
+                omitted += 1;
+            }
+        }
+
+        let status = if integrity {
+            RecallStatus::Undetermined("integrity")
+        } else if embedder_down {
+            RecallStatus::Undetermined("embedder-down")
+        } else if reranker_down {
+            RecallStatus::Undetermined("reranker-down")
+        } else if dense && (indexed < total || index_bad) {
+            RecallStatus::Undetermined("index-incomplete")
+        } else if found && kept_live == 0 {
+            // Every relevant note was too long for the budget: an answer exists but none can be shown.
+            RecallStatus::Undetermined("budget")
+        } else if found {
+            RecallStatus::Found
+        } else {
+            RecallStatus::Empty
+        };
+        if status == RecallStatus::Empty {
+            items.clear();
+        }
+        RecallOutcome { status, items, omitted, indexed, total, query_digest }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -539,13 +637,20 @@ mod tests {
     }
 
     fn put(s: &mut SharedStore, k: &SecretKey, text: &str, lane: Lane, capture: Capture, review: Review, at: u64) -> String {
+        put_private(s, k, text, lane, capture, review, Privacy::Builders, at)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn put_private(
+        s: &mut SharedStore, k: &SecretKey, text: &str, lane: Lane, capture: Capture, review: Review, privacy: Privacy, at: u64,
+    ) -> String {
         let d = NoteDraft {
             text: text.into(),
             subject: "test".into(),
             scope: "builders".into(),
             lane,
             form: Form::Fact,
-            privacy: Privacy::Builders,
+            privacy,
             capture,
             sources: vec![],
             slot: None,
@@ -562,7 +667,15 @@ mod tests {
     }
 
     fn query(text: &str, caller: &str) -> RecallQuery {
-        RecallQuery { text: text.into(), caller: caller.into(), epoch: 2, scopes: vec![], author: None, budget_chars: 0 }
+        RecallQuery {
+            text: text.into(),
+            caller: caller.into(),
+            epoch: 2,
+            scopes: vec![],
+            author: None,
+            budget_chars: 0,
+            include_local: false,
+        }
     }
 
     fn chars(items: &[RecallItem]) -> usize {
@@ -656,7 +769,42 @@ mod tests {
         assert_ne!(r.items[0].id, later);
         assert_eq!(r.items[0].author_name, "claude");
         assert_eq!(r.items[0].also_by, vec!["grok".to_string()]);
+        assert_eq!(r.items[0].also_by_ids, vec![later]);
         assert_eq!(r.items[0].roots, 2, "two independent observations, not one");
+    }
+
+    #[test]
+    fn dedupe_keeps_the_highest_trust_note_and_never_mixes_privacy() {
+        let (peter, a) = (key(), key());
+        let mut s = store_with(&[("peter", &peter, true), ("claude", &a, false)]);
+        let early = note(&mut s, &a, "The figurine is on the left shelf.", 1);
+        let typed = put(&mut s, &peter, "the figurine is on the left shelf.", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, 5);
+        let signed = put(&mut s, &peter, "THE figurine is on the left shelf.", Lane::Evidence, Capture::OwnerTyped, Review::OwnerSigned, 9);
+        let local = put_private(&mut s, &peter, "The figurine is on the left shelf.", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, Privacy::Local, 2);
+        let mut q = query("figurine shelf", "x");
+        let r = s.recall(&q, None, None).unwrap();
+        assert_eq!(r.items.len(), 1, "the local copy is dropped for a caller who may not read it");
+        assert_eq!(r.items[0].id, signed, "owner-signed outranks owner-typed outranks the earliest note");
+        let mut others = r.items[0].also_by_ids.clone();
+        others.sort();
+        let mut expected = vec![early, typed];
+        expected.sort();
+        assert_eq!(others, expected);
+        q.include_local = true;
+        let owner = s.recall(&q, None, None).unwrap();
+        assert_eq!(owner.items.len(), 2, "a local note is its own group, never folded into a shared one");
+        assert!(owner.items.iter().any(|i| i.id == local && i.also_by_ids.is_empty()));
+    }
+
+    #[test]
+    fn local_notes_never_make_a_non_owner_recall_found() {
+        let peter = key();
+        let mut s = store_with(&[("peter", &peter, true)]);
+        put_private(&mut s, &peter, "The door code is in the drawer.", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, Privacy::Local, 1);
+        let mut q = query("door code drawer", "x");
+        assert_eq!(s.recall(&q, None, None).unwrap().status, RecallStatus::Empty);
+        q.include_local = true;
+        assert_eq!(s.recall(&q, None, None).unwrap().status, RecallStatus::Found);
     }
 
     #[test]
@@ -709,6 +857,8 @@ mod tests {
         let correction = |id: &str| r.items.iter().find(|i| i.id == id).and_then(|i| i.correction.clone());
         assert_eq!(correction(&old).as_deref(), Some("superseded"));
         assert_eq!(correction(&bad).as_deref(), Some("quarantined"));
+        // A quarantined note is a stub: no body.
+        assert_eq!(r.items.iter().find(|i| i.id == bad).map(|i| i.text.as_str()), Some(""));
         // Corrections fill lane (d), ahead of the unreserved rest, and never more than two.
         assert_eq!(r.items.iter().filter(|i| i.correction.is_some()).count(), 2);
         assert_eq!(r.items.last().map(|i| i.id.as_str()), Some(new.as_str()));
@@ -752,6 +902,12 @@ mod tests {
         let default = s.recall(&q, Some(&Words), None).unwrap();
         assert!(chars(&default.items) <= DEFAULT_BUDGET);
         assert_eq!(default.items.len(), 12);
+        assert_eq!((small.omitted, default.omitted), (9, 0));
+        // Every relevant note over the budget: an answer exists but none fits, so the status says so.
+        q.budget_chars = 10;
+        let none = s.recall(&q, Some(&Words), None).unwrap();
+        assert_eq!(none.status, RecallStatus::Undetermined("budget"));
+        assert_eq!((none.items.len(), none.omitted), (0, 12));
     }
 
     #[test]

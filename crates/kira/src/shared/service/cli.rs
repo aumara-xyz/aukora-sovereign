@@ -7,10 +7,13 @@ fn usage() -> Refusal {
     refuse("usage")
 }
 
-/// `sovereign kira <serve | register NAME | token NAME | import [FILE] | mcp>` with `--state DIR`, `--socket PATH`,
-/// `--token-file PATH`, `--scopes a,b` and `--owner`.
+/// `sovereign kira <serve | register NAME | token NAME [--rotate] | revoke NAME | import [FILE] | mcp>` with
+/// `--state DIR`, `--socket PATH`, `--token-file PATH`, `--scopes a,b` and `--owner`. `--rotate` replaces every
+/// earlier token of the agent; `revoke` marks the agent revoked and removes all its tokens. Both take effect on the
+/// running service's next request.
 pub fn cli(arguments: &[OsString]) -> Result<()> {
     let (mut words, mut state, mut socket, mut token_file, mut scopes, mut owner) = (vec![], None, None, None, None, false);
+    let mut rotate = false;
     let mut iter = arguments.iter();
     while let Some(argument) = iter.next() {
         let argument = argument.to_str().ok_or_else(usage)?;
@@ -21,6 +24,7 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
             "--token-file" => token_file = Some(PathBuf::from(value()?)),
             "--scopes" => scopes = Some(value()?.split(',').map(str::to_owned).collect::<Vec<_>>()),
             "--owner" => owner = true,
+            "--rotate" => rotate = true,
             flag if flag.starts_with("--") => return Err(usage()),
             word => words.push(word.to_owned()),
         }
@@ -41,6 +45,18 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
                 "kira: imported {} epoch-1 notes; skipped {} secret-looking, {} already present, {} invalid",
                 report.imported, report.secrets, report.duplicates, report.invalid
             );
+            for why in ["secret", "invalid"] {
+                let lines: Vec<String> =
+                    report.skipped.iter().filter(|(_, w)| *w == why).map(|(line, _)| line.to_string()).collect();
+                if !lines.is_empty() {
+                    println!("kira: skipped as {why}: line {}", lines.join(", "));
+                }
+            }
+            Ok(())
+        }
+        ["revoke", name] => {
+            revoke(&dir, name)?;
+            println!("kira: {name} is revoked; its tokens are removed and the running service refuses them now");
             Ok(())
         }
         [command @ ("register" | "token"), name] => {
@@ -51,7 +67,7 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
                 let scopes = scopes.unwrap_or_else(|| vec![if owner { "*" } else { "builders" }.to_owned()]);
                 register(&dir, name, &scopes, owner)?
             } else {
-                reissue(&dir, name)?
+                reissue(&dir, name, rotate)?
             };
             match token_file {
                 Some(file) if write_private(&file, format!("{token}\n").as_bytes(), true).is_ok() => {

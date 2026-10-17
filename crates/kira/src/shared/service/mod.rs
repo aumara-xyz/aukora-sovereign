@@ -2,11 +2,18 @@
 //! The Kira 2 service: one local memory for every agent on the Mac.
 //!
 //! The service holds every agent's signing key and signs for the authenticated caller, so no agent ever holds another
-//! agent's key. A caller authenticates with a bearer token; only its sha256 is kept. Requests are one JSON object per
-//! line on a Unix socket (mode 0600, inside the 0700 state folder); `mcp` is a stdio Model Context Protocol shim that
-//! forwards to it. Every note a response carries is read back from the store, which re-verifies it, and a caller
-//! that is not the owner never receives a note whose privacy is `local`.
+//! agent's key. A caller authenticates with a bearer token; only its sha256 is kept, and `tokens.json` is re-read
+//! whenever it changes, so a revoked or rotated token stops working on the next request. Requests are one JSON object
+//! per line on a Unix socket (mode 0600, inside the 0700 state folder); `mcp` is a stdio Model Context Protocol shim
+//! that forwards to it. Every note a response carries is read back from the store, which re-verifies it; a caller that
+//! is not the owner never receives a note whose privacy is `local` or whose scope it is not registered for, and a
+//! quarantined note is only ever shown as a stub without its text.
+//!
+//! Trust boundary (Phase M): same-uid trust: agents running as the owner's user can read token and key files; Phase N
+//! moves keys behind a separate service uid and SO_PEERCRED. The 0600/0700 modes keep out other users, not other
+//! processes of the same user.
 
+use super::hybrid::query_vector;
 use super::llama::{HttpEmbedder, HttpReranker};
 use super::note::{Capture, Form, Lane, NoteDraft, Privacy, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
 use super::recall::{Embedder, RecallQuery, RecallStatus, Reranker};
@@ -21,11 +28,12 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, SystemTime};
 use zeroize::Zeroizing;
 
 const DB: &str = "kira.sqlite3";
@@ -45,8 +53,6 @@ const MAX_BUDGET: usize = 48_000;
 const DEFAULT_LIMIT: usize = 20;
 const MAX_REQUEST: usize = 1 << 20;
 const MAX_REPLY: usize = 64 << 20;
-/// Batch size for embedding notes that have no vector yet, before a recall and after a remember.
-const INDEX_BATCH: usize = 256;
 const PROTOCOLS: [&str; 4] = ["2025-06-18", "2025-11-25", "2025-03-26", "2024-11-05"];
 const TOOLS: [&str; 6] = ["remember", "recall", "get", "list_recent", "supersede", "quarantine_source"];
 
@@ -152,6 +158,17 @@ fn load_tokens(dir: &Path) -> Result<BTreeMap<String, String>> {
     }
 }
 
+/// What identifies one version of `tokens.json`: modification time, length and inode (a save renames a new file in).
+type TokensStamp = Option<(Option<SystemTime>, u64, u64)>;
+
+fn tokens_stamp(dir: &Path) -> Result<TokensStamp> {
+    match fs::metadata(dir.join(TOKENS)) {
+        Ok(meta) => Ok(Some((meta.modified().ok(), meta.len(), meta.ino()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(refuse("tokens-unreadable")),
+    }
+}
+
 fn save_tokens(dir: &Path, tokens: &BTreeMap<String, String>) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(tokens).map_err(|_| refuse("tokens-malformed"))?;
     let temp = dir.join("tokens.json.new");
@@ -186,9 +203,13 @@ fn create_agent(dir: &Path, store: &SharedStore, name: &str, scopes: &[String], 
     Ok(())
 }
 
-fn issue_token(dir: &Path, name: &str) -> Result<String> {
+/// A fresh token for `name`; with `rotate`, every earlier token of that agent is removed in the same save.
+fn issue_token(dir: &Path, name: &str, rotate: bool) -> Result<String> {
     let token = hex(random32()?.as_ref());
     let mut tokens = load_tokens(dir)?;
+    if rotate {
+        tokens.retain(|_, holder| holder != name);
+    }
     tokens.insert(token_hash(&token), name.to_owned());
     save_tokens(dir, &tokens)?;
     Ok(token)
@@ -198,17 +219,32 @@ fn issue_token(dir: &Path, name: &str) -> Result<String> {
 pub fn register(dir: &Path, name: &str, scopes: &[String], owner: bool) -> Result<String> {
     let state = State::open(dir)?;
     create_agent(dir, &state.store, name, scopes, owner)?;
-    issue_token(dir, name)
+    issue_token(dir, name, false)
 }
 
-/// Issues one more token for an agent that already has a key (a lost token). Earlier tokens stay valid.
-pub fn reissue(dir: &Path, name: &str) -> Result<String> {
+/// Issues one more token for an agent that already has a key (a lost token). Earlier tokens stay valid unless
+/// `rotate` is set, which replaces them. A revoked agent gets no token.
+pub fn reissue(dir: &Path, name: &str, rotate: bool) -> Result<String> {
     let mut state = State::open(dir)?;
     if name == IMPORT_AGENT {
         return Err(refuse("agent-takes-no-token"));
     }
-    state.key(name)?;
-    issue_token(dir, name)
+    let pubkey = state.pubkey_of(name)?;
+    if state.store.agent(&pubkey)?.is_none_or(|a| a.revoked_at.is_some()) {
+        return Err(refuse("agent-revoked"));
+    }
+    issue_token(dir, name, rotate)
+}
+
+/// Revokes an agent: `revoked_at` is set in the store (it can no longer write or authenticate) and every token hash
+/// it holds is removed from `tokens.json`. Its notes stay readable; quarantine is the separate act that withdraws them.
+pub fn revoke(dir: &Path, name: &str) -> Result<()> {
+    agent_name(name)?;
+    let state = State::open(dir)?;
+    state.store.revoke_agent(name, now())?;
+    let mut tokens = load_tokens(dir)?;
+    tokens.retain(|_, holder| holder != name);
+    save_tokens(dir, &tokens)
 }
 
 /// An authenticated caller.
@@ -216,19 +252,45 @@ struct Caller {
     name: String,
     pubkey: String,
     owner: bool,
+    /// Registered scopes; `*` reads every scope.
+    scopes: Vec<String>,
 }
 
-type BoxedEmbedder = Box<dyn Embedder + Send>;
-type BoxedReranker = Box<dyn Reranker + Send>;
+impl Caller {
+    fn reads_scope(&self, scope: &str) -> bool {
+        self.owner || self.scopes.iter().any(|s| s == "*" || s == scope)
+    }
+
+    /// The scopes a recall searches: the requested ones this caller may read (all of its own when none are asked).
+    fn read_scopes(&self, requested: Vec<String>) -> Result<Vec<String>> {
+        if self.owner || self.scopes.iter().any(|s| s == "*") {
+            return Ok(requested);
+        }
+        if requested.is_empty() {
+            return Ok(self.scopes.clone());
+        }
+        let allowed: Vec<String> = requested.into_iter().filter(|s| self.scopes.contains(s)).collect();
+        if allowed.is_empty() {
+            return Err(refuse("scope-refused"));
+        }
+        Ok(allowed)
+    }
+}
+
+type SharedEmbedder = Arc<dyn Embedder + Send + Sync>;
+type SharedReranker = Arc<dyn Reranker + Send + Sync>;
 
 /// The service state: the store, the token hashes, the agents' keys and the optional model servers.
 pub struct State {
     dir: PathBuf,
     store: SharedStore,
     tokens: BTreeMap<String, String>,
+    tokens_stamp: TokensStamp,
     keys: BTreeMap<String, SecretKey>,
-    embedder: Option<BoxedEmbedder>,
-    reranker: Option<BoxedReranker>,
+    embedder: Option<SharedEmbedder>,
+    reranker: Option<SharedReranker>,
+    /// Wakes the background indexer after a write.
+    wake: Option<Sender<()>>,
     /// Signing times per agent name, for the rate limit.
     writes: BTreeMap<String, Vec<u64>>,
 }
@@ -305,7 +367,7 @@ fn parse<T: DeserializeOwned>(params: Value) -> Result<T> {
 }
 
 fn visible(caller: &Caller, note: &StoredNote) -> bool {
-    caller.owner || note.meta.privacy != Privacy::Local
+    (caller.owner || note.meta.privacy != Privacy::Local) && caller.reads_scope(&note.meta.scope)
 }
 
 /// A note as the wire shows it, built from a store read (which re-verified it).
@@ -321,13 +383,27 @@ fn note_json(note: &StoredNote) -> Value {
     })
 }
 
-/// The note, or for a `local` note and a caller who is not the owner, only a receipt that it exists.
+/// A quarantined note: that it existed, who signed it and its statement hash, never its text.
+fn stub(note: &StoredNote) -> Value {
+    json!({
+        "id": hex(note.event.id.as_bytes()), "author": hex(note.event.pubkey.as_bytes()),
+        "created_at": note.event.created_at, "statement_hash": hex(&note.meta.statement_hash), "correction": "quarantined",
+    })
+}
+
+/// The note; a stub if it is quarantined; for a note this caller may not read, only a receipt that it exists.
 fn view(caller: &Caller, note: &StoredNote) -> Value {
-    if visible(caller, note) {
-        note_json(note)
+    if !visible(caller, note) {
+        json!({"id": hex(note.event.id.as_bytes()), "privacy": note.meta.privacy.wire(), "withheld": true})
+    } else if note.quarantined {
+        stub(note)
     } else {
-        json!({"id": hex(note.event.id.as_bytes()), "privacy": "local", "withheld": true})
+        note_json(note)
     }
+}
+
+fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
+    state.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl State {
@@ -337,18 +413,21 @@ impl State {
         private_dir(&dir.join(KEYS))?;
         let store = SharedStore::open(&dir.join(DB))?;
         fs::set_permissions(dir.join(DB), fs::Permissions::from_mode(0o600)).map_err(|_| refuse("state-dir"))?;
+        let tokens_stamp = tokens_stamp(dir)?;
         Ok(Self {
             dir: dir.to_owned(),
             store,
             tokens: load_tokens(dir)?,
+            tokens_stamp,
             keys: BTreeMap::new(),
             embedder: None,
             reranker: None,
+            wake: None,
             writes: BTreeMap::new(),
         })
     }
 
-    pub fn with_models(mut self, embedder: Option<BoxedEmbedder>, reranker: Option<BoxedReranker>) -> Self {
+    pub fn with_models(mut self, embedder: Option<SharedEmbedder>, reranker: Option<SharedReranker>) -> Self {
         self.embedder = embedder;
         self.reranker = reranker;
         self
@@ -367,41 +446,20 @@ impl State {
         Ok(hex(key.public_key()?.as_bytes()))
     }
 
+    /// Every request sees the current `tokens.json`: it is re-read whenever its stamp changes.
     fn caller(&mut self, token: &str) -> Result<Caller> {
-        let hash = token_hash(token);
-        if !self.tokens.contains_key(&hash) {
+        let stamp = tokens_stamp(&self.dir)?;
+        if stamp != self.tokens_stamp {
             self.tokens = load_tokens(&self.dir)?;
+            self.tokens_stamp = stamp;
         }
-        let name = self.tokens.get(&hash).cloned().ok_or_else(|| refuse("token-refused"))?;
+        let name = self.tokens.get(&token_hash(token)).cloned().ok_or_else(|| refuse("token-refused"))?;
         let pubkey = self.pubkey_of(&name).map_err(|_| refuse("token-refused"))?;
         let agent = self.store.agent(&pubkey)?.ok_or_else(|| refuse("token-refused"))?;
         if agent.revoked_at.is_some() {
             return Err(refuse("agent-revoked"));
         }
-        Ok(Caller { name, pubkey, owner: agent.owner })
-    }
-
-    /// Embeds notes that have no vector yet. Best effort: a model that is down leaves recall to report coverage.
-    fn index_new(&self) {
-        if let Some(embedder) = &self.embedder {
-            if let Err(r) = self.store.index_missing(embedder.as_ref(), INDEX_BATCH) {
-                eprintln!("kira: indexing paused: {}:{}", r.organ, r.reason);
-            }
-        }
-    }
-
-    fn dispatch(&mut self, line: &str) -> Result<Value> {
-        let request: Request = serde_json::from_str(line).map_err(|_| refuse("request-malformed"))?;
-        let caller = self.caller(&request.token)?;
-        match request.method.as_str() {
-            "remember" => self.remember(&caller, parse(request.params)?),
-            "recall" => self.recall(&caller, parse(request.params)?),
-            "get" => self.get(&caller, parse(request.params)?),
-            "list_recent" => self.list_recent(&caller, parse(request.params)?),
-            "supersede" => self.supersede(&caller, parse(request.params)?),
-            "quarantine_source" => self.quarantine(&caller, parse(request.params)?),
-            _ => Err(refuse("method-unknown")),
-        }
+        Ok(Caller { name, pubkey, owner: agent.owner, scopes: agent.scopes })
     }
 
     /// The signing-oracle rate (spec v0.3 §5): at most RATE_WRITES signatures per agent per RATE_WINDOW seconds.
@@ -416,15 +474,26 @@ impl State {
         Ok(())
     }
 
+    fn whoami(caller: &Caller) -> Value {
+        json!({"name": caller.name, "pubkey": caller.pubkey, "owner": caller.owner, "scopes": caller.scopes})
+    }
+
     fn remember(&mut self, caller: &Caller, p: RememberParams) -> Result<Value> {
-        let capture = Capture::parse(&p.capture)?;
-        if capture == Capture::Import {
+        let claimed = Capture::parse(&p.capture)?;
+        if claimed == Capture::Import {
             return Err(refuse("capture-import-reserved"));
         }
         // Spec v0.3 §5: only the owner channel claims owner review or an owner-class capture; refused, never downgraded.
-        if !caller.owner && (p.owner_signed || matches!(capture, Capture::OwnerSigned | Capture::OwnerTyped)) {
+        if !caller.owner && (p.owner_signed || claimed.owner_class()) {
             return Err(refuse("review-claim-refused"));
         }
+        // Any other caller's claim stands only as tool-observed with at least one source note behind it; everything
+        // else it writes is filed as model-generated.
+        let capture = if caller.owner || (claimed == Capture::ToolObserved && !p.sources.is_empty()) {
+            claimed
+        } else {
+            Capture::ModelGenerated
+        };
         if p.text.len() > MAX_STATEMENT {
             return Err(refuse("statement-too-long"));
         }
@@ -447,56 +516,10 @@ impl State {
         let tags = draft.tags(review)?;
         let event = Event::sign(self.key(&caller.name)?, now(), NOTE_KIND, tags, draft.text)?;
         let note = self.store.append(event)?;
-        self.index_new();
+        if let Some(wake) = &self.wake {
+            let _ = wake.send(());
+        }
         Ok(view(caller, &note))
-    }
-
-    fn recall(&mut self, caller: &Caller, p: RecallParams) -> Result<Value> {
-        let author = match p.author {
-            None => None,
-            Some(author) if is_hex64(&author) => Some(author),
-            Some(name) => Some(self.pubkey_of(&name)?),
-        };
-        let query = RecallQuery {
-            text: p.query,
-            caller: caller.pubkey.clone(),
-            epoch: p.epoch.unwrap_or(2),
-            scopes: p.scopes,
-            author,
-            budget_chars: p.budget_chars.unwrap_or(DEFAULT_BUDGET).min(MAX_BUDGET),
-        };
-        self.index_new();
-        let embedder = self.embedder.as_deref().map(|e| e as &dyn Embedder);
-        let reranker = self.reranker.as_deref().map(|r| r as &dyn Reranker);
-        let outcome = self.store.recall(&query, embedder, reranker)?;
-        let mut status = outcome.status.clone();
-        let mut items = Vec::new();
-        for item in &outcome.items {
-            match self.store.get(&item.id) {
-                Ok(Some(note)) if visible(caller, &note) => {
-                    let mut shown = note_json(&note);
-                    shown["score"] = json!(item.score);
-                    shown["also_by"] = json!(item.also_by);
-                    shown["correction"] = json!(item.correction);
-                    items.push(shown);
-                }
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => status = RecallStatus::Undetermined("note-integrity"),
-            }
-        }
-        // Only withheld notes matched: from this caller's view nothing was found.
-        if status == RecallStatus::Found && items.is_empty() {
-            status = RecallStatus::Empty;
-        }
-        let (status, reason) = match status {
-            RecallStatus::Found => ("found", None),
-            RecallStatus::Empty => ("empty", None),
-            RecallStatus::Undetermined(why) => ("undetermined", Some(why)),
-        };
-        Ok(json!({
-            "status": status, "reason": reason, "items": items, "indexed": outcome.indexed, "total": outcome.total,
-            "query_digest": outcome.query_digest,
-        }))
     }
 
     fn get(&mut self, caller: &Caller, p: GetParams) -> Result<Value> {
@@ -504,7 +527,7 @@ impl State {
             return Err(refuse("id-invalid"));
         }
         match self.store.get(&p.id)? {
-            Some(note) if visible(caller, &note) => Ok(note_json(&note)),
+            Some(note) if visible(caller, &note) => Ok(view(caller, &note)),
             _ => Err(refuse("not-found")),
         }
     }
@@ -513,7 +536,7 @@ impl State {
         let limit = p.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 500);
         let notes = self.store.list_recent(limit, p.before, Some(p.epoch.unwrap_or(2)))?;
         let next_before = if notes.len() == limit { notes.last().map(|n| n.seq) } else { None };
-        let shown: Vec<Value> = notes.iter().filter(|n| visible(caller, n)).map(note_json).collect();
+        let shown: Vec<Value> = notes.iter().filter(|n| visible(caller, n)).map(|n| view(caller, n)).collect();
         Ok(json!({"notes": shown, "next_before": next_before}))
     }
 
@@ -548,48 +571,89 @@ impl State {
     }
 }
 
+/// Recall in three steps so no model call runs under the state lock: read the query's settings and model handles,
+/// embed the query unlocked, gather candidates locked, rerank unlocked, then re-read the returned notes locked.
+fn recall(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Result<Value> {
+    let (query, embedder, reranker) = {
+        let mut s = lock(state);
+        let author = match p.author {
+            None => None,
+            Some(author) if is_hex64(&author) => Some(author),
+            Some(name) => Some(s.pubkey_of(&name)?),
+        };
+        let query = RecallQuery {
+            text: p.query,
+            caller: caller.pubkey.clone(),
+            epoch: p.epoch.unwrap_or(2),
+            scopes: caller.read_scopes(p.scopes)?,
+            author,
+            budget_chars: p.budget_chars.unwrap_or(DEFAULT_BUDGET).min(MAX_BUDGET),
+            include_local: caller.owner,
+        };
+        (query, s.embedder.clone(), s.reranker.clone())
+    };
+    let model = embedder.as_ref().map(|e| e.model_id().to_owned());
+    let vector = embedder.as_deref().and_then(|e| query_vector(&query, e));
+    let prepared = lock(state).store.recall_prepare(&query, model.as_deref().map(|m| (m, vector)))?;
+    let outcome = prepared.finish(reranker.as_deref().map(|r| r as &dyn Reranker));
+    let s = lock(state);
+    let mut status = outcome.status.clone();
+    let mut items = Vec::new();
+    for item in &outcome.items {
+        match s.store.get(&item.id) {
+            Ok(Some(note)) if visible(caller, &note) => {
+                let mut shown = if note.quarantined { stub(&note) } else { note_json(&note) };
+                shown["score"] = json!(item.score);
+                shown["also_by"] = json!(item.also_by);
+                shown["also_by_ids"] = json!(item.also_by_ids);
+                shown["correction"] = json!(item.correction);
+                items.push(shown);
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => status = RecallStatus::Undetermined("note-integrity"),
+        }
+    }
+    // Only withheld notes matched: from this caller's view nothing was found.
+    if status == RecallStatus::Found && items.is_empty() {
+        status = RecallStatus::Empty;
+    }
+    let (status, reason) = match status {
+        RecallStatus::Found => ("found", None),
+        RecallStatus::Empty => ("empty", None),
+        RecallStatus::Undetermined(why) => ("undetermined", Some(why)),
+    };
+    Ok(json!({
+        "status": status, "reason": reason, "items": items, "omitted": outcome.omitted, "indexed": outcome.indexed,
+        "total": outcome.total, "query_digest": outcome.query_digest,
+    }))
+}
+
+fn dispatch(state: &Mutex<State>, line: &str) -> Result<Value> {
+    let request: Request = serde_json::from_str(line).map_err(|_| refuse("request-malformed"))?;
+    let mut s = lock(state);
+    let caller = s.caller(&request.token)?;
+    match request.method.as_str() {
+        "recall" => {
+            drop(s);
+            recall(state, &caller, parse(request.params)?)
+        }
+        "whoami" => Ok(State::whoami(&caller)),
+        "remember" => s.remember(&caller, parse(request.params)?),
+        "get" => s.get(&caller, parse(request.params)?),
+        "list_recent" => s.list_recent(&caller, parse(request.params)?),
+        "supersede" => s.supersede(&caller, parse(request.params)?),
+        "quarantine_source" => s.quarantine(&caller, parse(request.params)?),
+        _ => Err(refuse("method-unknown")),
+    }
+}
+
 /// One request line in, one reply line out: `{"ok":true,"result":...}` or `{"ok":false,"error":"kira:<reason>"}`.
-pub fn handle(state: &mut State, line: &str) -> String {
-    match state.dispatch(line) {
+pub fn handle(state: &Mutex<State>, line: &str) -> String {
+    match dispatch(state, line) {
         Ok(result) => json!({"ok": true, "result": result}),
         Err(refusal) => json!({"ok": false, "error": refusal.to_string()}),
     }
     .to_string()
-}
-
-fn socket_addr(text: &str) -> Result<std::net::SocketAddr> {
-    text.parse().map_err(|_| refuse("model-addr"))
-}
-
-fn env_models() -> Result<(Option<BoxedEmbedder>, Option<BoxedReranker>)> {
-    let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-    let embedder: Option<BoxedEmbedder> = match (var("KIRA_EMBED_ADDR"), var("KIRA_EMBED_MODEL")) {
-        (Some(addr), Some(model)) => Some(Box::new(HttpEmbedder::new(socket_addr(&addr)?, &model)?)),
-        (None, None) => None,
-        _ => return Err(refuse("embed-config-partial")),
-    };
-    let reranker: Option<BoxedReranker> = match (var("KIRA_RERANK_ADDR"), var("KIRA_RERANK_MODEL")) {
-        (Some(addr), Some(model)) => Some(Box::new(HttpReranker::new(socket_addr(&addr)?, &model)?)),
-        (None, None) => None,
-        _ => return Err(refuse("rerank-config-partial")),
-    };
-    Ok((embedder, reranker))
-}
-
-/// Binds the socket at mode 0600. A stale socket file is replaced; a live service is never displaced.
-fn bind(socket: &Path) -> Result<UnixListener> {
-    if let Ok(meta) = fs::symlink_metadata(socket) {
-        if !meta.file_type().is_socket() {
-            return Err(refuse("socket-path-taken"));
-        }
-        if UnixStream::connect(socket).is_ok() {
-            return Err(refuse("service-running"));
-        }
-        fs::remove_file(socket).map_err(|_| refuse("socket-bind"))?;
-    }
-    let listener = UnixListener::bind(socket).map_err(|_| refuse("socket-bind"))?;
-    fs::set_permissions(socket, fs::Permissions::from_mode(0o600)).map_err(|_| refuse("socket-bind"))?;
-    Ok(listener)
 }
 
 fn read_line(reader: &mut impl BufRead, limit: usize) -> Option<String> {
@@ -601,44 +665,15 @@ fn read_line(reader: &mut impl BufRead, limit: usize) -> Option<String> {
     String::from_utf8(buf).ok()
 }
 
-fn connection(state: &Mutex<State>, stream: UnixStream) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
-    let Ok(mut writer) = stream.try_clone() else { return };
-    let mut reader = BufReader::new(stream);
-    while let Some(line) = read_line(&mut reader, MAX_REQUEST) {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let reply = handle(&mut state.lock().unwrap_or_else(PoisonError::into_inner), &line);
-        if writeln!(writer, "{reply}").and_then(|()| writer.flush()).is_err() {
-            return;
-        }
-    }
-}
-
-/// Serves the store on a Unix socket until killed. Model servers come from KIRA_EMBED_ADDR/KIRA_EMBED_MODEL and
-/// KIRA_RERANK_ADDR/KIRA_RERANK_MODEL; without them recall runs on keywords and reports its coverage.
-pub fn serve(dir: &Path, socket: &Path) -> Result<()> {
-    let (embedder, reranker) = env_models()?;
-    let state = State::open(dir)?.with_models(embedder, reranker);
-    let listener = bind(socket)?;
-    eprintln!("kira: serving {} on {}", dir.display(), socket.display());
-    let state = Arc::new(Mutex::new(state));
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let state = Arc::clone(&state);
-        std::thread::spawn(move || connection(&state, stream));
-    }
-    Ok(())
-}
-
 mod cli;
 mod import;
 mod mcp;
+mod server;
 
 pub use cli::cli;
 pub use import::{import_epoch1, ImportReport};
 pub use mcp::{mcp, mcp_reply};
+pub use server::serve;
 
 #[cfg(test)]
 mod tests {
@@ -646,7 +681,7 @@ mod tests {
 
     struct Fixture {
         dir: PathBuf,
-        state: State,
+        state: Mutex<State>,
         owner: String,
         claude: String,
         grok: String,
@@ -664,11 +699,11 @@ mod tests {
         let owner = register(&dir, "peter", &["*".to_owned()], true).unwrap();
         let claude = register(&dir, "claude", &["builders".to_owned()], false).unwrap();
         let grok = register(&dir, "grok", &["builders".to_owned()], false).unwrap();
-        let state = State::open(&dir).unwrap();
+        let state = Mutex::new(State::open(&dir).unwrap());
         Fixture { dir, state, owner, claude, grok }
     }
 
-    fn call(state: &mut State, token: &str, method: &str, params: Value) -> Value {
+    fn call(state: &Mutex<State>, token: &str, method: &str, params: Value) -> Value {
         let line = json!({"token": token, "method": method, "params": params}).to_string();
         serde_json::from_str(&handle(state, &line)).unwrap()
     }
@@ -693,87 +728,153 @@ mod tests {
 
     #[test]
     fn a_wrong_token_is_refused() {
-        let mut f = fixture();
-        let reply = call(&mut f.state, &"0".repeat(64), "list_recent", json!({}));
+        let f = fixture();
+        let reply = call(&f.state, &"0".repeat(64), "list_recent", json!({}));
         assert_eq!(reply["error"], "kira:token-refused");
-        let reply = call(&mut f.state, "", "remember", note("anything", "builders"));
+        let reply = call(&f.state, "", "remember", note("anything", "builders"));
         assert_eq!(reply["error"], "kira:token-refused");
-        assert_eq!(call(&mut f.state, &f.grok, "list_recent", json!({}))["ok"], true);
+        assert_eq!(call(&f.state, &f.grok, "list_recent", json!({}))["ok"], true);
     }
 
     #[test]
     fn a_remembers_b_finds_it_with_a_as_author() {
-        let mut f = fixture();
+        let f = fixture();
         let claude = f.claude.clone();
-        let written = call(&mut f.state, &claude, "remember", note("The figurine is on the left shelf", "builders"));
+        let written = call(&f.state, &claude, "remember", note("The figurine is on the left shelf", "builders"));
         assert_eq!(written["ok"], true, "{written}");
         let id = written["result"]["id"].as_str().unwrap().to_owned();
         assert_eq!(written["result"]["review"], "remembered");
         let grok = f.grok.clone();
-        let got = call(&mut f.state, &grok, "get", json!({"id": id}));
+        let got = call(&f.state, &grok, "get", json!({"id": id}));
         assert_eq!(got["result"]["author_name"], "claude");
         assert_eq!(got["result"]["text"], "The figurine is on the left shelf");
-        let recalled = call(&mut f.state, &grok, "recall", json!({"query": "where is the figurine"}));
+        let recalled = call(&f.state, &grok, "recall", json!({"query": "where is the figurine"}));
         assert_eq!(recalled["ok"], true, "{recalled}");
         let items = recalled["result"]["items"].as_array().unwrap();
         assert!(items.iter().all(|i| i["author_name"] == "claude"));
         assert_eq!(recalled["result"]["status"], "found", "{recalled}");
         assert!(items.iter().any(|i| i["id"] == id.as_str()));
-        let listed = call(&mut f.state, &grok, "list_recent", json!({"limit": 5}));
+        let listed = call(&f.state, &grok, "list_recent", json!({"limit": 5}));
         assert_eq!(listed["result"]["notes"][0]["author_name"], "claude");
     }
 
     #[test]
     fn only_the_owner_signs_reviews_and_quarantines() {
-        let mut f = fixture();
+        let f = fixture();
         let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
         let mut claim = note("Peter approved this", "builders");
         claim["owner_signed"] = json!(true);
-        assert_eq!(call(&mut f.state, &claude, "remember", claim.clone())["error"], "kira:review-claim-refused");
-        let signed = call(&mut f.state, &owner, "remember", claim);
+        assert_eq!(call(&f.state, &claude, "remember", claim.clone())["error"], "kira:review-claim-refused");
+        let signed = call(&f.state, &owner, "remember", claim);
         assert_eq!(signed["result"]["review"], "owner_signed", "{signed}");
         let mut typed = note("Peter said so", "builders");
         typed["capture"] = json!("owner-typed");
-        assert_eq!(call(&mut f.state, &claude, "remember", typed)["error"], "kira:review-claim-refused");
+        assert_eq!(call(&f.state, &claude, "remember", typed)["error"], "kira:review-claim-refused");
         let long = note(&"x".repeat(MAX_STATEMENT + 1), "builders");
-        assert_eq!(call(&mut f.state, &claude, "remember", long)["error"], "kira:statement-too-long");
+        assert_eq!(call(&f.state, &claude, "remember", long)["error"], "kira:statement-too-long");
         for i in 0..RATE_WRITES {
-            assert_eq!(call(&mut f.state, &claude, "remember", note(&format!("note {i}"), "builders"))["ok"], true);
+            assert_eq!(call(&f.state, &claude, "remember", note(&format!("note {i}"), "builders"))["ok"], true);
         }
-        assert_eq!(call(&mut f.state, &claude, "remember", note("one too many", "builders"))["error"], "kira:rate-limited");
-        let grok_key = f.state.pubkey_of("grok").unwrap();
-        let reply = call(&mut f.state, &claude, "quarantine_source", json!({"pubkey": grok_key}));
+        assert_eq!(call(&f.state, &claude, "remember", note("one too many", "builders"))["error"], "kira:rate-limited");
+        let grok_key = lock(&f.state).pubkey_of("grok").unwrap();
+        let reply = call(&f.state, &claude, "quarantine_source", json!({"pubkey": grok_key}));
         assert_eq!(reply["error"], "kira:quarantine-owner-only");
-        assert_eq!(call(&mut f.state, &owner, "quarantine_source", json!({"pubkey": grok_key}))["ok"], true);
-        assert_eq!(call(&mut f.state, &grok, "remember", note("after quarantine", "builders"))["error"], "kira:author-quarantined");
+        assert_eq!(call(&f.state, &owner, "quarantine_source", json!({"pubkey": grok_key}))["ok"], true);
+        assert_eq!(call(&f.state, &grok, "remember", note("after quarantine", "builders"))["error"], "kira:author-quarantined");
     }
 
     #[test]
     fn local_notes_are_withheld_from_non_owners() {
-        let mut f = fixture();
+        let f = fixture();
         let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
-        let private = call(&mut f.state, &owner, "remember", note("Peter's door code lives in the drawer", "local"));
+        let private = call(&f.state, &owner, "remember", note("Peter's door code lives in the drawer", "local"));
         let id = private["result"]["id"].as_str().unwrap().to_owned();
         assert_eq!(private["result"]["text"], "Peter's door code lives in the drawer");
-        assert_eq!(call(&mut f.state, &grok, "get", json!({"id": id}))["error"], "kira:not-found");
-        assert_eq!(call(&mut f.state, &grok, "list_recent", json!({}))["result"]["notes"], json!([]));
-        let recalled = call(&mut f.state, &grok, "recall", json!({"query": "door code drawer"}));
+        assert_eq!(call(&f.state, &grok, "get", json!({"id": id}))["error"], "kira:not-found");
+        assert_eq!(call(&f.state, &grok, "list_recent", json!({}))["result"]["notes"], json!([]));
+        let recalled = call(&f.state, &grok, "recall", json!({"query": "door code drawer"}));
         assert_eq!(recalled["result"]["items"], json!([]), "{recalled}");
         assert_ne!(recalled["result"]["status"], "found");
-        let own = call(&mut f.state, &claude, "remember", note("my own local observation", "local"));
+        let own = call(&f.state, &claude, "remember", note("my own local observation", "local"));
         assert_eq!(own["result"]["withheld"], true);
         assert!(own["result"].get("text").is_none());
-        assert_eq!(call(&mut f.state, &owner, "list_recent", json!({}))["result"]["notes"].as_array().unwrap().len(), 2);
+        assert_eq!(call(&f.state, &owner, "list_recent", json!({}))["result"]["notes"].as_array().unwrap().len(), 2);
+        // Scopes: an agent reads only the scopes it is registered for, whatever it asks for.
+        let mut owner_scope = note("the figurine insurance is in the owner folder", "builders");
+        owner_scope["scope"] = json!("owner");
+        let id = call(&f.state, &owner, "remember", owner_scope)["result"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(call(&f.state, &grok, "get", json!({"id": id}))["error"], "kira:not-found");
+        let asked = call(&f.state, &grok, "recall", json!({"query": "figurine insurance", "scopes": ["owner"]}));
+        assert_eq!(asked["error"], "kira:scope-refused");
+        let wide = call(&f.state, &grok, "recall", json!({"query": "figurine insurance"}));
+        assert_eq!(wide["result"]["status"], "empty", "{wide}");
+        assert_eq!(call(&f.state, &owner, "recall", json!({"query": "figurine insurance"}))["result"]["status"], "found");
+    }
+
+    #[test]
+    fn agent_captures_are_clamped_and_commitments_are_the_owners() {
+        let f = fixture();
+        let (owner, claude) = (f.owner.clone(), f.claude.clone());
+        let plain = call(&f.state, &claude, "remember", note("the kettle was descaled", "builders"));
+        assert_eq!(plain["result"]["capture"], "model-generated", "{plain}");
+        let mut sourced = note("the kettle was descaled on Sunday", "builders");
+        sourced["sources"] = json!([plain["result"]["id"]]);
+        assert_eq!(call(&f.state, &claude, "remember", sourced)["result"]["capture"], "tool-observed");
+        let mut web = note("the kettle manual says monthly", "builders");
+        web["capture"] = json!("web-derived");
+        assert_eq!(call(&f.state, &claude, "remember", web)["result"]["capture"], "model-generated");
+        let mut decision = note("we descale the kettle monthly", "builders");
+        decision["lane"] = json!("decision");
+        assert_eq!(call(&f.state, &claude, "remember", decision.clone())["error"], "kira:note-capture-lane");
+        assert_eq!(call(&f.state, &owner, "remember", decision.clone())["error"], "kira:note-capture-lane");
+        decision["capture"] = json!("owner-typed");
+        assert_eq!(call(&f.state, &owner, "remember", decision)["result"]["lane"], "decision");
+        assert_eq!(call(&f.state, &owner, "whoami", json!({}))["result"]["owner"], true);
+    }
+
+    #[test]
+    fn quarantined_notes_are_stubs_everywhere() {
+        let f = fixture();
+        let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+        call(&f.state, &claude, "remember", note("The harness is the deepseek one.", "builders"));
+        let bad = call(&f.state, &grok, "remember", note("The harness is secretly broken.", "builders"));
+        let id = bad["result"]["id"].as_str().unwrap().to_owned();
+        let grok_key = bad["result"]["author"].clone();
+        assert_eq!(call(&f.state, &owner, "quarantine_source", json!({"pubkey": grok_key}))["ok"], true);
+        let got = call(&f.state, &claude, "get", json!({"id": id}));
+        assert_eq!(got["result"]["correction"], "quarantined", "{got}");
+        assert!(got["result"].get("text").is_none() && got["result"]["statement_hash"].is_string());
+        let listed = call(&f.state, &claude, "list_recent", json!({}));
+        assert!(listed["result"]["notes"].as_array().unwrap().iter().any(|n| n["id"] == id.as_str() && n.get("text").is_none()));
+        let recalled = call(&f.state, &claude, "recall", json!({"query": "which harness"}));
+        let items = recalled["result"]["items"].as_array().unwrap();
+        let stub = items.iter().find(|i| i["id"] == id.as_str()).expect("the quarantined note shows as a correction");
+        assert!(stub.get("text").is_none() && stub["correction"] == "quarantined", "{stub}");
+    }
+
+    #[test]
+    fn revoke_and_rotate_take_effect_on_the_next_request() {
+        let f = fixture();
+        let (old, grok) = (f.claude.clone(), f.grok.clone());
+        assert_eq!(call(&f.state, &old, "whoami", json!({}))["result"]["name"], "claude");
+        let new = reissue(&f.dir, "claude", true).unwrap();
+        assert_eq!(call(&f.state, &old, "whoami", json!({}))["error"], "kira:token-refused");
+        assert_eq!(call(&f.state, &new, "whoami", json!({}))["result"]["scopes"], json!(["builders"]));
+        revoke(&f.dir, "claude").unwrap();
+        assert_eq!(call(&f.state, &new, "whoami", json!({}))["error"], "kira:token-refused");
+        assert_eq!(reissue(&f.dir, "claude", false).err(), Some(refuse("agent-revoked")));
+        assert!(revoke(&f.dir, "nobody").is_err());
+        assert_eq!(call(&f.state, &grok, "whoami", json!({}))["result"]["owner"], false);
     }
 
     #[test]
     fn supersede_is_signed_by_the_caller() {
-        let mut f = fixture();
+        let f = fixture();
         let (claude, grok) = (f.claude.clone(), f.grok.clone());
-        let old = call(&mut f.state, &claude, "remember", note("plan uses the tiny harness", "builders"));
+        let old = call(&f.state, &claude, "remember", note("plan uses the tiny harness", "builders"));
         let id = old["result"]["id"].as_str().unwrap().to_owned();
-        assert_eq!(call(&mut f.state, &grok, "supersede", json!({"target": id}))["error"], "kira:supersede-not-author");
-        let done = call(&mut f.state, &claude, "supersede", json!({"target": id}));
+        assert_eq!(call(&f.state, &grok, "supersede", json!({"target": id}))["error"], "kira:supersede-not-author");
+        let done = call(&f.state, &claude, "supersede", json!({"target": id}));
         assert!(done["result"]["target"]["superseded_by"].is_string(), "{done}");
     }
 
@@ -782,6 +883,11 @@ mod tests {
         let f = fixture();
         let file = f.dir.join("archive.jsonl");
         let lines = [
+            json!({"from": "AUKORA-BUILD", "text": "a stray bell \u{7} and escape \u{1b}[0m, then\ta tab"}),
+            json!({"from": "AUKORA-BUILD", "text": "the bearer token never enters the engine; password rules: see the spec"}),
+            json!({"from": "AUKORA-BUILD", "text": format!("pushed with ghp_{}", "a1".repeat(18))}),
+            json!({"from": "AUKORA-BUILD", "text": "curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwx'"}),
+            json!({"from": "AUKORA-BUILD", "text": "export API_KEY=\"live1234abcd\""}),
             json!({"from": "AUKORA-BUILD", "text": "[conductor ruling] Kira holds no root keys."}),
             json!({"from": "AUKORA-BUILD", "text": "[aukora-sovereign plan, NORTH-STAR row 7] | 7 | Memory app |"}),
             json!({"from": "AUKORA-BUILD", "text": "the relay nsec1qqqqqqqq was pasted here"}),
@@ -791,14 +897,23 @@ mod tests {
         let body: String = lines.iter().map(|l| format!("{l}\nnot json\n")).collect();
         fs::write(&file, body).unwrap();
         let report = import_epoch1(&f.dir, &file).unwrap();
-        assert_eq!(report, ImportReport { imported: 3, duplicates: 0, secrets: 2, invalid: 5 });
-        assert_eq!(import_epoch1(&f.dir, &file).unwrap().duplicates, 3);
-        let notes = f.state.store.list_recent(10, None, Some(1)).unwrap();
+        let secret = [5, 7, 9, 15, 17].map(|n| (n, "secret"));
+        let mut skipped: Vec<(usize, &str)> = (1..=10).map(|n| (n * 2, "invalid")).chain(secret).collect();
+        skipped.sort_unstable();
+        let mut got = report.skipped.clone();
+        got.sort_unstable();
+        assert_eq!((report.imported, report.duplicates, report.secrets, report.invalid), (5, 0, 5, 10));
+        assert_eq!(got, skipped);
+        assert_eq!(import_epoch1(&f.dir, &file).unwrap().duplicates, 5);
+        let notes = lock(&f.state).store.list_recent(10, None, Some(1)).unwrap();
         let lanes: Vec<&str> = notes.iter().map(|n| n.meta.lane.wire()).collect();
-        assert_eq!(lanes, ["finding", "evidence", "evidence"]);
+        assert_eq!(lanes, ["finding", "evidence", "evidence", "evidence", "evidence"]);
+        assert_eq!(notes[4].event.content, "a stray bell  and escape [0m, then\ta tab");
+        let source = hex(&Sha256::digest(fs::read(&file).unwrap()));
+        assert!(notes.iter().all(|n| n.event.tags.contains(&vec!["import_source".to_owned(), source.clone()])));
         assert!(notes.iter().all(|n| n.author_name == IMPORT_AGENT && n.meta.capture == Capture::Import));
         assert!(notes[0].meta.subject.starts_with("epoch1:finding") && notes[0].meta.subject.contains("a4c1c86c567b"));
         assert!(notes[1].meta.subject.starts_with("epoch1:row") && notes[2].meta.subject.starts_with("epoch1:ruling"));
-        assert!(reissue(&f.dir, IMPORT_AGENT).is_err());
+        assert!(reissue(&f.dir, IMPORT_AGENT, false).is_err());
     }
 }

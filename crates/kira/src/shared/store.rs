@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The shared store: one SQLite file of signed NIP-01 events, an append chain over every id, keyword (FTS5) and
-//! vector indexes as rebuildable side tables, and an author registry. Every returned note is re-verified.
+//! The shared store: one SQLite file of signed NIP-01 events, an append chain over every event, keyword (FTS5) and
+//! vector indexes as rebuildable side tables, and an author registry. Every returned note is re-verified, and so is
+//! every supersede or quarantine event that changes how a note reads.
 
-use super::note::{NoteMeta, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
+use super::note::{check_capture_lane, NoteMeta, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
 use canon::{Refusal, Result};
 use nostr::{Event, VerifiedEvent};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -34,9 +35,13 @@ CREATE TABLE IF NOT EXISTS ancestry(seq INTEGER NOT NULL, root TEXT NOT NULL, PR
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(body, tokenize='unicode61 remove_diacritics 2');
 CREATE TABLE IF NOT EXISTS embeddings(seq INTEGER NOT NULL, model TEXT NOT NULL, vec BLOB NOT NULL,
   PRIMARY KEY(seq, model));
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
-/// One registered author. `scopes` lists where it may write; `*` means every scope.
+/// The chain format this build writes. v1 hashed (prev, id); v2 adds the seq and the signed created_at.
+const CHAIN_VERSION: u8 = 2;
+
+/// One registered author. `scopes` lists where it may write and read; `*` means every scope.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentRecord {
     pub pubkey: String,
@@ -79,16 +84,118 @@ fn single_tag<'a>(event: &'a Event, name: &str) -> Result<&'a str> {
     found.ok_or_else(|| refuse("event-tag-missing"))
 }
 
+/// One chain link. v2: H(domain ‖ prev ‖ seq ‖ id ‖ created_at), integers as 8 big-endian bytes, so moving a row,
+/// renumbering it or changing its time breaks the chain. v1 is kept only to check a store before upgrading it.
+fn link(version: u8, prev: &[u8; 32], seq: i64, id: &[u8; 32], created_at: u64) -> [u8; 32] {
+    let mut h = Sha256::new();
+    if version == 1 {
+        h.update(b"aukora:kira:chain:v1\0");
+        h.update(prev);
+        h.update(id);
+    } else {
+        h.update(b"aukora:kira:chain:v2\0");
+        h.update(prev);
+        h.update(seq.to_be_bytes());
+        h.update(id);
+        h.update(created_at.to_be_bytes());
+    }
+    h.finalize().into()
+}
+
+/// An events row as stored.
+struct Row {
+    seq: i64,
+    id: String,
+    pubkey: String,
+    created_at: i64,
+    kind: i64,
+    raw: Vec<u8>,
+    chain: Vec<u8>,
+}
+
+const ROW: &str = "SELECT seq, id, pubkey, created_at, kind, raw, chain FROM events";
+
+fn row_of(r: &rusqlite::Row) -> rusqlite::Result<Row> {
+    Ok(Row {
+        seq: r.get(0)?,
+        id: r.get(1)?,
+        pubkey: r.get(2)?,
+        created_at: r.get(3)?,
+        kind: r.get(4)?,
+        raw: r.get(5)?,
+        chain: r.get(6)?,
+    })
+}
+
+/// The stored bytes must be a correctly signed event whose id, author, time and kind match the row's columns, and
+/// whose chain link follows `prev`. Returns the event and its link.
+fn check_row(row: &Row, prev: &[u8; 32], version: u8) -> Result<(Event, [u8; 32])> {
+    let bad = || refuse("note-integrity");
+    let event = Event::decode(&row.raw).and_then(Event::verify).map_err(|_| bad())?.event().clone();
+    let agrees = hex32(event.id.as_bytes()) == row.id
+        && hex32(event.pubkey.as_bytes()) == row.pubkey
+        && i64::try_from(event.created_at).ok() == Some(row.created_at)
+        && i64::from(event.kind) == row.kind;
+    let next = link(version, prev, row.seq, event.id.as_bytes(), event.created_at);
+    if !agrees || next.as_slice() != row.chain.as_slice() {
+        return Err(bad());
+    }
+    Ok((event, next))
+}
+
+/// Walks every row in seq order under one chain version; returns the (seq, link) pairs.
+fn walk(db: &Connection, version: u8) -> Result<Vec<(i64, [u8; 32])>> {
+    let mut stmt = db.prepare(&format!("{ROW} ORDER BY seq")).map_err(sql)?;
+    let rows = stmt.query_map([], row_of).map_err(sql)?;
+    let (mut prev, mut links) = ([0u8; 32], Vec::new());
+    for row in rows {
+        let row = row.map_err(sql)?;
+        let (_, next) = check_row(&row, &prev, version).map_err(|_| refuse("store-chain-broken"))?;
+        links.push((row.seq, next));
+        prev = next;
+    }
+    Ok(links)
+}
+
+/// Upgrades a v1 chain to v2, only when the whole v1 chain verifies first (signatures, columns and links). A store
+/// whose v1 chain does not verify is left as it is, so it fails verification under v2 and the service refuses it.
+fn upgrade_chain(db: &mut Connection) -> Result<()> {
+    let version: Option<String> = db
+        .query_row("SELECT value FROM meta WHERE key = 'chain'", [], |r| r.get(0))
+        .optional()
+        .map_err(sql)?;
+    match version.as_deref() {
+        Some(v) if v == CHAIN_VERSION.to_string() => return Ok(()),
+        Some(_) => return Err(refuse("store-chain-version")),
+        None => {}
+    }
+    let Ok(v1) = walk(db, 1) else { return Ok(()) };
+    let tx = db.transaction().map_err(sql)?;
+    let mut prev = [0u8; 32];
+    for (seq, _) in v1 {
+        let row = tx.query_row(&format!("{ROW} WHERE seq = ?1"), params![seq], row_of).map_err(sql)?;
+        let created_at = u64::try_from(row.created_at).map_err(|_| refuse("store-chain-broken"))?;
+        let id: [u8; 32] = Event::decode(&row.raw)?.id.as_bytes().to_owned();
+        let next = link(CHAIN_VERSION, &prev, seq, &id, created_at);
+        tx.execute("UPDATE events SET chain = ?1 WHERE seq = ?2", params![next.to_vec(), seq]).map_err(sql)?;
+        prev = next;
+    }
+    tx.execute("INSERT INTO meta(key, value) VALUES ('chain', ?1)", params![CHAIN_VERSION.to_string()]).map_err(sql)?;
+    tx.commit().map_err(sql)
+}
+
 impl SharedStore {
     pub fn open(path: &Path) -> Result<Self> {
-        let db = Connection::open(path).map_err(sql)?;
+        let mut db = Connection::open(path).map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
+        upgrade_chain(&mut db)?;
         Ok(Self { db })
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let db = Connection::open_in_memory().map_err(sql)?;
+        let mut db = Connection::open_in_memory().map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
+        upgrade_chain(&mut db)?;
         Ok(Self { db })
     }
 
@@ -105,6 +212,20 @@ impl SharedStore {
                 params![pubkey_hex, name, scopes, owner as i64],
             )
             .map_err(|_| refuse("agent-exists"))?;
+        Ok(())
+    }
+
+    /// Marks an agent revoked at `at` (an earlier revocation time stands). It can no longer write or authenticate;
+    /// its notes stay readable (quarantine is the separate act that withdraws them).
+    pub fn revoke_agent(&self, name: &str, at: u64) -> Result<()> {
+        let at = i64::try_from(at).map_err(|_| refuse("agent-record"))?;
+        let changed = self
+            .db
+            .execute("UPDATE agents SET revoked_at = COALESCE(revoked_at, ?1) WHERE name = ?2", params![at, name])
+            .map_err(sql)?;
+        if changed == 0 {
+            return Err(refuse("agent-unknown"));
+        }
         Ok(())
     }
 
@@ -137,39 +258,65 @@ impl SharedStore {
             .transpose()
     }
 
-    fn quarantined(&self, pubkey_hex: &str) -> Result<bool> {
-        let n: i64 = self
-            .db
-            .query_row(
-                "SELECT count(*) FROM events WHERE kind = ?1 AND target = ?2",
-                params![QUARANTINE_KIND, pubkey_hex],
-                |r| r.get(0),
-            )
-            .map_err(sql)?;
-        Ok(n > 0)
+    fn is_owner(&self, pubkey_hex: &str) -> Result<bool> {
+        Ok(self.agent(pubkey_hex)?.is_some_and(|a| a.owner))
     }
 
-    // ---------- append ----------
+    // ---------- verified rows ----------
 
-    fn last_chain(&self) -> Result<[u8; 32]> {
-        let chain: Option<Vec<u8>> = self
+    /// The chain link of the row just before `seq` (zero for the first row).
+    fn prev_link(&self, seq: i64) -> Result<[u8; 32]> {
+        let prev: Option<Vec<u8>> = self
             .db
-            .query_row("SELECT chain FROM events ORDER BY seq DESC LIMIT 1", [], |r| r.get(0))
+            .query_row("SELECT chain FROM events WHERE seq < ?1 ORDER BY seq DESC LIMIT 1", params![seq], |r| r.get(0))
             .optional()
             .map_err(sql)?;
-        match chain {
+        match prev {
             None => Ok([0u8; 32]),
-            Some(bytes) => bytes.try_into().map_err(|_| refuse("store-chain")),
+            Some(b) => b.try_into().map_err(|_| refuse("note-integrity")),
         }
     }
 
-    fn next_chain(prev: &[u8; 32], id: &[u8; 32]) -> [u8; 32] {
-        let mut h = Sha256::new();
-        h.update(b"aukora:kira:chain:v1\0");
-        h.update(prev);
-        h.update(id);
-        h.finalize().into()
+    /// Rows of one control kind aimed at `target`, oldest first, each re-verified (signature, columns, chain link).
+    fn verified_controls(&self, kind: u16, target: &str) -> Result<Vec<(Row, Event)>> {
+        let mut stmt = self.db.prepare(&format!("{ROW} WHERE kind = ?1 AND target = ?2 ORDER BY seq")).map_err(sql)?;
+        let rows = stmt
+            .query_map(params![kind, target], row_of)
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .map(|row| {
+                let (event, _) = check_row(&row, &self.prev_link(row.seq)?, CHAIN_VERSION)?;
+                Ok((row, event))
+            })
+            .collect()
     }
+
+    /// Whether a verified, owner-signed quarantine names this source. The `target` column only finds candidates: the
+    /// signed `source` tag and the signer's owner flag decide, and a row that fails either is an integrity failure.
+    fn quarantined(&self, pubkey_hex: &str) -> Result<bool> {
+        let controls = self.verified_controls(QUARANTINE_KIND, pubkey_hex)?;
+        for (row, event) in &controls {
+            if single_tag(event, "source")? != pubkey_hex || !self.is_owner(&row.pubkey)? {
+                return Err(refuse("note-integrity"));
+            }
+        }
+        Ok(!controls.is_empty())
+    }
+
+    /// The first verified supersede of note `id_hex` (written by `author`), signed by that author or the owner.
+    fn superseded_by(&self, id_hex: &str, author: &str) -> Result<Option<String>> {
+        let controls = self.verified_controls(SUPERSEDE_KIND, id_hex)?;
+        for (row, event) in &controls {
+            if single_tag(event, "supersedes")? != id_hex || (row.pubkey != author && !self.is_owner(&row.pubkey)?) {
+                return Err(refuse("note-integrity"));
+            }
+        }
+        Ok(controls.into_iter().next().map(|(row, _)| row.id))
+    }
+
+    // ---------- append ----------
 
     /// Append one verified event. Checks the author's registration, scope, review claim, and the kind's rules.
     pub fn append(&mut self, verified: VerifiedEvent) -> Result<StoredNote> {
@@ -184,16 +331,17 @@ impl SharedStore {
             return Err(refuse("author-quarantined"));
         }
         let raw = event.encode()?;
+        let created_at = i64::try_from(event.created_at).map_err(|_| refuse("event-time"))?;
         let tx = self.db.transaction().map_err(sql)?;
-        let prev: Option<Vec<u8>> = tx
-            .query_row("SELECT chain FROM events ORDER BY seq DESC LIMIT 1", [], |r| r.get(0))
+        let last: Option<(i64, Vec<u8>)> = tx
+            .query_row("SELECT seq, chain FROM events ORDER BY seq DESC LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?)))
             .optional()
             .map_err(sql)?;
-        let prev: [u8; 32] = match prev {
-            None => [0u8; 32],
-            Some(b) => b.try_into().map_err(|_| refuse("store-chain"))?,
+        let (seq, prev): (i64, [u8; 32]) = match last {
+            None => (1, [0u8; 32]),
+            Some((s, b)) => (s + 1, b.try_into().map_err(|_| refuse("store-chain"))?),
         };
-        let chain = Self::next_chain(&prev, event.id.as_bytes());
+        let chain = link(CHAIN_VERSION, &prev, seq, event.id.as_bytes(), event.created_at).to_vec();
         let exists: i64 = tx
             .query_row("SELECT count(*) FROM events WHERE id = ?1", params![id], |r| r.get(0))
             .map_err(sql)?;
@@ -209,6 +357,11 @@ impl SharedStore {
                 }
                 if meta.review == Review::OwnerSigned && !agent.owner {
                     return Err(refuse("review-claim-refused"));
+                }
+                // Lanes by whitelist: commitments, the self file and the resume hold only the owner's own words.
+                check_capture_lane(meta.capture, meta.lane)?;
+                if meta.lane.owner_only() && !agent.owner {
+                    return Err(refuse("note-capture-lane"));
                 }
                 // Ancestry is computed here, from notes the store holds; a tag cannot declare independence.
                 let mut roots = BTreeSet::new();
@@ -230,15 +383,14 @@ impl SharedStore {
                     roots.insert(id.clone());
                 }
                 tx.execute(
-                    "INSERT INTO events(id, pubkey, created_at, kind, raw, chain, epoch, scope, lane, privacy, slot, statement_hash, target)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, NULL)",
+                    "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, epoch, scope, lane, privacy, slot, statement_hash, target)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)",
                     params![
-                        id, author, event.created_at as i64, NOTE_KIND, raw, chain.to_vec(), meta.epoch as i64,
-                        meta.scope, meta.lane.wire(), meta.privacy.wire(), meta.slot, meta.statement_hash.to_vec()
+                        seq, id, author, created_at, NOTE_KIND, raw, chain, meta.epoch as i64, meta.scope,
+                        meta.lane.wire(), meta.privacy.wire(), meta.slot, meta.statement_hash.to_vec()
                     ],
                 )
                 .map_err(sql)?;
-                let seq = tx.last_insert_rowid();
                 tx.execute("INSERT INTO fts(rowid, body) VALUES (?1, ?2)", params![seq, event.content]).map_err(sql)?;
                 for root in &roots {
                     tx.execute("INSERT INTO ancestry(seq, root) VALUES (?1, ?2)", params![seq, root]).map_err(sql)?;
@@ -265,8 +417,8 @@ impl SharedStore {
                     }
                 }
                 tx.execute(
-                    "INSERT INTO events(id, pubkey, created_at, kind, raw, chain, target) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![id, author, event.created_at as i64, SUPERSEDE_KIND, raw, chain.to_vec(), target],
+                    "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, target) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![seq, id, author, created_at, SUPERSEDE_KIND, raw, chain, target],
                 )
                 .map_err(sql)?;
                 tx.commit().map_err(sql)?;
@@ -277,8 +429,8 @@ impl SharedStore {
                 }
                 let source = single_tag(&event, "source")?.to_owned();
                 tx.execute(
-                    "INSERT INTO events(id, pubkey, created_at, kind, raw, chain, target) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![id, author, event.created_at as i64, QUARANTINE_KIND, raw, chain.to_vec(), source],
+                    "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, target) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![seq, id, author, created_at, QUARANTINE_KIND, raw, chain, source],
                 )
                 .map_err(sql)?;
                 tx.commit().map_err(sql)?;
@@ -288,7 +440,6 @@ impl SharedStore {
         if event.kind == NOTE_KIND {
             return self.get(&id)?.ok_or_else(|| refuse("store-sql"));
         }
-        let _ = self.last_chain()?;
         Err(refuse("event-recorded-not-a-note"))
     }
 
@@ -305,38 +456,17 @@ impl SharedStore {
     // ---------- read ----------
 
     fn load(&self, seq: i64) -> Result<Option<StoredNote>> {
-        let row: Option<(String, Vec<u8>, Vec<u8>, i64)> = self
-            .db
-            .query_row(
-                "SELECT pubkey, raw, chain, kind FROM events WHERE seq = ?1",
-                params![seq],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .optional()
-            .map_err(sql)?;
-        let Some((author, raw, chain, kind)) = row else { return Ok(None) };
-        if kind != NOTE_KIND as i64 {
+        let row = self.db.query_row(&format!("{ROW} WHERE seq = ?1"), params![seq], row_of).optional().map_err(sql)?;
+        let Some(row) = row else { return Ok(None) };
+        if row.kind != i64::from(NOTE_KIND) {
             return Ok(None);
         }
-        // Verify on read: the stored bytes must still be a correctly signed event with the stored id and chain link.
-        let event = Event::decode(&raw)?.verify().map_err(|_| refuse("note-integrity"))?.event().clone();
-        let id = hex32(event.id.as_bytes());
-        let prev: Option<Vec<u8>> = self
-            .db
-            .query_row("SELECT chain FROM events WHERE seq < ?1 ORDER BY seq DESC LIMIT 1", params![seq], |r| r.get(0))
-            .optional()
-            .map_err(sql)?;
-        let prev: [u8; 32] = match prev {
-            None => [0u8; 32],
-            Some(b) => b.try_into().map_err(|_| refuse("note-integrity"))?,
-        };
-        if Self::next_chain(&prev, event.id.as_bytes()).to_vec() != chain || hex32(event.pubkey.as_bytes()) != author {
-            return Err(refuse("note-integrity"));
-        }
+        // Verify on read: a correctly signed event matching its columns and its chain link.
+        let (event, _) = check_row(&row, &self.prev_link(seq)?, CHAIN_VERSION)?;
         let meta = NoteMeta::parse(&event.tags, &event.content)?;
         let author_name: String = self
             .db
-            .query_row("SELECT name FROM agents WHERE pubkey = ?1", params![author], |r| r.get(0))
+            .query_row("SELECT name FROM agents WHERE pubkey = ?1", params![row.pubkey], |r| r.get(0))
             .optional()
             .map_err(sql)?
             .unwrap_or_else(|| "unknown".into());
@@ -346,16 +476,8 @@ impl SharedStore {
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
-        let superseded_by: Option<String> = self
-            .db
-            .query_row(
-                "SELECT id FROM events WHERE kind = ?1 AND target = ?2 ORDER BY seq LIMIT 1",
-                params![SUPERSEDE_KIND, id],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(sql)?;
-        let quarantined = self.quarantined(&author)?;
+        let superseded_by = self.superseded_by(&row.id, &row.pubkey)?;
+        let quarantined = self.quarantined(&row.pubkey)?;
         Ok(Some(StoredNote { seq, event, meta, author_name, roots, superseded_by, quarantined }))
     }
 
@@ -416,29 +538,10 @@ impl SharedStore {
         seqs.into_iter().filter_map(|s| self.load(s).transpose()).collect()
     }
 
-    /// Walk the whole append chain; returns the number of events checked.
+    /// Walk the whole append chain, re-verifying every event's signature, columns and link; returns the number of
+    /// events checked. Any mismatch is `store-chain-broken`.
     pub fn verify_chain(&self) -> Result<u64> {
-        let mut stmt = self.db.prepare("SELECT id, chain FROM events ORDER BY seq").map_err(sql)?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))
-            .map_err(sql)?;
-        let mut prev = [0u8; 32];
-        let mut n = 0;
-        for row in rows {
-            let (id, chain) = row.map_err(sql)?;
-            let mut idb = [0u8; 32];
-            for (i, byte) in idb.iter_mut().enumerate() {
-                *byte = u8::from_str_radix(id.get(i * 2..i * 2 + 2).ok_or_else(|| refuse("store-chain"))?, 16)
-                    .map_err(|_| refuse("store-chain"))?;
-            }
-            let next = Self::next_chain(&prev, &idb);
-            if next.to_vec() != chain {
-                return Err(refuse("store-chain-broken"));
-            }
-            prev = next;
-            n += 1;
-        }
-        Ok(n)
+        Ok(walk(&self.db, CHAIN_VERSION)?.len() as u64)
     }
 
     // ---------- index access for recall ----------
@@ -655,5 +758,61 @@ mod tests {
         let mut fake = draft("claims an unknown source", "builders");
         fake.sources = vec!["ab".repeat(32)];
         assert!(s.append(sign(&a, &fake, Review::Remembered, 3)).is_err());
+    }
+
+    #[test]
+    fn commitment_lanes_take_only_the_owners_words() {
+        let (owner, a) = (key(), key());
+        let mut s = store_with(&[("peter", &owner, &["*"], true), ("agent", &a, &["builders"], false)]);
+        let mut d = draft("the figurine stays on the left shelf", "builders");
+        d.lane = Lane::Decision;
+        d.capture = Capture::OwnerTyped;
+        // An owner-class capture signed by an agent's own key still cannot enter a commitment lane.
+        assert_eq!(s.append(sign(&a, &d, Review::Remembered, 1)).err(), Some(refuse("note-capture-lane")));
+        s.append(sign(&owner, &d, Review::Remembered, 1)).unwrap();
+        // A hand-built event that skips NoteDraft::tags is refused by the store's own whitelist check.
+        let mut tags = draft("x y", "builders").tags(Review::Remembered).unwrap();
+        tags.retain(|t| t[0] != Lane::TAG);
+        tags.push(vec![Lane::TAG.into(), "resume".into()]);
+        let forged = Event::sign(&owner, 2, NOTE_KIND, tags, "x y".into()).unwrap();
+        assert_eq!(s.append(forged).err(), Some(refuse("note-capture-lane")));
+    }
+
+    #[test]
+    fn chain_binds_seq_and_time_and_control_rows_are_verified() {
+        let (owner, a, b) = (key(), key(), key());
+        let mut s = store_with(&[("peter", &owner, &["*"], true), ("a", &a, &["builders"], false), ("b", &b, &["builders"], false)]);
+        let one = s.append(sign(&a, &draft("first note here", "builders"), Review::Remembered, 1)).unwrap();
+        let two = s.append(sign(&b, &draft("second note here", "builders"), Review::Remembered, 2)).unwrap();
+        assert_eq!(s.verify_chain().unwrap(), 2);
+        // Changing a row's time column breaks both the read and the chain walk.
+        s.db.execute("UPDATE events SET created_at = 9 WHERE seq = ?1", params![one.seq]).unwrap();
+        assert!(s.note_by_seq(one.seq).is_err());
+        assert_eq!(s.verify_chain().err(), Some(refuse("store-chain-broken")));
+        s.db.execute("UPDATE events SET created_at = 1 WHERE seq = ?1", params![one.seq]).unwrap();
+        // A forged quarantine row (a column pointed at b, a raw event that is not a signed quarantine) is caught on
+        // read instead of silently quarantining b.
+        let q = Event::sign(&owner, 3, QUARANTINE_KIND, vec![vec!["source".into(), pub_hex(&a)]], String::new()).unwrap();
+        s.record(q).unwrap();
+        assert!(s.get(&hex32(one.event.id.as_bytes())).unwrap().unwrap().quarantined);
+        s.db.execute("UPDATE events SET target = ?1 WHERE kind = ?2", params![pub_hex(&b), QUARANTINE_KIND]).unwrap();
+        assert!(s.note_by_seq(two.seq).is_err());
+        // A store from before v2 whose v1 chain verifies is upgraded in place on open.
+        let path = std::env::temp_dir().join(format!("kira-chain-{}.sqlite", pub_hex(&key())));
+        {
+            let mut old = SharedStore::open(&path).unwrap();
+            old.register_agent("a", &pub_hex(&a), &["builders".into()], false).unwrap();
+            let n = old.append(sign(&a, &draft("an old note", "builders"), Review::Remembered, 4)).unwrap();
+            let v1 = link(1, &[0u8; 32], n.seq, n.event.id.as_bytes(), 4);
+            old.db.execute("UPDATE events SET chain = ?1", params![v1.to_vec()]).unwrap();
+            old.db.execute("DELETE FROM meta", []).unwrap();
+            assert!(old.verify_chain().is_err());
+        }
+        assert_eq!(SharedStore::open(&path).unwrap().verify_chain().unwrap(), 1);
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = path.clone().into_os_string();
+            name.push(suffix);
+            let _ = std::fs::remove_file(name);
+        }
     }
 }
