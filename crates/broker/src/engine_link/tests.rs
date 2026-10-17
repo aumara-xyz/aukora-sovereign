@@ -129,6 +129,10 @@ struct Rig {
 static RIGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 async fn rig(reply: Reply, budget: Option<Budget>, key: bool, approve_key: bool) -> Rig {
+    rig_limits(reply, budget, key, approve_key, Limits::default()).await
+}
+
+async fn rig_limits(reply: Reply, budget: Option<Budget>, key: bool, approve_key: bool, limits: Limits) -> Rig {
     let (port, seen) = fake_provider(reply).await;
     let dir = std::env::temp_dir().join(format!(
         "aukora-engine-link-{}-{}",
@@ -149,7 +153,7 @@ async fn rig(reply: Reply, budget: Option<Budget>, key: bool, approve_key: bool)
         approved.key_sha256 = approve_key.then(|| KeyApproval::for_key(KEY).key_sha256);
         approved.budget = budget.map(|b| b.canonical_bytes().unwrap());
     }
-    let link = Link::new(keys.clone(), fake.clone(), &dir, Upstream::loopback(port), vec![ENGINE_UID], Limits::default())
+    let link = Link::new(keys.clone(), fake.clone(), &dir, Upstream::loopback(port), vec![ENGINE_UID], limits)
         .unwrap();
     Rig { link: Arc::new(link), fake, seen, dir, responses: Mutex::new(Vec::new()) }
 }
@@ -361,6 +365,42 @@ async fn a_request_with_an_odd_message_member_a_typed_tool_or_a_fetched_source_i
     });
     let (status, reply, _) = rig.call(body).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+}
+
+/// An engine that holds its socket open and never reads: the call ends, settles at the reservation and frees its slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_engine_that_stops_reading_does_not_hold_the_call_or_its_reservation_for_ever() {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = vec![tool_call_stream(10)[0].clone()];
+    stream.push(event("content_block_start", serde_json::json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})));
+    let big = "x".repeat(60 * 1024);
+    for _ in 0..120 {
+        stream.push(event("content_block_delta", serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":big}})));
+    }
+    let limits = Limits { idle: std::time::Duration::from_millis(400), max_calls: 2, ..Limits::default() };
+    let rig = rig_limits(Reply::Sse(stream), Some(budget(1_000_000, 200_000, 100)), true, true, limits).await;
+    let (mut client, server) = tokio::net::UnixStream::pair().unwrap();
+    tokio::spawn(serve_connection(rig.link.clone(), server, Peer::Uid(ENGINE_UID)));
+    let body = harness_request("deepseek-flash", 100);
+    let head = format!("POST /v1/messages HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\nanthropic-version: 2023-06-01\r\ncontent-length: {}\r\n\r\n", body.len());
+    client.write_all(head.as_bytes()).await.unwrap();
+    client.write_all(&body).await.unwrap();
+    // The client now reads nothing and keeps the connection open.
+    let mut waited = 0;
+    while rig.fake.receipts.lock().unwrap().is_empty() {
+        assert!(waited < 150, "the stalled call never ended");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        waited += 1;
+    }
+    let receipt: serde_json::Value = serde_json::from_str(&rig.fake.receipts.lock().unwrap()[0]).unwrap();
+    assert_eq!(receipt["body"]["outcome"], "interrupted");
+    assert_eq!(receipt["body"]["detail"], "engine-stalled");
+    assert_eq!(receipt["body"]["cost_unknown"], true);
+    assert_eq!(receipt["body"]["charged_microusd"], receipt["body"]["reserved_microusd"]);
+    assert_eq!(rig.link.calls.available_permits(), 2, "the call slot is free again");
+    let used = rig.link.used(&budget(1_000_000, 200_000, 100).canonical_bytes().unwrap());
+    assert_eq!(used.microusd, receipt["body"]["charged_microusd"].as_u64().unwrap(), "nothing is left reserved");
+    drop(client);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

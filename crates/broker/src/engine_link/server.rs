@@ -25,6 +25,8 @@ use zeroize::Zeroizing;
 type Body = BoxBody<Bytes, Infallible>;
 const MAX_CONNECTIONS: usize = 32;
 const MAX_ERROR_BODY: usize = 64 * 1024;
+/// The provider's whole error body, however slowly it drips.
+const ERROR_BODY_WITHIN: Duration = Duration::from_secs(30);
 
 /// Bind the socket: an existing live socket or any other file there refuses; a stale socket is replaced. The
 /// folder must not be writable by others. With a uid check the socket is opened to every local user after the
@@ -264,8 +266,10 @@ async fn send(
             .filter(|v| !v.is_empty() && v.len() <= 8 && v.bytes().all(|b| b.is_ascii_digit()))
             .map(str::to_owned);
         let mut error = Vec::new();
+        let until = Instant::now() + ERROR_BODY_WITHIN;
         while error.len() < MAX_ERROR_BODY {
-            match tokio::time::timeout(Duration::from_secs(10), response.chunk()).await {
+            let left = until.saturating_duration_since(Instant::now()).min(Duration::from_secs(10));
+            match tokio::time::timeout(left, response.chunk()).await {
                 Ok(Ok(Some(chunk))) => error.extend_from_slice(&chunk),
                 _ => break,
             }
@@ -330,8 +334,13 @@ async fn pump(
             Err(Stop::Unscannable) => break Outcome::Interrupted("reply-unscannable"),
             Ok(out) if out.is_empty() => {}
             Ok(out) => {
-                if sender.send(Bytes::from(out)).await.is_err() {
-                    break Outcome::Cancelled;
+                let within = deadline.saturating_duration_since(Instant::now()).min(link.limits.idle);
+                match hand_over(&sender, Bytes::from(out), within).await {
+                    Handed::Sent => {}
+                    Handed::Gone => break Outcome::Cancelled,
+                    // An engine that holds its end open and stops reading must not keep the call's slot and
+                    // reservation for ever.
+                    Handed::Stalled => break Outcome::Interrupted("engine-stalled"),
                 }
             }
         }
@@ -342,9 +351,9 @@ async fn pump(
     drop(permit);
     match outcome {
         Outcome::Ended if recorded && meter.complete() => {
-            let _ = sender.send(Bytes::from(tail)).await;
+            hand_over(&sender, Bytes::from(tail), link.limits.idle).await;
         }
-        Outcome::Cancelled => {}
+        Outcome::Cancelled | Outcome::Interrupted("engine-stalled") => {}
         _ => {
             // The engine learns the call ended and why, never what was withheld.
             let code = match outcome {
@@ -357,8 +366,25 @@ async fn pump(
                 "\n\nevent: error\ndata: {}\n\n",
                 String::from_utf8_lossy(&error_body("api_error", &format!("aukora broker: {code}")))
             );
-            let _ = sender.send(Bytes::from(event)).await;
+            hand_over(&sender, Bytes::from(event), link.limits.idle).await;
         }
+    }
+}
+
+enum Handed {
+    Sent,
+    /// The engine's side hung up.
+    Gone,
+    /// The engine kept its side open and did not take the bytes in time.
+    Stalled,
+}
+
+/// Give the reply some bytes, for at most `within`.
+async fn hand_over(sender: &tokio::sync::mpsc::Sender<Bytes>, bytes: Bytes, within: Duration) -> Handed {
+    match tokio::time::timeout(within, sender.send(bytes)).await {
+        Ok(Ok(())) => Handed::Sent,
+        Ok(Err(_)) => Handed::Gone,
+        Err(_) => Handed::Stalled,
     }
 }
 
