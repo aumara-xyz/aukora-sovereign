@@ -6,10 +6,21 @@ verified pairing proves. Bricks 47, 76, 77, 78, 118, 132 (NORTH-STAR.md).
 
 ## What it proves, and what it does not
 
-- **Proves:** two device keys, each held by a browser, exchanged signed rotating QR frames within the same few
-  seconds, while both bound the same node-issued context (this node, this owner, this owner session, this pairing,
-  this owner origin, these two keys, this five-minute window). The node checked both signatures, the nonce
-  commitments and timestamps the receipt carries, and accepted that receipt once.
+- **What the node checks** (`supervisor::pairing::submit`, then `copresence::v1::verify_receipt`): the receipt is
+  canonical v1 JSON; its context is exactly the pinned one (this node in both participants, these two device keys,
+  the pinned context bytes, screen-to-screen, no sound, motion or intent layer); both P-256 signatures verify over one
+  core digest, which commits to that context, both nonces, both timestamps and a transcript digest; the two
+  timestamps are at most 10 s apart, the second is fresh (from 7 s before to 3 s after the node's clock: the verifier's 10 s, shifted by the 3 s a device clock may run ahead), both fall inside the
+  pairing window; and the receipt has not been spent. Then it spends it once.
+- **What the node does not check:** the frames themselves never reach it. It does not check each nonce against its
+  FACE commitment, and it does not recompute the transcript digest from the four frames: it only sees the 32 bytes
+  both keys signed. Those checks are each device's, in the browser engine (`portal/engine.ts`: the reveal against the
+  commitment, the transcript rebuilt from the frames, the HANDSHAKE core compared with its own); the Rust exchange
+  state machine (`crates/copresence/src/v1/exchange.rs`) does the same but the node does not run it for pairing.
+- **So a verified pairing shows:** two device keys, the ones the node registered at start and join, both signed one
+  core binding this node's context within a few seconds of each other, and the node accepted that once. That two
+  honest engines also exchanged light is what those engines enforce; two colluding keys could sign a core without
+  any exchange.
 - **Does not prove:** that a human was present, that the two screens were physically near each other (a fast video
   relay can carry the light), who held either device, or anything about location. One person can pair two of their
   own devices; that is the point here. A receipt grants no permission, device scope or authority. Adding a device
@@ -30,8 +41,9 @@ verified pairing proves. Bricks 47, 76, 77, 78, 118, 132 (NORTH-STAR.md).
    exchange context. Both sign with their durable device keys. Frames rotate each second: FACE (nonce commitment),
    SEENYOU (reveal), HANDSHAKE (B signs the core), BLOOM (A signs; the receipt).
 5. **Receipt.** The owner screen submits the receipt: `POST /api/pairing/receipt {pairing, receipt}`. The node checks
-   the claimed context against everything it pinned, then `copresence::v1::verify_receipt` (both signatures, core,
-   10-second freshness, durable attempt journal), then that both timestamps fall in the pairing window.
+   the claimed context against everything it pinned, then `copresence::v1::verify_receipt` (both signatures over one
+   core, the 10-second window between the timestamps and freshness, durable attempt journal), then that both
+   timestamps fall in the pairing window. Nonce commitments and the transcript are the devices' checks (above).
 6. **Spend and record.** In one SQLite transaction the node inserts the receipt digest into `spent_receipts`
    (primary key; no update or delete), marks the pairing spent and upserts both devices. Then it appends one Aura fact.
    It returns the verdict.
@@ -151,11 +163,12 @@ export const pairingPort: PairingPort | null = createNodePairingPort();
 
 ## What ran
 
-- `cargo test -p supervisor --bin sovereign pairing`: 13 tests (including two crash-injection tests and one against a
-  real Aura ledger); with real P-256 receipts (spend once, replay, wrong context,
+- `cargo test -p supervisor --bin sovereign pairing`: 16 tests (including crash-injection, post-spend failure and
+  pending-fact sweep tests, and one against a real Aura ledger); with real P-256 receipts (spend once, replay, wrong context,
   wrong node, stranger key, stale and future frames, tampered signature, attempt bound, single-use and expiring join,
   session separation, pending fact settled once, reopen).
 - `cargo test -p frontdoor --lib`: portal paths on the owner surface only; pairing routes; phone page headers.
+- `node tests/copresence/port.mjs`: the owner port's renewal timer keeps a joined pairing, renews an unjoined one.
 - `node tests/copresence/twin.mjs --runs=5`: two isolated headless-Chrome contexts against a local
   stand-in node running `supervisor::pairing` (`crates/supervisor/src/pairing/twin.rs`): 5 of 5 paired in about
   4.5 s, phone verified, one fact per run, replay refused, both devices listed, no CSP violation. Both pages read
