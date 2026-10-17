@@ -52,6 +52,26 @@ impl Host {
             .filter(|active| *active == running)
     }
 
+    /// Whether the shell session with this store digest is still live for this owner scope (not expired, not
+    /// revoked, its owner epoch and parent intact, still a shell session of this node's shell origin). `Ok(false)`
+    /// is "ended"; an `Err` is a store that could not be read now.
+    pub fn shell_session_live(&self, shell: canon::digest::Digest32, scope: PrincipalScope, now_ms: u64) -> Result<bool> {
+        use frontdoor::session::SessionStore as _;
+        let mut sessions = self.sessions()?;
+        let shell_origin = frontdoor::tls::Origin::parse(&self.config.shell_origin)?;
+        match sessions.with_live_session(shell, now_ms, |record| {
+            Ok(record.scope == frontdoor::session::SessionScope::Shell
+                && record.node == self.state.node
+                && record.origin == shell_origin
+                && record.subject == Some(scope.subject)
+                && record.owner_epoch == scope.epoch)
+        }) {
+            Ok(live) => Ok(live),
+            Err(refusal) if refusal == codes::FRONTDOOR_SESSION_REQUIRED || refusal == codes::AUMLOK_BINDING_REQUIRED => Ok(false),
+            Err(refusal) => Err(refusal),
+        }
+    }
+
     /// `GET /engine/open` on the shell origin: a bound owner (shell session) is sent to the engine origin with a fresh
     /// one-time ticket. Only a top-level navigation carries the shell cookie here; the engine origin never sees it.
     pub(super) fn engine_open(&self, request: &AdmittedRequest) -> Result<http::Response<Vec<u8>>> {
@@ -70,6 +90,9 @@ impl Host {
             now()?,
             |session| {
                 let record = session.record();
+                if record.scope != frontdoor::session::SessionScope::Shell {
+                    return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+                }
                 let scope = PrincipalScope {
                     subject: record.subject.ok_or(codes::AUMLOK_BINDING_REQUIRED)?,
                     epoch: record.owner_epoch,
@@ -77,7 +100,8 @@ impl Host {
                 if self.ledger.binding()? != BindingState::Bound(scope) {
                     return Err(codes::AUMLOK_BINDING_REQUIRED);
                 }
-                engine.enter_url(scope, now()?)
+                // The engine session is this shell session's: it ends when this one does (O12).
+                engine.enter_url(scope, record.token_digest, record.expires_at_ms, now()?)
             },
         )?;
         http::Response::builder()
@@ -87,6 +111,44 @@ impl Host {
             .header("referrer-policy", "no-referrer")
             .body(Vec::new())
             .map_err(|_| codes::SUPERVISOR_STATE)
+    }
+
+    /// `POST /api/session/end` on the shell origin: sign out. The caller's own shell session is revoked in the store
+    /// (with anything derived from it), every engine-origin session minted from it ends at once, and the browser's
+    /// shell cookie is cleared (O12). Nothing else is touched: the owner origin's session and the binding stay.
+    pub(super) fn shell_sign_out(&self, request: &AdmittedRequest) -> Result<http::Response<Vec<u8>>> {
+        use frontdoor::session::SessionStore as _;
+        if request.method() != frontdoor::ingress::Method::Post {
+            return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
+        }
+        let mut sessions = self.sessions()?;
+        let shell = frontdoor::session::with_bound_session(
+            &mut sessions,
+            request.cookie().ok_or(codes::FRONTDOOR_SESSION_REQUIRED)?,
+            self.state.node,
+            request.origin(),
+            now()?,
+            |session| {
+                let record = session.record();
+                if record.scope != frontdoor::session::SessionScope::Shell {
+                    return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+                }
+                Ok(record.token_digest)
+            },
+        )?;
+        sessions.revoke(shell)?;
+        drop(sessions);
+        if let Some(engine) = self.engine.as_ref() {
+            engine.end_shell(shell);
+        }
+        let mut response = super::json_response(Value::object(vec![("ended".into(), Value::boolean(true))])?)?;
+        response.headers_mut().insert(
+            http::header::SET_COOKIE,
+            format!("{}=; {}; Max-Age=0", frontdoor::session::SHELL_COOKIE, frontdoor::session::COOKIE_ATTRIBUTES)
+                .parse()
+                .map_err(|_| codes::SUPERVISOR_STATE)?,
+        );
+        Ok(response)
     }
 
     /// `GET /engine/model-key` on the shell origin: one self-contained page where the owner types the provider key.

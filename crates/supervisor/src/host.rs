@@ -566,6 +566,9 @@ impl Host {
         if request.role() == HostRole::Shell && request.path() == "/api/engine/model-key" {
             return self.model_key_entry(request);
         }
+        if request.role() == HostRole::Shell && request.path() == "/api/session/end" {
+            return self.shell_sign_out(request);
+        }
         if !request.path().starts_with("/api/") {
             return self.asset(request, admission.owner_navigation());
         }

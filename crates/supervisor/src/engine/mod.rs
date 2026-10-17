@@ -100,10 +100,24 @@ impl Engine {
         })))
     }
 
-    /// The engine origin's URL that redeems a fresh one-time ticket for this bound owner.
-    pub fn enter_url(&self, scope: supervisor::ingress::PrincipalScope, now: u64) -> Result<String> {
-        let ticket = self.access.lock().map_err(|_| refuse("engine-state"))?.mint_ticket(scope, now)?;
+    /// The engine origin's URL that redeems a fresh one-time ticket for this bound owner, minted from the shell
+    /// session `shell` (its store digest), which ends at `shell_expires`: the engine session lives no longer (O12).
+    pub fn enter_url(
+        &self,
+        scope: supervisor::ingress::PrincipalScope,
+        shell: canon::digest::Digest32,
+        shell_expires: u64,
+        now: u64,
+    ) -> Result<String> {
+        let ticket = self.access.lock().map_err(|_| refuse("engine-state"))?.mint_ticket(scope, shell, shell_expires, now)?;
         Ok(format!("https://{}{}{ticket}", self.config.host, access::ENTER_PREFIX))
+    }
+
+    /// End every engine-origin session minted from this shell session (the owner signed out of the shell).
+    pub fn end_shell(&self, shell: canon::digest::Digest32) {
+        if let Ok(mut access) = self.access.lock() {
+            access.end_shell(shell);
+        }
     }
 
     /// Whether the controller's last decision is "running" (the unit active, its policy check passed).

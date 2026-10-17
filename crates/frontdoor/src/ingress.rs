@@ -283,6 +283,15 @@ fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
             Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
         };
     }
+    // Sign out of the shell: the bound owner ends this shell session (and every engine-origin session minted from it,
+    // deploy/engine/NODE.md O12). Same-origin JSON like every shell POST.
+    if role == HostRole::Shell && path == "/api/session/end" {
+        return if method == Method::Post {
+            Ok(())
+        } else {
+            Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
+        };
+    }
     if role == HostRole::Shell && path == crate::api::service_reads::PATH {
         return crate::api::service_reads::resolve(role, method, path);
     }
@@ -754,4 +763,16 @@ fn handoff_cookie_digest(headers: &[String], name: &str) -> Vec<canon::digest::D
         }
     }
     digests
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn the_shell_can_sign_out_by_post_only_and_the_owner_origin_has_no_such_route() {
+        assert!(require_route(HostRole::Shell, Method::Post, "/api/session/end").is_ok());
+        assert!(require_route(HostRole::Shell, Method::Get, "/api/session/end").is_err());
+        assert!(require_route(HostRole::Owner, Method::Post, "/api/session/end").is_err());
+    }
 }

@@ -220,10 +220,11 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
         }
         let redeemed = engine.access.lock().map_err(|_| refuse("engine-state")).and_then(|mut access| access.redeem(ticket, now, lifetime));
         return match redeemed {
-            Ok((bearer, _, _)) => {
+            Ok((bearer, _, expires)) => {
                 let mut response = text(StatusCode::SEE_OTHER, "\n");
                 response.headers_mut().insert("location", http::HeaderValue::from_static("/"));
-                if let Ok(cookie) = http::HeaderValue::from_str(&access::set_cookie(&bearer, lifetime)) {
+                // The cookie lasts no longer than the session, which lasts no longer than its shell session.
+                if let Ok(cookie) = http::HeaderValue::from_str(&access::set_cookie(&bearer, expires.saturating_sub(now))) {
                     response.headers_mut().insert("set-cookie", cookie);
                 }
                 response
@@ -233,11 +234,11 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     }
     let cookies: Vec<&str> = request.headers().get_all("cookie").iter().filter_map(|value| value.to_str().ok()).collect();
     let bearer = access::bearer_from(&cookies);
-    let scope = bearer.as_deref().and_then(|bearer| engine.access.lock().ok()?.session(bearer, now));
-    let Some(scope) = scope else {
+    let grant = bearer.as_deref().and_then(|bearer| engine.access.lock().ok()?.session(bearer, now));
+    let Some(grant) = grant else {
         return text(StatusCode::UNAUTHORIZED, "Open the engine from your node (https://<your node>/engine/open).\n");
     };
-    match still_admitted(&host, scope).await {
+    match still_admitted(&host, &grant, now).await {
         Admitted::Yes => {}
         Admitted::Unknown => {
             // The floor could not be read just now: refuse this request, keep the session (NODE.md O11).
@@ -247,7 +248,19 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
             if let (Some(bearer), Ok(mut access)) = (bearer.as_deref(), engine.access.lock()) {
                 access.end(bearer);
             }
-            return text(StatusCode::FORBIDDEN, "This engine session ended: the owner binding or the approved release changed.\n");
+            return text(
+                StatusCode::FORBIDDEN,
+                "This engine session ended: you signed out of your node, or the owner binding or the approved release changed.\n",
+            );
+        }
+        Admitted::ShellEnded => {
+            if let Ok(mut access) = engine.access.lock() {
+                access.end_shell(grant.shell);
+            }
+            return text(
+                StatusCode::FORBIDDEN,
+                "This engine session ended: you signed out of your node, or the owner binding or the approved release changed.\n",
+            );
         }
     }
     relay(&engine, request, &target).await
@@ -259,15 +272,24 @@ enum Admitted {
     Yes,
     /// The binding changed or the owner's release approval is gone: the session ends.
     Ended,
+    /// The shell session it was minted from ended (signed out, expired, revoked, a new owner epoch): every engine
+    /// session from it ends (O12).
+    ShellEnded,
     /// The release floor could not be read just now: this request is refused, the session stays.
     Unknown,
 }
 
-/// Re-checked on every request: the owner scope is still the node's binding and the running release is the one the
-/// owner approved. A floor that cannot be read is tried again briefly and is never taken for an answer.
-async fn still_admitted(host: &Host, scope: supervisor::ingress::PrincipalScope) -> Admitted {
-    if !matches!(host.ledger.binding(), Ok(BindingState::Bound(bound)) if bound == scope) {
+/// Re-checked on every request: the owner scope is still the node's binding, the shell session that minted the engine
+/// session is still live, and the running release is the one the owner approved. A floor or session store that cannot
+/// be read is tried again briefly and is never taken for an answer.
+async fn still_admitted(host: &Host, grant: &access::Grant, now: u64) -> Admitted {
+    if !matches!(host.ledger.binding(), Ok(BindingState::Bound(bound)) if bound == grant.scope) {
         return Admitted::Ended;
+    }
+    match host.shell_session_live(grant.shell, grant.scope, now) {
+        Ok(true) => {}
+        Ok(false) => return Admitted::ShellEnded,
+        Err(_) => return Admitted::Unknown,
     }
     for attempt in 0..3 {
         match host.release_standing() {
