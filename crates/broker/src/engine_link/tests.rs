@@ -322,6 +322,47 @@ async fn a_lone_surrogate_in_the_history_is_read_as_a_replacement_character_not_
     );
 }
 
+/// The rebuild is only as deep as it checks: the adapter's messages are `{role, content}` and its tools are function
+/// tools, and nothing in them asks the provider to fetch a URL or a file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_with_an_odd_message_member_a_typed_tool_or_a_fetched_source_is_refused() {
+    use serde_json::json;
+    let url = json!({"type": "image", "source": {"type": "url", "url": "https://elsewhere.example/?d=secret"}});
+    let file = json!({"type": "image", "source": {"type": "file", "file_id": "file_1"}});
+    let base: serde_json::Value = serde_json::from_slice(&harness_request("deepseek-flash", 100)).unwrap();
+    let with = |change: &dyn Fn(&mut serde_json::Value)| {
+        let mut value = base.clone();
+        change(&mut value);
+        serde_json::to_vec(&value).unwrap()
+    };
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("message member", with(&|v| v["messages"][0]["name"] = json!("x"))),
+        ("typed tool", with(&|v| v["tools"][0]["type"] = json!("web_search_20250305"))),
+        ("tool that is not an object", with(&|v| v["tools"] = json!(["fs_list"]))),
+        ("url source in content", with(&|v| v["messages"][0]["content"] = json!([url]))),
+        ("file source in content", with(&|v| v["messages"][0]["content"] = json!([file]))),
+        ("url source in a tool result", with(&|v| v["messages"][2]["content"][0]["content"] = json!([url]))),
+        ("url source in system", with(&|v| v["system"] = json!([url]))),
+    ];
+    for (what, body) in cases {
+        let rig = rig(Reply::Sse(tool_call_stream(10)), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+        let (status, reply, _) = rig.call(body).await;
+        assert_eq!(status, 400, "{what}: {}", String::from_utf8_lossy(&reply));
+        assert_eq!(rig.upstream_calls(), 0, "{what}");
+        assert_eq!(rig.link.used(&budget(1_000_000, 200_000, 100).canonical_bytes().unwrap()).requests, 0, "{what}");
+    }
+    // What the adapter does write passes: an inline image, a deferred tool, and a call whose arguments happen to hold
+    // a member named `source` (the model's own data, not a block).
+    let rig = rig(Reply::Sse(tool_call_stream(10)), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+    let body = with(&|v| {
+        v["messages"][0]["content"] = json!([{"type": "text", "text": "see"}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}]);
+        v["messages"][1]["content"][1]["input"] = json!({"source": {"type": "url", "url": "https://x.example/a"}});
+        v["tools"][0]["defer_loading"] = json!(true);
+    });
+    let (status, reply, _) = rig.call(body).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nothing_is_sent_without_an_approved_key_and_budget_or_for_a_request_the_broker_does_not_forward() {
     let ok = budget(1_000_000, 200_000, 100);

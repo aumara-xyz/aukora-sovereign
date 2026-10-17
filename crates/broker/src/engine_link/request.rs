@@ -23,6 +23,9 @@ const FORWARDED: [&str; 12] = [
     "top_p",
     "top_k",
 ];
+/// Members of a message and of a function tool in the adapter's `serialize()`.
+const MESSAGE_MEMBERS: [&str; 2] = ["role", "content"];
+const TOOL_MEMBERS: [&str; 4] = ["name", "description", "input_schema", "defer_loading"];
 const MAX_MESSAGES: usize = 100_000;
 const MAX_TOOLS: usize = 512;
 /// Per-message and per-request template allowances on top of the byte bound (as `provider::prompt_token_bound`).
@@ -83,12 +86,27 @@ pub fn check(raw: &[u8], budget: &Budget, max_bytes: usize) -> Result<Checked, L
         Some(Value::Array(messages)) if !messages.is_empty() && messages.len() <= MAX_MESSAGES => messages,
         _ => return Err(refuse::bad_request("request-messages")),
     };
-    if !messages.iter().all(|m| matches!(m.get("role"), Some(Value::String(_))) && m.get("content").is_some()) {
+    // What the adapter writes is `{role, content}` and nothing else; a message with another member is not one it wrote.
+    let message_ok = |m: &Value| {
+        matches!(m.get("role"), Some(Value::String(_)))
+            && m.get("content").is_some()
+            && m.as_object().is_some_and(|members| members.keys().all(|name| MESSAGE_MEMBERS.contains(&name.as_str())))
+    };
+    if !messages.iter().all(message_ok) {
         return Err(refuse::bad_request("request-messages"));
+    }
+    if messages.iter().any(|m| fetches_by_reference(m.get("content")))
+        || body.get("system").is_some_and(|system| fetches_by_reference(Some(system)))
+    {
+        return Err(refuse::bad_request("request-content-source"));
     }
     let message_count = messages.len() as u64;
     if let Some(tools) = body.get("tools") {
-        if !matches!(tools, Value::Array(list) if list.len() <= MAX_TOOLS) {
+        // Function tools as the adapter writes them; a provider-side tool (a typed entry) is not one of them.
+        let tool_ok = |tool: &Value| {
+            tool.as_object().is_some_and(|members| members.keys().all(|name| TOOL_MEMBERS.contains(&name.as_str())))
+        };
+        if !matches!(tools, Value::Array(list) if list.len() <= MAX_TOOLS && list.iter().all(tool_ok)) {
             return Err(refuse::bad_request("request-tools"));
         }
     }
@@ -120,6 +138,19 @@ impl Checked {
         self.body.insert("max_tokens".into(), Value::from(max_tokens));
         serde_json::to_vec(&Value::Object(self.body)).map_err(|_| refuse::bad_request("request-not-json"))
     }
+}
+
+/// Whether this message content (or system) holds an image or document block whose source is a URL or an uploaded
+/// file: something the provider would be asked to fetch, which is a way out of the wall for whatever the URL carries.
+/// The adapter sends images inline (`base64`; the Files API is not served). Only block positions are read (the
+/// content, a tool result's content), never a tool call's arguments, which are the model's own data.
+fn fetches_by_reference(content: Option<&Value>) -> bool {
+    let Some(Value::Array(blocks)) = content else { return false };
+    blocks.iter().any(|block| {
+        let by_reference = block.get("source").and_then(|source| source.get("type")).and_then(Value::as_str)
+            .is_some_and(|kind| kind == "url" || kind == "file");
+        by_reference || (block.get("type").and_then(Value::as_str) == Some("tool_result") && fetches_by_reference(block.get("content")))
+    })
 }
 
 fn hex4(raw: &[u8], at: usize) -> Option<u16> {
