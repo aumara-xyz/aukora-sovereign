@@ -27,7 +27,8 @@ pub fn open_trusted(path: &Path, max: u64, forbidden: u32, reason: &'static str)
     let refuse = || Refusal { organ: "supervisor", reason };
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(OFlags::NOFOLLOW.bits() as i32)
+        // NONBLOCK so a FIFO swapped in for a file cannot hold the open; the check below refuses anything not a regular file.
+        .custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32)
         .open(path)
         .map_err(|_| refuse())?;
     let meta = file.metadata().map_err(|_| refuse())?;
@@ -98,6 +99,15 @@ mod tests {
         assert!(open_trusted(&ok, 0, 0o077, "x").is_err());
         assert!(open_trusted(&dir.join("missing"), 16, 0o077, "x").is_err());
         assert!(open_trusted(&dir, 16, 0o077, "x").is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_fifo_in_place_of_a_file_is_refused_without_waiting_for_a_writer() {
+        let dir = temp("fifo");
+        let fifo = dir.join("policy");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        assert!(open_trusted(&fifo, 16, 0o077, "x").is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 

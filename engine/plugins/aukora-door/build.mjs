@@ -12,6 +12,7 @@
 // not rewrite.
 
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { stripTypeScriptTypes } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,37 +36,46 @@ export function compile(source, file) {
   return code
 }
 
-/** The names the last build wrote, kept next to its output so a later build can tell its own stale files from anyone else's. */
+/** What the last build wrote, name to sha256, kept next to its output so a later build can tell its own files from anyone else's. */
 const RECORD = '.built-by-build.json'
+
+const sha256 = text => createHash('sha256').update(text).digest('hex')
 
 function previousOutputs(outDir) {
   try {
-    const names = JSON.parse(readFileSync(join(outDir, RECORD), 'utf8'))
-    return Array.isArray(names) ? names.filter(name => typeof name === 'string' && /^[A-Za-z0-9_-]+\.js$/.test(name)) : []
+    const record = JSON.parse(readFileSync(join(outDir, RECORD), 'utf8'))
+    const entries = Object.entries(record).filter(([name, digest]) => /^[A-Za-z0-9_-]+\.js$/.test(name) && typeof digest === 'string' && /^[0-9a-f]{64}$/.test(digest))
+    return new Map(entries)
   } catch {
-    return []
+    return new Map()
   }
 }
 
 /**
- * Build every src/*.ts under `root` into `outDir`; returns the file names written. It removes only a .js file that an
- * earlier build of this directory wrote and that no source produces now. Any other .js file in `outDir` is not ours:
- * the build refuses instead of deleting it, so a mistyped outDir cannot cost anyone a file.
+ * Build every src/*.ts under `root` into `outDir`; returns the file names written. A .js file already in `outDir` is
+ * ours only if the last build recorded it and its bytes are still what was recorded, or it is byte-identical to what
+ * this build is about to write. Anything else (somebody's file, or one of ours that was edited) stops the build
+ * before it touches anything: a mistyped outDir cannot cost anyone a file. A recorded file whose source is gone is
+ * removed, since it is untouched since the build wrote it.
  */
 export function build(root = here, outDir = join(root, 'lib')) {
   const srcDir = join(root, 'src')
   const names = readdirSync(srcDir).filter(name => name.endsWith('.ts')).sort()
-  const outputs = names.map(name => name.replace(/\.ts$/, '.js'))
+  // Compile everything first: a source that does not compile leaves the directory as it was.
+  const outputs = new Map(names.map(name => [name.replace(/\.ts$/, '.js'), compile(readFileSync(join(srcDir, name), 'utf8'), name)]))
   mkdirSync(outDir, { recursive: true })
-  const mine = new Set([...outputs, ...previousOutputs(outDir)])
-  const foreign = readdirSync(outDir).filter(name => name.endsWith('.js') && !mine.has(name))
-  if (foreign.length > 0) throw new Error(`build: ${outDir} holds .js files this build did not write: ${foreign.join(' ')}; remove them or build elsewhere`)
-  for (const stale of previousOutputs(outDir)) if (!outputs.includes(stale)) rmSync(join(outDir, stale), { force: true })
-  for (const name of names) {
-    writeFileSync(join(outDir, name.replace(/\.ts$/, '.js')), compile(readFileSync(join(srcDir, name), 'utf8'), name))
+  const before = previousOutputs(outDir)
+  const foreign = []
+  for (const name of readdirSync(outDir).filter(file => file.endsWith('.js'))) {
+    const current = sha256(readFileSync(join(outDir, name)))
+    const ours = before.get(name) === current || (outputs.has(name) && sha256(outputs.get(name)) === current)
+    if (!ours) foreign.push(name)
   }
-  writeFileSync(join(outDir, RECORD), `${JSON.stringify(outputs)}\n`)
-  return outputs
+  if (foreign.length > 0) throw new Error(`build: ${outDir} holds .js files this build did not write (or that were changed since): ${foreign.join(' ')}; remove them or build elsewhere`)
+  for (const name of before.keys()) if (!outputs.has(name)) rmSync(join(outDir, name), { force: true })
+  for (const [name, code] of outputs) writeFileSync(join(outDir, name), code)
+  writeFileSync(join(outDir, RECORD), `${JSON.stringify(Object.fromEntries([...outputs].map(([name, code]) => [name, sha256(code)])))}\n`)
+  return [...outputs.keys()]
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

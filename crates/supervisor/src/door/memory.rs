@@ -70,9 +70,9 @@ fn read_token(policy: &MemoryPolicy) -> Result<String, &'static str> {
 }
 
 /// Send one request line to the service and return its `result`, or a refusal token.
-fn send(policy: &MemoryPolicy, token: &str, method: &str, params: &Json) -> Result<Json, String> {
+fn send(policy: &MemoryPolicy, token: &str, method: &str, params: &Json, wait: Duration) -> Result<Json, String> {
     let mut stream = UnixStream::connect(&policy.socket).map_err(|_| "kira-unavailable".to_owned())?;
-    stream.set_read_timeout(Some(Duration::from_secs(30))).map_err(|_| "kira-unavailable".to_owned())?;
+    stream.set_read_timeout(Some(wait)).map_err(|_| "kira-unavailable".to_owned())?;
     stream.set_write_timeout(Some(Duration::from_secs(5))).map_err(|_| "kira-unavailable".to_owned())?;
     let request = json!({"token": token, "method": method, "params": params});
     writeln!(stream, "{request}").and_then(|()| stream.flush()).map_err(|_| "kira-unavailable".to_owned())?;
@@ -103,7 +103,8 @@ pub fn preflight(tool: &str, args: &Value) -> Result<(&'static str, Json), Strin
 /// refusal (`kira-token-owner`), and so is any answer that does not say plainly that it is not the owner's.
 pub fn check_token(policy: &MemoryPolicy) -> Result<(), String> {
     let token = read_token(policy).map_err(str::to_owned)?;
-    let who = send(policy, &token, "whoami", &json!({}))?;
+    // A service that does not answer a one-line question quickly is not one to hold the door's other calls behind.
+    let who = send(policy, &token, "whoami", &json!({}), Duration::from_secs(2))?;
     match who.get("owner").and_then(Json::as_bool) {
         Some(false) => Ok(()),
         Some(true) => Err("kira-token-owner".to_owned()),
@@ -115,7 +116,7 @@ pub fn check_token(policy: &MemoryPolicy) -> Result<(), String> {
 pub fn forward(policy: &MemoryPolicy, tool: &str, args: &Value) -> Result<Json, String> {
     let (method, params) = preflight(tool, args)?;
     let token = read_token(policy).map_err(str::to_owned)?;
-    send(policy, &token, method, &params)
+    send(policy, &token, method, &params, Duration::from_secs(30))
 }
 
 #[cfg(test)]

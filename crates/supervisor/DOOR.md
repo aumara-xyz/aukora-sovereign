@@ -137,7 +137,7 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
   creates or widens a grant, and the closed memory lanes cannot be named), and revoking narrows without a passkey.
   Creating or widening one is a critical gate proposal for `door/standing-grants.json` (the installer must ship that
   target; not built yet, like the `door/ask-NN.json` sync).
-- Files: root-owned, not group- or world-writable, read like the policy and re-read when they change. No policy file means
+- Files: owned by the door's user or root, not group- or world-writable, read like the policy and re-read when they change. No policy file means
   the shipped starter (`crates/laya/data/starter-slider-v1.json`, "only risky things", pinned by sha256); a bad policy
   file means "ask for everything"; a missing or bad grants file means no grants. Counts are appended to
   `autoclear.jsonl` (synced before the call runs; compacted to today's lines at start and emptied when the UTC day turns;

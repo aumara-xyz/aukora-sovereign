@@ -84,7 +84,7 @@ const SESSION_TOOLS: [&str; 18] = [
     "session_event_trace",
     "session_event_read",
 ];
-const PATH_KEYS: [&str; 7] = ["file_path", "path", "paths", "cwd", "workdir", "directory", "dir"];
+pub(super) const PATH_KEYS: [&str; 7] = ["file_path", "path", "paths", "cwd", "workdir", "directory", "dir"];
 
 /// The segments of an absolute path after resolving `.` and `..` (`..` at the root stays at the root).
 fn absolute_segments(path: &str) -> Vec<&str> {

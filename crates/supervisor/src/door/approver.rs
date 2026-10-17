@@ -26,6 +26,8 @@ use supervisor::services::GateService;
 
 /// The approvals log stops accepting after this many bytes; an ask is then refused until the owner rotates it.
 pub const APPROVALS_MAX_BYTES: u64 = 16 << 20;
+/// What one event line takes at most (an `open` line is about 170 bytes), kept free before a card is raised.
+const EVENT_BYTES: u64 = 256;
 /// Open asks the door remembers at once. A request beyond this is refused, not forgotten.
 const MAX_OPEN: usize = 4_096;
 /// How many `door/ask-NN.json` targets the installer ships (the most asks open at once).
@@ -131,7 +133,9 @@ impl ApprovalLog {
     }
 
     fn make_room(&self, inner: &mut Inner, digest: &str, now: u64) -> std::result::Result<(), &'static str> {
-        if inner.open.len() < self.max_open || inner.open.contains_key(digest) {
+        // Room in the file as well as in the table: at the byte cap `begin` would refuse after the card went up.
+        let room_in_file = inner.bytes + EVENT_BYTES <= self.max_bytes;
+        if room_in_file && (inner.open.len() < self.max_open || inner.open.contains_key(digest)) {
             return Ok(());
         }
         let stale: Vec<(String, String)> = inner
@@ -144,7 +148,7 @@ impl ApprovalLog {
             self.append(inner, "gone", &old_digest, &old_handle, 0)?;
             inner.open.remove(&old_digest);
         }
-        if inner.open.len() < self.max_open {
+        if room_in_file && inner.open.len() < self.max_open {
             Ok(())
         } else {
             Err("approvals-full")
@@ -425,9 +429,21 @@ mod tests {
     }
 
     #[test]
+    fn a_log_with_no_room_left_in_the_file_refuses_before_a_card_goes_up() {
+        let dir = temp("bytes");
+        // Room for one event of the real size and a little more, but not for the 256 bytes kept free.
+        let log = ApprovalLog::open_with(&dir.join("approvals.jsonl"), 300).unwrap();
+        log.begin("d1", "h1", 10).unwrap();
+        assert_eq!(log.reserve("d2", 10), Err("approvals-full"));
+        // An ask that is already open needs no new line, but the file is still too full to promise one.
+        assert_eq!(log.reserve("d1", 10), Err("approvals-full"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_full_log_refuses_rather_than_forgets() {
         let dir = temp("full");
-        let log = ApprovalLog::open_with(&dir.join("approvals.jsonl"), 60).unwrap();
+        let log = ApprovalLog::open_with(&dir.join("approvals.jsonl"), 300).unwrap();
         log.begin("d1", "h1", 10).unwrap();
         assert!(log.begin("d2", "h2", 10).is_err());
         assert_eq!(log.get("d2"), None);

@@ -86,7 +86,7 @@ test('a build removes only its own stale outputs and refuses to touch any other 
     mkdirSync(join(project, 'src'))
     writeFileSync(join(project, 'src', 'x.ts'), 'export const x: number = 1\n')
     assert.deepEqual(build(project, out), ['x.js'])
-    // x.ts is renamed y.ts: the old output is ours and goes.
+    // x.ts is renamed y.ts: the old output is ours and untouched, so it goes.
     rmSync(join(project, 'src', 'x.ts'))
     writeFileSync(join(project, 'src', 'y.ts'), 'export const y: number = 2\n')
     assert.deepEqual(build(project, out), ['y.js'])
@@ -95,12 +95,39 @@ test('a build removes only its own stale outputs and refuses to touch any other 
     writeFileSync(join(out, 'precious.js'), 'keep me\n')
     assert.throws(() => build(project, out), /precious\.js/)
     assert.equal(readFileSync(join(out, 'precious.js'), 'utf8'), 'keep me\n')
-    // Neither a first build into a directory that already holds somebody's .js file.
+    rmSync(join(out, 'precious.js'))
+    // Neither a first build into a directory that already holds somebody's .js file, even one named like an output.
     const elsewhere = join(project, 'elsewhere')
     mkdirSync(elsewhere)
     writeFileSync(join(elsewhere, 'mine.js'), 'not yours\n')
+    writeFileSync(join(elsewhere, 'y.js'), 'a different y\n')
     assert.throws(() => build(project, elsewhere), /mine\.js/)
+    assert.throws(() => build(project, elsewhere), /y\.js/)
     assert.equal(readFileSync(join(elsewhere, 'mine.js'), 'utf8'), 'not yours\n')
+    assert.equal(readFileSync(join(elsewhere, 'y.js'), 'utf8'), 'a different y\n')
+  } finally {
+    rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test('a recorded name does not let a later build delete or overwrite a file somebody put there since', () => {
+  const project = mkdtempSync(join(tmpdir(), 'door-build-bound-'))
+  const out = join(project, 'lib')
+  try {
+    mkdirSync(join(project, 'src'))
+    writeFileSync(join(project, 'src', 'x.ts'), 'export const x: number = 1\n')
+    assert.deepEqual(build(project, out), ['x.js'])
+    // Somebody replaces the recorded x.js with their own file, and the source x.ts goes away.
+    writeFileSync(join(out, 'x.js'), 'theirs\n')
+    rmSync(join(project, 'src', 'x.ts'))
+    writeFileSync(join(project, 'src', 'y.ts'), 'export const y: number = 2\n')
+    assert.throws(() => build(project, out), /x\.js/)
+    assert.equal(readFileSync(join(out, 'x.js'), 'utf8'), 'theirs\n')
+    // A name in the record that tries to leave the directory is ignored.
+    writeFileSync(join(out, '.built-by-build.json'), JSON.stringify({ '../escape.js': 'a'.repeat(64) }))
+    rmSync(join(out, 'x.js'))
+    assert.deepEqual(build(project, out), ['y.js'])
+    assert.equal(existsSync(join(project, 'escape.js')), false)
   } finally {
     rmSync(project, { recursive: true, force: true })
   }

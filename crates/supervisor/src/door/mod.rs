@@ -289,14 +289,24 @@ impl Door {
     /// The Kira token is not the owner's, as the service itself says, within the last `token_check_every`. A token that
     /// was re-issued as the owner's, or a service that does not answer, stops the memory crossings at the next call.
     fn memory_token_ok(&self, memory: &policy::MemoryPolicy) -> std::result::Result<(), String> {
-        let mut checked = self.memory_checked.lock().unwrap_or_else(PoisonError::into_inner);
-        if checked.is_some_and(|at| at.elapsed() < self.token_check_every) {
+        if self.memory_checked.lock().unwrap_or_else(PoisonError::into_inner).is_some_and(|at| at.elapsed() < self.token_check_every) {
             return Ok(());
         }
-        *checked = None;
-        memory::check_token(memory)?;
-        *checked = Some(Instant::now());
-        Ok(())
+        // Asked outside the lock: a service that is slow to answer must not stall every other call behind this one.
+        let verdict = memory::check_token(memory);
+        let mut checked = self.memory_checked.lock().unwrap_or_else(PoisonError::into_inner);
+        *checked = verdict.is_ok().then(Instant::now);
+        verdict
+    }
+
+    /// The door's own checks, plus (for memory) that the Kira token is not the owner's: what a call must pass before
+    /// the slider may spend a count on it, so a service that is down or an owner token burns no grant.
+    fn preflight_for_clear(&self, class: Class, request: &Request) -> std::result::Result<(), String> {
+        self.preflight(class, request)?;
+        match (&self.policy.memory, class) {
+            (Some(memory), Class::Memory) => self.memory_token_ok(memory),
+            _ => Ok(()),
+        }
     }
 
     fn execute_net(&self, request: &Request) -> Decision {

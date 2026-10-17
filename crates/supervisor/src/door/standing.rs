@@ -163,12 +163,40 @@ impl Standing {
             return Settled::Ask;
         }
         if counts.log.write_all(line.as_bytes()).and_then(|()| counts.log.sync_data()).is_err() {
+            // Take back a torn line so the next one does not glue onto it (and a restart does not read it as a count).
+            let length = counts.bytes;
+            let _ = counts.log.set_len(length);
             return Settled::Ask;
         }
         counts.bytes += line.len() as u64;
         counts.usage.record(crossing.class, grant, now);
         Settled::Clear
     }
+}
+
+/// The one path a file-outside call names. The door classifies a call by seven argument names (`classify::PATH_KEYS`,
+/// arrays included); the slider's grant covers a prefix, so a call that names more than one distinct path, or one it
+/// cannot read as text, has no single token and asks.
+fn one_path(request: &Request) -> Option<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for key in super::classify::PATH_KEYS {
+        match request.args.get(key).map(Value::view) {
+            None => {}
+            Some(ValueView::Text(path)) => seen.push(path.to_owned()),
+            Some(ValueView::Array(items)) => {
+                for item in items {
+                    match item.view() {
+                        ValueView::Text(path) => seen.push(path.to_owned()),
+                        _ => return None,
+                    }
+                }
+            }
+            Some(_) => return None,
+        }
+    }
+    seen.sort();
+    seen.dedup();
+    if seen.len() == 1 { seen.pop() } else { None }
 }
 
 /// What a call crosses, as the slider's rules see it: a class and one target token, never the body.
@@ -187,7 +215,7 @@ pub fn crossing_of(class: Class, request: &Request) -> Option<Crossing> {
         },
         Class::Mcp => request.tool.strip_prefix("mcp__")?.split("__").next()?.to_owned(),
         Class::Delegate => text("provider")?,
-        Class::FsOutside => ["file_path", "path", "cwd", "workdir", "directory", "dir"].iter().find_map(|key| text(key))?,
+        Class::FsOutside => one_path(request)?,
         _ => request.tool.clone(),
     };
     Some(Crossing::new(crossing_class, token))
@@ -199,7 +227,7 @@ impl Door {
     pub(super) fn settle(&self, class: Class, request: &Request, action: Action) -> std::result::Result<Action, String> {
         let (Some(standing), true) = (&self.standing, action != Action::Deny) else { return Ok(action) };
         let Some(crossing) = crossing_of(class, request) else { return Ok(Action::Ask) };
-        match standing.settle(&crossing, now_ms(), || self.preflight(class, request)) {
+        match standing.settle(&crossing, now_ms(), || self.preflight_for_clear(class, request)) {
             Settled::Clear => Ok(Action::Allow),
             Settled::Ask => Ok(Action::Ask),
             Settled::Refuse(code) => Err(code),
@@ -280,6 +308,34 @@ mod tests {
         let path = dir.join("slider.json");
         write_private(&path, &policy.canonical_bytes().unwrap());
         path
+    }
+
+    fn request(tool: &str, args: &str, class: &str) -> Request {
+        super::super::wire::parse_request(&super::super::wire::test_line("c-1", tool, args, class)).unwrap()
+    }
+
+    #[test]
+    fn the_token_the_slider_sees_is_the_one_the_executor_will_use() {
+        // Net: the host, lowercased, from the same URL parse the executor uses.
+        let net = crossing_of(Class::Net, &request("web_fetch", "{\"url\":\"https://Docs.RS/x\"}", "net")).unwrap();
+        assert_eq!((net.class, net.token.as_str()), (CrossingClass::Net, "docs.rs"));
+        assert!(crossing_of(Class::Net, &request("web_search", "{\"query\":\"x\"}", "net")).is_none());
+        // Memory: reads are `read`, writes name their lane, a tool the door does not forward has no token.
+        let read = crossing_of(Class::Memory, &request("kira_recall", "{\"query\":\"x\"}", "memory")).unwrap();
+        assert_eq!(read.token, "read");
+        let write = crossing_of(Class::Memory, &request("kira_remember", "{\"lane\":\"notes\"}", "memory")).unwrap();
+        assert_eq!(write.token, "write:notes");
+        assert!(crossing_of(Class::Memory, &request("kira_quarantine_source", "{}", "memory")).is_none());
+        // Outside the workspace: one path, however many of the seven argument names carry it; two different paths (or one
+        // that is not text) have no single token, so the call asks instead of being graded by the first one found.
+        let one = |args: &str| crossing_of(Class::FsOutside, &request("read", args, "fs-outside")).map(|c| c.token);
+        assert_eq!(one("{\"file_path\":\"/srv/shared/x\"}").as_deref(), Some("/srv/shared/x"));
+        assert_eq!(one("{\"file_path\":\"/srv/shared/x\",\"path\":\"/srv/shared/x\"}").as_deref(), Some("/srv/shared/x"));
+        assert_eq!(one("{\"file_path\":\"/srv/shared/x\",\"path\":\"/etc/shadow\"}"), None);
+        assert_eq!(one("{\"paths\":[\"/srv/shared/x\",\"/etc/shadow\"]}"), None);
+        assert_eq!(one("{\"cwd\":\"/srv/shared/x\",\"paths\":[\"/srv/shared/x\"]}").as_deref(), Some("/srv/shared/x"));
+        assert_eq!(one("{\"file_path\":7}"), None);
+        assert_eq!(one("{}"), None);
     }
 
     #[test]

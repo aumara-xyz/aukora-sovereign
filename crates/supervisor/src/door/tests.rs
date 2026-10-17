@@ -628,3 +628,76 @@ fn under_trusted_a_granted_memory_read_runs_every_time_with_no_owner_request() {
     assert_eq!(stub.join().unwrap().len(), 4);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_cleared_memory_call_whose_token_cannot_be_checked_spends_no_count() {
+    use laya::grant::{DoorGrant, GrantSet, DAY_MS};
+    use laya::{slider, CrossingClass, SliderSetting};
+    let dir = temp("trusted-down");
+    let write_private = |path: &Path, bytes: &[u8]| {
+        std::fs::write(path, bytes).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    let now = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()).unwrap();
+    let grant = DoorGrant {
+        class: CrossingClass::Memory,
+        scope: vec!["read".to_owned()],
+        per_day: 1,
+        not_before: now - 1_000,
+        expires_at: now + DAY_MS,
+        nonce: canon::ids::ProposalId::from_bytes([4; 16]),
+    };
+    let grants = dir.join("grants.json");
+    write_private(&grants, &GrantSet::default().with_grant(grant).unwrap().canonical_bytes().unwrap());
+    let mut limits = slider::starter().unwrap();
+    limits.setting = SliderSetting::WithinTodayLimits;
+    let slider_file = dir.join("slider.json");
+    write_private(&slider_file, &limits.canonical_bytes().unwrap());
+    let token = dir.join("door.token");
+    write_private(&token, b"door-token\n");
+    // No Kira service listens: whoami cannot be asked.
+    let extra = format!(
+        ",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}},\"standing\":{{\"policy_file\":\"{}\",\"grants_file\":\"{}\"}}",
+        dir.join("kira.sock").display(),
+        token.display(),
+        slider_file.display(),
+        grants.display()
+    );
+    let text = policy_text(&dir.join("state"), "{\"mode\":\"peercred\",\"uids\":[1001]}", "\"memory\":\"allow\"", &extra);
+    let door = Door::open(Policy::parse(&text).unwrap()).unwrap();
+    assert_eq!(denied(&call(&door, "d-1", "kira_recall", RECALL, "memory")), "kira-unavailable");
+    // The grant's one count for the day is still there, and nothing was written to the counts log.
+    assert_eq!(std::fs::read_to_string(dir.join("state").join("autoclear.jsonl")).unwrap(), "");
+    let stub = kira_stub(&dir, vec![agent(), found()]);
+    assert!(matches!(call(&door, "d-2", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+    assert_eq!(stub.join().unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn inside_the_window_the_door_does_not_ask_the_service_again_and_a_started_door_has_already_asked() {
+    let dir = temp("whoami-window");
+    // One whoami for the first call, none for the second: the window holds.
+    let stub = kira_stub(&dir, vec![agent(), found(), found()]);
+    let door = memory_door(&dir, TOKEN_CHECK_EVERY);
+    assert!(matches!(call(&door, "w-1", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+    assert!(matches!(call(&door, "w-2", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+    let lines = stub.join().unwrap();
+    assert_eq!(lines.iter().filter(|line| line.contains("\"whoami\"")).count(), 1);
+    drop(door);
+    // A door that started with the service up has asked already: its first call goes straight to the recall.
+    let started = temp("whoami-window-start");
+    let stub = kira_stub(&started, vec![agent(), found()]);
+    let token = started.join("door.token");
+    std::fs::write(&token, "door-token\n").unwrap();
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", started.join("kira.sock").display(), token.display());
+    let text = policy_text(&started.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
+    let (door, _listener) = start(Policy::parse(&text).unwrap(), &started.join("door.sock"), None).unwrap();
+    assert!(matches!(call(&door, "w-3", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+    let lines = stub.join().unwrap();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("\"whoami\"") && lines[1].contains("\"recall\""));
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(started);
+}
