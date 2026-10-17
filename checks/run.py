@@ -738,10 +738,13 @@ if sorted(rows) != list(range(1, len(rows) + 1)):
 
 # 3. No clutter: no logs, no stray text files, no mutation or evidence output.
 allowed_txt = tuple(scaffold["allowed_txt_prefixes"])
-copied = tuple(baseline.get("copied_from_prime", {}))
+# Copied code is exempt file by file, never by folder: a path here is a file that is tracked and is named exactly.
+copied = set(baseline.get("copied_from_prime", {}))
+for p in sorted(copied - set(files)):
+    fail("copied-from-prime", f"{p} is listed in checks/baseline.json but is not a tracked file")
 for p in files:
     low = p.lower()
-    if p.startswith(copied):
+    if p in copied:
         continue
     if low.endswith(".log"):
         fail("clutter", p)
@@ -762,7 +765,7 @@ for p in files:
     if p in pins or not re.search(r"\.(rs|mjs|js|ts|py|sh|md)$", p):
         continue
     lines = (ROOT / p).read_bytes().count(b"\n")
-    if lines > 1000 and p not in baseline["oversized_files"] and not p.startswith(tuple(baseline.get("copied_from_prime", {}))):
+    if lines > 1000 and p not in baseline["oversized_files"] and p not in copied:
         fail("file-size", f"{p} has {lines} lines")
 
 # 5. No absolute paths and no path into another repository, in code.
@@ -865,12 +868,29 @@ for p in files:
     if p in pins:
         continue
     for rule, detail in walls.file_findings(p, (ROOT / p).read_text(errors="replace")):
-        if rule == "wall-browser" and p.startswith(tuple(baseline.get("copied_from_prime", {}))):
+        if rule == "wall-browser" and p in copied:
             continue
         if (rule == "no-test-suites" and p in RELEASE_POINTER_PINS
                 and hashlib.sha256((ROOT / p).read_bytes()).hexdigest() == RELEASE_POINTER_PINS[p]):
             continue
         fail(rule, detail)
+
+# 11b. The engine's reach (checks/walls.py `engine_findings`): TypeScript and JavaScript under engine/ may not use the network,
+#      run a program, read the environment or evaluate a string. Only the exact files in checks/baseline.json
+#      `engine_io_allowed` are excused, each with the reason it must keep what it keeps. Pinned files are scanned too:
+#      a pin says the bytes did not change, not that they may do this. A stale entry (file gone, or no longer reaching) fails.
+engine_allowed = baseline.get("engine_io_allowed", {})
+for p in files:
+    if not (ROOT / p).is_file():
+        continue
+    kinds = walls.engine_findings(p, (ROOT / p).read_text(errors="replace"))
+    if kinds and p not in engine_allowed:
+        fail("engine-io", f"{p}: {', '.join(kinds)}")
+for p, reason in engine_allowed.items():
+    if not (isinstance(reason, str) and reason.strip()):
+        fail("engine-io", f"{p} is allow-listed without a reason")
+    elif p not in files or not walls.engine_findings(p, (ROOT / p).read_text(errors="replace")):
+        fail("engine-io", f"{p} no longer needs its allow-list entry")
 
 # 12. The compiler walls (checks/walls.py): every crate root forbids unsafe code except the launcher and supervisor,
 #     and canon and pentora, which deny it and allow it only in their WASM module; each crate carries the exact
