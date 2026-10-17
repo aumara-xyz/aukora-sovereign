@@ -35,7 +35,21 @@ pub(crate) struct ReleaseApproval {
     /// The last verified offer (its resolved, immutable release folder and digest): a staged release never changes, so
     /// the approvals poll does not hash it again.
     verified: Arc<Mutex<Option<(PathBuf, Digest32)>>>,
+    /// The supervisor's state folder: the pre-swap probe copies it (NODE.md O20).
+    state_root: PathBuf,
+    /// The pre-swap probe of each offered release: running, passed or failed (once per release; a failed release is
+    /// probed again only after `PROBE_RETRY`, e.g. an approval landed while its state was copied).
+    probes: Arc<Mutex<std::collections::HashMap<Digest32, (Probe, std::time::Instant)>>>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Probe {
+    Running,
+    Passed,
+    Failed,
+}
+
+const PROBE_RETRY: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// What the release card is for, once the floor names `base`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +91,7 @@ impl Step {
 impl ReleaseFiles {
     /// `current`: the current-release link; an upgrade the operator offers is the link beside it (`offered`,
     /// written by `node_release.py offer`).
-    pub(crate) fn configure_owner_approval(&self, node: NodeId, current: &Path) -> Result<()> {
+    pub(crate) fn configure_owner_approval(&self, node: NodeId, current: &Path, state_root: &Path) -> Result<()> {
         let offered = current.parent().map(|root| root.join("offered")).ok_or(codes::SUPERVISOR_STATE)?;
         self.ledger.configure_release_approval(ReleaseApproval {
             installed: self.release_digest,
@@ -85,25 +99,36 @@ impl ReleaseFiles {
             node,
             offered,
             verified: Arc::new(Mutex::new(None)),
+            state_root: state_root.to_path_buf(),
+            probes: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })?;
         Ok(())
     }
 }
 
 impl ReleaseApproval {
-    /// The offered release, verified once per staged folder. A broken or partial offer is no offer (logged).
+    /// The offered release, verified once per staged folder and offered to the owner only once its pre-swap probe
+    /// passed (O20). A broken or partial offer, or one whose probe failed, is no offer (logged).
     fn offered(&self) -> Option<Digest32> {
+        let (path, digest) = self.verified_offer()?;
+        if digest == self.installed {
+            return Some(digest);
+        }
+        self.probed(&path, digest).then_some(digest)
+    }
+
+    fn verified_offer(&self) -> Option<(PathBuf, Digest32)> {
         let resolved = std::fs::canonicalize(&self.offered).ok()?;
         let mut cache = self.verified.lock().ok()?;
         if let Some((path, digest)) = cache.as_ref() {
             if *path == resolved {
-                return Some(*digest);
+                return Some((path.clone(), *digest));
             }
         }
         match verify_candidate(&self.offered) {
             Ok(Some((path, digest))) => {
-                *cache = Some((path, digest));
-                Some(digest)
+                *cache = Some((path.clone(), digest));
+                Some((path, digest))
             }
             Ok(None) => None,
             Err(refusal) => {
@@ -111,6 +136,46 @@ impl ReleaseApproval {
                 None
             }
         }
+    }
+
+    /// Whether the offered release passed its probe; starts the probe (in the background) when it has not run.
+    fn probed(&self, candidate: &Path, digest: Digest32) -> bool {
+        let Ok(mut probes) = self.probes.lock() else { return false };
+        match probes.get(&digest) {
+            Some((Probe::Passed, _)) => return true,
+            Some((Probe::Running, _)) => return false,
+            Some((Probe::Failed, at)) if at.elapsed() < PROBE_RETRY => return false,
+            _ => {}
+        }
+        let Some(config) = crate::config::CONFIG_PATH.get().cloned() else {
+            return false;
+        };
+        probes.insert(digest, (Probe::Running, std::time::Instant::now()));
+        eprintln!("release: probing the offered release {digest} on a copy of this node's state");
+        let (candidate, state_root, shared) = (candidate.to_path_buf(), self.state_root.clone(), self.probes.clone());
+        let started = std::thread::Builder::new().name("release-probe".into()).spawn(move || {
+            let outcome = super::probe::run(&candidate, digest, &config, &state_root);
+            let state = match &outcome {
+                Ok(()) => {
+                    eprintln!("release: the offered release {digest} started on a copy of the state; its card can go up");
+                    Probe::Passed
+                }
+                Err(refusal) => {
+                    eprintln!(
+                        "release: the offered release {digest} did not start on a copy of the state ({}:{}); no card",
+                        refusal.organ, refusal.reason
+                    );
+                    Probe::Failed
+                }
+            };
+            if let Ok(mut probes) = shared.lock() {
+                probes.insert(digest, (state, std::time::Instant::now()));
+            }
+        });
+        if started.is_err() {
+            probes.insert(digest, (Probe::Failed, std::time::Instant::now()));
+        }
+        false
     }
 
     pub(crate) fn ensure_proposal(&self, host: &HostLedger, scope: PrincipalScope) -> Result<()> {

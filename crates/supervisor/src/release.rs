@@ -3,6 +3,7 @@
 
 mod owner;
 pub(crate) mod pointer;
+pub(crate) mod probe;
 pub(crate) use owner::ReleaseApproval;
 
 use crate::adapters::HostLedger;

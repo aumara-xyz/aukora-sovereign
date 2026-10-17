@@ -33,6 +33,10 @@ fn run() -> canon::Result<()> {
         if arguments.get(1).is_some_and(|command| command == "floor") {
             return release::floor_cli(&arguments[2..]);
         }
+        // `release probe --config PATH --state COPY`: the pre-swap probe, run from an offered release (NODE.md O20).
+        if arguments.get(1).is_some_and(|command| command == "probe") {
+            return release::probe::cli(&arguments[2..]);
+        }
         return release::pointer::run(&arguments[1..]);
     }
     // The Rust door for the engine's crossings (engine/plugins/aukora-door): `door serve --socket PATH --policy FILE`.
@@ -60,6 +64,7 @@ fn run() -> canon::Result<()> {
         });
     }
     let config = config::NodeConfig::load(std::path::Path::new(path))?;
+    let _ = config::CONFIG_PATH.set(std::path::PathBuf::from(path));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
