@@ -111,3 +111,13 @@ test('the read-only session history queries are local, by exact name only', () =
   assert.equal(classifyCall('session_delete', {}, roots), 'unknown')
   assert.equal(classifyCall('session_export', {}, roots), 'unknown')
 })
+
+test('the Auma Canvas tools only write the session\'s own canvas event: local, by exact name only', () => {
+  for (const tool of ['auma_canvas_read', 'auma_canvas_render']) {
+    assert.equal(classifyCall(tool, {}, roots), 'local', tool)
+    assert.equal(classifyCall(tool, { title: 'x', markup: '<p>x</p>', css: '' }, []), 'local', tool)
+  }
+  assert.equal(classifyCall('auma_canvas_export', {}, roots), 'unknown')
+  assert.equal(classifyCall('auma_canvas_', {}, roots), 'unknown')
+  assert.equal(classifyCall('AUMA_CANVAS_RENDER', {}, roots), 'unknown')
+})

@@ -30,6 +30,10 @@ const SESSION_TOOLS = new Set([
   // Read-only queries over the engine's own persisted session history (DSH authorizes which sessions a caller may see).
   // Listed by name, never by prefix: a future `session_*` tool that writes must not inherit `local`.
   'session_search', 'session_event_search', 'session_trace', 'session_event_trace', 'session_event_read',
+  // The Spatial face's Auma Canvas tools. Read returns, and render appends, one `auma-canvas/document` event on the
+  // calling agent's own session (aukora-face apps/src/auma-canvas-tool.ts): no workspace file, process or network.
+  // Explicit exact names, never the `auma_canvas_` prefix: a future canvas tool that does more must not inherit `local`.
+  'auma_canvas_read', 'auma_canvas_render',
 ])
 
 /** Argument names that carry a filesystem path (string) or a list of paths (array of strings). */

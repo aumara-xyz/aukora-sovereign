@@ -63,7 +63,7 @@ pub enum Derived {
 
 const FILE_TOOLS: [&str; 9] = ["read", "write", "edit", "str_replace_editor", "read_image", "glob", "grep", "working_directory", "lsp"];
 const EXEC_TOOLS: [&str; 6] = ["bash", "pwsh", "job_kill", "job_list", "job_output", "run_code"];
-const SESSION_TOOLS: [&str; 18] = [
+const SESSION_TOOLS: [&str; 20] = [
     "todo_write",
     "ask_user_question",
     "create_goal",
@@ -83,6 +83,10 @@ const SESSION_TOOLS: [&str; 18] = [
     "session_trace",
     "session_event_trace",
     "session_event_read",
+    // The Spatial face's Auma Canvas tools: read returns, and render appends, one `auma-canvas/document` event on the
+    // calling agent's own session. No workspace file, process or network. Exact names, never a prefix.
+    "auma_canvas_read",
+    "auma_canvas_render",
 ];
 pub(super) const PATH_KEYS: [&str; 7] = ["file_path", "path", "paths", "cwd", "workdir", "directory", "dir"];
 
@@ -293,6 +297,12 @@ mod tests {
             assert_eq!(call(tool, "{\"query\":\"x\"}"), Derived::Local, "{tool}");
         }
         assert_eq!(call("session_delete", "{}"), Derived::Cross(Class::Unknown));
+        for tool in ["auma_canvas_read", "auma_canvas_render"] {
+            assert_eq!(call(tool, "{\"title\":\"x\",\"markup\":\"<p>x</p>\",\"css\":\"\"}"), Derived::Local, "{tool}");
+        }
+        // Exact names only: a sibling canvas tool is unknown until the table names it.
+        assert_eq!(call("auma_canvas_export", "{}"), Derived::Cross(Class::Unknown));
+        assert_eq!(call("auma_canvas_", "{}"), Derived::Cross(Class::Unknown));
         assert_eq!(call("totally_new_tool", "{}"), Derived::Cross(Class::Unknown));
         assert_eq!(call("READ", "{\"file_path\":\"a\"}"), Derived::Cross(Class::Unknown));
     }
