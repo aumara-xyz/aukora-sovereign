@@ -640,6 +640,65 @@ fn found_does_not_stand_after_the_note_that_justified_it_is_gone() {
     assert!(after["items"].as_array().unwrap().iter().all(|i| i["id"] != backed.as_str() && i["evidence"] == "unverified"));
 }
 
+/// Grok review part 5: a note's `sources` and `roots` must not hand a reader the id of a note it cannot open.
+#[test]
+fn sources_and_roots_list_only_notes_the_reader_can_open() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let hidden = call(&f.state, &owner, "remember", note("The spare key is under the blue mat", "local"))["result"]["id"].as_str().unwrap().to_owned();
+    let open = remember_id(&f, &claude, "A key is kept somewhere near the door");
+    let mut cites = note("So the key is by the door", "builders");
+    cites["sources"] = json!([hidden, open]);
+    let cites = call(&f.state, &owner, "remember", cites);
+    let id = cites["result"]["id"].as_str().unwrap().to_owned();
+    // The owner reads both; a builder reads the note but is told of only the source it can open.
+    assert_eq!(cites["result"]["sources"].as_array().unwrap().len(), 2);
+    let got = call(&f.state, &grok, "get", json!({"id": id}))["result"].clone();
+    assert_eq!(got["sources"], json!([open]), "{got}");
+    let roots: Vec<&str> = got["roots"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+    assert!(!roots.contains(&hidden.as_str()) && roots.contains(&open.as_str()), "{got}");
+    // Citing the readable note inherits the hidden root in the store, but never shows it.
+    let mut again = note("and the door key is easy to find", "builders");
+    again["sources"] = json!([id]);
+    let again = call(&f.state, &grok, "remember", again);
+    assert!(!again.to_string().contains(&hidden), "{again}");
+    let listed = call(&f.state, &grok, "list_recent", json!({}));
+    assert!(!listed.to_string().contains(&hidden), "{listed}");
+    let recalled = call(&f.state, &grok, "recall", json!({"query": "where is the door key"}));
+    assert!(!recalled.to_string().contains(&hidden), "{recalled}");
+    // A note whose only source is hidden reads as one that cites nothing.
+    let mut only = note("a note that rests on the hidden one", "builders");
+    only["sources"] = json!([hidden]);
+    let only = call(&f.state, &owner, "remember", only)["result"]["id"].as_str().unwrap().to_owned();
+    let seen = call(&f.state, &grok, "get", json!({"id": only}))["result"].clone();
+    assert_eq!((seen["sources"].clone(), seen["lineage"].clone()), (json!([]), json!("unsupported")));
+}
+
+/// Grok review part 5: a store error while working out a note's relations fails the read; it is not "no dispute".
+#[test]
+fn a_store_error_in_a_relation_fails_the_read_instead_of_hiding_it() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let mut typed = note("The relay listens on port 8443", "builders");
+    typed["capture"] = json!("owner-typed");
+    let claim = call(&f.state, &owner, "remember", typed)["result"]["id"].as_str().unwrap().to_owned();
+    let mut against = note("The relay refused port 8443 at noon", "builders");
+    against["form"] = json!("counterevidence");
+    against["sources"] = json!([claim]);
+    let against = call(&f.state, &claude, "remember", against)["result"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": claim}))["result"]["state"], "disputed");
+    // Forge the counterevidence row: reading it now fails verification.
+    let side = rusqlite::Connection::open(f.dir.join(DB)).unwrap();
+    let raw: Vec<u8> = side.query_row("SELECT raw FROM events WHERE id = ?1", [&against], |r| r.get(0)).unwrap();
+    let mut event = nostr::Event::decode(&raw).unwrap();
+    event.content = "The relay did not refuse anything".into();
+    side.execute("UPDATE events SET raw = ?1 WHERE id = ?2", rusqlite::params![event.encode().unwrap(), against]).unwrap();
+    let got = call(&f.state, &grok, "get", json!({"id": claim}));
+    assert_eq!(got["ok"], false, "the claim must not read as supported while its counterevidence cannot be checked: {got}");
+    let recalled = call(&f.state, &grok, "recall", json!({"query": "which port does the relay listen on"}));
+    assert_ne!(recalled["result"]["status"], "found", "{recalled}");
+}
+
 /// Argon RT-4 (b, c, d): a hidden note could be probed through citations, replacements and the list cursor.
 #[test]
 fn hidden_notes_cannot_be_probed_through_sources_replacements_or_the_list_cursor() {

@@ -586,7 +586,7 @@ impl State {
         if let Some(wake) = &self.wake {
             let _ = wake.send(());
         }
-        Ok(view(&self.store, caller, &note))
+        view(&self.store, caller, &note)
     }
 
     /// One note by id, or the head of a slot (`aukora:self`, `aukora:resume`, `resume:<agent>`): the newest live note
@@ -658,7 +658,7 @@ impl State {
         };
         match note {
             Some(note) if visible(caller, &note) => {
-                let mut shown = view(&self.store, caller, &note);
+                let mut shown = view(&self.store, caller, &note)?;
                 if let Some(event) = from_event {
                     shown["resolved_from"] = json!(event);
                 }
@@ -681,7 +681,7 @@ impl State {
                 scanned += 1;
                 cursor = Some(note.seq);
                 if visible(caller, note) {
-                    shown.push(view(&self.store, caller, note));
+                    shown.push(view(&self.store, caller, note)?);
                     if shown.len() == limit {
                         break 'pages;
                     }
@@ -725,7 +725,7 @@ impl State {
         let id = self.store.record(event)?;
         let target = self.store.get(&p.target)?.ok_or_else(|| refuse("not-found"))?;
         let proposed = target.superseded_by.as_deref() != Some(id.as_str()) && target.author_name != caller.name && !caller.owner;
-        Ok(json!({"event": id, "proposed": proposed, "target": view(&self.store, caller, &target)}))
+        Ok(json!({"event": id, "proposed": proposed, "target": view(&self.store, caller, &target)?}))
     }
 
     /// Accept a proposed correction of a note: signed by the note's author or the owner. From then on the proposal is
@@ -743,7 +743,7 @@ impl State {
         let event = Event::sign(self.key(&caller.name)?, now(), ACCEPT_KIND, vec![vec!["accepts".to_owned(), p.proposal.clone()]], String::new())?;
         let id = self.store.record(event)?;
         let target = self.store.get(&target.map(|t| hex(t.event.id.as_bytes())).unwrap_or_default())?.ok_or_else(|| refuse("not-found"))?;
-        Ok(json!({"event": id, "target": view(&self.store, caller, &target)}))
+        Ok(json!({"event": id, "target": view(&self.store, caller, &target)?}))
     }
 
     fn quarantine(&mut self, caller: &Caller, p: QuarantineParams) -> Result<Value> {
@@ -826,7 +826,18 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 // in the answer after the filtering above.
                 justified |= item.correction.is_none() && item.relevant && item.evidence != "unverified";
                 let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
-                let mut shown = if note.quarantined { stub(&note) } else { note_json(&s.store, &caller, &note, Some(item.evidence)) };
+                let mut shown = if note.quarantined {
+                    stub(&note)
+                } else {
+                    match note_json(&s.store, &caller, &note, Some(item.evidence)) {
+                        Ok(shown) => shown,
+                        // A relation the store cannot read is not "no relation": the answer is not one.
+                        Err(_) => {
+                            status = RecallStatus::Undetermined("note-integrity");
+                            continue;
+                        }
+                    }
+                };
                 shown["score"] = json!(item.score);
                 // Others who stated the same words. Repetition is not support: see `evidence` and `roots`. `also_by`
                 // is the old name of `repeated_by`.
