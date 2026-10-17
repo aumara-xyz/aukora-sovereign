@@ -175,6 +175,30 @@ impl GateAdapter {
         self.propose_reserved(scope, gate::build::TARGET.to_owned(), note, manifest)
     }
 
+    /// Open the owner's review of the engine's plugin set (`engine/plugin-set.json`): the exact canonical set bytes,
+    /// names and digests, shown on the generic content card. Bytes `floor::plugins::PluginSet::parse` refuses never
+    /// become a proposal. Only the supervisor's engine controller reaches this; the guest's `propose` refuses `engine/`.
+    pub fn propose_plugin_set(&self, scope: PrincipalScope, note: String, set: Vec<u8>) -> ServiceFuture<'_, ProposalId> {
+        if let Err(refusal) = floor::plugins::PluginSet::parse(&set) {
+            return Box::pin(async move { Err(refusal) });
+        }
+        self.propose_reserved(scope, crate::engine_plugins::PLUGIN_SET_TARGET.to_owned(), note, set)
+    }
+
+    /// The bytes an owner-approved target holds now, checked against the digest the gate observes for it. `None`
+    /// before the first applied proposal (or when the target is not in this node's inventory).
+    pub fn approved_target(&self, target: &'static str) -> ServiceFuture<'_, Option<Vec<u8>>> {
+        self.submit(move |gate, _| {
+            let id = TargetId::new(target.to_owned())?;
+            let Ok(observed) = gate.target_store().observe(&id) else { return Ok(None) };
+            match (observed.digest, observed.bytes) {
+                (BaseDigest::Absent, _) | (_, None) => Ok(None),
+                (BaseDigest::Present(digest), Some(bytes)) if canon::digest::Digest32::sha256(&bytes) == digest => Ok(Some(bytes)),
+                _ => Err(canon::Refusal { organ: "gate", reason: "observation-digest" }),
+            }
+        })
+    }
+
     /// The manifest the owner last approved: the bytes the gate's `build/manifest.json` target holds, which only an
     /// applied proposal can change. `None` before the first approval.
     pub fn approved_manifest(&self) -> ServiceFuture<'_, Option<Vec<u8>>> {
@@ -275,7 +299,10 @@ impl GateService for GateAdapter {
         _: &'a FrameId,
         request: Propose,
     ) -> ServiceFuture<'a, Accepted> {
-        if request.target.starts_with(gate::door::TARGET_PREFIX) || request.target.starts_with(gate::build::TARGET_PREFIX) {
+        if request.target.starts_with(gate::door::TARGET_PREFIX)
+            || request.target.starts_with(gate::build::TARGET_PREFIX)
+            || request.target.starts_with(crate::engine::TARGET_PREFIX)
+        {
             return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
         }
         self.submit(move |gate, host| {

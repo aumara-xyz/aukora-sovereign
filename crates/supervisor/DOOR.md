@@ -109,7 +109,10 @@ not group- or world-writable, read like `gate-targets-v1.json`; absent means no 
 above plus `"socket": "/abs/path"` where the door listens. The door runs on plain threads in the node process (the gate
 lives only there) and a door that cannot start is logged, never a node crash. The installer ships the eight
 `door/ask-NN.json` targets; an older node needs them added to its inventory by an owner-approved sync (not built yet).
-The policy file is **not** installed by default: enabling the door is the operator's decision.
+The policy file is **not** installed by `node_install.py`: enabling the door is the operator's decision. The engine
+installer (`deploy/engine/engine_install.py`, NODE.md section 6) writes it on an engine node: the wall test's policy plus
+`memory` (Kira, the non-owner token), `socket` and the starter slider. There the Kira socket's folder is 2750
+kira:kira-clients with the socket 0660 (the door's user is a member, the engine's is not), not 0700 as below.
 
 ## The slider and standing grants (Track 5)
 

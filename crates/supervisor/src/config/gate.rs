@@ -89,14 +89,24 @@ impl NodeConfig {
     /// The door's policy beside the inventory, read the same way (root-owned, not writable by others, no symlink).
     /// Absent means this node runs no door.
     pub fn door_policy_text(&self) -> Result<Option<String>> {
-        const NAME: &str = "door-policy-v1.json";
+        self.optional_host_text("door-policy-v1.json")
+    }
+
+    /// The engine's settings beside the inventory (`engine-v1.json`), read like the door policy. Absent means this
+    /// node runs no engine.
+    pub fn engine_config_text(&self) -> Result<Option<String>> {
+        self.optional_host_text("engine-v1.json")
+    }
+
+    /// A root-owned file in the config directory that may be absent; read like `gate-targets-v1.json`.
+    fn optional_host_text(&self, name: &'static str) -> Result<Option<String>> {
         let directory = disk::open_host_directory(&self.directory)?;
-        match rustix::fs::statat(&directory, NAME, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
+        match rustix::fs::statat(&directory, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
             Ok(_) => {}
             Err(rustix::io::Errno::NOENT) => return Ok(None),
             Err(_) => return Err(super::refused("config-unreadable")),
         }
-        let raw = disk::read_host_file(&self.directory.join(NAME), 65_536)?;
+        let raw = disk::read_host_file(&self.directory.join(name), 65_536)?;
         String::from_utf8(raw)
             .map(Some)
             .map_err(|_| super::refused("config-unreadable"))

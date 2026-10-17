@@ -1,0 +1,42 @@
+# The engine's OpenShell policy (Ring 1). Source: the wall test that PASSED on 2026-10-17
+# (~/aukora-memory/review/WALL-TEST-2026-10-17.md, OpenShell 0.1.4, enforce, docker compute driver), verbatim except the
+# lines marked NODE, each of which the node needs and the wall test did not exercise:
+#   /engine-home   the harness's own home (sessions, credentials, settings). Root-owned skeleton with the sticky bit:
+#                  the engine can add its own files but cannot replace the root-owned profile, plugin closure,
+#                  node_modules guard or cordis.patch.yml inside it (NODE.md, "The harness home").
+#   /run/aukora-engine-io  where the in-wall bridge puts the web socket and the launch line for the supervisor.
+#   /etc/resolv.conf is replaced by a read-only file naming 127.0.0.1 (nothing listens there): the DNS posture that
+#                  closes the wall test's one residual (B03). Not a policy key; it is a read-only bind (engine-run.sh),
+#                  and the host fence drops port 53 from the sandbox network (aukora-engine-fence.nft).
+# The installer substitutes @AUMA_UID@ (the engine user) and refuses to start a sandbox whose effective policy
+# (`openshell policy get`) is not exactly this one with Status: Effective.
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /sbin
+    - /etc
+    - /opt/rust      # read-only toolchain (bind-mounted RO)
+    - /engine        # read-only: node runtime, DSH install, in-wall scripts (bind-mounted RO)
+  read_write:
+    - /sandbox       # OpenShell's own workspace (reserved; unused by the engine)
+    - /work          # the engine workspace (bind-mounted RW)
+    - /tmp
+    - /run/aukora-door   # the ONLY crossing point: the door unix socket, bind-mounted (the directory is not engine-writable)
+    - /engine-home       # NODE: the harness home (see above)
+    - /run/aukora-engine-io  # NODE: web socket + launch line, read by the supervisor
+    - /dev/null
+    - /dev/zero
+    - /dev/urandom
+    - /dev/pts
+    - /dev/ptmx
+landlock:
+  compatibility: hard_requirement   # enforce: the sandbox refuses to start if Landlock cannot apply
+process:
+  run_as_user: "@AUMA_UID@"         # auma, unprivileged, != root, != the door's user
+  run_as_group: "@AUMA_UID@"
+network_policies: {}                # deny-by-default: no egress; the door socket is AF_UNIX, filesystem-mediated

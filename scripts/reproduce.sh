@@ -29,6 +29,9 @@ BUILDS = (("supervisor", "sovereign", False), ("verifier", "aukora-verify", Fals
 DEPLOY_FILES = ("deploy/spawn/core.py", "deploy/spawn/caddy.py", "deploy/spawn/node_install.py",
                 "deploy/upgrade/node_release.py")
 UNITS = "deploy/units"
+# The engine's installer, policies and in-wall scripts (deploy/engine/NODE.md): every file, so the owner's release
+# approval covers what root runs and what the wall is made of.
+ENGINE = "deploy/engine"
 REQUIRED = ("bin/sovereign", "bin/auma", "bin/aukora-verify", "www/release-manifest.json") + DEPLOY_FILES + (
     "deploy/units/aukora-sovereign.service", "deploy/units/aukora-egress.service", "deploy/units/egress_apply.py",
     "deploy/units/aukora-egress-verify.service", "deploy/units/aukora-egress-verify.timer")
@@ -158,6 +161,11 @@ def rebuild(repo, commit, work):
     for path in sorted((source / UNITS).iterdir()):
         if path.is_file() and not path.is_symlink():
             built[UNITS + "/" + path.name] = (path.read_bytes(), "0755" if path.suffix == ".sh" else "0644")
+    for path in sorted((source / ENGINE).rglob("*")):
+        if path.is_symlink():
+            refuse("engine-entry", str(path.relative_to(source)))
+        if path.is_file():
+            built[path.relative_to(source).as_posix()] = (path.read_bytes(), "0755" if path.suffix == ".sh" else "0644")
     for name in REQUIRED:
         if name not in built:
             refuse("file-missing", name)

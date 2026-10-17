@@ -36,9 +36,9 @@ fn env_models() -> Result<(Option<SharedEmbedder>, Option<SharedReranker>)> {
     Ok((embedder, reranker))
 }
 
-/// Binds the socket at mode 0600 (0666 when a peer set is enforced by the kernel). A stale socket file is replaced; a
-/// live service is never displaced.
-fn bind(socket: &Path, by_peer: bool) -> Result<UnixListener> {
+/// Binds the socket at mode 0600, 0660 with `group`, or 0666 when a peer set is enforced by the kernel. A stale socket
+/// file is replaced; a live service is never displaced.
+fn bind(socket: &Path, by_peer: bool, group: bool) -> Result<UnixListener> {
     if let Ok(meta) = fs::symlink_metadata(socket) {
         if !meta.file_type().is_socket() {
             return Err(refuse("socket-path-taken"));
@@ -49,7 +49,7 @@ fn bind(socket: &Path, by_peer: bool) -> Result<UnixListener> {
         fs::remove_file(socket).map_err(|_| refuse("socket-bind"))?;
     }
     let listener = UnixListener::bind(socket).map_err(|_| refuse("socket-bind"))?;
-    let mode = if by_peer { 0o666 } else { 0o600 };
+    let mode = if by_peer { 0o666 } else if group { 0o660 } else { 0o600 };
     fs::set_permissions(socket, fs::Permissions::from_mode(mode)).map_err(|_| refuse("socket-bind"))?;
     Ok(listener)
 }
@@ -147,7 +147,7 @@ fn indexer(state: &Mutex<State>, embedder: &dyn Embedder, wake: &Receiver<()>) {
 /// KIRA_RERANK_ADDR/KIRA_RERANK_MODEL; without them recall runs on keywords and reports its coverage. Refuses to
 /// start when the store's append chain does not verify end to end, and when a peer set is asked for on a platform that
 /// cannot enforce it (see peer.rs).
-pub fn serve(dir: &Path, socket: &Path, admission: &Admission) -> Result<()> {
+pub fn serve(dir: &Path, socket: &Path, admission: &Admission, group: bool) -> Result<()> {
     if admission.configured() && !peer::supported() {
         eprintln!("kira: refusing to serve: --peer-uids/--peer-gids need SO_PEERCRED (Linux); here only same-uid trust exists");
         return Err(refuse("peer-cred-unsupported"));
@@ -166,7 +166,7 @@ pub fn serve(dir: &Path, socket: &Path, admission: &Admission) -> Result<()> {
             return Err(refuse("store-chain-broken"));
         }
     }
-    let listener = bind(socket, admission.configured())?;
+    let listener = bind(socket, admission.configured(), group)?;
     let (wake, woken) = mpsc::channel();
     state.wake = Some(wake);
     eprintln!("kira: serving {} on {}", dir.display(), socket.display());

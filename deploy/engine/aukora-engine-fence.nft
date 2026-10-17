@@ -1,0 +1,21 @@
+#!/usr/sbin/nft -f
+# Host fences for the engine node (loaded by aukora-engine-fence.service, replaced as one table).
+# 1. DNS posture for the engine sandbox (closes the wall test's B03): nothing from a container network may reach
+#    port 53 or 853 anywhere, and Docker's own resolver forwards only to 192.0.2.53 (daemon.json), which is dropped
+#    here. Together with the read-only /etc/resolv.conf inside the sandbox, a lookup inside the wall fails.
+# 2. Kira's model servers listen on loopback 8771 and 8772: only the kira user may connect to them.
+table inet aukora_engine_fence
+delete table inet aukora_engine_fence
+table inet aukora_engine_fence {
+	chain forward {
+		type filter hook forward priority -10; policy accept;
+		iifname "docker0" meta l4proto { tcp, udp } th dport { 53, 853 } drop
+		iifname "br-*" meta l4proto { tcp, udp } th dport { 53, 853 } drop
+		ip daddr 192.0.2.53 drop
+	}
+	chain output {
+		type filter hook output priority -10; policy accept;
+		ip daddr 192.0.2.53 drop
+		oifname "lo" tcp dport { 8771, 8772 } meta skuid != "kira" reject
+	}
+}

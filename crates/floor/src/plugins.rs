@@ -187,6 +187,9 @@ pub struct Assembly {
     admitted: Vec<Candidate>,
     pending: Vec<Candidate>,
     refused: Vec<Candidate>,
+    /// An approved `authority` package is missing or its bytes changed: the engine must not start, and the changed
+    /// package is still in `pending`, so it reaches the owner as a proposal instead of only stopping the engine.
+    authority_blocked: bool,
 }
 
 impl Assembly {
@@ -208,6 +211,20 @@ impl Assembly {
     /// Hot reload is off for every context the assembler builds.
     pub const fn hot_reload(&self) -> bool {
         false
+    }
+
+    /// Whether every approved `authority` package was found with its approved digest.
+    pub const fn authority_blocked(&self) -> bool {
+        self.authority_blocked
+    }
+
+    /// The engine may start from this closure only when no authority package is missing or changed.
+    pub fn startable(&self) -> Result<()> {
+        if self.authority_blocked {
+            Err(refuse("plugin-authority"))
+        } else {
+            Ok(())
+        }
     }
 
     /// The closure manifest the supervisor hands the engine read-only: the set hash, hot reload off and exactly the
@@ -241,7 +258,8 @@ impl Assembly {
 /// - A found package is admitted only when its name is approved and its digest equals the approved digest.
 /// - Anything else is `pending` (a `plugin` crossing), except hot reload and creator mode, which are `refused`.
 /// - Every `authority` plugin must be found and admitted. If one is missing or changed the engine does not start
-///   (`plugin-authority`): the unmatched path fails closed to the owner's classification, it never loads anyway.
+///   (`Assembly::startable` answers `plugin-authority`), and a changed one is still `pending`, so it becomes the owner's
+///   proposal like any other changed package: the unmatched path fails closed to the owner's classification.
 /// - The door plugin must be in the approved set.
 pub fn assemble(approved: &PluginSet, pinned: &Digest32, found: &[Candidate]) -> Result<Assembly> {
     approved.check_pinned(pinned)?;
@@ -263,11 +281,10 @@ pub fn assemble(approved: &PluginSet, pinned: &Digest32, found: &[Candidate]) ->
             pending.push(package.clone());
         }
     }
-    if approved.entries.iter().any(|entry| entry.authority && !admitted.iter().any(|plugin| plugin.name == entry.name)) {
-        return Err(refuse("plugin-authority"));
-    }
+    let authority_blocked =
+        approved.entries.iter().any(|entry| entry.authority && !admitted.iter().any(|plugin| plugin.name == entry.name));
     admitted.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(Assembly { set_hash: approved.set_hash()?, admitted, pending, refused })
+    Ok(Assembly { set_hash: approved.set_hash()?, admitted, pending, refused, authority_blocked })
 }
 
 #[cfg(test)]
@@ -318,10 +335,16 @@ mod tests {
     }
 
     #[test]
-    fn an_authority_plugin_that_is_missing_or_changed_stops_the_engine() {
+    fn an_authority_plugin_that_is_missing_or_changed_stops_the_engine_and_a_changed_one_is_still_a_proposal() {
         let (set, pin) = approved();
-        assert_eq!(assemble(&set, &pin, &[found("@aukora/kira-tools", 2)]).unwrap_err().reason, "plugin-authority");
-        assert_eq!(assemble(&set, &pin, &[found(DOOR_PLUGIN, 5)]).unwrap_err().reason, "plugin-authority");
+        let missing = assemble(&set, &pin, &[found("@aukora/kira-tools", 2)]).unwrap();
+        assert_eq!(missing.startable().unwrap_err().reason, "plugin-authority");
+        assert!(missing.pending().is_empty());
+        let changed = assemble(&set, &pin, &[found(DOOR_PLUGIN, 5)]).unwrap();
+        assert!(changed.authority_blocked());
+        assert_eq!(changed.startable().unwrap_err().reason, "plugin-authority");
+        assert_eq!(changed.pending(), [found(DOOR_PLUGIN, 5)]);
+        assert!(assemble(&set, &pin, &[found(DOOR_PLUGIN, 1)]).unwrap().startable().is_ok());
     }
 
     #[test]

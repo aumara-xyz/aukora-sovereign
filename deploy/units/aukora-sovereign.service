@@ -38,6 +38,9 @@ RuntimeDirectory=aukora
 RuntimeDirectoryMode=0700
 WorkingDirectory=%S/aukora
 UMask=0077
+# On an engine node (deploy/engine/NODE.md): the door's socket folder and the folder that hands the root closure step
+# the approved plugin set. Both are created by tmpfiles; the leading '-' keeps nodes without an engine unchanged.
+ReadWritePaths=-/run/aukora-door -/run/aukora-engine-ctl
 
 # The cage's cgroup is a child of this unit's delegated subtree. Starting in the leaf `supervisor` lets a restart
 # succeed after the controllers were enabled for the children (otherwise status 219/CGROUP).

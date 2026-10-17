@@ -1,0 +1,10 @@
+# Runtime folders of the engine node (systemd-tmpfiles). Modes are the boundary: see NODE.md.
+# The door socket's folder: the supervisor creates the socket; others may traverse, nobody else may add entries.
+d /run/aukora-door 0711 aukora aukora -
+# The supervisor hands the root closure step the approved set here.
+d /run/aukora-engine-ctl 0750 aukora root -
+# The in-wall bridge's socket and launch line: written by the engine (auma), read by the supervisor (group aukora).
+d /run/aukora-engine 0755 root root -
+d /run/aukora-engine/io 2770 @AUMA@ aukora -
+# Kira's socket: the service and the members of kira-clients (the supervisor's door) only.
+d /run/aukora-kira 2750 kira kira-clients -

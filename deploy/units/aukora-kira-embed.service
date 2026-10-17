@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Kira 2's embed model: llama.cpp llama-server on CPU, loopback 8771 only, as user kira. The alias is the model file's
+# SHA-256 (deploy/engine/engine-pins.json): Kira checks /v1/models serves exactly it, so a swapped file refuses.
+[Unit]
+Description=AUKORA Kira 2 embed model (llama.cpp, CPU, loopback)
+After=aukora-engine-fence.service
+Wants=aukora-engine-fence.service
+
+[Service]
+Type=exec
+User=kira
+Group=kira
+ExecStart=/opt/aukora-kira/llama/llama-server -m /opt/aukora-kira/models/embed.gguf --alias 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439 --embedding --pooling last -np 1 -c 2048 -b 2048 -ub 2048 -t 2 --host 127.0.0.1 --port 8771
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

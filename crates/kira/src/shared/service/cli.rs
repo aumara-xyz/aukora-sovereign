@@ -11,10 +11,11 @@ fn usage() -> Refusal {
 /// `sovereign kira <serve | register NAME | token NAME [--rotate] | revoke NAME | import [FILE] | mcp>` with
 /// `--state DIR`, `--socket PATH`, `--token-file PATH`, `--owner-token-file PATH`, `--scopes a,b` and `--owner`.
 /// `serve` also takes `--peer-uids 1001,1002` and `--peer-gids 2000`: on Linux only those peers are admitted
-/// (SO_PEERCRED); elsewhere asking for them refuses to start (peer.rs). Without `--state` the live
-/// `~/aukora-memory/kira` is used, except in a test, which must name its own (`under_test`).
-/// `--rotate` replaces every earlier token of the agent; `revoke` marks the agent revoked and removes all its tokens.
-/// Both take effect on the running service's next request.
+/// (SO_PEERCRED); elsewhere asking for them refuses to start (peer.rs). On a node `serve` takes `--group-socket` (the
+/// socket is 0660: the service's group may connect, in a 2750 directory of that group; every request still needs a
+/// token). Without `--state` the live `~/aukora-memory/kira` is used, except in a test, which must name its own
+/// (`under_test`). `--rotate` replaces every earlier token of the agent; `revoke` marks the agent revoked and removes all
+/// its tokens. Both take effect on the running service's next request.
 ///
 /// `register` and `token` mint credentials, so once the store has an owner they require `--owner-token-file PATH`: a
 /// file (mode 0600) holding the owner's token. Without it they refuse with `kira:owner-token-required`; a token that
@@ -24,7 +25,7 @@ fn usage() -> Refusal {
 pub fn cli(arguments: &[OsString]) -> Result<()> {
     let (mut words, mut state, mut socket, mut token_file, mut scopes, mut owner) = (vec![], None, None, None, None, false);
     let mut owner_token_file: Option<PathBuf> = None;
-    let mut rotate = false;
+    let (mut rotate, mut group_socket) = (false, false);
     let mut admission = Admission::default();
     let ids = |text: String| text.split(',').map(|id| id.trim().parse::<u32>().map_err(|_| usage())).collect::<Result<Vec<u32>>>();
     let mut iter = arguments.iter();
@@ -41,6 +42,7 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
             "--rotate" => rotate = true,
             "--peer-uids" => admission.uids = ids(value()?)?,
             "--peer-gids" => admission.gids = ids(value()?)?,
+            "--group-socket" => group_socket = true,
             flag if flag.starts_with("--") => return Err(usage()),
             word => words.push(word.to_owned()),
         }
@@ -52,8 +54,8 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
     let socket = socket.unwrap_or_else(|| dir.join(SOCKET));
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
     match words.as_slice() {
-        ["serve"] => serve(&dir, &socket, &admission),
-        _ if admission.configured() => Err(usage()),
+        ["serve"] => serve(&dir, &socket, &admission, group_socket),
+        _ if admission.configured() || group_socket => Err(usage()),
         ["mcp"] => mcp(&socket, &token_file.ok_or_else(usage)?),
         ["import"] | ["import", _] => {
             let file = words.get(1).map_or_else(default_epoch1, |f| Ok(PathBuf::from(f)))?;

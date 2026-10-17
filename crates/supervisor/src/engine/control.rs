@@ -1,0 +1,264 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Whether the engine may run, decided outside it every few seconds, and systemd made to agree.
+//!
+//! The engine runs only when all hold: the node is bound to its owner; the installed release is the one the owner
+//! approved (the release floor); the door is configured; the owner has approved a plugin set and every authority
+//! package in it (the door) is staged with its approved bytes. Lose any one and the engine is stopped. New or
+//! changed packages are never loaded; they become one critical proposal for `engine/plugin-set.json` that only the
+//! owner's passkey applies. Starting means: hand the approved set and an admission record to the root closure step
+//! (`control_dir`), then `systemctl start` the one engine unit, which polkit lets this user start and stop.
+
+use super::{refuse, write_atomic, Engine, UNIT};
+use crate::engine_plugins::{self, PLUGIN_SET_TARGET};
+use crate::host::Host;
+use canon::{digest::Digest32, Result};
+use floor::plugins::{assemble, Candidate, PluginSet};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use supervisor::ingress::{BindingState, PrincipalScope};
+
+const TICK: Duration = Duration::from_secs(5);
+/// A refused or expired proposal for the same bytes is raised again only after this long.
+const PROPOSE_AGAIN: Duration = Duration::from_secs(600);
+
+/// What the controller saw this tick.
+pub struct Inputs<'a> {
+    pub bound: Option<PrincipalScope>,
+    pub release_approved: bool,
+    pub door_configured: bool,
+    pub approved: Option<&'a [u8]>,
+    pub found: Result<Vec<Candidate>>,
+}
+
+/// What it decided.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub run: bool,
+    pub reason: &'static str,
+    /// A plugin-set proposal to raise (exact canonical set bytes).
+    pub propose: Option<Vec<u8>>,
+    /// The approved set and its pin, when the engine may run from it.
+    pub admitted: Option<(Vec<u8>, Digest32)>,
+}
+
+fn stop(reason: &'static str, propose: Option<Vec<u8>>) -> Plan {
+    Plan { run: false, reason, propose, admitted: None }
+}
+
+/// The decision, as a pure function of what was observed. The order is the order an owner meets the conditions.
+pub fn plan(inputs: Inputs<'_>) -> Plan {
+    if inputs.bound.is_none() {
+        return stop("awaiting-owner-binding", None);
+    }
+    if !inputs.release_approved {
+        return stop("awaiting-release-approval", None);
+    }
+    if !inputs.door_configured {
+        return stop("door-not-configured", None);
+    }
+    let found = match inputs.found {
+        Ok(found) => found,
+        Err(_) => return stop("plugins-unreadable", None),
+    };
+    let Some(bytes) = inputs.approved else {
+        return match engine_plugins::initial_set(&found) {
+            Ok(Some(set)) => stop("awaiting-plugin-set-approval", Some(set)),
+            Ok(None) => stop("door-package-missing", None),
+            Err(_) => stop("plugins-unapprovable", None),
+        };
+    };
+    let Ok(approved) = PluginSet::parse(bytes) else { return stop("plugin-set-unreadable", None) };
+    let Ok(pin) = approved.set_hash() else { return stop("plugin-set-unreadable", None) };
+    let assembly = match assemble(&approved, &pin, &found) {
+        Ok(assembly) => assembly,
+        Err(refusal) => return stop(refusal.reason, None),
+    };
+    let propose = engine_plugins::candidate_set(&approved, &assembly).ok().flatten();
+    if assembly.startable().is_err() {
+        return stop("authority-plugin-changed", propose);
+    }
+    Plan { run: true, reason: "running", propose, admitted: Some((bytes.to_vec(), pin)) }
+}
+
+async fn systemctl(verb: &str) -> bool {
+    tokio::process::Command::new("/usr/bin/systemctl")
+        .args(["--no-block", verb, UNIT])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
+async fn active() -> bool {
+    tokio::process::Command::new("/usr/bin/systemctl")
+        .args(["is-active", "--quiet", UNIT])
+        .stdin(std::process::Stdio::null())
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
+fn hex(digest: &[u8]) -> String {
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `admission.json`: what the closure step must find (the set and its pin) and what admitted it.
+fn admission(set: &[u8], pin: &Digest32, release: &str) -> Vec<u8> {
+    let value = serde_json::json!({
+        "v": 1,
+        "plugin_set_sha256": hex(&Digest32::sha256(set).as_bytes()[..]),
+        "set_hash": pin.to_string(),
+        "release": release,
+    });
+    serde_json::to_vec(&value).unwrap_or_default()
+}
+
+/// Record every set the engine was started from in the floor's state folder (an append-only audit line). The
+/// authority itself is the gate target the owner's passkey applied; this record lets a reader see which approved
+/// set each run used. A pin inside the signed floor (`ProtectedState`) needs a floor schema change: NODE.md, open items.
+fn record_pin(host: &Host, pin: &Digest32, gate_digest: &str) {
+    use std::io::Write;
+    let path = host.config.state_root.join("floor").join("engine-plugin-set.jsonl");
+    let line = format!("{{\"at\":{},\"gate_sha256\":\"{gate_digest}\",\"set_hash\":\"{pin}\"}}\n", crate::host::now().unwrap_or(0));
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes()).and_then(|()| file.sync_all());
+    }
+}
+
+pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
+    let mut proposed: Option<(Digest32, Instant)> = None;
+    let mut started_from: Option<Vec<u8>> = None;
+    loop {
+        tokio::time::sleep(TICK).await;
+        let bound = match host.ledger.binding() {
+            Ok(BindingState::Bound(scope)) => Some(scope),
+            _ => None,
+        };
+        let approved = host.engine_gate().approved_target(PLUGIN_SET_TARGET).await.ok().flatten();
+        let root = engine.config.plugin_root.clone();
+        let found = tokio::task::spawn_blocking(move || engine_plugins::discover(&root))
+            .await
+            .unwrap_or_else(|_| Err(refuse("plugin-package")));
+        let decision = plan(Inputs {
+            bound,
+            release_approved: host.release_approved(),
+            door_configured: matches!(host.config.door_policy_text(), Ok(Some(_))),
+            approved: approved.as_deref(),
+            found,
+        });
+        engine.set_status(decision.reason);
+        if let (Some(set), Some(scope)) = (decision.propose.as_ref(), bound) {
+            let digest = Digest32::sha256(set);
+            let due = proposed.is_none_or(|(last, at)| last != digest || at.elapsed() >= PROPOSE_AGAIN);
+            if due {
+                proposed = Some((digest, Instant::now()));
+                let note = "Let the engine load exactly these plugin packages (names and SHA-256 fingerprints)".to_owned();
+                if let Err(refusal) = host.engine_gate().propose_plugin_set(scope, note, set.clone()).await {
+                    eprintln!("engine: plugin-set proposal not raised: {}:{}", refusal.organ, refusal.reason);
+                }
+            }
+        }
+        let running = active().await;
+        match decision.admitted {
+            Some((set, pin)) => {
+                let changed = started_from.as_deref() != Some(set.as_slice());
+                if changed || !running {
+                    let dir = engine.config.control_dir.clone();
+                    let record = admission(&set, &pin, &host.release_digest());
+                    let written = write_atomic(&dir, "plugin-set.json", &set).and_then(|()| write_atomic(&dir, "admission.json", &record));
+                    if let Err(refusal) = written {
+                        engine.set_status(refusal.reason);
+                        continue;
+                    }
+                    let verb = if running { "restart" } else { "start" };
+                    if systemctl(verb).await {
+                        if changed {
+                            record_pin(&host, &pin, &hex(&Digest32::sha256(&set).as_bytes()[..]));
+                        }
+                        started_from = Some(set);
+                    }
+                }
+            }
+            None => {
+                // Withdraw the admission first: a start that systemd propagates on its own (a supervisor restart)
+                // then fails in the root closure step instead of running without this decision.
+                let _ = std::fs::remove_file(engine.config.control_dir.join("admission.json"));
+                if running {
+                    let _ = systemctl("stop").await;
+                }
+                started_from = None;
+                if let Ok(mut cookie) = engine.dsh_cookie.lock() {
+                    *cookie = None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use floor::plugins::{PluginEntry, DOOR_PLUGIN};
+
+    fn scope() -> PrincipalScope {
+        PrincipalScope { subject: canon::ids::SubjectId::from_digest(Digest32::from_bytes([3; 32])), epoch: 1 }
+    }
+
+    fn found(name: &str, n: u8) -> Candidate {
+        Candidate { name: name.to_owned(), digest: Digest32::sha256(&[n]) }
+    }
+
+    fn set(entries: &[(&str, u8, bool)]) -> Vec<u8> {
+        let entries = entries
+            .iter()
+            .map(|(name, n, authority)| PluginEntry { name: (*name).to_owned(), digest: Digest32::sha256(&[*n]), authority: *authority })
+            .collect();
+        PluginSet::new(entries).unwrap().canonical_bytes().unwrap()
+    }
+
+    fn inputs<'a>(approved: Option<&'a [u8]>, found: Vec<Candidate>) -> Inputs<'a> {
+        Inputs { bound: Some(scope()), release_approved: true, door_configured: true, approved, found: Ok(found) }
+    }
+
+    #[test]
+    fn nothing_runs_before_binding_release_approval_and_the_door() {
+        let staged = vec![found(DOOR_PLUGIN, 1)];
+        let mut unbound = inputs(None, staged.clone());
+        unbound.bound = None;
+        assert_eq!(plan(unbound), stop("awaiting-owner-binding", None));
+        let mut unreleased = inputs(None, staged.clone());
+        unreleased.release_approved = false;
+        assert_eq!(plan(unreleased), stop("awaiting-release-approval", None));
+        let mut doorless = inputs(None, staged);
+        doorless.door_configured = false;
+        assert_eq!(plan(doorless), stop("door-not-configured", None));
+    }
+
+    #[test]
+    fn the_first_set_is_proposed_whole_and_nothing_runs_until_it_is_approved() {
+        let decision = plan(inputs(None, vec![found(DOOR_PLUGIN, 1), found("@aukora/face-layout", 2)]));
+        assert!(!decision.run && decision.reason == "awaiting-plugin-set-approval");
+        let proposed = PluginSet::parse(&decision.propose.unwrap()).unwrap();
+        assert_eq!(proposed.entries().len(), 2);
+        assert_eq!(plan(inputs(None, vec![found("@aukora/face-layout", 2)])).reason, "door-package-missing");
+    }
+
+    #[test]
+    fn an_approved_set_runs_extra_packages_are_proposed_and_a_changed_door_stops_and_is_proposed() {
+        let approved = set(&[(DOOR_PLUGIN, 1, true), ("@aukora/face-layout", 2, false)]);
+        let running = plan(inputs(Some(&approved), vec![found(DOOR_PLUGIN, 1), found("@aukora/face-layout", 2)]));
+        assert!(running.run && running.propose.is_none() && running.admitted.as_ref().unwrap().0 == approved);
+        let extra = plan(inputs(Some(&approved), vec![found(DOOR_PLUGIN, 1), found("@aukora/face-layout", 2), found("@x/new", 9)]));
+        assert!(extra.run && extra.propose.is_some());
+        let changed = plan(inputs(Some(&approved), vec![found(DOOR_PLUGIN, 7), found("@aukora/face-layout", 2)]));
+        assert!(!changed.run && changed.reason == "authority-plugin-changed");
+        let next = PluginSet::parse(&changed.propose.unwrap()).unwrap();
+        assert!(next.entries().iter().any(|entry| entry.name == DOOR_PLUGIN && entry.authority && entry.digest == Digest32::sha256(&[7])));
+        assert_eq!(plan(inputs(Some(b"garbage"), vec![])).reason, "plugin-set-unreadable");
+        let mut unreadable = inputs(Some(&approved), vec![]);
+        unreadable.found = Err(refuse("plugin-package"));
+        assert_eq!(plan(unreadable).reason, "plugins-unreadable");
+    }
+}

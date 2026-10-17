@@ -437,7 +437,7 @@ fn a_peer_set_is_refused_where_the_kernel_cannot_name_peers() {
     let f = fixture();
     let socket = f.dir.join("peer.sock");
     let set = Admission { uids: vec![1001], gids: vec![] };
-    assert_eq!(serve(&f.dir, &socket, &set), Err(refuse("peer-cred-unsupported")));
+    assert_eq!(serve(&f.dir, &socket, &set, false), Err(refuse("peer-cred-unsupported")));
     assert!(!socket.exists());
     // A peer set means nothing to any other command: a usage error, before anything runs.
     let state = f.dir.clone().into_os_string();

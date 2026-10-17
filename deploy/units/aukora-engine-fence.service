@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Host fences for the engine node (deploy/engine/aukora-engine-fence.nft): no DNS from container networks (the wall
+# test's B03), Docker's resolver forwards into a dropped address, and only the kira user reaches Kira's model ports.
+[Unit]
+Description=AUKORA engine fences (DNS posture, Kira model ports)
+After=local-fs.target
+Before=docker.service aukora-kira.service aukora-engine.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /opt/aukora/current/deploy/engine/aukora-engine-fence.nft
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

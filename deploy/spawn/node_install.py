@@ -516,9 +516,10 @@ def install_node(stage, mode, node, policy, restricted):
     core.atomic_write(release.NODE_JSON, node_config(node, cage_id), 0o640, (0, gid))
     # The supervisor refuses to start without an explicit gate target inventory. A new node starts with only the door's
     # eight ask slots (door/ask-00.json..), each holding one owner-reviewed engine call, and the build manifest
-    # (build/manifest.json), holding the owner-approved inputs of one build: critical content targets that only the
-    # host can propose to. The gate refuses every other change until a later, passkey-approved release adds targets.
-    ids = ["build/manifest.json"] + ["door/ask-%02d.json" % n for n in range(8)]
+    # (build/manifest.json), holding the owner-approved inputs of one build, and the engine's plugin set
+    # (engine/plugin-set.json, deploy/engine/NODE.md): critical content targets that only the host can propose to.
+    # The gate refuses every other change until a later, passkey-approved release adds targets.
+    ids = ["build/manifest.json", "engine/plugin-set.json"] + ["door/ask-%02d.json" % n for n in range(8)]
     slots = [{"class": "content", "id": name, "max_bytes": 16384, "risk": "critical"} for name in ids]
     core.atomic_write(os.path.join(release.CONFIG, "gate-targets-v1.json"),
                       core.canonical({"kind": "aukora-gate-targets-v1", "node": node["name"], "targets": slots, "v": 1}),

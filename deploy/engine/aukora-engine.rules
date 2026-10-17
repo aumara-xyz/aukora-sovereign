@@ -1,0 +1,11 @@
+// The supervisor (user aukora) may start, stop and restart exactly one unit: the engine. Nothing else.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "aukora-engine.service" &&
+        subject.user == "aukora") {
+        var verb = action.lookup("verb");
+        if (verb == "start" || verb == "stop" || verb == "restart") {
+            return polkit.Result.YES;
+        }
+    }
+});

@@ -15,6 +15,7 @@ Python 3.9 and the standard library run everything on the operator side; the nod
 | `spawn/node_install.py` | 73 | runs once as root on a new node |
 | `upgrade/upgrade.sh`, `pointer.py`, `node_release.py` | 80, 131 | verify the release pointer, stage, switch, probe, roll back |
 | `units/*.service`, `*.timer`, `check-units.sh` | 102 | hardened units; the audit with `systemd-analyze security` |
+| `engine/` | — | the real node: the engine in OpenShell, Kira 2, the door, the engine origin; design and runbook in [engine/NODE.md](engine/NODE.md) (Nebius VM nodes only; a second step after `spawn.sh create`) |
 
 ```
 scripts/reproduce.sh build COMMIT OUT_DIR --twice          # release.tar + release.json, built twice and byte-compared

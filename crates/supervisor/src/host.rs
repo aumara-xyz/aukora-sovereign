@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Host composition for the deployed supervisor entry point.
 
+mod engine_routes;
 mod owner_gate;
 
 use crate::{
@@ -57,6 +58,7 @@ pub struct Host {
     gate: Arc<crate::adapters::GateAdapter>,
     runtime_refusal: Mutex<Option<canon::Refusal>>,
     handoffs: Mutex<frontdoor::fd4::ShellHandoffs>,
+    engine: Option<Arc<crate::engine::Engine>>,
 }
 struct Assets {
     source: ReleaseFiles,
@@ -234,6 +236,11 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         state.node,
     )?);
     let live_data = crate::data::live::RuntimeData::new(data.clone());
+    // The engine (deploy/engine/NODE.md), when this node has `engine-v1.json`. A bad file is logged; the node serves on.
+    let engine = crate::engine::Engine::load(&config).unwrap_or_else(|refusal| {
+        eprintln!("engine: not configured: {}:{}", refusal.organ, refusal.reason);
+        None
+    });
     let host = Arc::new(Host {
         identity,
         approvals: crate::approvals::ApprovalFeed::new(ledger.clone()),
@@ -253,7 +260,11 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         faces,
         runtime_refusal: Mutex::new(None),
         handoffs: Mutex::new(frontdoor::fd4::ShellHandoffs::default()),
+        engine: engine.clone(),
     });
+    if let Some(engine) = engine {
+        crate::engine::run(host.clone(), engine);
+    }
     crate::web::serve_handoff(host).await
 }
 
@@ -516,6 +527,9 @@ impl Host {
     /// Tokio runtime worker thread.
     pub fn dispatch(&self, admission: &HttpAdmission) -> Result<http::Response<Vec<u8>>> {
         let request = admission.request();
+        if request.role() == HostRole::Shell && request.method() == Method::Get && request.path() == "/engine/open" {
+            return self.engine_open(request);
+        }
         if !request.path().starts_with("/api/") {
             return self.asset(request, admission.owner_navigation());
         }

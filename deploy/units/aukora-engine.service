@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The engine (deploy/engine/NODE.md): the DeepSeek Harness inside OpenShell. No [Install] section: it never starts at
+# boot by itself. Only the supervisor starts and stops it (polkit allows user aukora exactly this unit), and only
+# while the owner is bound, the approved release is installed, the door is configured and an owner-approved plugin
+# set matches. This unit runs as root only to drive the local OpenShell gateway; the engine inside runs as auma.
+[Unit]
+Description=AUKORA engine: the DeepSeek Harness inside OpenShell (Ring 1)
+After=docker.service aukora-openshell-gateway.service aukora-engine-fence.service aukora-kira.service
+Requires=aukora-openshell-gateway.service aukora-engine-fence.service
+# Stopping or restarting the supervisor stops the engine; it comes back only when the supervisor starts it again.
+PartOf=aukora-sovereign.service
+AssertPathExists=/etc/aukora/engine-v1.json
+AssertPathExists=/etc/aukora/engine.env
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=exec
+ExecStartPre=/opt/aukora/current/deploy/engine/engine-prestart.sh
+ExecStart=/opt/aukora/current/deploy/engine/engine-run.sh create
+ExecStartPost=/opt/aukora/current/deploy/engine/engine-run.sh verify
+ExecStopPost=/opt/aukora/current/deploy/engine/engine-run.sh delete
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=180s
+TimeoutStopSec=30s
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes

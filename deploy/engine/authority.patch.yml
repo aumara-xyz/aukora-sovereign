@@ -1,0 +1,46 @@
+# The engine's authority overlay: applied by `dsh --patch` AFTER the profile and its user layer, so nothing the engine
+# can write (its home, its settings) can undo it. Root-owned, inside the release (/engine/aukora, read-only).
+#
+# 1. The door, with the node's real values. They must match the door's policy (/etc/aukora/door-policy-v1.json):
+#    socket /run/aukora-door/door.sock, workspace root /work. A wrong value makes the door's apply() throw, so the
+#    harness does not start with the door half open.
+- insert:
+    - id: aukora-door
+      name: '@aukora/door'
+      config:
+        socketPath: /run/aukora-door/door.sock
+        workspaceRoots:
+          - /work
+
+# 2. Off in the authority context (NORTH-STAR section C; wall test B12-B14): hot reload, the plugin manager and its
+#    install tool, the web terminal, the desktop telemetry, "open in app" on the host, and the harness-development
+#    context (it tells the model where a checkout of the harness lives).
+- id: hmr
+  disabled: true
+- id: client-hmr
+  disabled: true
+- id: plugin-manager
+  disabled: true
+- id: tool-plugin-manager
+  disabled: true
+- id: ui-plugin-manager
+  disabled: true
+- id: terminal-controller
+  disabled: true
+- id: ui-sidebar-terminal
+  disabled: true
+- id: desktop-product-telemetry
+  disabled: true
+- id: product-analytics
+  disabled: true
+- id: open-in-app
+  disabled: true
+- id: ui-open-in-app
+  disabled: true
+- id: harness-dev-context
+  disabled: true
+
+# 3. No first-run sign-in form; the engine holds no model key (NODE.md, "The model").
+- id: ui-settings-models
+  config:
+    credentialOnboarding: false

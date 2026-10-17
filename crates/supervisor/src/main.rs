@@ -7,6 +7,7 @@ mod build;
 mod config;
 mod data;
 mod door;
+mod engine;
 mod engine_plugins;
 pub mod faces;
 mod health;
@@ -31,6 +32,10 @@ fn run() -> canon::Result<()> {
     // The Rust door for the engine's crossings (engine/plugins/aukora-door): `door serve --socket PATH --policy FILE`.
     if arguments.first().is_some_and(|command| command == "door") {
         return door::run(&arguments[1..]);
+    }
+    // The engine's root closure step (deploy/units/aukora-engine.service): `engine closure --control D --from D --to D`.
+    if arguments.first().is_some_and(|command| command == "engine") {
+        return engine::cli(&arguments[1..]);
     }
     // Kira 2, the shared memory service on the Mac: serve, register, token, import, mcp.
     if arguments.first().is_some_and(|command| command == "kira") {

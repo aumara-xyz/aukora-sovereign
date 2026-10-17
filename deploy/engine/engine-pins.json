@@ -1,0 +1,53 @@
+{
+  "v": 1,
+  "note": "Every artifact the engine installer fetches on the node, by exact URL and SHA-256. A null sha256 refuses the install (engine-pin-missing): fill it with `python3 deploy/engine/engine.py pin FILE` on the operator machine from a download you checked. The model pins are the files Kira 2 runs on the Mac today (~/aukora-memory/kira/models/*.sha256).",
+  "artifacts": {
+    "node": {
+      "url": "https://nodejs.org/dist/v24.11.1/node-v24.11.1-linux-x64.tar.xz",
+      "sha256": null,
+      "install": "/opt/aukora-engine/node"
+    },
+    "dsh": {
+      "url": "operator:dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz",
+      "sha256": null,
+      "install": "/opt/aukora-engine/dsh",
+      "how": "npm install --save-exact --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.5 in an empty folder on the rehearsal VM with the pinned node; tar the folder (package.json, package-lock.json, node_modules) with --sort=name --owner=0 --group=0 --mtime=@0. The wall test ran this exact graph (/opt/toy-boundary/engine/node_modules)."
+    },
+    "openshell": {
+      "url": "operator:openshell-0.1.4-linux-x64.tar.gz",
+      "sha256": null,
+      "install": "/usr/local/bin",
+      "how": "the openshell and openshell-gateway 0.1.4 binaries the wall test ran (docker compute driver)"
+    },
+    "sandbox_image": {
+      "url": "operator:openshell-sandbox-image.tar",
+      "sha256": null,
+      "install": "docker load",
+      "how": "docker save of the sandbox image the wall test used (docker image inspect on that VM gives its id)"
+    },
+    "llama": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10621/llama-b10621-bin-ubuntu-x64.zip",
+      "sha256": null,
+      "install": "/opt/aukora-kira/llama",
+      "how": "the CPU build of the release the Mac runs (llama-server version 0.3.0, build 10621, commit c1d0e7a00)"
+    },
+    "embed_model": {
+      "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+      "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+      "bytes": 639150592,
+      "install": "/opt/aukora-kira/models/embed.gguf"
+    },
+    "rerank_model": {
+      "url": "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf",
+      "sha256": "a43c7c9b11a4c1517e5bf95151960e1621d1b72f7a493364b01e386cf1aaa1d3",
+      "bytes": 635676416,
+      "install": "/opt/aukora-kira/models/rerank.gguf"
+    },
+    "rust": {
+      "url": "operator:rust-1.99.1-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": null,
+      "install": "/opt/rust",
+      "how": "the read-only toolchain the wall test mounted at /opt/rust (rustup toolchain dir for 1.99.1, minimal profile, plus wasm32-unknown-unknown)"
+    }
+  }
+}
