@@ -546,6 +546,16 @@ D (ed7a900…-16c5a08c, the fixes below) through B's own card, then E (aff2272�
 | re-proposal cap | bytes whose card simply expired are held back 24 h (`gate:recently-expired`) unless the owner asks again for that very card (its `aukora-owner-again-v1` fact; other evidence does not lift it, Codex re-review 3); listed beside the declines | unit tests (`adapters::gate`); not exercised live |
 | Live, Zeta Harp, Lingwa faces | `connect-src 'self'` (their JSON module imports were blocked, the AUMLOK cause) | checks green; not opened on the node |
 
+Codex's re-review (probe isolation, activation intent, the cooldown's binding), LIVE on the same node with releases
+F (d985805…-9080a0fd), H (c8e92b3…-73e7ff7a) and I (473b7ab…-ed80b9b0):
+
+| Item | Live evidence |
+|---|---|
+| probe in its own unit (Codex HIGH) | `systemd-analyze security aukora-release-probe@…`: 0.5 SAFE. A FAKE staged release whose `bin/sovereign` is a hostile script, started in the unit: it ran as a throwaway uid (62669) with only its copy (`aura-signing-key aura.sqlite3 browser-sessions floor node-identity-v1 targets`); `live state unreadable`, `live signing key unreadable`, `/etc/aukora hidden`, `door and broker sockets hidden`, `no TCP connection`, `no socket of any family`, `release state not writable`; it forked a `setsid sleep 1000` survivor and printed the expected success line, then hung: at 90 s `Failed with result 'timeout'`, survivors 0 (the cgroup was killed), root's record `passed: false, result: timeout`, the copy and the configuration copy gone. A good candidate (D) in the unit: `probe ok <digest>`, `passed: true` |
+| supervisor ↔ unit | F offered H: the supervisor started `aukora-release-probe@…` through polkit, root recorded passed, the card went up, approved, `switched to c8e92b338716-…`; H's follow installed the template from H's release; H offered I through that installed unit: `release-probe: passed`, card, approved, `switched to 473b7abc3995-…`, anchor seq 65, 8 spent, no activation intent left |
+| found live and fixed | a stdout file under the unit's runtime folder could not be opened for the root step (209/STDOUT): the answer is read from the journal; the unit's UMask 0077 applies to root's steps: the configuration folder (config-unreadable), node.json's claim/egress paths (config-path) and the results folder (0700: the supervisor timed out on a passed probe) are now set explicitly (the last fix is after I; on this node the folder was set by hand) |
+| activation intent, cooldown binding | unit tests only (a crash between the links and active.json finished at the next start; an unanchored intent dropped; unrelated evidence and another card's Ask again do not lift the day) |
+
 Tests (Mac): `cargo test -p floor` (10, three new: genesis and upgrade ordering), `-p supervisor -- adapters::gate
 release::owner` (7 new), `tests/deploy/test_node_release_upgrade.py` (6: offer switches nothing; follow waits for the
 floor, switches to the approved release, survives a withdrawn offer, refuses an unstaged or tampered one).
