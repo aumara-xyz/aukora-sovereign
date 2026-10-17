@@ -233,6 +233,33 @@ fn dedupe_keeps_the_earliest_note_and_names_every_author() {
 }
 
 #[test]
+fn dead_versions_do_not_crowd_the_live_head_out_of_the_candidate_pool() {
+    let (peter, a) = (key(), key());
+    let mut s = store_with(&[("peter", &peter, true), ("claude", &a, false)]);
+    // The owner corrected one fact 60 times: every version matches the query, shorter and closer than the live head.
+    let mut previous: Option<String> = None;
+    for i in 0..60u64 {
+        let id = put(&mut s, &peter, &format!("severity leak v{i}"), Lane::Evidence, Capture::OwnerTyped, Review::Remembered, 100 + i);
+        if let Some(old) = previous.replace(id) {
+            let sup = Event::sign(&peter, 1_000 + i, SUPERSEDE_KIND, vec![vec!["supersedes".into(), old]], String::new()).unwrap();
+            s.record(sup).unwrap();
+        }
+    }
+    let head = put(&mut s, &peter, "the severity of the leak was finally settled after the long review as Medium", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, 2_000);
+    let old = previous.unwrap();
+    let sup = Event::sign(&peter, 2_001, SUPERSEDE_KIND, vec![vec!["supersedes".into(), old], vec!["replacement".into(), head.clone()]], String::new()).unwrap();
+    s.record(sup).unwrap();
+    s.index_missing(&Words, 64).unwrap();
+    for (emb, rr) in [(None, None), (Some(&Words as &dyn Embedder), None), (Some(&Words as &dyn Embedder), Some(&Overlap as &dyn Reranker))] {
+        let r = s.recall(&query("severity leak", "x"), emb, rr).unwrap();
+        assert_eq!(r.status, RecallStatus::Found, "the live head must be found, not a definite empty");
+        let live: Vec<&str> = r.items.iter().filter(|i| i.correction.is_none()).map(|i| i.id.as_str()).collect();
+        assert_eq!(live, vec![head.as_str()]);
+        assert!(r.items.iter().filter(|i| i.correction.is_some()).count() <= MAX_CORRECTIONS);
+    }
+}
+
+#[test]
 fn dedupe_keeps_the_highest_trust_note_and_never_mixes_privacy() {
     let (peter, a) = (key(), key());
     let mut s = store_with(&[("peter", &peter, true), ("claude", &a, false)]);

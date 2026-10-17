@@ -21,6 +21,8 @@ pub const RRF_K: f64 = 60.0;
 pub const RERANK_TOP: usize = 20;
 /// History items (superseded, quarantined) shown after the current items.
 pub const MAX_CORRECTIONS: usize = 4;
+/// Superseded or quarantined notes that may take candidate-pool places, per retriever, beside the POOL live ones.
+const MAX_DEAD_POOL: usize = 8;
 /// Character budget when the query leaves it at 0.
 pub const DEFAULT_BUDGET: usize = 4_800;
 /// Epoch searched when the query leaves it at 0 (epoch 1 is the archived import).
@@ -271,8 +273,11 @@ fn pool(loader: &mut Loader, ranked: &[(i64, f64)]) -> Vec<(i64, usize)> {
     let mut kept: Vec<(f64, String, i64)> = Vec::new();
     let mut held: BTreeMap<String, usize> = BTreeMap::new();
     let mut over: Vec<(i64, f64)> = Vec::new();
+    // Places are for live notes. Superseded and quarantined ones only feed the corrections lane, so they take at most
+    // MAX_DEAD_POOL places beside the POOL live ones: many old versions of one fact cannot push its head out.
+    let (mut live_kept, mut dead_kept) = (0usize, 0usize);
     for &(seq, score) in ranked {
-        if kept.len() >= POOL && kept.last().is_some_and(|last| last.0 != score) {
+        if live_kept >= POOL && kept.last().is_some_and(|last| last.0 != score) {
             break;
         }
         let Some(who) = loader.in_epoch.get(&seq) else { continue };
@@ -282,16 +287,32 @@ fn pool(loader: &mut Loader, ranked: &[(i64, f64)]) -> Vec<(i64, usize)> {
         }
         let pubkey = who.pubkey.clone();
         if let Some(note) = loader.note(seq) {
-            *held.entry(pubkey).or_default() += 1;
+            if note.quarantined || note.superseded_by.is_some() {
+                if dead_kept >= MAX_DEAD_POOL {
+                    continue;
+                }
+                dead_kept += 1;
+            } else {
+                live_kept += 1;
+                *held.entry(pubkey).or_default() += 1;
+            }
             kept.push((score, hex(note.event.id.as_bytes()), seq));
         }
     }
     // Places left over go to the overflow, best first.
     for (seq, score) in over {
-        if kept.len() >= POOL && kept.last().is_some_and(|last| last.0 != score) {
+        if live_kept >= POOL && kept.last().is_some_and(|last| last.0 != score) {
             break;
         }
         if let Some(note) = loader.note(seq) {
+            if note.quarantined || note.superseded_by.is_some() {
+                if dead_kept >= MAX_DEAD_POOL {
+                    continue;
+                }
+                dead_kept += 1;
+            } else {
+                live_kept += 1;
+            }
             kept.push((score, hex(note.event.id.as_bytes()), seq));
         }
     }
