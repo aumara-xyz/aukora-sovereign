@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(judge(&p, &g, &u, &net(), NOW + 4 * DAY_MS).reason, "no-grant");
         let mut revoked = grants();
         let id = revoked.grants()[0].id().unwrap();
-        assert!(revoked.revoke(id));
+        assert!(revoked.revoke(id).is_ok());
         assert_eq!(judge(&p, &revoked, &u, &net(), NOW).reason, "no-grant");
         // No grants at all: trusted is not a grant.
         assert_eq!(judge(&p, &GrantSet::default(), &u, &net(), NOW).reason, "no-grant");

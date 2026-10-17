@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap(), "");
         assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Clear));
         let mut set = GrantSet::parse(&std::fs::read(&grants).unwrap()).unwrap();
-        assert!(set.revoke(id));
+        assert!(set.revoke(id).is_ok());
         std::fs::remove_file(&grants).unwrap();
         write_private(&grants, &set.canonical_bytes().unwrap());
         assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
