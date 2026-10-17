@@ -6,25 +6,7 @@
     "tsBuildInfoFile": "lib/tsconfig.client.tsbuildinfo"
   },
   "files": [
-
-
-
-
-
-
-
-
-    "src/aura/activity.ts",
-    "src/aura/aggregate.ts",
-    "src/aura/deformation.ts",
-    "src/aura/figure.ts",
-    "src/aura/motion.ts",
-    "src/aura/rotor.ts",
-    "src/aura/ternary.ts",
-    "src/aura/types.ts",
-    "src/aura/walsh.ts",
     "src/client/AuraCoherenceMenu.tsx",
-    "src/client/AuraCoherenceSurface.tsx",
     "src/client/GeneralSection.tsx",
     "src/client/SettingsDocumentAction.tsx",
     "src/client/SettingsMenu.tsx",
@@ -37,6 +19,11 @@
     "src/client/locales.ts",
     "src/client/settings-document-store.ts",
     "src/client/shell-contract.ts",
+    "src/client/pentora/AuraPentoraSurface.tsx",
+    "src/client/pentora/PentoraFigure.tsx",
+    "src/client/pentora/model.ts",
+    "src/client/pentora/stub.ts",
+    "src/client/pentora/tables.ts",
     "src/client/sovereignty/SovereigntyMenu.tsx",
     "src/client/sovereignty/SovereigntySurface.tsx",
     "src/client/sovereignty/format.ts",

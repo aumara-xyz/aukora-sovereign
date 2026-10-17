@@ -6,11 +6,6 @@
     "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo"
   },
   "files": [
-
-
-    "src/aura/aggregate.ts",
-    "src/aura/projection.ts",
-    "src/aura/types.ts",
     "src/index.ts"
   ],
   "references": [

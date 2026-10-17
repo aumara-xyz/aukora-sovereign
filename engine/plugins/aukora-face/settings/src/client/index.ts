@@ -8,7 +8,7 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { AuraCoherenceMenu } from './AuraCoherenceMenu.tsx'
-import { AuraCoherenceSurface } from './AuraCoherenceSurface.tsx'
+import { AuraPentoraSurface } from './pentora/AuraPentoraSurface.tsx'
 import { SovereigntyMenu } from './sovereignty/SovereigntyMenu.tsx'
 import { SovereigntySurface } from './sovereignty/SovereigntySurface.tsx'
 import { SOVEREIGNTY_SURFACE } from './sovereignty/model.ts'
@@ -201,11 +201,11 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('settings.close', () =>
     ctx.slots.register({ name: 'settings.close', locale: NS }, CloseLabel))
-  // Aura Coherence: a living view of system state, as its own surface and its own
-  // System-menu row.
+  // Aura Coherence: the node's living state on the Pentora (it replaced Prime's tesseract, 2026-10-17), as its own
+  // surface and its own System-menu row. Read-only; stub data only in the preview.
   ctx.slots.inject('shell.surface', () => ctx.slots.register({
-    name: 'shell.surface', id: 'aura-coherence', order: 60, locale: NS,
-  }, AuraCoherenceSurface))
+    name: 'shell.surface', id: 'aura-coherence', order: 60,
+  }, AuraPentoraSurface))
   ctx.slots.inject('shell.menu.system', () => ctx.slots.register({
     name: 'shell.menu.system', id: 'aura-coherence', order: -10, locale: NS,
   }, AuraCoherenceMenu))
