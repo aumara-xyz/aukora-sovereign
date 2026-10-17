@@ -376,6 +376,25 @@ pub fn corroborating_authors(store: &SharedStore, note: &StoredNote, readable: &
     Ok(out)
 }
 
+/// What a statement stands on NOW, from the notes that hold it (the one shown and its repeaters): the strongest of each
+/// note's own provenance, and corroborated if the notes together go back to roots of at least two different authors
+/// (none web-derived). Recall computes this once while it gathers; the service computes it again from the notes it
+/// reloads, because a quarantine, a supersede or an expiry may have removed what the first answer stood on.
+pub fn group_evidence(store: &SharedStore, notes: &[&StoredNote], readable: &dyn Fn(&StoredNote) -> bool) -> Result<&'static str> {
+    let mut best = Evidence::Unverified;
+    let (mut authors, mut web) = (BTreeSet::new(), false);
+    for note in notes {
+        let own = corroborating_authors(store, note, readable)?;
+        best = best.max(provenance(&note.meta, own.len()));
+        authors.extend(own);
+        web |= note.meta.capture == Capture::WebDerived;
+    }
+    if authors.len() >= 2 && !web {
+        best = best.max(Evidence::Corroborated);
+    }
+    Ok(best.wire())
+}
+
 /// The wire label of what a single note stands on (see `RecallItem::evidence`), from the roots `readable` accepts.
 pub fn evidence_of(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(&StoredNote) -> bool) -> Result<&'static str> {
     Ok(provenance(&note.meta, corroborating_authors(store, note, readable)?.len()).wire())

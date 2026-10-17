@@ -822,14 +822,41 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                     continue;
                 }
                 live += usize::from(item.correction.is_none());
-                // `found` stands on a note that cleared the relevance floor AND stands on something; it must still be
-                // in the answer after the filtering above.
-                justified |= item.correction.is_none() && item.relevant && item.evidence != "unverified";
+                // What the statement stands on is worked out again from the notes as they are now (the kept note and the
+                // repeaters that still read as visible and live): the label recall gathered before the models ran may rest
+                // on a root that has since been quarantined.
+                let mut evidence = item.evidence;
+                if item.correction.is_none() && !note.quarantined {
+                    let mut holders = vec![note.clone()];
+                    let mut failed = false;
+                    for other in &item.also_by_ids {
+                        match s.store.get(other) {
+                            Ok(Some(n)) if visible(&caller, &n) && !n.quarantined && n.superseded_by.is_none() && validity(&n.meta, now()) == "current" => holders.push(n),
+                            Ok(_) => {}
+                            Err(_) => failed = true,
+                        }
+                    }
+                    let fresh = if failed {
+                        None
+                    } else {
+                        let refs: Vec<&StoredNote> = holders.iter().collect();
+                        crate::shared::hybrid::group_evidence(&s.store, &refs, &|n| visible(&caller, n)).ok()
+                    };
+                    match fresh {
+                        Some(fresh) => evidence = fresh,
+                        None => {
+                            status = RecallStatus::Undetermined("note-integrity");
+                            continue;
+                        }
+                    }
+                }
+                // `found` stands on a note that cleared the relevance floor AND stands on something, as of now.
+                justified |= item.correction.is_none() && item.relevant && evidence != "unverified";
                 let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
                 let mut shown = if note.quarantined {
                     stub(&note)
                 } else {
-                    match note_json(&s.store, &caller, &note, Some(item.evidence)) {
+                    match note_json(&s.store, &caller, &note, Some(evidence)) {
                         Ok(shown) => shown,
                         // A relation the store cannot read is not "no relation": the answer is not one.
                         Err(_) => {
