@@ -306,6 +306,22 @@ test('slot loading: an empty slot is loaded as empty, a door outage retries, a m
   assert.deepEqual(await controller.ensureSlotsLoaded(true), { selfText: '', resumeText: '', loaded: true })
 })
 
+test('the plugin remembers the head of each slot it loaded, and a handoff can carry it as expected_head', async () => {
+  const head = 'ab'.repeat(32)
+  const controller = createKiraController({}, async (_name, args) => {
+    const slot = (args as { id: string }).id
+    if (slot === 'aukora:self') return { isError: true as const, error: { message: 'none', info: { name: 'x', code: 'kira:not-found' } }, content: [] } as never
+    return { isError: false, value: sampleNote({ id: head, slot, lane: 'resume', content: 'step 9' }), content: [{ type: 'text', text: '{}' }] } as never
+  })
+  assert.equal(controller.slotHead('aukora:resume'), undefined, 'nothing is known before the slots are loaded')
+  await controller.ensureSlotsLoaded()
+  assert.equal(controller.slotHead('aukora:resume'), head)
+  assert.equal(controller.slotHead('aukora:self'), 'none', 'a slot loaded empty is guarded with "none"')
+  const args = buildRememberArgs({ text: 'step 12', subject: 'resume', expected_head: controller.slotHead('aukora:resume') })
+  assert.equal(args.expected_head, head)
+  assert.equal('expected_head' in buildRememberArgs({ text: 'x', subject: 'y' }), false, 'absent unless asked for')
+})
+
 test('resolveKiraConfig validates bounds', () => {
   assert.throws(() => resolveKiraConfig({ maxSelfBytes: 10 }))
   assert.throws(() => resolveKiraConfig({ maxResumeBytes: 65_537 }))

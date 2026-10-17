@@ -528,6 +528,51 @@ fn the_latest_correction_in_force_wins() {
     assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], urgent.as_str());
 }
 
+/// Bench E1: a stale session re-sent an older resume and replaced the newer one (the head is the newest write).
+#[test]
+fn a_stale_resume_is_refused_when_it_names_the_head_it_read() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let resume = |text: &str, expected: Option<&str>| {
+        let mut n = note(text, "builders");
+        n["slot"] = json!("resume:claude");
+        n["lane"] = json!("experience");
+        n["form"] = json!("snapshot");
+        if let Some(head) = expected {
+            n["expected_head"] = json!(head);
+        }
+        call(&f.state, &claude, "remember", n)
+    };
+    let head = |token: &str| call(&f.state, token, "get", json!({"id": "resume:claude"}))["result"]["id"].as_str().map(str::to_owned);
+    // An empty slot is "none"; anything else is stale.
+    assert_eq!(resume("v1 step 5", Some("none"))["ok"], true);
+    let v1 = head(&grok).unwrap();
+    assert_eq!(resume("v0 again", Some("none"))["error"], "kira:resume-stale");
+    // Two sessions read v1. The first writes v2 against it; the second, still holding v1, is refused and v2 stays.
+    let v2 = resume("v2 step 9", Some(&v1));
+    assert_eq!(v2["ok"], true, "{v2}");
+    assert_eq!(v2["result"]["previous_head"], v1.as_str());
+    let v2 = v2["result"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(resume("v1b step 6", Some(&v1))["error"], "kira:resume-stale");
+    assert_eq!(head(&grok).as_deref(), Some(v2.as_str()), "the newer handoff must stay the head");
+    // Reading again and writing against the new head works; a malformed head or one without a slot is refused.
+    assert_eq!(resume("v3 step 10", Some(&v2))["ok"], true);
+    assert_eq!(resume("bad", Some("not-an-id"))["error"], "kira:id-invalid");
+    let mut unslotted = note("no slot here", "builders");
+    unslotted["expected_head"] = json!(v2);
+    assert_eq!(call(&f.state, &claude, "remember", unslotted)["error"], "kira:expected-head-needs-slot");
+    // Without expected_head a write is unguarded (as before) but names what it shadowed.
+    let unguarded = resume("unguarded", None);
+    assert_eq!(unguarded["ok"], true);
+    assert!(unguarded["result"]["previous_head"].is_string());
+    // The owner's own slot is guarded the same way.
+    let mut own = note("brief one", "builders");
+    (own["slot"], own["lane"], own["capture"]) = (json!("aukora:resume"), json!("resume"), json!("owner-typed"));
+    own["expected_head"] = json!("none");
+    assert_eq!(call(&f.state, &owner, "remember", own.clone())["ok"], true);
+    assert_eq!(call(&f.state, &owner, "remember", own)["error"], "kira:resume-stale");
+}
+
 fn state_of(f: &Fixture, token: &str, id: &str) -> String {
     let r = call(&f.state, token, "get", json!({"id": id}));
     r["result"]["state"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned()

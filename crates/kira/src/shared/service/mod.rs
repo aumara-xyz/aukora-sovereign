@@ -399,6 +399,10 @@ struct RememberParams {
     valid_to: Option<u64>,
     #[serde(default)]
     owner_signed: bool,
+    /// For a slot write: the head the writer last read (a note id), or `none` for a slot it saw empty. A slot whose
+    /// live head is anything else is refused as `kira:resume-stale`, so a session that went stale cannot silently
+    /// replace a newer handoff. Without it the write goes through, as it always did.
+    expected_head: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -651,6 +655,8 @@ impl State {
         // owner included (provenance is a fact, not a trust level). Citations only ever lower a claim, never raise it;
         // so a commitment lane, which takes only the owner's own words, refuses a note that cites the web.
         let capture = if self.cites_web(&p.sources)? { Capture::WebDerived } else { claimed };
+        self.check_head(&p)?;
+        let previous_head = p.slot.as_deref().and_then(|slot| self.store.slot(slot).ok().flatten()).map(|n| hex(n.event.id.as_bytes()));
         if p.text.len() > MAX_STATEMENT {
             return Err(refuse("statement-too-long"));
         }
@@ -676,7 +682,12 @@ impl State {
         if let Some(wake) = &self.wake {
             let _ = wake.send(());
         }
-        Ok(view(&self.store, caller, &note))
+        let mut shown = view(&self.store, caller, &note);
+        if note.meta.slot.is_some() {
+            // What this write now shadows, so a writer that did not guard it can still see it replaced something.
+            shown["previous_head"] = json!(previous_head);
+        }
+        Ok(shown)
     }
 
     /// One note by id, or the head of a slot (`aukora:self`, `aukora:resume`, `resume:<agent>`): the newest live note
@@ -689,6 +700,21 @@ impl State {
             }
         }
         Ok(false)
+    }
+
+    /// A guarded slot write (`expected_head`) against the slot's live head, under the same lock the append runs under.
+    fn check_head(&self, p: &RememberParams) -> Result<()> {
+        let Some(expected) = p.expected_head.as_deref() else { return Ok(()) };
+        let Some(slot) = p.slot.as_deref() else { return Err(refuse("expected-head-needs-slot")) };
+        if expected != "none" && !is_hex64(expected) {
+            return Err(refuse("id-invalid"));
+        }
+        let head = self.store.slot(slot)?.map(|n| hex(n.event.id.as_bytes()));
+        match head.as_deref() {
+            None if expected == "none" => Ok(()),
+            Some(head) if head == expected => Ok(()),
+            _ => Err(refuse("resume-stale")),
+        }
     }
 
     fn get(&mut self, caller: &Caller, p: GetParams) -> Result<Value> {

@@ -27,7 +27,8 @@ fn tools(owner: bool) -> Value {
             "capture": capture,
             "sources": {"type": "array", "items": {"type": "string"}, "description": "Ids of notes this one derives from."},
             "slot": text(if owner { "Optional fixed slot: aukora:self, aukora:resume or resume:<agent>." } else { "Optional: resume:<your name>, your own resume slot; no other slot is yours to write." }),
-            "valid_from": int("Unix seconds."), "valid_to": int("Unix seconds.")});
+            "valid_from": int("Unix seconds."), "valid_to": int("Unix seconds."),
+            "expected_head": text("For a slot write: the id of the slot's note you last read (get returns it), or none if the slot was empty. If a newer note has taken the slot since, the write is refused (kira:resume-stale) instead of replacing it; read again, merge, retry.")});
     if owner {
         remember["owner_signed"] = json!({"type": "boolean", "description": "Sign the review as the owner."});
     }

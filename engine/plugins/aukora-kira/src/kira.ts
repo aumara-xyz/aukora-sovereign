@@ -118,6 +118,12 @@ export interface KiraController {
   selfText(): string
   /** Current cached text for the `aukora:resume` section (<= maxResumeBytes UTF-8 bytes). */
   resumeText(): string
+  /**
+   * The id of the live note a slot held when it was loaded (`'none'` for an empty slot), or undefined when the slot
+   * has not been loaded (or held a note that was not injected). A handoff written afterwards passes this as
+   * `expected_head` so a newer handoff is never overwritten by a session that went stale.
+   */
+  slotHead(slot: string): string | undefined
   /** DSH SystemPrompt section descriptor for `aukora:self` (`interpolate: false`). */
   selfSection(): PromptSectionLike
   /** DSH SystemPrompt section descriptor for `aukora:resume` (`interpolate: false`). */
@@ -145,6 +151,7 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
   let cachedSelfText = ''
   let cachedResumeText = ''
   let slotsLoaded = false
+  const heads = new Map<string, string>()
   let inflightLoad: Promise<{ selfText: string; resumeText: string; loaded: boolean }> | null = null
 
   const isTurnTainted = (agent?: object): boolean => {
@@ -175,10 +182,19 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
   const loadSlot = async (slot: string, maxBytes: number): Promise<string | undefined> => {
     const result = await executeTool('kira_get', { id: slot })
     if (result.isError) {
-      return result.error.info?.code === 'kira:not-found' ? '' : undefined
+      if (result.error.info?.code === 'kira:not-found') {
+        heads.set(slot, 'none')
+        return ''
+      }
+      return undefined
     }
     const note = result.value as KiraNote
-    if (typeof note !== 'object' || note === null || note.slot !== slot || !isLiveVerifiedNote(note)) return ''
+    if (typeof note !== 'object' || note === null || note.slot !== slot || !isLiveVerifiedNote(note)) {
+      heads.delete(slot)
+      return ''
+    }
+    if (typeof note.id === 'string' && /^[0-9a-f]{64}$/.test(note.id)) heads.set(slot, note.id)
+    else heads.delete(slot)
     return truncateUtf8(noteText(note), maxBytes).text
   }
 
@@ -263,6 +279,7 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     ensureSlotsLoaded,
     selfText: () => cachedSelfText,
     resumeText: () => cachedResumeText,
+    slotHead: slot => heads.get(slot),
 
     selfSection(): PromptSectionLike {
       return {

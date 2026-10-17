@@ -106,6 +106,12 @@ export interface RememberInput {
   sources?: string[]
   valid_from?: number
   valid_to?: number
+  /**
+   * For a slot write: the id of the slot's note the writer last read (`KiraController.slotHead`), or `'none'` for a
+   * slot it saw empty. Kira refuses the write with `kira:resume-stale` when a newer note has taken the slot since.
+   * (The engine's own slot writes are closed at the door; this is for the session wrapper that writes the handoff.)
+   */
+  expected_head?: string
 }
 
 /** Build a canonical `kira_remember` argument object matching `RememberParams` in `crates/kira/src/shared/service/mod.rs`. */
@@ -122,6 +128,7 @@ export function buildRememberArgs(input: RememberInput): Record<string, unknown>
   if (input.sources !== undefined) args.sources = input.sources
   if (input.valid_from !== undefined) args.valid_from = input.valid_from
   if (input.valid_to !== undefined) args.valid_to = input.valid_to
+  if (input.expected_head !== undefined) args.expected_head = input.expected_head
   return args
 }
 
@@ -242,6 +249,10 @@ export function createKiraTools(): DshToolDefinition[] {
             type: 'integer',
             description: 'Optional unix timestamp (seconds) until which the note is valid.',
           },
+          expected_head: {
+            type: 'string',
+            description: 'Slot writes only: the id of the slot note you last read, or "none" for an empty slot. A newer note in the slot refuses the write (kira:resume-stale).',
+          },
         },
         required: ['text', 'subject', 'scope', 'lane', 'form', 'privacy', 'capture'],
         additionalProperties: false,
@@ -305,7 +316,7 @@ export function createKiraTools(): DshToolDefinition[] {
     {
       name: 'kira_supersede',
       description:
-        'Supersede an existing note in shared memory (Kira 2) without deleting it. Agents may only supersede notes authored by their own key.',
+        'Correct a note in shared memory (Kira 2) without deleting it: name the note that replaces it. On your own note it is in force at once. On another author\'s note it needs your own replacement note and is only a proposal until the author or the owner accepts it. The latest correction in force wins.',
       parameters: {
         type: 'object',
         properties: {
@@ -315,7 +326,11 @@ export function createKiraTools(): DshToolDefinition[] {
           },
           replacement: {
             type: 'string',
-            description: 'Optional 64-character hex event ID of the replacement note.',
+            description: 'Optional 64-character hex event ID of the replacement note (required, and your own, when the target is not yours).',
+          },
+          reason: {
+            type: 'string',
+            description: 'Optional reason, up to 512 characters.',
           },
         },
         required: ['target'],
