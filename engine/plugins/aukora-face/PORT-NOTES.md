@@ -1,14 +1,14 @@
 # Port notes: Prime's Spatial app on DeepSeek Harness 0.2.1-alpha.5
 
-Source: Prime `plugins/aukora-face` at 3673b98 (built against dsh `0d1f500`, "untagged commit 5 after dsh-v0.1.6-alpha.1").
+Source: Prime `plugins/aukora-face` at 3673b98 (licences and notices: `NOTICE`, `licenses/`) (built against dsh `0d1f500`, "untagged commit 5 after dsh-v0.1.6-alpha.1").
 Target: `@deepseek-ai/dsh@0.2.1-alpha.5` (GitHub tag `dsh-v0.2.1-alpha.5`, `1517a4d`).
 
-**The first commit of this branch (600e3ae) is the verbatim copy** (Prime's committed `lib/` build outputs omitted).
-`git diff 600e3ae` shows every adaptation below and nothing else. Every `.module.css`, `spatial-tokens.css`, string,
+**The first commit of this branch (45da3d8) is the verbatim copy** (Prime's committed `lib/` build outputs omitted).
+`git diff 45da3d8` shows every adaptation below and nothing else. Every `.module.css`, `spatial-tokens.css`, string,
 locale and component is untouched except where a line below says so. `apps/vendor/**` is byte-identical to Prime
-(`git diff 600e3ae -- engine/plugins/aukora-face/apps/vendor` is empty).
+(`git diff 45da3d8 -- engine/plugins/aukora-face/apps/vendor` is empty).
 
-Line numbers are **Prime's** (the verbatim commit), so each can be read straight from `git show 600e3ae:<path>`.
+Line numbers are **Prime's** (the verbatim commit), so each can be read straight from `git show 45da3d8:<path>`.
 Marks: RAN = executed here, SOURCE = read in the DSH 0.2.1-alpha.5 source, GUESS = not verified.
 
 ## What was added besides the copy
@@ -24,9 +24,14 @@ Marks: RAN = executed here, SOURCE = read in the DSH 0.2.1-alpha.5 source, GUESS
 ## Adaptations (old API -> new API)
 
 ### 1. Runtime invariants removed (all nine faces) - SOURCE `docs/upgrade-guide/v0.2.0-rc.2/remove-runtime-invariants`
-`@deepseek-ai/dsh-invariants`, `ctx.invariants` and every `<package>/invariant` subpath are gone. Each face's
-`src/invariant.ts` was an empty companion (`install = () => {}`), so deleting it loses nothing.
-- Deleted: `{layout,sidebar,threads,apps,messages,documents,aumlok,settings}/src/invariant.ts` (memory had none).
+`@deepseek-ai/dsh-invariants`, `ctx.invariants` and every `<package>/invariant` subpath are gone. Eight of the nine faces' `src/invariant.ts`
+were empty companions (`install = () => {}`; memory had none), so deleting those loses nothing.
+**`apps/src/invariant.ts` was not empty.** It validated every `auma-canvas/document` event, on load and on append: data holds only `document`; `document` is null or
+an object with exactly the keys `css`, `markup`, `title`, `version`; `version` is 1; `title` is 1-160 characters and already trimmed; `markup` is a non-blank string; `css` is a string.
+Those checks now live in the zod schema of `apps/src/auma-canvas/projection.ts` (`documentSchema` is a strict object with those fields, and `apply` parses each event's data
+with `eventDataSchema`), so the replayed projection cannot hold a document the tool would never have written. Failing the append itself is no longer possible (no invariant service);
+a bad event now fails the projection's `apply`. The tool (`auma-canvas-tool.ts`) already enforced the same rules before appending.
+- Deleted: `{layout,sidebar,threads,apps,messages,documents,aumlok,settings}/src/invariant.ts` (memory had none; only apps' held logic, moved as above).
 - `package.json`: `./invariant` export, both `@deepseek-ai/dsh-invariants` entries and `lib/invariant.js` in `files`
   (layout 20-22,58,77,84; sidebar 20-22,52,61,70; threads 20-22,61,77,93; apps 20-22,67,101,125; messages 23-25,60,67,79;
   documents 19-21,57,68,77; aumlok 20-22,62,72,86; settings 20-22,61,82,94; memory 59,69,81).
@@ -97,6 +102,38 @@ On a stock DSH there is no `aukoraConfinement` provider, so Chat/Build mode chan
 - Client `settings/src/client/index.ts:68,87`: the service `settingsScope` is `configForms`.
 - **Consequence for composition:** `ui-settings-models` writes the welcome acknowledgement into the entry with id `ui-settings-general`, and the config editor refuses ids that two entries share (`config-editor/src/index.ts:39-44`), so a *disabled* upstream row of that id leaves nothing writable.
   `preview-face.py` therefore removes the four replaced rows from dsh-web-app's patch (it does not disable them) and gives the settings face the id `ui-settings-general`. RAN: Continue persists and stays dismissed across a restart.
+
+## Disabled in Sovereign
+
+The conductor's ruling (the plan Peter approved): **the engine holds no keys; its only ways out are the door and the broker; Kira 2 replaces OpenViking.** So the paths below
+are off in Sovereign's composition. A composition switch was preferred; where the copied source itself held the way out (a `fetch`, an `execFile`, a `Function(...)`, an env read of a key) it is edited, minimally, and the edit is listed.
+`checks/run.py` rule `engine-io` (`checks/walls.py` `engine_findings`) now fails any `.ts/.tsx/.js/.mjs` under `engine/` that uses the network, runs a program, reads `process.env` or evaluates a string unless
+`checks/baseline.json` `engine_io_allowed` names the exact file with a reason. **None of the files below is on that list for the capability it had**; the residue is stated per row. Line numbers are Prime's (45da3d8).
+
+| # | Disabled path (Prime) | How | Source edit |
+|---|---|---|---|
+| 1 | First-run OpenRouter key route: `layout/src/index.ts:259-269` (`POST first-run/key`, `first-run/key/remove`), `layout/src/first-run-host.ts:50,115` (`secrets/openrouter-key`) | The two routes are not registered; `rememberKey`/`forgetKey` are deleted, `firstRunAnswer` no longer reads a key file (`keyTail` is always null). The client still renders its field and gets a 404 on submit. | `layout/src/index.ts`, `layout/src/first-run-host.ts` |
+| 2 | `apps/src/auma-live/presence.ts:206` (`openrouter.ai`) and the provider route | `OPENROUTER_ENDPOINT` is a non-address (`disabled-in-sovereign://...`); the global-`fetch` fallbacks in `presence.ts` (the constructor) and `reflex.ts` (`reflexTurn`) now reject; `process.env.AUKORA_OWNER_NAME` is no longer read (the `ownerName` config sets the name); `apps/src/index.ts` no longer reads `AUKORA_DISCLOSURE_RECIPIENT` (it was `?? 'openrouter.ai'`). **Composition:** `providerSendConsent: false` (also the schema default) in `preview-face.py`. | `presence.ts`, `reflex.ts`, `index.ts` |
+| 3 | `memory/src/index.ts:64,76` (OpenViking, `x-api-key`) | Every way out refuses `memory:disabled-in-sovereign` (503): the endpoint/key/env reads (`memoryOpenVikingConfig`), the `fetch` (`vikingCall`), the state-directory env read and the load of Prime's Kira reader by computed path (`loadKiraMemoryReaderModule`, not in the list: a dynamic import of a path the engine does not own). Routes stay registered so the client gets a named refusal. The rest of the file is Prime's and unreachable. | `memory/src/index.ts` |
+| 4 | `settings/src/index.ts:167` (`execFile python3 evidence/aura-evidence.py`) | `readAuraEvidence` answers a refusal document (`aura-evidence-disabled-in-sovereign`); `resolveGateState` (a dynamic import of Prime's Aura association plugin by path, reading `process.env`) is deleted with its constants; `settings/evidence/aura-evidence.py` is deleted. | `settings/src/index.ts`, `settings/evidence/aura-evidence.py` |
+| 5 | `layout/src/health-sample.ts:81,95` (`/usr/bin/footprint`, `sysctl`) | `readFootprintViaBinary` and `readPressureLevel` resolve null (unmeasured, never a guess); `TMPDIR` is no longer read (`/tmp`). | `layout/src/health-sample.ts` |
+| 6 | `apps/src/auma-live/voice.ts:84` (`new WebSocket` to the sidecar) and `voice-sidecar.ts:144` (spawn of the Python sidecar) | Both files are deleted, with the `ws` and `@types/ws` dependencies, their two `apps/tsconfig.host.json` entries and the `if (config.voiceEnabled)` block and import in `apps/src/index.ts` (Auma Live voice comes later). `voiceEnabled`/`voiceAutoStart` now default `false`, and `preview-face.py` sets them `false`. The browser keeps its own fallback. `apps/vendor/auma-live/voice/**` (the Python sidecar) stays as inert, hash-pinned bytes. | `apps/src/index.ts`, `apps/package.json`, `apps/tsconfig.host.json`, two files deleted |
+| 7 | `layout/src/watchdog-limit.ts:80` (`Function(...)`) | The limit is unknown (null): the matched expression is never evaluated. | `layout/src/watchdog-limit.ts` |
+
+**Composition switches, no source edit** (`preview-face.py`, a row after the face insert): `repoLensRoot: ''`, `repoLensLookups: 0`, `webLensLookups: 0`, `weightsControlScript: ''`, `organismDshHome: ''`, `organismRepo: ''`. They keep
+`apps/src/auma-live/lens-exec.ts` (git/gh via `execFile`), `weights-control.ts` (`subprocess.spawn`) and `apps/src/vendor/organism.ts` (git/gh) from ever running. **Those three are not on the ruling list, still contain the capability, and are therefore on the `engine_io_allowed`
+list** (with that reason); cutting them from the source needs the conductor's word. Not verified: that `dsh web` accepts the override row; it copies the shape of the existing `ui-settings-models` row, and the booted preview was not rerun.
+
+**Could not be removed without editing copied files:** every row above except the composition switches needed an edit. Residue that stays on the allow-list because it is not a key, program or network reach of the disabled path: `layout/src/index.ts` still reads
+`AUKORA_STATE_ROOT`/`AUKORA_STATE` through `stateRootOf(process.env)` (the owner-name file, approvals log and why store live there), and `apps/src/index.ts` reads `PATH` (a `statSync` probe; nothing is run).
+
+## Reproducible build and the checks
+
+- `pnpm-lock.yaml` here is the harness checkout's lockfile at the tag plus the nine face importers. `build-face.py` copies it over the checkout's and runs `pnpm install --frozen-lockfile`; `--update-lockfile` is the one way to change it.
+  It also runs `scripts/generate-typert.ts` first (a fresh or re-copied checkout has no `lib/typert.remote-client.*`, and `tsc -b` stops on them).
+- `checks/baseline.json` `copied_from_prime` lists exact files (the Prime exemption is no longer the whole folder). Every copied file that is byte-identical to Prime 3673b98 is pinned by sha256 in `checks/pins.json`, so any edit shows;
+  a file edited here (the table above, section 1-11) is not pinned and answers to the ordinary checks.
+- `NOTICE` and `licenses/` carry Prime's notices (DeepSeek Harness MIT, Dakini React/Base UI/Lucide/Three, Auma Lingwa CC-BY-SA), byte-identical to Prime's `licenses/` at the same relative paths.
 
 ## Composition (what `preview-face.py` writes)
 Profile `aukora`: `dsh-base`, then `@aukora/face-bundle` = dsh-web-app's `cordis.patch.yml` and presets with the rows `ui-layout`, `ui-sidebar`, `ui-workspace`, `ui-settings-general` removed

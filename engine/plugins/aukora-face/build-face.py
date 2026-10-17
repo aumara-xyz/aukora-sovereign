@@ -9,13 +9,21 @@ carry a copy. This script therefore does what Prime's `scripts/build-face.py` di
 
   1. places each face under `<dsh>/packages/client/aukora-face-<name>` (the path every config in the face
      already assumes: `../../../tsconfig.base.client.json`, `../tsdown.client.ts`);
-  2. runs `pnpm install` so the workspace links the new packages;
+  2. copies the committed `pnpm-lock.yaml` (this directory) over the checkout's and runs `pnpm install --frozen-lockfile`,
+     so the workspace links the new packages from exactly the resolved versions the lockfile records, and fails if
+     the lockfile and the packages disagree (`--update-lockfile` is the one way to change it, see below);
+  2b. generates the harness's Typert artifacts (`scripts/generate-typert.ts`: the `lib/typert.remote-client.*` files that
+     `@deepseek-ai/dsh-api-*/remote` resolves to; a fresh or re-copied checkout has none and `tsc -b` stops on them);
   3. `tsc -b` the face (client half judged first, host half reported separately);
   4. `tsdown` bundles `lib/client.js` and `lib/index.js` (host half);
   5. copies `lib/` back next to the source, in `engine/plugins/aukora-face/<name>/lib` (git-ignored).
 
 `<dsh>` MUST BE A DISPOSABLE CLONE of github.com/deepseek-ai/deepseek-harness at tag dsh-v0.2.1-alpha.5, already
-installed once (`pnpm install --frozen-lockfile`). This script writes faces and a lockfile change into it.
+installed once (`pnpm install --frozen-lockfile`). This script writes faces and the lockfile into it.
+
+THE LOCKFILE. `pnpm-lock.yaml` beside this script is the checkout's own lockfile at the tag plus the face packages'
+importers, as `pnpm install` resolved them. Change a face's `package.json` dependencies and the frozen install refuses;
+run once with `--update-lockfile` (a normal, network-using install that rewrites the file here), review the diff, commit it.
 
 Usage:
     python3 build-face.py --dsh ~/face-scratch-dsh/src [--only layout --only sidebar] [--types-only]
@@ -86,12 +94,32 @@ def build_foundation(dsh: Path):
     return None
 
 
-def install(dsh: Path):
+LOCKFILE = HERE / 'pnpm-lock.yaml'
+
+
+def install(dsh: Path, update_lockfile: bool = False):
     env = dict(os.environ, CI='true', LEFTHOOK='0')
-    out = run(['pnpm', 'install', '--no-frozen-lockfile', '--prefer-offline',
+    if update_lockfile:
+        out = run(['pnpm', 'install', '--no-frozen-lockfile', '--prefer-offline',
+                   '--config.manage-package-manager-versions=false'], dsh, env)
+        if out.returncode:
+            sys.exit('face-install-failed:\n' + out.stdout[-3000:])
+        shutil.copy2(dsh / 'pnpm-lock.yaml', LOCKFILE)
+        print(f'LOCKFILE rewritten: {LOCKFILE} (review the diff, then commit it)')
+        return
+    if not LOCKFILE.is_file():
+        sys.exit(f'lockfile-missing: {LOCKFILE} (run once with --update-lockfile)')
+    shutil.copy2(LOCKFILE, dsh / 'pnpm-lock.yaml')
+    out = run(['pnpm', 'install', '--frozen-lockfile', '--prefer-offline',
                '--config.manage-package-manager-versions=false'], dsh, env)
     if out.returncode:
-        sys.exit('face-install-failed:\n' + out.stdout[-3000:])
+        sys.exit('face-install-failed (frozen lockfile; if a face dependency changed, run --update-lockfile):\n' + out.stdout[-3000:])
+
+
+def generate_typert(dsh: Path):
+    out = run([str(dsh / 'node_modules/.bin/tsx'), 'scripts/generate-typert.ts'], dsh)
+    if out.returncode:
+        sys.exit('typert-generation-failed:\n' + out.stdout[-3000:])
 
 
 def type_build(dsh: Path, name):
@@ -130,6 +158,8 @@ def main():
     parser.add_argument('--only', action='append', default=[])
     parser.add_argument('--types-only', action='store_true')
     parser.add_argument('--no-install', action='store_true')
+    parser.add_argument('--update-lockfile', action='store_true',
+                        help='resolve with a normal install and rewrite pnpm-lock.yaml here, then stop')
     parser.add_argument('--all', action='store_true', help='print every type error, not the first 25')
     a = parser.parse_args()
     dsh = a.dsh.expanduser().resolve()
@@ -139,7 +169,10 @@ def main():
     place(dsh, FACES)
     (dsh / 'packages/client/aukora-foundation').mkdir(parents=True, exist_ok=True)
     if not a.no_install:
-        install(dsh)
+        install(dsh, a.update_lockfile)
+        if a.update_lockfile:
+            return
+    generate_typert(dsh)
     failed = []
     for n in names:
         client, host = type_build(dsh, n)

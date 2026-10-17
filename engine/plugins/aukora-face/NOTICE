@@ -1,0 +1,98 @@
+NOTICE: engine/plugins/aukora-face (AUKORA Sovereign)
+=====================================================
+
+This directory is the Spatial app copied from AUKORA Prime (`plugins/aukora-face` at commit 3673b98) and ported to
+DeepSeek Harness `dsh-v0.2.1-alpha.5` (commit 1517a4dbca0a2789ff1d41ba439600f8547d23fa, MIT; its LICENSE is
+byte-identical to `licenses/DSH-MIT-LICENSE`). `PORT-NOTES.md` lists every change from the copy.
+
+Below, **verbatim and unchanged**, is Prime's NOTICE at 3673b98. Its paths (`plugins/aukora-face/`, `vendor/dsh/`)
+name Prime's tree. The notices it relies on are carried in `licenses/` (byte-identical to Prime's `licenses/`, same
+relative paths, as listed here), and each vendored third-party tree under this directory keeps its own LICENSE beside
+its code (`apps/vendor/three/LICENSE`, `aumlok/src/vendor/qrcodegen/LICENSE`, `messages/src/vendor/jsqr/LICENSE`).
+
+| carried here | what it covers |
+|---|---|
+| `licenses/DSH-MIT-LICENSE`, `licenses/upstream/dsh/LICENSE`, `licenses/DSH-THIRD-PARTY-NOTICES.md` | DeepSeek Harness (MIT) and its third-party notices |
+| `licenses/DAKINI-REACT-NOTICES.md`, `licenses/upstream/npm/react@19.2.6/LICENSE` | React / React DOM / Scheduler in the Dakini bundle (MIT) |
+| `licenses/DAKINI-BASE-UI-NOTICES.md`, `licenses/upstream/npm/@base-ui/react@1.7.0/LICENSE` | Base UI in the Dakini bundle (MIT) |
+| `licenses/DAKINI-LUCIDE-THREE-NOTICES.md`, `licenses/upstream/npm/lucide-react@1.31.0/LICENSE`, `licenses/upstream/npm/three@0.186.0/LICENSE` | Lucide (ISC plus Feather MIT) and Three.js 0.186.0 (MIT) in the Dakini assets |
+| `licenses/AUMA-LINGWA-NOTICES.md`, `licenses/upstream/auma-lingwa/` | Auma Lingwa canon, curriculum and readers (CC-BY-SA-4.0 in the public language publication; attribution and the exact licence notice) |
+
+**Not carried:** the rest of Prime's `licenses/` (OpenShell, Noble, pg, Electron and the other trees that Prime ships
+and this directory does not) and its `inventory.json`. Prime's index (`licenses/README.md`) remains authoritative for
+those at 3673b98.
+
+----- Prime NOTICE at 3673b98, verbatim -----
+
+NOTICE
+======
+
+This file records third-party notices for material distributed with AUKORA. It is additive: **it changes no
+`package.json` licence field and no copyright-holder line, because those are the maintainer's and counsel's
+call.** See `LICENSE` (AGPL-3.0) for the terms this repository itself is offered under.
+
+DeepSeek Harness — MIT
+----------------------
+
+**Parts of the face code under `plugins/aukora-face/` are derived from the DeepSeek Harness**, which this
+repository pins in `upstream-dsh.json`:
+
+    repository : https://github.com/deepseek-ai/deepseek-harness
+    commit     : 0d1f50007f9bca3f52b06e1c3074fa14d5fb0720
+    licence    : MIT
+
+**The MIT licence requires that its copyright notice and permission notice be preserved in all copies or
+substantial portions of the software, so they are reproduced here in full and verbatim.** The text below is the
+notice as it appears in `vendor/dsh/LICENSE`, which is the pinned upstream tree:
+
+```
+MIT License
+
+Copyright (c) 2026 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+*** WHY THIS FILE EXISTS, AND WHY IT IS NOT A `package.json` LINE. *** **`vendor/dsh` carries that notice itself,
+so code taken *from* it is covered while it stays there. Code *derived* from it and living under this repository's
+own tree is a copy or a substantial portion in the MIT sense, and the notice has to travel with it.** *The two
+facts a reader needs are which upstream it came from — named by commit above — and the notice itself, and this
+file carries both.*
+
+**NOT ASSERTED HERE:** which individual files are derived, and whether any given file is a "substantial portion".
+**That is a legal characterisation and it is not this file's to make.** This file reproduces the notice, names the
+pin, and leaves the characterisation to the maintainer and to counsel — *which is the same boundary the rest of
+this repository draws between what it measured and what it decided.*
+
+Other vendored material
+-----------------------
+
+**The other vendored trees carry their own licences beside their own code, and each is pinned in its manifest:**
+
+| tree | manifest | licence |
+|---|---|---|
+| `vendor/append-only/` | `upstream-phase0.json` | AGPL-3.0-only |
+| `vendor/receipt/` | `upstream-receipt-v3.json` | AGPL-3.0-only |
+| `vendor/kira-export/` | `upstream-diamond.json` | AGPL-3.0-only |
+
+**The root `LICENSE` and the `LICENSE` files in the three trees above carry section 13 — *Remote Network
+Interaction* — verified on 2026-09-28.** `vendor/aukora-membrane/LICENSE` is an exception: its 4,674-byte shortened
+AGPL-3.0 text omits section 13 and duplicates section numbers. It is kept byte for byte as pinned from upstream in
+`vendor/aukora-membrane/PROVENANCE.json`. The full AGPL-3.0 text, including section 13, is the root `LICENSE`.
+See `vendor/append-only/upstream-phase0.json` for the recorded reason `vendor/append-only/LICENSE` departs from upstream bytes.
