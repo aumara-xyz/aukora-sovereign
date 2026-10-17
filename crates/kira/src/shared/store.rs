@@ -713,6 +713,21 @@ impl SharedStore {
         Ok(rows)
     }
 
+    /// The distinct authors (public keys, hex) of the root notes of note `seq`: how many different hands the note's
+    /// ancestry goes back to. A root whose author is not in the store counts as no one.
+    pub fn root_authors(&self, seq: i64) -> Result<BTreeSet<String>> {
+        let mut stmt = self
+            .db
+            .prepare("SELECT DISTINCT e.pubkey FROM ancestry a JOIN events e ON e.id = a.root AND e.kind = ?2 WHERE a.seq = ?1")
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![seq, NOTE_KIND], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<BTreeSet<_>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
     /// The seqs that have a vector under `model`.
     pub fn embedded_seqs(&self, model: &str) -> Result<BTreeSet<i64>> {
         let mut stmt = self.db.prepare("SELECT seq FROM embeddings WHERE model = ?1").map_err(sql)?;

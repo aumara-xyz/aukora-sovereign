@@ -791,6 +791,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 shown["also_by"] = json!(item.also_by);
                 shown["also_by_ids"] = json!(item.also_by_ids);
                 shown["correction"] = json!(correction);
+                shown["evidence"] = json!(item.evidence);
                 items.push(shown);
             }
             Ok(Some(_)) => changed |= item.correction.is_none(),
@@ -801,7 +802,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
         status = RecallStatus::Undetermined("note-changed");
     }
     // Only withheld notes matched: from this caller's view nothing was found.
-    if status == RecallStatus::Found && items.is_empty() {
+    if matches!(status, RecallStatus::Found | RecallStatus::Undetermined("similar-note-unverified")) && items.is_empty() {
         status = RecallStatus::Empty;
     }
     let (status, reason) = match status {

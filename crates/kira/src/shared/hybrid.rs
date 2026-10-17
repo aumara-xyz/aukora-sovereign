@@ -47,6 +47,12 @@ pub const RERANK_KEEP: f32 = -7.0;
 pub const COSINE_FLOOR: f32 = 0.60;
 /// Keyword rows read before the epoch and scope filters: FTS5 ranks over every epoch at once.
 const KEYWORD_SCAN: usize = 1_000;
+/// Whether a note filed by the owner-run archive import (`Capture::Import`) counts as owner-attested evidence for
+/// `found`. Import is a credential-class act (`sovereign kira import` needs the owner's token file, and no `remember`
+/// can claim the capture), so an imported note is the owner's archive, not an agent's claim. Setting this to false
+/// makes the archive `undetermined: similar-note-unverified` like any unreviewed note; the measured trade-off is in
+/// ~/aukora-memory/review/kira-hardening-2026-10-18 (the archive is the whole of epoch 1).
+pub const IMPORT_IS_EVIDENCE: bool = true;
 const MAX_QUERY_BYTES: usize = 4_096;
 /// Dead notes kept after the prepare phase; `finish` admits the few whose current note is returned.
 const MAX_HISTORY_CANDIDATES: usize = 32;
@@ -294,8 +300,37 @@ fn pool(loader: &mut Loader, ranked: &[(i64, f64)]) -> Vec<(i64, usize)> {
     out
 }
 
+/// What a note stands on, weakest first. A factual `found` needs more than `Unverified`.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum Evidence {
+    /// Nobody reviewed it and nobody else's observation backs it.
+    Unverified,
+    /// Its ancestry goes back to roots written by at least two different authors.
+    Corroborated,
+    /// Filed by the owner-run archive import.
+    ArchiveImport,
+    /// Captured as the owner's own words.
+    OwnerWords,
+    /// Reviewed by the owner.
+    OwnerReview,
+}
+
+impl Evidence {
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Unverified => "unverified",
+            Self::Corroborated => "corroborated",
+            Self::ArchiveImport => "archive-import",
+            Self::OwnerWords => "owner-words",
+            Self::OwnerReview => "owner-review",
+        }
+    }
+}
+
 struct Cand {
     note: StoredNote,
+    /// Distinct authors of the root notes of this note's ancestry.
+    root_authors: usize,
     id: String,
     fused: f64,
     cosine: Option<f32>,
@@ -310,6 +345,23 @@ struct Cand {
 }
 
 impl Cand {
+    /// What this note stands on: owner review, the owner's words, the owner's archive import, or roots by at least two
+    /// different authors. Web-derived material never counts as corroborated, whoever repeats it.
+    fn provenance(&self) -> Evidence {
+        let meta = &self.note.meta;
+        if meta.review == Review::OwnerSigned {
+            Evidence::OwnerReview
+        } else if meta.capture.owner_class() {
+            Evidence::OwnerWords
+        } else if IMPORT_IS_EVIDENCE && meta.capture == Capture::Import {
+            Evidence::ArchiveImport
+        } else if self.root_authors >= 2 && meta.capture != Capture::WebDerived {
+            Evidence::Corroborated
+        } else {
+            Evidence::Unverified
+        }
+    }
+
     /// The note itself matches the question: a keyword hit or the cosine floor.
     fn evidence(&self) -> bool {
         self.hit || self.cosine.is_some_and(|c| c >= COSINE_FLOOR)
@@ -338,7 +390,7 @@ impl Cand {
         (trust, self.note.event.created_at, &self.id)
     }
 
-    fn item(&self, score: f32, also_by: Vec<String>, also_by_ids: Vec<String>, roots: usize, correction: Option<&str>) -> RecallItem {
+    fn item(&self, score: f32, also_by: Vec<String>, also_by_ids: Vec<String>, roots: usize, evidence: Evidence, correction: Option<&str>) -> RecallItem {
         // A retired note points at the note that stands where it did (the service shows the id only to a caller who
         // may read that note).
         let meta = &self.note.meta;
@@ -357,6 +409,7 @@ impl Cand {
             text: if correction == Some("quarantined") { String::new() } else { self.note.event.content.clone() },
             score,
             roots,
+            evidence: evidence.wire(),
             correction: correction.map(str::to_owned),
             current_id: if correction == Some("superseded") { self.note.current_id.clone() } else { None },
         }
@@ -399,6 +452,8 @@ struct Group {
     names: BTreeSet<String>,
     ids: BTreeSet<String>,
     roots: BTreeSet<String>,
+    /// The strongest thing any note of the statement stands on.
+    evidence: Evidence,
 }
 
 /// Reserved lanes, filled in this order.
@@ -525,7 +580,7 @@ impl SharedStore {
                 let note = loader.cache.remove(&seq).flatten()?;
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
                 let id = hex(note.event.id.as_bytes());
-                Some(Cand { note, id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, past: None, inherited: false })
+                Some(Cand { note, root_authors: 0, id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, past: None, inherited: false })
             })
             .collect();
         cands.sort_by(|a, b| b.fused.total_cmp(&a.fused).then_with(|| a.id.cmp(&b.id)));
@@ -555,11 +610,14 @@ impl SharedStore {
             }
             if let Some(note) = loader.note(found.seq).cloned() {
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
-                live.push(Cand { id: current.to_owned(), note, fused: stale.fused, cosine: None, hit, rerank: None, past: None, inherited: true });
+                live.push(Cand { id: current.to_owned(), root_authors: 0, note, fused: stale.fused, cosine: None, hit, rerank: None, past: None, inherited: true });
                 pulled += 1;
             }
         }
         history.truncate(MAX_HISTORY_CANDIDATES);
+        for c in live.iter_mut().chain(history.iter_mut()) {
+            c.root_authors = self.root_authors(c.note.seq)?.len();
+        }
         Ok(Prepared {
             text: text.to_owned(),
             caller: q.caller.to_ascii_lowercase(),
@@ -648,6 +706,7 @@ impl Prepared {
                 g.names.insert(c.note.author_name.clone());
                 g.ids.insert(c.id.clone());
                 g.roots.extend(c.note.roots.iter().cloned());
+                g.evidence = g.evidence.max(c.provenance());
                 if c.standing() < g.keep.standing() {
                     g.keep = c;
                 }
@@ -660,6 +719,7 @@ impl Prepared {
                     names: BTreeSet::from([c.note.author_name.clone()]),
                     ids: BTreeSet::from([c.id.clone()]),
                     roots: c.note.roots.iter().cloned().collect(),
+                    evidence: c.provenance(),
                     keep: c,
                 });
             }
@@ -685,17 +745,17 @@ impl Prepared {
                 Slot::Rest
             }
         };
-        let mut ordered: Vec<(Slot, bool, RecallItem)> = groups
+        let mut ordered: Vec<(Slot, bool, bool, RecallItem)> = groups
             .into_iter()
             .map(|g| {
                 let lane = slot(&g);
                 let exempt = lane == Slot::OwnExperience || g.keep.note.author_owner;
                 let also_by = g.names.into_iter().filter(|n| *n != g.keep.note.author_name).collect();
                 let also_by_ids = g.ids.into_iter().filter(|id| *id != g.keep.id).collect();
-                (lane, exempt, g.keep.item(g.score, also_by, also_by_ids, g.roots.len(), None))
+                (lane, exempt, g.relevant, g.keep.item(g.score, also_by, also_by_ids, g.roots.len(), g.evidence, None))
             })
             .collect();
-        ordered.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.score.total_cmp(&a.2.score)).then_with(|| a.2.id.cmp(&b.2.id)));
+        ordered.sort_by(|a, b| a.0.cmp(&b.0).then(b.3.score.total_cmp(&a.3.score)).then_with(|| a.3.id.cmp(&b.3.id)));
 
         // Fill the budget in lane order; an item that does not fit is skipped, never cut, and a skipped relevant
         // note is counted in `omitted`. First pass: no author other than the owner (or the caller's own experience)
@@ -704,7 +764,7 @@ impl Prepared {
         let (mut used, mut taken) = (0, vec![false; ordered.len()]);
         let mut held: BTreeMap<&str, usize> = BTreeMap::new();
         for pass in 0..2 {
-            for (i, (_, exempt, item)) in ordered.iter().enumerate() {
+            for (i, (_, exempt, _, item)) in ordered.iter().enumerate() {
                 let size = item.text.chars().count();
                 if taken[i] || used + size > budget {
                     continue;
@@ -718,10 +778,12 @@ impl Prepared {
                 *held.entry(item.author.as_str()).or_default() += size;
             }
         }
-        let (mut items, mut omitted, mut kept_live) = (Vec::new(), 0, 0);
-        for ((_, _, item), taken) in ordered.into_iter().zip(taken) {
+        let (mut items, mut omitted, mut kept_live, mut verified) = (Vec::new(), 0, 0, false);
+        for ((_, _, relevant, item), taken) in ordered.into_iter().zip(taken) {
             if taken {
                 kept_live += 1;
+                // An answer stands only if a note that clears the relevance floor also stands on something.
+                verified |= relevant && item.evidence != Evidence::Unverified.wire();
                 items.push(item);
             } else {
                 omitted += 1;
@@ -734,7 +796,7 @@ impl Prepared {
         let mut past: Vec<RecallItem> = history
             .iter()
             .filter(|c| c.past != Some("superseded") || c.note.current_id.as_deref().is_some_and(|id| shown.contains(id)))
-            .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), c.past))
+            .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), c.provenance(), c.past))
             .collect();
         past.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
         for item in past.into_iter().take(MAX_CORRECTIONS) {
@@ -756,6 +818,10 @@ impl Prepared {
         } else if found && kept_live == 0 {
             // Every relevant note was too long for the budget: an answer exists but none can be shown.
             RecallStatus::Undetermined("budget")
+        } else if found && !verified {
+            // Similar notes exist, but none was reviewed, written by the owner or backed by two different authors: a
+            // lead to check, not an answer. The notes are returned, each labelled with what it stands on.
+            RecallStatus::Undetermined("similar-note-unverified")
         } else if found {
             RecallStatus::Found
         } else {

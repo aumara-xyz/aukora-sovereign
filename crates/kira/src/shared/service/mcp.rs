@@ -34,7 +34,7 @@ fn tools(owner: bool) -> Value {
     let mut list = json!([
         {"name": "remember", "description": "Write one note to AUKORA's shared memory, signed as you. It is remembered, never approved: memory is context, not authority.",
          "inputSchema": object(&["text", "subject", "scope", "lane", "form", "privacy", "capture"], remember)},
-        {"name": "recall", "description": "Search the shared memory. Answers found, empty or undetermined (unknown, never a no), with each note's author and evidence.",
+        {"name": "recall", "description": "Search the shared memory. Answers found, empty or undetermined (unknown, never a no), with each note's author and what it stands on (evidence). found needs a note the owner wrote or reviewed, an owner-run import, or roots by two different authors; a similar note nobody has backed comes back undetermined (similar-note-unverified), as a lead to check.",
          "inputSchema": object(&["query"], json!({
             "query": text("What you want to know."),
             "epoch": int("2 (default) is current memory; 1 is the imported archive, unreviewed."),

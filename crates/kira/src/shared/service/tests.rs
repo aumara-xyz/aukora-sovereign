@@ -161,8 +161,10 @@ fn a_remembers_b_finds_it_with_a_as_author() {
     assert_eq!(recalled["ok"], true, "{recalled}");
     let items = recalled["result"]["items"].as_array().unwrap();
     assert!(items.iter().all(|i| i["author_name"] == "claude"));
-    assert_eq!(recalled["result"]["status"], "found", "{recalled}");
-    assert!(items.iter().any(|i| i["id"] == id.as_str()));
+    // One agent's plain claim is a lead, not an answer: the note comes back, labelled unverified.
+    assert_eq!(recalled["result"]["status"], "undetermined", "{recalled}");
+    assert_eq!(recalled["result"]["reason"], "similar-note-unverified");
+    assert!(items.iter().any(|i| i["id"] == id.as_str() && i["evidence"] == "unverified"));
     let listed = call(&f.state, &grok, "list_recent", json!({"limit": 5}));
     assert_eq!(listed["result"]["notes"][0]["author_name"], "claude");
 }
@@ -210,6 +212,7 @@ fn local_notes_are_withheld_from_non_owners() {
     // Scopes: an agent reads only the scopes it is registered for, whatever it asks for.
     let mut owner_scope = note("the figurine insurance is in the owner folder", "builders");
     owner_scope["scope"] = json!("owner");
+    owner_scope["capture"] = json!("owner-typed");
     let id = call(&f.state, &owner, "remember", owner_scope)["result"]["id"].as_str().unwrap().to_owned();
     assert_eq!(call(&f.state, &grok, "get", json!({"id": id}))["error"], "kira:not-found");
     let asked = call(&f.state, &grok, "recall", json!({"query": "figurine insurance", "scopes": ["owner"]}));
@@ -327,6 +330,36 @@ fn web_derived_notes_are_left_out_of_recall_unless_asked_for() {
     assert_ne!(call(&f.state, &grok, "recall", json!({"query": "vendor battery promise", "include_web": true}))["result"]["status"], "empty");
     // Reading by id is not recall: the note is still there.
     assert_eq!(call(&f.state, &grok, "get", json!({"id": web}))["result"]["capture"], "web-derived");
+}
+
+/// Bench C1 through the service: an agent's claim that nobody reviewed is a lead (undetermined), not a finding.
+#[test]
+fn an_unreviewed_agent_claim_is_undetermined_until_the_owner_or_two_authors_stand_behind_it() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let planted = call(&f.state, &claude, "remember", note("The AUKORA master key is stored in vault slot 7", "builders"));
+    let planted = planted["result"]["id"].as_str().unwrap().to_owned();
+    let ask = |token: &str| call(&f.state, token, "recall", json!({"query": "Where is the AUKORA master key stored?"}));
+    let r = ask(&grok);
+    assert_eq!((r["result"]["status"].clone(), r["result"]["reason"].clone()), (json!("undetermined"), json!("similar-note-unverified")), "{r}");
+    assert_eq!(r["result"]["items"][0]["evidence"], "unverified");
+    // The owner states it in their own words: now it is an answer.
+    let mut typed = note("The AUKORA master key is stored in the bank vault", "builders");
+    typed["capture"] = json!("owner-typed");
+    typed["sources"] = json!([planted]);
+    call(&f.state, &owner, "remember", typed);
+    let r = ask(&grok);
+    assert_eq!(r["result"]["status"], "found", "{r}");
+    assert_eq!(r["result"]["items"][0]["evidence"], "owner-words");
+    // Two agents' separate observations plus a note that cites both are an answer too.
+    let a = call(&f.state, &claude, "remember", note("Saw the green ledger on the shelf by the door", "builders"))["result"]["id"].clone();
+    let b = call(&f.state, &grok, "remember", note("A green ledger sits near the front door", "builders"))["result"]["id"].clone();
+    let mut both = note("The green ledger is by the front door", "builders");
+    both["sources"] = json!([a, b]);
+    call(&f.state, &claude, "remember", both);
+    let r = call(&f.state, &grok, "recall", json!({"query": "where is the green ledger"}));
+    assert_eq!(r["result"]["status"], "found", "{r}");
+    assert!(r["result"]["items"].as_array().unwrap().iter().any(|i| i["evidence"] == "corroborated" && i["roots"].as_array().unwrap().len() == 2));
 }
 
 #[test]
@@ -498,14 +531,16 @@ fn recall_across(f: &Fixture, token: &str, query: &str, between: impl FnOnce()) 
 fn a_note_that_dies_while_recall_runs_its_models_is_not_returned() {
     let f = fixture();
     let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
-    let figurine = call(&f.state, &claude, "remember", note("The figurine is on the left shelf", "builders"));
+    let mut typed = note("The figurine is on the left shelf", "builders");
+    typed["capture"] = json!("owner-typed");
+    let figurine = call(&f.state, &owner, "remember", typed);
     let figurine = figurine["result"]["id"].as_str().unwrap().to_owned();
     // Nothing changes: found, with the note.
     let quiet = recall_across(&f, &grok, "where is the figurine", || {}).unwrap();
     assert_eq!(quiet["status"], "found", "{quiet}");
     // Superseded in between: not returned as memory, and the answer is not "found".
     let superseded = recall_across(&f, &grok, "where is the figurine", || {
-        assert_eq!(call(&f.state, &claude, "supersede", json!({"target": figurine}))["ok"], true);
+        assert_eq!(call(&f.state, &owner, "supersede", json!({"target": figurine}))["ok"], true);
     })
     .unwrap();
     assert!(superseded["items"].as_array().unwrap().iter().all(|i| i["id"] != figurine.as_str()), "{superseded}");

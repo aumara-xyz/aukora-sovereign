@@ -64,8 +64,12 @@ pub struct RecallItem {
     pub created_at: u64,
     pub text: String,
     pub score: f32,
-    /// Independent ancestry roots (computed by the store, never taken from tags).
+    /// Ancestry roots: the distinct originating notes (computed by the store, never taken from tags). A count of
+    /// roots is not a count of observations; see `evidence` for what the note stands on.
     pub roots: usize,
+    /// What the note stands on: `owner-review`, `owner-words`, `archive-import` (an owner-run import), `corroborated`
+    /// (roots by at least two different authors) or `unverified` (a note nobody reviewed or corroborated).
+    pub evidence: &'static str,
     /// "superseded", "quarantined", "expired" or "not-yet-valid" when shown as history after the current items: none of
     /// these is live memory. A quarantined item's text is empty.
     pub correction: Option<String>,

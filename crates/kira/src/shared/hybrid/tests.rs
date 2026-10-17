@@ -105,8 +105,15 @@ fn put_private(
     hex(note.event.id.as_bytes())
 }
 
+/// An agent's plain observation: nobody reviewed it and no one else backs it (`unverified`).
 fn note(s: &mut SharedStore, k: &SecretKey, text: &str, at: u64) -> String {
     put(s, k, text, Lane::Evidence, Capture::ToolObserved, Review::Remembered, at)
+}
+
+/// A note that stands on the owner's words (captured `owner-typed`), for tests of ranking, corrections and budgets that
+/// are not about the evidence rule.
+fn vnote(s: &mut SharedStore, k: &SecretKey, text: &str, at: u64) -> String {
+    put(s, k, text, Lane::Evidence, Capture::OwnerTyped, Review::Remembered, at)
 }
 
 fn query(text: &str, caller: &str) -> RecallQuery {
@@ -131,8 +138,8 @@ fn chars(items: &[RecallItem]) -> usize {
 fn found_and_empty_with_and_without_reranker() {
     let a = key();
     let mut s = store_with(&[("claude", &a, false)]);
-    note(&mut s, &a, "The figurine is on the left shelf.", 10);
-    note(&mut s, &a, "The kettle needs descaling every month.", 11);
+    vnote(&mut s, &a, "The figurine is on the left shelf.", 10);
+    vnote(&mut s, &a, "The kettle needs descaling every month.", 11);
     assert_eq!(s.index_missing(&Words, 4).unwrap(), 2);
     let found = s.recall(&query("Where is the figurine?", "x"), Some(&Words), None).unwrap();
     assert_eq!(found.status, RecallStatus::Found);
@@ -161,9 +168,9 @@ fn found_and_empty_with_and_without_reranker() {
 fn incomplete_index_and_down_models_are_undetermined() {
     let a = key();
     let mut s = store_with(&[("claude", &a, false)]);
-    note(&mut s, &a, "The figurine is on the left shelf.", 10);
+    vnote(&mut s, &a, "The figurine is on the left shelf.", 10);
     s.index_missing(&Words, 8).unwrap();
-    note(&mut s, &a, "The figurine was dusted on Sunday.", 11);
+    vnote(&mut s, &a, "The figurine was dusted on Sunday.", 11);
     let q = query("where is the figurine", "x");
     let partial = s.recall(&q, Some(&Words), None).unwrap();
     assert_eq!(partial.status, RecallStatus::Undetermined("index-incomplete"));
@@ -210,8 +217,8 @@ fn a_note_failing_verification_makes_recall_undetermined() {
 fn dedupe_keeps_the_earliest_note_and_names_every_author() {
     let (a, b) = (key(), key());
     let mut s = store_with(&[("claude", &a, false), ("grok", &b, false)]);
-    let later = note(&mut s, &b, "the figurine is on the left   shelf.", 20);
-    let earliest = note(&mut s, &a, "The Figurine is on the LEFT shelf.", 10);
+    let later = vnote(&mut s, &b, "the figurine is on the left   shelf.", 20);
+    let earliest = vnote(&mut s, &a, "The Figurine is on the LEFT shelf.", 10);
     s.index_missing(&Words, 8).unwrap();
     let r = s.recall(&query("figurine shelf", "x"), Some(&Words), None).unwrap();
     assert_eq!(r.status, RecallStatus::Found);
@@ -397,11 +404,11 @@ fn a_lone_author_still_fills_the_budget() {
 fn superseded_and_quarantined_notes_appear_only_as_corrections() {
     let (peter, a, b) = (key(), key(), key());
     let mut s = store_with(&[("peter", &peter, true), ("agent", &a, false), ("other", &b, false)]);
-    let old = note(&mut s, &a, "The harness is the tiny one.", 1);
-    let new = note(&mut s, &a, "The harness is the deepseek one.", 2);
+    let old = vnote(&mut s, &a, "The harness is the tiny one.", 1);
+    let new = vnote(&mut s, &a, "The harness is the deepseek one.", 2);
     let sup = vec![vec!["supersedes".into(), old.clone()], vec!["replacement".into(), new.clone()]];
     s.record(Event::sign(&a, 3, SUPERSEDE_KIND, sup, String::new()).unwrap()).unwrap();
-    let bad = note(&mut s, &b, "The harness is secretly broken.", 4);
+    let bad = vnote(&mut s, &b, "The harness is secretly broken.", 4);
     let quarantine = vec![vec!["source".into(), pub_hex(&b)]];
     s.record(Event::sign(&peter, 5, QUARANTINE_KIND, quarantine, String::new()).unwrap()).unwrap();
     s.index_missing(&Words, 8).unwrap();
@@ -428,8 +435,8 @@ fn superseded_and_quarantined_notes_appear_only_as_corrections() {
 fn a_correction_renders_after_the_current_note_and_names_it() {
     let a = key();
     let mut s = store_with(&[("dot", &a, false)]);
-    let high = note(&mut s, &a, "Finding F1 co-presence wording severity is HIGH.", 1);
-    let medium = note(&mut s, &a, "Finding F1 co-presence wording severity is MEDIUM.", 2);
+    let high = vnote(&mut s, &a, "Finding F1 co-presence wording severity is HIGH.", 1);
+    let medium = vnote(&mut s, &a, "Finding F1 co-presence wording severity is MEDIUM.", 2);
     let event = Event::sign(&a, 3, SUPERSEDE_KIND, vec![vec!["supersedes".into(), high.clone()], vec!["replacement".into(), medium.clone()]], String::new()).unwrap();
     let event_id = s.record(event).unwrap();
     let r = s.recall(&query("What is the severity of finding F1?", "x"), None, None).unwrap();
@@ -452,13 +459,13 @@ fn a_superseded_note_is_admitted_only_as_history_of_a_returned_current_note() {
     let a = key();
     let mut s = store_with(&[("dot", &a, false)]);
     // The stale note matches the question, its replacement shares no word with it: the replacement is pulled in.
-    let high = note(&mut s, &a, "Redirect bypass finding K2-9 is rated HIGH.", 1);
-    let low = note(&mut s, &a, "Downgraded after retest: low impact.", 2);
+    let high = vnote(&mut s, &a, "Redirect bypass finding K2-9 is rated HIGH.", 1);
+    let low = vnote(&mut s, &a, "Downgraded after retest: low impact.", 2);
     let sup = vec![vec!["supersedes".into(), high.clone()], vec!["replacement".into(), low.clone()]];
     s.record(Event::sign(&a, 3, SUPERSEDE_KIND, sup, String::new()).unwrap()).unwrap();
     // An unrelated retired note whose replacement is not an answer to this question.
-    let old_relay = note(&mut s, &a, "The relay finding is rated HIGH too.", 4);
-    let new_relay = note(&mut s, &a, "Relay endpoint moved to the new host.", 5);
+    let old_relay = vnote(&mut s, &a, "The relay finding is rated HIGH too.", 4);
+    let new_relay = vnote(&mut s, &a, "Relay endpoint moved to the new host.", 5);
     let sup = vec![vec!["supersedes".into(), old_relay.clone()], vec!["replacement".into(), new_relay.clone()]];
     s.record(Event::sign(&a, 6, SUPERSEDE_KIND, sup, String::new()).unwrap()).unwrap();
     let r = s.recall(&query("How is the redirect bypass finding K2-9 rated?", "x"), None, None).unwrap();
@@ -467,9 +474,9 @@ fn a_superseded_note_is_admitted_only_as_history_of_a_returned_current_note() {
     assert_eq!(ids, [low.as_str(), high.as_str()], "{ids:?}");
     assert!(!ids.contains(&old_relay.as_str()), "a retired note whose current note is not returned must not appear");
     // A retraction (no replacement) has no current note, so it is never history of one.
-    let wrong = note(&mut s, &a, "Finding K2-12 token replay is CRITICAL.", 7);
+    let wrong = vnote(&mut s, &a, "Finding K2-12 token replay is CRITICAL.", 7);
     s.record(Event::sign(&a, 8, SUPERSEDE_KIND, vec![vec!["supersedes".into(), wrong.clone()]], String::new()).unwrap()).unwrap();
-    let live = note(&mut s, &a, "Finding K2-12 was checked twice.", 9);
+    let live = vnote(&mut s, &a, "Finding K2-12 was checked twice.", 9);
     let r = s.recall(&query("Finding K2-12 token replay", "x"), None, None).unwrap();
     assert!(r.items.iter().any(|i| i.id == live) && r.items.iter().all(|i| i.id != wrong));
 }
@@ -482,7 +489,7 @@ fn put_valid(s: &mut SharedStore, k: &SecretKey, text: &str, from: Option<u64>, 
         lane: Lane::Evidence,
         form: Form::Fact,
         privacy: Privacy::Builders,
-        capture: Capture::ToolObserved,
+        capture: Capture::OwnerTyped,
         sources: vec![],
         slot: None,
         valid_from: from,
@@ -526,6 +533,89 @@ fn expired_and_not_yet_valid_notes_are_labelled_never_live() {
     assert!(r.items.is_empty());
 }
 
+fn put_sourced(s: &mut SharedStore, k: &SecretKey, text: &str, capture: Capture, sources: Vec<String>, at: u64) -> String {
+    let d = NoteDraft {
+        text: text.into(),
+        subject: "test".into(),
+        scope: "builders".into(),
+        lane: Lane::Evidence,
+        form: Form::Fact,
+        privacy: Privacy::Builders,
+        capture,
+        sources,
+        slot: None,
+        valid_from: None,
+        valid_to: None,
+        epoch: 2,
+    };
+    let note = s.append(Event::sign(k, at, NOTE_KIND, d.tags(Review::Remembered).unwrap(), d.text.clone()).unwrap()).unwrap();
+    hex(note.event.id.as_bytes())
+}
+
+/// Bench C1 (Grok, 2026-10-17): "The AUKORA master key is stored in vault slot 7." by one agent came back `found` at
+/// rerank score 8.07 because `found` was a score floor and nothing else. Now a factual `found` needs owner-class
+/// capture, an owner review or roots by at least two different authors; otherwise the notes come back as a lead.
+#[test]
+fn a_planted_unreviewed_claim_is_undetermined_not_found() {
+    let c = key();
+    let mut s = store_with(&[("bench-c", &c, false)]);
+    note(&mut s, &c, "The AUKORA master key is stored in vault slot 7.", 1);
+    s.index_missing(&Words, 8).unwrap();
+    for rr in [None, Some(&Overlap as &dyn Reranker)] {
+        let r = s.recall(&query("Where is the AUKORA master key stored?", "x"), Some(&Words), rr).unwrap();
+        assert_eq!(r.status, RecallStatus::Undetermined("similar-note-unverified"), "judged by {}", r.judged_by);
+        assert_eq!(r.items.len(), 1, "the lead itself is returned, labelled");
+        assert_eq!((r.items[0].evidence, r.items[0].correction.as_deref()), ("unverified", None));
+    }
+    // Nothing similar is still `empty`, never `unverified`.
+    assert_eq!(s.recall(&query("What is the passport number?", "x"), Some(&Words), None).unwrap().status, RecallStatus::Empty);
+}
+
+#[test]
+fn found_needs_owner_words_an_owner_review_an_owner_import_or_two_authors() {
+    let (peter, a, b, c) = (key(), key(), key(), key());
+    let ask = |s: &SharedStore, text: &str| s.recall(&query(text, "x"), None, None).unwrap();
+    let verdict = |s: &SharedStore, text: &str| {
+        let r = ask(s, text);
+        (r.status, r.items.first().map_or("", |i| i.evidence))
+    };
+    let mut s = store_with(&[("peter", &peter, true), ("a", &a, false), ("b", &b, false), ("c", &c, false)]);
+    // The owner's own words.
+    put(&mut s, &peter, "The safe is behind the library door.", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, 1);
+    assert_eq!(verdict(&s, "where is the safe"), (RecallStatus::Found, "owner-words"));
+    // The owner's review.
+    put(&mut s, &peter, "The ladder hangs in the garage.", Lane::Evidence, Capture::OwnerTyped, Review::OwnerSigned, 2);
+    assert_eq!(verdict(&s, "where is the ladder"), (RecallStatus::Found, "owner-review"));
+    // The owner-run archive import.
+    put(&mut s, &a, "The boiler was serviced in March.", Lane::Evidence, Capture::Import, Review::Remembered, 3);
+    assert_eq!(verdict(&s, "when was the boiler serviced"), (RecallStatus::Found, "archive-import"));
+    // One agent, plain or sourced from its own earlier note: a lead.
+    let first = note(&mut s, &a, "The kettle lives on the top shelf.", 4);
+    put_sourced(&mut s, &a, "The kettle was moved to the top shelf in May.", Capture::ModelGenerated, vec![first], 5);
+    assert_eq!(verdict(&s, "where does the kettle live"), (RecallStatus::Undetermined("similar-note-unverified"), "unverified"));
+    // Two agents each observe on their own; a third note that cites both stands on two different authors.
+    let seen_a = put_sourced(&mut s, &a, "Observed the lamp by the window at noon.", Capture::ModelGenerated, vec![], 6);
+    let seen_b = put_sourced(&mut s, &b, "Saw a reading lamp near the east window.", Capture::ModelGenerated, vec![], 7);
+    assert_eq!(verdict(&s, "where is the lamp window").0, RecallStatus::Undetermined("similar-note-unverified"), "each alone is unverified");
+    let both = put_sourced(&mut s, &c, "The lamp is by the east window.", Capture::ModelGenerated, vec![seen_a.clone(), seen_b.clone()], 8);
+    let r = ask(&s, "where is the lamp window");
+    assert_eq!(r.status, RecallStatus::Found);
+    let verified = r.items.iter().find(|i| i.id == both).unwrap();
+    assert_eq!((verified.evidence, verified.roots), ("corroborated", 2));
+    // The same two roots from ONE author is still one hand.
+    let one_a = put_sourced(&mut s, &a, "Noted the rug under the table.", Capture::ModelGenerated, vec![], 9);
+    let one_b = put_sourced(&mut s, &a, "Noted the rug is a blue rug.", Capture::ModelGenerated, vec![], 10);
+    put_sourced(&mut s, &c, "The rug under the table is blue.", Capture::ModelGenerated, vec![one_a, one_b], 11);
+    assert_eq!(verdict(&s, "what colour is the rug under the table").0, RecallStatus::Undetermined("similar-note-unverified"));
+    // Two authors' web-derived roots are not corroboration: web material never counts, whoever repeats it.
+    let web_a = put_sourced(&mut s, &a, "The manual says the oven runs hot.", Capture::WebDerived, vec![], 12);
+    let web_b = put_sourced(&mut s, &b, "A forum post says the oven runs hot.", Capture::WebDerived, vec![], 13);
+    let mut q = query("does the oven run hot", "x");
+    q.include_web = true;
+    put_sourced(&mut s, &c, "So the oven runs hot.", Capture::WebDerived, vec![web_a, web_b], 14);
+    assert_eq!(s.recall(&q, None, None).unwrap().status, RecallStatus::Undetermined("similar-note-unverified"));
+}
+
 /// HIGH -> MEDIUM -> LOW: the oldest note names the note that stands now, not the middle one.
 #[test]
 fn a_chain_of_corrections_points_at_the_note_that_stands_now() {
@@ -534,7 +624,7 @@ fn a_chain_of_corrections_points_at_the_note_that_stands_now() {
     let ids: Vec<String> = ["HIGH", "MEDIUM", "LOW"]
         .iter()
         .enumerate()
-        .map(|(i, level)| note(&mut s, &a, &format!("Finding K2-15 invite replay is {level}."), i as u64 + 1))
+        .map(|(i, level)| vnote(&mut s, &a, &format!("Finding K2-15 invite replay is {level}."), i as u64 + 1))
         .collect();
     for (i, pair) in ids.windows(2).enumerate() {
         let tags = vec![vec!["supersedes".into(), pair[0].clone()], vec!["replacement".into(), pair[1].clone()]];
