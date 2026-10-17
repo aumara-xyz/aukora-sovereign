@@ -19,6 +19,17 @@ import uuid
 import core
 
 CLI = ["--no-check-update", "--no-progress", "--retries", "1", "--format", "json"]
+# The operator's Nebius profile signs in through the browser (auth-type federation). When its cached token has expired
+# the CLI prints a sign-in link on stderr and WAITS for the browser, 15 minutes by default (--auth-timeout); the spawner
+# captures stderr and has no stdin, so nobody saw the link and `engine.py egress` seemed to hang inside
+# `nebius compute instance list`. So: never open a browser from here, bound every read (the CLI's own deadline for the
+# sign-in, and a wall-clock timeout on the process as the last word), and say what to do. A create or delete is never
+# cut short by a clock (a half-done change is worse), but it never waits on a browser either.
+CLI_NO_BROWSER = ["--no-browser"]
+CLI_READ = CLI_NO_BROWSER + ["--auth-timeout", "30s", "--timeout", "60s"]
+READ_SECONDS = 120
+SIGN_IN_HINT = ("the Nebius CLI needs you to sign in again (its token expired). Run `nebius iam whoami` in a terminal, "
+                "finish the browser sign-in, then run this again. Nothing was changed.")
 IMAGE_FAMILY = "ubuntu24.04-driverless"
 USER = "ubuntu"
 # The real node (deploy/engine/NODE.md, O1): two resident 0.6 GB models, docker with the sandbox image, the harness and
@@ -69,15 +80,33 @@ def require_spend(spend_ok):
     return estimate
 
 
-def nebius(host, *args):
+def nebius(host, *args, read=False):
+    """One `nebius` call, JSON out. `read`: a list or get (bounded in time); otherwise a change (never cut short)."""
+    argv = ["nebius"] + list(args) + CLI + (CLI_READ if read else CLI_NO_BROWSER)
     try:
-        return json.loads(host.text(["nebius"] + list(args) + CLI))
+        done = host.run(argv, None, False, READ_SECONDS if read else None)
+    except core.Refusal as error:
+        if str(error).endswith(":command-timeout"):
+            print("nebius did not answer in %d s; it may be waiting for a sign-in. %s" % (READ_SECONDS, SIGN_IN_HINT),
+                  file=sys.stderr)
+            core.refuse(host.admission.action, "nebius-timeout")
+        raise
+    if done.returncode != 0:
+        said = done.stderr.decode("utf-8", "replace")
+        if "authentication process" in said or "get auth data" in said:
+            print("nebius: " + SIGN_IN_HINT, file=sys.stderr)
+            core.refuse(host.admission.action, "nebius-sign-in")
+        if os.environ.get("AUKORA_DEPLOY_DEBUG") == "1":
+            print("command failed: nebius " + " ".join(args[:3]) + "\n" + said[-400:], file=sys.stderr)
+        core.refuse(host.admission.action, "command-failed")
+    try:
+        return json.loads(done.stdout.decode("utf-8", "replace"))
     except ValueError:
         core.refuse("spawn", "inventory-invalid")
 
 
 def inventory(host, parent):
-    listing = nebius(host, "compute", "v1", "instance", "list", "--parent-id", parent, "--all")
+    listing = nebius(host, "compute", "v1", "instance", "list", "--parent-id", parent, "--all", read=True)
     items = listing.get("items", []) if isinstance(listing, dict) else None
     if not isinstance(items, list):
         core.refuse("spawn", "inventory-invalid")
@@ -99,7 +128,7 @@ def find(items, instance, node_id):
 
 def smallest_preset(host, parent):
     """Platform and preset of the smallest CPU-only shape with at least MIN_VCPU vCPU and MIN_MEMORY_GIB GiB."""
-    listing = nebius(host, "compute", "v1", "platform", "list", "--parent-id", parent, "--all")
+    listing = nebius(host, "compute", "v1", "platform", "list", "--parent-id", parent, "--all", read=True)
     candidates = []
     for platform in listing.get("items", []) if isinstance(listing, dict) else []:
         spec = platform.get("spec", platform)
@@ -119,7 +148,7 @@ def smallest_preset(host, parent):
 
 
 def public_ip(host, instance_id):
-    vm = nebius(host, "compute", "v1", "instance", "get", "--id", instance_id)
+    vm = nebius(host, "compute", "v1", "instance", "get", "--id", instance_id, read=True)
     found = []
     interfaces = vm.get("status", {}).get("network_interfaces", []) if isinstance(vm, dict) else []
     for interface in interfaces:

@@ -111,7 +111,7 @@ DEPLOY_PINS = {
     "deploy/spawn/release.py": "c59b7b74f77b4a743ace8082bb3ca3151930b992a8cceb43cfc99c8cda915537",
     "deploy/spawn/spawn.py": "2a14406c4ffd28d415ff769ac195f47f63db2f45cb5866610584a6a0e8ff4c6c",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",
-    "deploy/spawn/vm.py": "6e37f57f6da599410d7f2708b5b1a6930906ebe87f9acec32b0be84fb0ab55ec",
+    "deploy/spawn/vm.py": "362ca1eef6cc31421423f15eedd1fcd9e19d710670203f6519b1f8058c43f53d",
     "deploy/upgrade/node_release.py": "e616e7599cb252d40014ca58094e3a99ede4e6ca61d16f8287811b050e4c5167",
     "deploy/upgrade/pointer.py": "2ab318a7fa6426c4289da676f2a81a731e77e433992e76ed519aac171aa778d1",
     "deploy/upgrade/upgrade.py": "3b87ededc203b315c39ae42945993f1b329c03caac55a2f100caa94c349e8315",

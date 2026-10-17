@@ -19,6 +19,10 @@ the node never resolves), a new policy epoch keeps every relay and provider and 
 web_fetch ends `resolve-failed` (NODE.md O10). `install` does the same first, and the node's installer refuses a policy
 that lacks a door host. The engine's own DNS stays sealed: the hosts file is the node's, not the sandbox's.
 
+The Nebius calls (the inventory behind every command that reaches a node) never wait on a browser: if the operator's
+Nebius sign-in has expired the command refuses within 30 s with `nebius-sign-in` and says to run `nebius iam whoami`
+(it used to sit for 15 minutes, the sign-in link hidden in captured stderr); an unanswered call ends `nebius-timeout`.
+
 `--stage-on-node` is for artifacts that never pass through the operator machine (about 1 GB, built on the artifact VM
 of runbook A and copied VM to VM, NODE.md section 8): the stage is already at /root/aukora-engine-stage on the node
 (root, 0700). Nothing is trusted for being there: the installer checks every artifact against the release's pins,
