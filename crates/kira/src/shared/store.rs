@@ -15,6 +15,17 @@ fn refuse(code: &'static str) -> Refusal {
     Refusal { organ: "kira", reason: code }
 }
 
+/// May a source-less note adopt an earlier source-less note as its root? Only if every reader of the new note could read
+/// the earlier one: a `local` note is read by its author and the owner, so its root must be the same author's; an agent's
+/// `resume:<name>` handoff is read by that agent and the owner, so no other note adopts it. (Used by `append` and by the
+/// ancestry rebuild, so a store upgraded in place agrees with one written note by note.)
+pub(super) fn may_adopt_root(privacy: &str, author: &str, slot: Option<&str>, root_author: &str, root_slot: Option<&str>) -> bool {
+    if privacy == "local" && root_author != author {
+        return false;
+    }
+    !root_slot.is_some_and(|s| s.starts_with("resume:")) || slot == root_slot
+}
+
 /// The longest reason a correction may give.
 const MAX_REASON: usize = 512;
 
@@ -383,21 +394,29 @@ impl SharedStore {
         if let Some(last) = self.corrections_of(id_hex, author)?.0.pop() {
             return Ok(Some(last));
         }
-        let mut stmt = self.db.prepare("SELECT event_id, target FROM supersede_links WHERE replacement = ?1").map_err(sql)?;
-        let links = stmt
-            .query_map(params![id_hex], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        let mut stmt = self.db.prepare("SELECT DISTINCT target FROM supersede_links WHERE replacement = ?1 ORDER BY rowid").map_err(sql)?;
+        let targets = stmt
+            .query_map(params![id_hex], |r| r.get::<_, String>(0))
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
-        for (event_id, target) in links {
+        // The note lost only if every target that ever named it has since been corrected to some other note: when the
+        // latest correction in force of ANY of them still names it (a correction that was later restored, or another
+        // chain that points here), it stands. Of the corrections that took it away, the latest retires it.
+        let mut retired_by: Option<Correction> = None;
+        for target in targets {
             let Some(target_author) = self.note_author(&target)? else { continue };
             let (in_force, _) = self.corrections_of(&target, &target_author)?;
-            let Some(mine) = in_force.iter().find(|c| c.event == event_id) else { continue };
-            if let Some(last) = in_force.iter().rev().find(|c| c.at > mine.at && c.replacement.as_deref() != Some(id_hex)) {
-                return Ok(Some(last.clone()));
+            let Some(named_at) = in_force.iter().filter(|c| c.replacement.as_deref() == Some(id_hex)).map(|c| c.at).max() else { continue };
+            let Some(last) = in_force.last() else { continue };
+            if last.replacement.as_deref() == Some(id_hex) {
+                return Ok(None);
+            }
+            if last.at > named_at && retired_by.as_ref().is_none_or(|best| last.at > best.at) {
+                retired_by = Some(last.clone());
             }
         }
-        Ok(None)
+        Ok(retired_by)
     }
 
     fn note_author(&self, id_hex: &str) -> Result<Option<String>> {
@@ -557,17 +576,29 @@ impl SharedStore {
                 if roots.is_empty() {
                     // A note that cites nothing is a root. The same statement, filed again with no source in the same
                     // scope, privacy and epoch, is not a second observation: it takes the earlier root, so repetition
-                    // by any number of authors is one root ("repeated by"), never corroboration.
-                    let earlier: Option<String> = tx
-                        .query_row(
-                            "SELECT e.id FROM events e JOIN ancestry a ON a.seq = e.seq AND a.root = e.id
+                    // by any number of authors is one root ("repeated by"), never corroboration. Only a root every
+                    // reader of this note can read is adopted (`may_adopt_root`), so a root never carries the id of a
+                    // note its readers cannot open.
+                    let mut stmt = tx
+                        .prepare(
+                            "SELECT e.id, e.pubkey, e.slot FROM events e JOIN ancestry a ON a.seq = e.seq AND a.root = e.id
                              WHERE e.kind = ?1 AND e.statement_hash = ?2 AND e.scope = ?3 AND e.privacy = ?4 AND e.epoch = ?5
-                             ORDER BY e.seq LIMIT 1",
-                            params![NOTE_KIND, meta.statement_hash.to_vec(), meta.scope, meta.privacy.wire(), meta.epoch as i64],
-                            |r| r.get(0),
+                             ORDER BY e.seq",
                         )
-                        .optional()
                         .map_err(sql)?;
+                    let candidates = stmt
+                        .query_map(
+                            params![NOTE_KIND, meta.statement_hash.to_vec(), meta.scope, meta.privacy.wire(), meta.epoch as i64],
+                            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+                        )
+                        .map_err(sql)?
+                        .collect::<std::result::Result<Vec<_>, _>>()
+                        .map_err(sql)?;
+                    drop(stmt);
+                    let earlier = candidates
+                        .into_iter()
+                        .find(|(_, by, slot)| may_adopt_root(meta.privacy.wire(), &author, meta.slot.as_deref(), by, slot.as_deref()))
+                        .map(|(root, _, _)| root);
                     roots.insert(earlier.unwrap_or_else(|| id.clone()));
                 }
                 tx.execute(

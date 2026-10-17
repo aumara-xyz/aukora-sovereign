@@ -185,6 +185,123 @@ fn the_last_correction_wins_and_the_links_table_is_rebuilt_for_an_old_store() {
     }
 }
 
+fn roots_of(s: &SharedStore, n: &StoredNote) -> Vec<String> {
+    s.get(&hex32(n.event.id.as_bytes())).unwrap().unwrap().roots
+}
+
+/// Grok review parts 6 and 7: a root must never carry the id of a note its readers cannot open.
+#[test]
+fn a_note_adopts_only_a_root_all_its_readers_can_read() {
+    let (owner, a, b) = (key(), key(), key());
+    let mut s = store_with(&[("peter", &owner, &["*"], true), ("a", &a, &["builders"], false), ("b", &b, &["builders"], false)]);
+    let words = "the spare key is under the mat";
+    let local = |text: &str| {
+        let mut d = draft(text, "builders");
+        d.privacy = Privacy::Local;
+        d
+    };
+    // Two authors' identical local notes are two roots: neither can read the other's.
+    let first = s.append(sign(&owner, &local(words), Review::Remembered, 1)).unwrap();
+    let second = s.append(sign(&a, &local(words), Review::Remembered, 2)).unwrap();
+    assert_eq!(second.roots, vec![hex32(second.event.id.as_bytes())]);
+    // The same author's own repeat does adopt it.
+    let again = s.append(sign(&owner, &local(words), Review::Remembered, 3)).unwrap();
+    assert_eq!(again.roots, vec![hex32(first.event.id.as_bytes())]);
+    // A handoff is its author's: a builders note with the same words does not take its id as a root.
+    let mut slotted = draft("grok rotates the relay on Monday", "builders");
+    slotted.slot = Some("resume:a".into());
+    let resume = s.append(sign(&a, &slotted, Review::Remembered, 4)).unwrap();
+    let plain = s.append(sign(&b, &draft("grok rotates the relay on Monday", "builders"), Review::Remembered, 5)).unwrap();
+    assert_eq!(plain.roots, vec![hex32(plain.event.id.as_bytes())], "not {:?}", hex32(resume.event.id.as_bytes()));
+    // ...but the same slot's next handoff may.
+    let next = s.append(sign(&a, &slotted, Review::Remembered, 6)).unwrap();
+    assert_eq!(next.roots, vec![hex32(resume.event.id.as_bytes())]);
+}
+
+/// Grok review part 7: the in-place upgrade rebuilds the derived ancestry under the same rule as a write, rewrites no
+/// event, and a second open changes nothing.
+#[test]
+fn the_ancestry_upgrade_follows_the_write_rule_rewrites_no_event_and_is_idempotent() {
+    let (owner, a, b) = (key(), key(), key());
+    let path = std::env::temp_dir().join(format!("kira-upgrade-{}.sqlite", pub_hex(&key())));
+    let dump = |s: &SharedStore| -> (Vec<(i64, String)>, Vec<Vec<u8>>) {
+        let mut stmt = s.db.prepare("SELECT seq, root FROM ancestry ORDER BY seq, root").unwrap();
+        let ancestry = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
+        let mut stmt = s.db.prepare("SELECT raw FROM events ORDER BY seq").unwrap();
+        let events = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        (ancestry, events)
+    };
+    let (expected, events_before) = {
+        let mut s = SharedStore::open(&path).unwrap();
+        s.register_agent("peter", &pub_hex(&owner), &["*".into()], true).unwrap();
+        s.register_agent("a", &pub_hex(&a), &["builders".into()], false).unwrap();
+        s.register_agent("b", &pub_hex(&b), &["builders".into()], false).unwrap();
+        let words = "the relay rotates on Monday";
+        let mut local = draft(words, "builders");
+        local.privacy = Privacy::Local;
+        s.append(sign(&owner, &local, Review::Remembered, 1)).unwrap();
+        s.append(sign(&a, &local, Review::Remembered, 2)).unwrap();
+        let mut slotted = draft("handoff words here", "builders");
+        slotted.slot = Some("resume:a".into());
+        s.append(sign(&a, &slotted, Review::Remembered, 3)).unwrap();
+        s.append(sign(&b, &draft("handoff words here", "builders"), Review::Remembered, 4)).unwrap();
+        let shared = draft("a shared statement", "builders");
+        let one = s.append(sign(&a, &shared, Review::Remembered, 5)).unwrap();
+        s.append(sign(&b, &shared, Review::Remembered, 6)).unwrap();
+        let mut cites = draft("so it holds", "builders");
+        cites.sources = vec![hex32(one.event.id.as_bytes())];
+        s.append(sign(&b, &cites, Review::Remembered, 7)).unwrap();
+        let expected = dump(&s);
+        // The wrong ancestry an earlier build wrote (lineage 2 folded across authors, privacy and slots), and no marker.
+        s.db.execute("UPDATE ancestry SET root = (SELECT root FROM ancestry WHERE seq = 1) WHERE seq = 2", []).unwrap();
+        s.db.execute("UPDATE ancestry SET root = (SELECT root FROM ancestry WHERE seq = 3) WHERE seq = 4", []).unwrap();
+        s.db.execute("UPDATE meta SET value = '2' WHERE key = 'lineage'", []).unwrap();
+        assert_ne!(dump(&s).0, expected.0);
+        (expected.0, expected.1)
+    };
+    let s = SharedStore::open(&path).unwrap();
+    let (ancestry, events) = dump(&s);
+    assert_eq!(ancestry, expected, "an upgraded store agrees with one written note by note");
+    assert_eq!(events, events_before, "no event is rewritten");
+    drop(s);
+    let again = SharedStore::open(&path).unwrap();
+    assert_eq!(dump(&again), (ancestry, events), "a second open changes nothing");
+    assert_eq!(again.verify_chain().unwrap(), 7);
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = path.clone().into_os_string();
+        name.push(suffix);
+        let _ = std::fs::remove_file(name);
+    }
+}
+
+/// Grok review part 6: T corrected to R, then to X, then back to R: R stands. A second chain that points at R keeps it
+/// standing when the first moves on.
+#[test]
+fn a_restored_correction_stands_and_another_chain_keeps_it_standing() {
+    let a = key();
+    let mut s = store_with(&[("a", &a, &["builders"], false)]);
+    let mut id = |text: &str, at: u64| hex32(s.append(sign(&a, &draft(text, "builders"), Review::Remembered, at)).unwrap().event.id.as_bytes());
+    let (t, r, x) = (id("finding K2-30 is HIGH", 1), id("finding K2-30 is MEDIUM", 2), id("finding K2-30 is LOW", 3));
+    let (u, v) = (id("finding K2-31 is HIGH", 4), id("finding K2-31 is CRITICAL", 5));
+    let mut correct = |s: &mut SharedStore, target: &str, rep: &str, at: u64| {
+        let tags = vec![vec!["supersedes".into(), target.to_owned()], vec!["replacement".into(), rep.to_owned()]];
+        s.record(Event::sign(&a, at, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
+    };
+    correct(&mut s, &t, &r, 10);
+    correct(&mut s, &t, &x, 11);
+    assert_eq!(s.get(&r).unwrap().unwrap().current_id.as_deref(), Some(x.as_str()), "R lost to X for now");
+    correct(&mut s, &t, &r, 12);
+    let now = |s: &SharedStore, id: &str| s.get(id).unwrap().unwrap();
+    assert_eq!(now(&s, &t).current_id.as_deref(), Some(r.as_str()), "the latest correction in force names R");
+    assert!(now(&s, &r).superseded_by.is_none(), "R stands");
+    assert_eq!(now(&s, &x).current_id.as_deref(), Some(r.as_str()), "X lost to the restored R");
+    // Another chain: U and T both corrected to R; then U moves on to V. R still stands for T.
+    correct(&mut s, &u, &r, 13);
+    correct(&mut s, &u, &v, 14);
+    assert!(now(&s, &r).superseded_by.is_none(), "T's latest correction still names R");
+    assert_eq!(now(&s, &u).current_id.as_deref(), Some(v.as_str()));
+}
+
 #[test]
 fn commitment_lanes_take_only_the_owners_words() {
     let (owner, a) = (key(), key());

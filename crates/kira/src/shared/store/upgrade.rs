@@ -3,6 +3,7 @@
 //! supersede links, citations), which are rebuilt from the events and are not part of the chain.
 
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Upgrades a v1 chain to v2, only when the whole v1 chain verifies first (signatures, columns and links). A store
 /// whose v1 chain does not verify is left as it is, so it fails verification under v2 and the service refuses it.
@@ -32,12 +33,14 @@ pub(super) fn upgrade_chain(db: &mut Connection) -> Result<()> {
 }
 
 /// The lineage rule this build writes: 1 = every source-less note is its own root; 2 = a source-less note repeating an
-/// earlier source-less statement (same scope, privacy, epoch) shares that note's root.
-const LINEAGE_VERSION: &str = "2";
+/// earlier source-less statement (same scope, privacy, epoch) shares that note's root, whoever can read it; 3 = the same,
+/// but only a root every reader of the new note can read (`may_adopt_root`: a `local` root only by the same author, a
+/// `resume:` root only by the same slot).
+const LINEAGE_VERSION: &str = "3";
 
-/// Brings the derived `ancestry` table of a store written under lineage 1 to lineage 2. The table is derived from the
-/// events (it is not in the chain), so this rewrites no event: repeated source-less statements point at the earliest
-/// one, and every note that derived from a repeat now derives from the earliest.
+/// Rebuilds the derived `ancestry` table under the current lineage rule, from the events alone (it is not in the chain,
+/// so no event is rewritten). A store written under any earlier rule ends up exactly as if it had been written note by
+/// note by this build, and a second open finds the version marker and does nothing.
 pub(super) fn upgrade_lineage(db: &mut Connection) -> Result<()> {
     let have: Option<String> = db
         .query_row("SELECT value FROM meta WHERE key = 'lineage'", [], |r| r.get(0))
@@ -47,32 +50,57 @@ pub(super) fn upgrade_lineage(db: &mut Connection) -> Result<()> {
         return Ok(());
     }
     let tx = db.transaction().map_err(sql)?;
-    let roots: Vec<(String, Vec<u8>, String, String, i64)> = {
-        let mut stmt = tx
-            .prepare(
-                "SELECT e.id, e.statement_hash, e.scope, e.privacy, e.epoch FROM events e
-                 JOIN ancestry a ON a.seq = e.seq AND a.root = e.id WHERE e.kind = ?1 ORDER BY e.seq",
-            )
-            .map_err(sql)?;
+    let rows: Vec<(i64, String, String, Vec<u8>)> = {
+        let mut stmt = tx.prepare("SELECT seq, id, pubkey, raw FROM events WHERE kind = ?1 ORDER BY seq").map_err(sql)?;
         let rows = stmt
-            .query_map(params![NOTE_KIND], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .query_map(params![NOTE_KIND], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
         rows
     };
-    let mut first: std::collections::BTreeMap<(Vec<u8>, String, String, i64), String> = std::collections::BTreeMap::new();
-    for (id, hash, scope, privacy, epoch) in roots {
-        match first.entry((hash, scope, privacy, epoch)) {
-            std::collections::btree_map::Entry::Vacant(slot) => {
-                slot.insert(id);
-            }
-            std::collections::btree_map::Entry::Occupied(slot) => {
-                let earliest = slot.get();
-                tx.execute("UPDATE OR IGNORE ancestry SET root = ?1 WHERE root = ?2", params![earliest, id]).map_err(sql)?;
-                tx.execute("DELETE FROM ancestry WHERE root = ?1", params![id]).map_err(sql)?;
+    type Key = (Vec<u8>, String, String, i64);
+    let mut roots_of: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Source-less roots seen so far, per statement, in seq order: (root id, author, slot).
+    let mut earlier: BTreeMap<Key, Vec<(String, String, Option<String>)>> = BTreeMap::new();
+    let mut out: Vec<(i64, String)> = Vec::new();
+    for (seq, id, author, raw) in rows {
+        let event = Event::decode(&raw)?;
+        let Ok(meta) = NoteMeta::parse(&event.tags, &event.content) else {
+            // A note that does not parse keeps being its own root; recall refuses it on read anyway.
+            roots_of.insert(id.clone(), BTreeSet::from([id.clone()]));
+            out.push((seq, id.clone()));
+            continue;
+        };
+        let mut roots: BTreeSet<String> = BTreeSet::new();
+        for source in &meta.sources {
+            if let Some(found) = roots_of.get(source) {
+                roots.extend(found.iter().cloned());
             }
         }
+        if roots.is_empty() {
+            let key: Key = (meta.statement_hash.to_vec(), meta.scope.clone(), meta.privacy.wire().to_owned(), i64::from(meta.epoch));
+            let list = earlier.entry(key).or_default();
+            let adopted = list
+                .iter()
+                .find(|(_, by, slot)| may_adopt_root(meta.privacy.wire(), &author, meta.slot.as_deref(), by, slot.as_deref()))
+                .map(|(root, _, _)| root.clone());
+            match adopted {
+                Some(root) => roots.insert(root),
+                None => {
+                    list.push((id.clone(), author.clone(), meta.slot.clone()));
+                    roots.insert(id.clone())
+                }
+            };
+        }
+        for root in &roots {
+            out.push((seq, root.clone()));
+        }
+        roots_of.insert(id, roots);
+    }
+    tx.execute("DELETE FROM ancestry", []).map_err(sql)?;
+    for (seq, root) in out {
+        tx.execute("INSERT OR IGNORE INTO ancestry(seq, root) VALUES (?1, ?2)", params![seq, root]).map_err(sql)?;
     }
     tx.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('lineage', ?1)", params![LINEAGE_VERSION]).map_err(sql)?;
     tx.commit().map_err(sql)
