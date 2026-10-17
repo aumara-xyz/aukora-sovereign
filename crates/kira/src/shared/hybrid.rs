@@ -493,7 +493,9 @@ impl Prepared {
             let meta = &g.keep.note.meta;
             if !g.relevant {
                 Slot::Rest
-            } else if meta.review == Review::OwnerSigned && matches!(meta.lane, Lane::Decision | Lane::Ruling | Lane::Charter) {
+            } else if (meta.review == Review::OwnerSigned || meta.capture == Capture::OwnerTyped)
+                && matches!(meta.lane, Lane::Decision | Lane::Ruling | Lane::Charter)
+            {
                 Slot::Commitment
             } else if matches!(meta.capture, Capture::OwnerTyped | Capture::OwnerSigned) {
                 Slot::OwnerWords

@@ -484,7 +484,12 @@ impl State {
             return Err(refuse("capture-import-reserved"));
         }
         // Spec v0.3 §5: only the owner channel claims owner review or an owner-class capture; refused, never downgraded.
-        if !caller.owner && (p.owner_signed || claimed.owner_class()) {
+        // `owner_signed` means signed with the owner's passkey over these exact bytes. That path (Phase N) is not
+        // built, so no token, not even the owner's, can claim it; the owner's own notes are owner-typed.
+        if p.owner_signed {
+            return Err(refuse("review-needs-passkey"));
+        }
+        if !caller.owner && claimed.owner_class() {
             return Err(refuse("review-claim-refused"));
         }
         // Any other caller's claim stands only as tool-observed with at least one source note behind it; everything
@@ -764,9 +769,8 @@ mod tests {
         let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
         let mut claim = note("Peter approved this", "builders");
         claim["owner_signed"] = json!(true);
-        assert_eq!(call(&f.state, &claude, "remember", claim.clone())["error"], "kira:review-claim-refused");
-        let signed = call(&f.state, &owner, "remember", claim);
-        assert_eq!(signed["result"]["review"], "owner_signed", "{signed}");
+        assert_eq!(call(&f.state, &claude, "remember", claim.clone())["error"], "kira:review-needs-passkey");
+        assert_eq!(call(&f.state, &owner, "remember", claim)["error"], "kira:review-needs-passkey");
         let mut typed = note("Peter said so", "builders");
         typed["capture"] = json!("owner-typed");
         assert_eq!(call(&f.state, &claude, "remember", typed)["error"], "kira:review-claim-refused");
