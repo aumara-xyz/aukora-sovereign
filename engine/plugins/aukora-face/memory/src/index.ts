@@ -1,11 +1,15 @@
-/** Face-owned OpenViking adapter. Kira remains the only authority for Kira notes. */
+/**
+ * Face-owned OpenViking adapter. Kira remains the only authority for Kira notes.
+ *
+ * DISABLED IN SOVEREIGN (PORT-NOTES.md, "Disabled in Sovereign"): every way out of this module is cut. The OpenViking
+ * endpoint, key and `fetch`, the environment reads, and the load of Prime's Kira reader by path now refuse with
+ * `memory:disabled-in-sovereign` (Kira 2 replaces OpenViking). The routes stay registered so the Memory face's client
+ * gets a named refusal instead of a 404. The rest of the file is Prime's, untouched and unreachable.
+ */
 import type { Context } from '@deepseek-ai/cordis'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { access } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
-import process from 'node:process'
+import { join } from 'node:path'
 
 export const MEMORY_OPENVIKING_ROUTES = {
   remembered: '/api/aukora/memory/remembered',
@@ -22,17 +26,12 @@ class MemoryFaceError extends Error {
 }
 
 function memoryStateDirectory(): string {
-  return join(process.env.AUKORA_SUPPORT_ROOT ?? join(homedir(), 'Library/Application Support/AUKORA'), 'state/home/kira-memory')
+  throw new MemoryFaceError('memory:disabled-in-sovereign', 503)
 }
 
 /** Releases flatten face directories; source worktrees keep the extra aukora-face directory. */
-async function loadKiraMemoryReaderModule(name: 'memory-deps' | 'recall-openviking'): Promise<Record<string, (...args: any[]) => any>> {
-  for (const relative of [`../../aukora-kira/lib/${name}.mjs`, `../../../aukora-kira/lib/${name}.mjs`]) {
-    const url = new URL(relative, import.meta.url)
-    try { await access(url) } catch { continue }
-    return await import(/* @vite-ignore */ url.href)
-  }
-  throw new MemoryFaceError('memory:kira-reader-unavailable', 503)
+async function loadKiraMemoryReaderModule(_name: 'memory-deps' | 'recall-openviking'): Promise<Record<string, (...args: any[]) => any>> {
+  throw new MemoryFaceError('memory:disabled-in-sovereign', 503)
 }
 
 /** Read the existing chained ledger without constructing a memory owner or creating directories. */
@@ -45,46 +44,12 @@ export async function readFaceLiveRemembered(): Promise<Row[]> {
 }
 
 /** Installed configuration keeps Kira's model-locality/consent checks. Scratch overrides inherit no key. */
-export async function memoryOpenVikingConfig(): Promise<VikingConfig> {
-  const installed = join(homedir(), 'Library/Application Support/AUKORA')
-  const support = process.env.AUKORA_SUPPORT_ROOT ?? installed
-  const override = process.env.AUKORA_MEMORY_OPENVIKING_URL
-  if (resolve(support) !== resolve(installed) && !override) throw new MemoryFaceError('memory:scratch-endpoint-required', 503)
-  let config: Row
-  if (override) {
-    config = { url: override, key: process.env.AUKORA_MEMORY_OPENVIKING_KEY ?? '',
-      account: process.env.AUKORA_MEMORY_OPENVIKING_ACCOUNT ?? 'aukora', user: process.env.AUKORA_MEMORY_OPENVIKING_USER ?? 'owner',
-      queryInstruction: process.env.AUKORA_MEMORY_OPENVIKING_QUERY_INSTRUCTION ?? '' }
-  } else {
-    const { readBridgeConfig, openVikingHome } = await loadKiraMemoryReaderModule('recall-openviking')
-    config = readBridgeConfig!(openVikingHome!(memoryStateDirectory()))
-    if (config.configured !== true) throw new MemoryFaceError('memory:openviking-config-refused', 503)
-  }
-  let url: URL
-  try { url = new URL(String(config.url ?? 'http://127.0.0.1:1933')) } catch { throw new MemoryFaceError('memory:invalid-endpoint', 503) }
-  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
-    || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new MemoryFaceError('memory:invalid-endpoint', 503)
-  const account = String(config.account)
-  const user = String(config.user)
-  if (![account, user].every(value => /^[a-zA-Z0-9_-]{1,64}$/u.test(value))) throw new MemoryFaceError('memory:invalid-identity', 503)
-  return { url: url.origin, key: String(config.key ?? ''), account, user, queryInstruction: String(config.queryInstruction ?? '') }
+export function memoryOpenVikingConfig(): Promise<VikingConfig> {
+  return Promise.reject(new MemoryFaceError('memory:disabled-in-sovereign', 503))
 }
 
-async function vikingCall(config: VikingConfig, path: string, method = 'GET', body?: unknown): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetch(`${config.url}${path}`, {
-      method, redirect: 'error', signal: AbortSignal.timeout(15_000),
-      headers: { 'content-type': 'application/json', 'x-openviking-account': config.account,
-        'x-openviking-user': config.user, ...(config.key ? { 'x-api-key': config.key } : {}) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
-  } catch { throw new MemoryFaceError('memory:openviking-unreachable', 503) }
-  const answer = object(await response.json().catch(() => null))
-  if (!response.ok || answer.status !== 'ok') throw new MemoryFaceError(
-    response.status === 404 ? 'memory:openviking-not-found' : 'memory:openviking-refused', response.status === 404 ? 404 : 502,
-  )
-  return answer.result
+function vikingCall(_config: VikingConfig, _path: string, _method = 'GET', _body?: unknown): Promise<unknown> {
+  return Promise.reject(new MemoryFaceError('memory:disabled-in-sovereign', 503))
 }
 
 /** Accept only visible, single memory files; never Kira's mirrored index or a signed/governed namespace. */

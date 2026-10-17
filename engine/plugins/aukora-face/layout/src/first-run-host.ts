@@ -20,7 +20,7 @@
  * @module first-run-host
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 /** Every way this host half answers, so a route never has to compose a status by hand. */
@@ -91,9 +91,8 @@ export function firstRunAnswer(stateRoot: string | null): FirstRunAnswer {
   const owner = existsSync(ownerFileIn(stateRoot))
     ? profileOf(readFileSync(ownerFileIn(stateRoot), 'utf8'))
     : null
-  const keyFile = keyFileIn(stateRoot)
-  const keyTail = existsSync(keyFile) ? tailOf(readFileSync(keyFile, 'utf8')) : null
-  return { firstRun: owner === null, name: owner?.name ?? null, keyTail }
+  // DISABLED IN SOVEREIGN: the engine holds no model key, so no key file is read and the tail is always null.
+  return { firstRun: owner === null, name: owner?.name ?? null, keyTail: null }
 }
 
 /**
@@ -108,20 +107,5 @@ export function rememberName(stateRoot: string, name: string, voice?: 'on' | 'of
   // the app about themselves. The key is the only thing here that is a secret, and it is the only thing kept apart.
   const profile = voice === undefined ? { name: trimmed } : { name: trimmed, voice }
   writeFileSync(ownerFileIn(stateRoot), `${JSON.stringify(profile)}\n`, { mode: 0o600 })
-  return firstRunAnswer(stateRoot)
-}
-
-/** Store the key, with the file readable only by its owner. **The key is never returned, logged or echoed.** */
-export function rememberKey(stateRoot: string, key: string): FirstRunAnswer {
-  const path = keyFileIn(stateRoot)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, key.trim(), { mode: 0o600 })
-  return firstRunAnswer(stateRoot)
-}
-
-/** Remove the stored key. Removing one that is not there is a success, because the person asked for it to be gone. */
-export function forgetKey(stateRoot: string): FirstRunAnswer {
-  const path = keyFileIn(stateRoot)
-  if (existsSync(path)) rmSync(path)
   return firstRunAnswer(stateRoot)
 }

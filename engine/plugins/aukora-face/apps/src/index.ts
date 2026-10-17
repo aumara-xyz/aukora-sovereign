@@ -183,7 +183,6 @@ import { accessSync, constants as fsConstants, mkdirSync, readFileSync, statSync
 import { RecallLens } from './auma-live/recall-lens.ts'
 import { WebLens } from './auma-live/web-lens.ts'
 import { WeightsControl } from './auma-live/weights-control.ts'
-import { VoiceSidecarSupervisor, VoiceWebSocketProxy, voiceLogger } from './auma-live/voice.ts'
 
 export type * from './auma-live/types.ts'
 export type * from './auma-canvas/types.ts'
@@ -293,8 +292,8 @@ export const Config: z<Config> = z.object({
   apiKeyEnv: z.string().role('credential-ref').default('OPENROUTER_API_KEY'),
   maxRequestBodyBytes: z.natural().min(1).default(16 * 1024),
   voicePort: z.natural().min(1).max(65_535).default(7_512),
-  voiceEnabled: z.boolean().default(true),
-  voiceAutoStart: z.boolean().default(true),
+  voiceEnabled: z.boolean().default(false),
+  voiceAutoStart: z.boolean().default(false),
   voiceRuntimeDirectory: z.string().default(''),
   repoLensRoot: z.string().default('.'),
   providerSendConsent: z.boolean().default(false).description('Owner consent for Auma Live provider prompts and conversation history. Enable explicitly in the existing aukora-face-apps composition config; false disables sending. The release disclosure policy still checks every data class and continuation.'),
@@ -784,7 +783,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // reading state/memory or returning cached text; the engine still admits every declared disclosure.
     ...organismDisclosureDependencies({
       disclosurePolicy: () => readOwnerPolicy(policyText().text),
-      disclosureRecipient: process.env.AUKORA_DISCLOSURE_RECIPIENT ?? 'openrouter.ai',
+      // DISABLED IN SOVEREIGN: no provider recipient exists (the OpenRouter route is off), so none is read from the environment.
+      disclosureRecipient: 'none.invalid',
       ...(config.organismDshHome.length === 0 ? {} : {
         // The state document stays uncached so its staleness verdict uses the current age.
         // Failed authorised reads still return the lens's explicit INDETERMINATE text.
@@ -954,36 +954,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   routes.forEach((route) => {
     ctx.effect(() => ctx.webServer.register(gated(route)), `ui-stock-apps: ${route.path}`)
   })
-  if (config.voiceEnabled) {
-    const voiceProxy = new VoiceWebSocketProxy(config.voicePort)
-    const voiceSupervisor = new VoiceSidecarSupervisor({
-      port: config.voicePort,
-      autoStart: config.voiceAutoStart,
-      runtimeDirectory: config.voiceRuntimeDirectory.length === 0 ? '' : path.resolve(config.voiceRuntimeDirectory),
-      // THE VOICE LINES GO TO server.log AS WELL AS TO THE PLUGIN LOGGER. `<state>/logs/server.log` is the
-      // launcher's redirect of this child's stdout, so a line a person needs to read — "browser voice
-      // fallback active" — has to be printed, not only logged. Before this it was a sentence nothing wrote.
-    }, { subprocess: ctx.subprocess, logger: voiceLogger(ctx.logger) })
-    ctx.effect(() => ctx.webServer.registerUpgrade({
-      path: '/stock-apps/auma-live/voice',
-      // The upgrade carries the browser's cookies too, and a socket that proxies audio
-      // to the local sidecar is not something an unauthenticated process may open.
-      handler: (req, socket, head) => {
-        const rejection = gate().requestRejection(req)
-        if (rejection !== undefined) {
-          socket.write(`HTTP/1.1 ${rejection} ${rejection === 401 ? 'Unauthorized' : 'Forbidden'}\r\nconnection: close\r\n\r\n`)
-          socket.destroy()
-          return
-        }
-        voiceProxy.handle(req, socket, head)
-      },
-    }), 'ui-stock-apps: Auma Live voice WebSocket')
-    ctx.effect(() => () => voiceProxy.close(), 'ui-stock-apps: Auma Live voice proxy')
-    ctx.effect(() => {
-      voiceSupervisor.start()
-      return () => voiceSupervisor.stop()
-    }, 'ui-stock-apps: Auma Live voice sidecar')
-  }
+  // DISABLED IN SOVEREIGN (PORT-NOTES.md, "Disabled in Sovereign"): the Auma Live voice WebSocket bridge and the Python
+  // voice sidecar spawn (voice.ts, voice-sidecar.ts) are not carried; the voice config keys below are accepted and ignored.
   ctx.on('session/event', (session: Session, event: SessionEvent) => {
     // **ONLY A LANE'S OWN FINISH MAY WAKE HER, AND THAT HAD TO BE SAID OUT LOUD.** This listener saw EVERY session's
     // events, so CORE's own `turn/end` was indistinguishable from a lane finishing — **the wake woke itself**, and

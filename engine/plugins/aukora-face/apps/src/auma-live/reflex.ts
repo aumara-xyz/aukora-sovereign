@@ -346,7 +346,8 @@ export async function reflexTurn(options: {
   const reflex = options.reflex ?? requestReflex({
     endpoint: options.endpoint ?? '',
     key: options.key,
-    fetchImpl: options.fetchImpl ?? fetch,
+    // DISABLED IN SOVEREIGN (PORT-NOTES.md): no global `fetch` fallback; a caller must hand in a transport.
+    fetchImpl: options.fetchImpl ?? (() => Promise.reject(new Error('provider transport disabled in Sovereign'))),
     signal: options.signal ?? new AbortController().signal,
   })
 

@@ -44,11 +44,11 @@ const RING_CHARS = 20_000
 export const OWNER_NAME_PATTERN = /^[\p{L}\p{M} .'-]{0,40}(?![\s\S])/u
 const validOwnerName = (name: unknown): string | undefined =>
   typeof name === 'string' && OWNER_NAME_PATTERN.test(name) && name.trim() !== '' ? name.trim() : undefined
-let ownerName = validOwnerName(process.env.AUKORA_OWNER_NAME) ?? 'the owner'
+let ownerName = 'the owner'
 
 /** Validate both entry points; an invalid/blank value never becomes prompt text or preserves a previous owner's name. */
 export function setOwnerName(name: string): void {
-  ownerName = validOwnerName(process.env.AUKORA_OWNER_NAME) ?? validOwnerName(name) ?? 'the owner'
+  ownerName = validOwnerName(name) ?? 'the owner'
 }
 
 /** A function replacer never interprets replacement metacharacters. */
@@ -203,7 +203,9 @@ let processSpendGate: SpendGate | undefined
 const defaultSpendGate = (): SpendGate => (processSpendGate ??= createSpendGate())
 
 /** OpenRouter chat-completions endpoint used by the bundled minds. */
-export const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+// DISABLED IN SOVEREIGN (PORT-NOTES.md): the engine holds no keys and its only ways out are the door and the broker, so
+// this is no longer an address. `providerSendConsent` also stays false, so no presence request is built.
+export const OPENROUTER_ENDPOINT = 'disabled-in-sovereign://openrouter/chat-completions'
 
 /** Model routes exposed by the original Auma Live selector. */
 export const PRESENCE_MINDS = {
@@ -808,7 +810,8 @@ export class PresenceEngine {
   ) {
     this.crossLane = crossLane
     this.dependencies = dependencies
-    const transport = dependencies.fetch ?? fetch
+    // DISABLED IN SOVEREIGN (PORT-NOTES.md): there is no global `fetch` fallback; a caller must hand in a transport.
+    const transport = dependencies.fetch ?? (() => Promise.reject(new Error('provider transport disabled in Sovereign')))
     this.fetchImpl = transport
     // THE MONEY GATE. Default-constructed when the deployment supplies none, so a composition that forgot to
     // wire it still refuses on an unknown price rather than spending without a ceiling.

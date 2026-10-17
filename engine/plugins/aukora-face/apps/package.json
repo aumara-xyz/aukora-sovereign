@@ -50,8 +50,7 @@
   "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@deepseek-ai/schemastery": "workspace:^",
-    "zod": "^4.4.3",
-    "ws": "^8.21.0"
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
@@ -104,7 +103,6 @@
     "@deepseek-ai/dsh-web": "workspace:^",
     "@testing-library/react": "^16.1.0",
     "@types/react": "~18.3.1",
-    "@types/ws": "^8.18.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "@deepseek-ai/dsh-client-store": "workspace:^",

@@ -35,7 +35,6 @@
  * @module health-sample
  */
 
-import { execFile } from 'node:child_process'
 import { readdirSync, statSync, statfsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { HealthSample } from './client/health-model.ts'
@@ -76,28 +75,15 @@ export type FootprintReader = (pid: number) => Promise<number | null>
  * which is why the note asking ALPHA to expose theirs is on the board. When they do, this becomes their
  * function and this one is deleted — the panel's number will not change, because it was always their command.
  */
-export function readFootprintViaBinary(pid: number): Promise<number | null> {
-  return new Promise(resolve => {
-    execFile('/usr/bin/footprint', ['-f', 'bytes', String(pid)], { timeout: 5000 }, (error, stdout) => {
-      if (error) { resolve(null); return }
-      // `footprint -f bytes <pid>` prints several lines; the total is the one that names itself. An unreadable answer
-      // is null rather than a guess, because a footprint of zero would read as an idle process.
-      const match = /total\s+(\d+)/iu.exec(stdout) ?? /(\d{6,})/u.exec(stdout)
-      const bytes = match === null ? Number.NaN : Number(match[1])
-      resolve(Number.isFinite(bytes) && bytes > 0 ? bytes : null)
-    })
-  })
+export function readFootprintViaBinary(_pid: number): Promise<number | null> {
+  // DISABLED IN SOVEREIGN: the engine runs no program (it was `/usr/bin/footprint`). Unmeasured is null, never a guess.
+  return Promise.resolve(null)
 }
 
 /** The machine's memory pressure level, or null. */
 export function readPressureLevel(): Promise<number | null> {
-  return new Promise(resolve => {
-    execFile('sysctl', ['-n', 'kern.memorystatus_level'], { timeout: 5000 }, (error, stdout) => {
-      if (error) { resolve(null); return }
-      const level = Number(stdout.trim())
-      resolve(Number.isFinite(level) ? level : null)
-    })
-  })
+  // DISABLED IN SOVEREIGN: the engine runs no program (it was `sysctl`). Unmeasured is null, never a guess.
+  return Promise.resolve(null)
 }
 
 /** Free bytes on the volume a path lives on, or null. `bavail` is what a non-root process may actually use. */
@@ -167,7 +153,7 @@ export interface SampleSources {
 export function liveSources(stateRoot: string | null): SampleSources {
   return {
     stateRoot,
-    tmpDir: process.env.TMPDIR ?? '/tmp',
+    tmpDir: '/tmp',
     pid: process.pid,
     footprint: readFootprintViaBinary,
     pressure: readPressureLevel,

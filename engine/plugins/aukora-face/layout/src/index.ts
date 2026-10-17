@@ -34,7 +34,7 @@ import { installComposerMode } from './composer-mode.ts'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
-  FIRST_RUN_REFUSALS, firstRunAnswer, forgetKey, rememberKey, rememberName, stateRootOf,
+  FIRST_RUN_REFUSALS, firstRunAnswer, rememberName, stateRootOf,
 } from './first-run-host.ts'
 import { readApprovalLog } from './approvals-log.ts'
 import { readManifest } from './why-store.ts'
@@ -254,29 +254,7 @@ export function apply(ctx: Context): void {
       }),
     }), 'ui-layout: first-run name')
 
-    webCtx.effect(() => webCtx.webServer.register({
-      kind: 'exact',
-      path: FIRST_RUN_ROUTES.key,
-      handler: (req: IncomingMessage, res: ServerResponse) => guarded(req, res, 'POST', async () => {
-        const stateRoot = root()
-        if (stateRoot === null) { send(res, 500, { code: FIRST_RUN_REFUSALS.NO_STATE_ROOT }); return }
-        const body = await readJsonBody(req)
-        if (!body.ok) { send(res, 400, { code: FIRST_RUN_REFUSALS.BODY_NOT_OBJECT, because: body.because }); return }
-        const key = typeof body.value.key === 'string' ? body.value.key.trim() : ''
-        if (key === '') { send(res, 400, { code: FIRST_RUN_REFUSALS.KEY_MISSING }); return }
-        // **WHAT COMES BACK IS THE TAIL.** The key itself is written and never echoed, logged or put in an error.
-        send(res, 200, { ...rememberKey(stateRoot, key), writable: true })
-      }),
-    }), 'ui-layout: first-run key')
-
-    webCtx.effect(() => webCtx.webServer.register({
-      kind: 'exact',
-      path: FIRST_RUN_ROUTES.keyRemove,
-      handler: (req: IncomingMessage, res: ServerResponse) => guarded(req, res, 'POST', () => {
-        const stateRoot = root()
-        if (stateRoot === null) { send(res, 500, { code: FIRST_RUN_REFUSALS.NO_STATE_ROOT }); return }
-        send(res, 200, { ...forgetKey(stateRoot), writable: true })
-      }),
-    }), 'ui-layout: first-run key removal')
+    // DISABLED IN SOVEREIGN (PORT-NOTES.md, "Disabled in Sovereign"): the first-run model-key routes
+    // (FIRST_RUN_ROUTES.key, FIRST_RUN_ROUTES.keyRemove) are not registered. The engine holds no keys.
   })
 }

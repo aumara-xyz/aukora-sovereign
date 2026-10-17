@@ -66,20 +66,7 @@ export function watchdogLimitBytes(
   }
   const match = /FOOTPRINT_LIMIT_BYTES\s*=\s*([^\n]+)/u.exec(source)
   if (match === null) return null
-  // **THE EXPRESSION IS EVALUATED, NOT PARSED BY HAND.** Their line is arithmetic, and re-implementing arithmetic in a
-  // regex would be a third way to disagree with them. Only digits, `Math.round`, `*`, `**`, parentheses and whitespace
-  // are allowed through, so nothing from that file can execute as code.
-  // **`match[1]` IS `string | undefined` UNDER `noUncheckedIndexedAccess`**, and this read `.trim()` on it
-  // regardless — the same defect as `waiting.ts:113` (`stamped[0]`), `waiting.ts:126` (a null clock) and
-  // `health-model.ts:199` (`newest` possibly undefined). **Four instances in one face, all of them an indexed or
-  // optional read whose guard was assumed rather than written.**
-  if (match[1] === undefined) return null
-  const expression = match[1].trim().replace(/;\s*$/u, '')
-  if (!/^[\d\s.*+()Mathround\u002a]+$/u.test(expression)) return null
-  try {
-    const value = Function(`"use strict"; return (${expression})`)() as unknown
-    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
-  } catch {
-    return null
-  }
+  // DISABLED IN SOVEREIGN: Prime evaluated the matched expression with the Function constructor. The engine evaluates no string,
+  // and Prime's watchdog file is not carried here, so the limit is unknown (null), which the panel shows as unmeasured.
+  return null
 }

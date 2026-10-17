@@ -19,7 +19,6 @@ import { auraCoherenceProjectionDefinition } from './aura/projection.ts'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -34,12 +33,6 @@ export const BACKEND_IDENTITY_ENDPOINT = '/api/aukora/backend-identity'
 /** The faces whose presence in a release makes it the spatial frontend. */
 const SPATIAL_FACES = Object.freeze(['layout', 'sidebar', 'threads', 'settings'])
 
-/** The projection is a short read; a run longer than this is a refusal, not a wait. */
-const PROJECTION_TIMEOUT_MS = 20_000
-
-/** A projection document larger than this is refused rather than buffered. */
-const PROJECTION_MAX_BYTES = 4 * 1024 * 1024
-
 /**
  * The trust surface a plugin-owned route consults before serving. Typed locally, as the
  * harness's own open-in-app plugin does, because the connection package is browser-side.
@@ -50,30 +43,6 @@ interface RouteGate {
 
 /** This file's own directory, and the release (or package) root two levels above it. */
 const HERE = dirname(fileURLToPath(import.meta.url))
-
-/**
- * Resolve the composition state directory the way the gate itself resolves it.
- *
- * ONE SOURCE OF TRUTH, NOT A SECOND COPY OF THE PRECEDENCE. `resolveStateDir` lives in
- * the association plugin and reads config.stateDir, then config.gateRoot, then the
- * stateDir inside $AUKORA_GATE_CONFIG, then `<gateRoot>/gate-state`. Re-deriving that
- * order here would work until the day it drifted, and then this route would confidently
- * report evidence from a directory nothing else was using.
- * @param releaseRoot - the root the face was loaded from.
- * @returns the state directory, or undefined when the association plugin is not carried.
- */
-async function resolveGateState(releaseRoot: string): Promise<string | undefined> {
-  const candidate = join(releaseRoot, 'plugins/aukora-aura-association/lib/index.js')
-  try {
-    const module = await import(candidate) as {
-      resolveStateDir?: (config: object, env: NodeJS.ProcessEnv) => string
-    }
-    if (typeof module.resolveStateDir !== 'function') return undefined
-    return module.resolveStateDir({ gateRoot: releaseRoot }, process.env)
-  } catch {
-    return undefined
-  }
-}
 
 /**
  * What this backend is, answered by the backend itself.
@@ -154,34 +123,12 @@ export const Config = z.object({
  * @param releaseRoot - the root this face was loaded from.
  * @returns the projection document, or a refusal in the same shape.
  */
-export async function readAuraEvidence(releaseRoot: string): Promise<object> {
-  const script = join(HERE, '..', 'evidence', 'aura-evidence.py')
-  const scripts = join(releaseRoot, 'scripts')
-  const state = await resolveGateState(releaseRoot)
-  if (state === undefined) {
-    return refusalDocument('aura-state-unresolved',
-      'the association plugin that owns state resolution is not carried here, so this route '
-      + 'will not guess which directory the gate is using')
-  }
-  return await new Promise((settle) => {
-    execFile('python3', [script, '--state', state, '--scripts', scripts], {
-      timeout: PROJECTION_TIMEOUT_MS,
-      maxBuffer: PROJECTION_MAX_BYTES,
-      // A read must not inherit a cwd inside a checkout: the adapter's imports are
-      // path-driven and a stray cwd is how bytecode lands where it should not.
-      cwd: releaseRoot,
-    }, (error, stdout) => {
-      if (error) {
-        settle(refusalDocument('aura-projection-failed', `${error.name}: ${error.message}`))
-        return
-      }
-      try {
-        settle(JSON.parse(stdout) as object)
-      } catch (parseError) {
-        settle(refusalDocument('aura-projection-unparseable', String(parseError)))
-      }
-    })
-  })
+export function readAuraEvidence(_releaseRoot: string): Promise<object> {
+  // DISABLED IN SOVEREIGN (PORT-NOTES.md, "Disabled in Sovereign"): Prime ran `python3 evidence/aura-evidence.py` and
+  // loaded the Aura association plugin to find the gate state. The engine spawns nothing and loads nothing by path, and
+  // neither exists here, so the route answers its own refusal shape.
+  return Promise.resolve(refusalDocument('aura-evidence-disabled-in-sovereign',
+    'the Aura evidence projection ran a program and is not part of the Sovereign composition'))
 }
 
 /** Register the projection, the settings namespace, and the evidence route. */
