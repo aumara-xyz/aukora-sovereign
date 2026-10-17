@@ -510,6 +510,21 @@ Tests (Linux, the node, umask 002): `cargo test -p supervisor -p broker -p gate 
 170 + 1 ignored, broker 13, gate 17, floor 7, frontdoor 4), `tests/deploy` (8); `scripts/check.sh` CONSTRUCTION GREEN
 on the node (the Mac stayed under its disk floor).
 
+Closed by the owner-lifecycle branch (node/owner-lifecycle, 2026-10-17), verified LIVE on the rehearsal node (genesis 7
+with release 82254d3…-83c97646 (A), then upgraded in place to 8834ad9…-4c29ddb9 (B); software passkey, fake key,
+headless Chrome through the SSH tunnel; shots in `~/aukora-memory/review/node-owner-lifecycle-2026-10-17-shots/`,
+`live-*` from the node, the rest from a local preview):
+
+| Item | Fix | Live evidence |
+|---|---|---|
+| **O17** upgrades | `node_release.py offer` (link `/opt/aukora/offered`); the running release raises the upgrade card from its floor and keeps serving; approval advances the floor (the supervisor's release proposal is ordering evidence for an owner floor too: `floor` and Aura's twin); exit 75; unit pre-start `node_release.py follow` switches to the staged release the floor names (read by `sovereign release floor` as aukora); a withdrawn offer withdraws its card (not a decline) | A running with the engine `active`; B staged and offered at 13:22:06; card "Upgrade this node to a new release" (`base_sha256` = A, `release_sha256` = B) while `current` stayed A and the engine stayed `active`; approved 13:23:34 → `release: the owner approved release 4c29ddb9…; restarting to switch to it`, `engine: awaiting-release-approval`, exit `status=75/TEMPFAIL` 13:23:36, `node-release follow: switched to 8834ad96a45c-4c29ddb97c0e` 13:23:39, `engine: running` 13:23:49 (the supervisor down 3 s, the engine about 15 s); `current` = B, `previous` = A, offer gone, `active.json` = B, floor `aukora-floor-state-v2` naming B with A in its history, `admission.json` names B, the plugin set needed no new card (unchanged plugins) |
+| **O18** sign-in / sign-out | shell: one primitive button pinned at the base of the right-hand menu, "Sign in with your passkey" / "Sign out" (`POST /api/session/end`); session refusals are a calm signed-out state; the AUMLOK face's CSP (`connect-src 'self'`) no longer blanks it | on B: Sign out → the button reads "Sign in with your passkey", `/api/approvals` 400 `frontdoor:session-required` (`live-o18-signed-out.png`); clicking it opened the owner pane and signed in with the passkey, the button read "Sign out" again; on A the AUMLOK face rendered its own Sign in (it was blank before). The look needs Peter's preview (local shots `01`…`17`) |
+| **O19** declines | only the owner's Decline (`gate.refuse`, reason `owner-declined`) is a decline; an expiry or another refusal frees the same bytes; `POST /api/v1/approvals/decline` (no passkey, ends a live review) and `/again` (fact `aukora-owner-again-v1` as new evidence; release cards raised afresh); the owner card has Decline and Ask again; the shell's Approvals says "N declined · ask again"; the model key: card before key, re-entering a declined or expired key raises a fresh card, another key's card up refuses `awaiting-other-approval` (SCOUT M5; SCOUT's own branch was not visible here) | upgrade card declined (`gate.refuse` seq 25; `live-o19-declined.png`, the shell's Approvals "1 declined · ask again"); for 20 s of shell polling nothing raised it again and `current` stayed A, engine `active`; Ask again 24 s after the decline raised a fresh card (seq 26, `live-o19-asked-again.png`), which was then approved (the upgrade above). Model key: fake key entered → card; Declined → the same key entered again → a fresh pending `engine/model-key.json` card (`refused`, then `pending`). Tests: an expired card's bytes raised again, a decline held until asked again, door asks per call (supervisor `adapters::gate`, 5) |
+
+Tests (Mac): `cargo test -p floor` (10, three new: genesis and upgrade ordering), `-p supervisor -- adapters::gate
+release::owner` (7 new), `tests/deploy/test_node_release_upgrade.py` (6: offer switches nothing; follow waits for the
+floor, switches to the approved release, survives a withdrawn offer, refuses an unstaged or tampered one).
+
 ## 11. Resource use (the rehearsal node, 4 vCPU / 16 GiB / 80 GiB)
 
 Idle, engine running (10:12 UTC) and around a chat turn (11:15; with the fake key the turn ends at DeepSeek's 401,
