@@ -165,6 +165,15 @@ impl DoorGrant {
     }
 }
 
+/// Why `GrantSet::revoke` changed nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RevokeError {
+    /// This id was revoked before; the set already narrows it.
+    AlreadyRevoked,
+    /// The revoked list is at `MAX_REVOKED`; the id was **not** recorded.
+    Full,
+}
+
 /// The owner's grants and the ids of those revoked. Revoked ids stay listed so a revoked grant can never come back
 /// by being signed again with the same bytes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -239,13 +248,39 @@ impl GrantSet {
         next.canonical_bytes().map(|_| next)
     }
 
-    /// Narrowing: revoke one grant by id. Idempotent; needs no passkey because it can only remove authority.
-    pub fn revoke(&mut self, id: Digest32) -> bool {
-        if self.revoked.contains(&id) || self.revoked.len() >= MAX_REVOKED {
-            return false;
+    /// Narrowing: revoke one grant by id; needs no passkey because it can only remove authority. Revoking an id that is
+    /// already revoked changes nothing and says so (`AlreadyRevoked`); a full revoked list cannot take another id and
+    /// says that instead (`Full`), because the caller must then `prune` or the revocation did **not** happen.
+    pub fn revoke(&mut self, id: Digest32) -> core::result::Result<(), RevokeError> {
+        if self.revoked.contains(&id) {
+            return Err(RevokeError::AlreadyRevoked);
+        }
+        if self.revoked.len() >= MAX_REVOKED {
+            return Err(RevokeError::Full);
         }
         self.revoked.push(id);
-        true
+        Ok(())
+    }
+
+    /// Drop every grant whose window has ended (`expires_at <= now_ms`) together with its revoked id, and return how
+    /// many grants went. An expired grant can never clear a crossing again, and neither can the same bytes signed
+    /// again (the window is in the bytes), so its revocation record no longer protects anything; keeping it would only
+    /// fill the bounded revoked list until `revoke` refused a live grant. A revoked id whose grant is not in this set
+    /// is kept: nothing here says when that grant ends.
+    pub fn prune(&mut self, now_ms: i64) -> usize {
+        let before = self.grants.len();
+        let mut gone: Vec<Digest32> = Vec::new();
+        self.grants.retain(|grant| {
+            if grant.expires_at > now_ms {
+                return true;
+            }
+            if let Ok(id) = grant.id() {
+                gone.push(id);
+            }
+            false
+        });
+        self.revoked.retain(|id| !gone.contains(id));
+        before - self.grants.len()
     }
 
     pub fn is_revoked(&self, id: &Digest32) -> bool {
@@ -341,8 +376,8 @@ mod tests {
         let b = grant(CrossingClass::Memory, &["read"], 9);
         let mut set = GrantSet::default().with_grant(a.clone()).unwrap().with_grant(b.clone()).unwrap();
         assert_eq!(set.matching(&Crossing::new(CrossingClass::Net, "docs.rs"), 2_000).count(), 1);
-        assert!(set.revoke(a.id().unwrap()));
-        assert!(!set.revoke(a.id().unwrap()));
+        assert_eq!(set.revoke(a.id().unwrap()), Ok(()));
+        assert_eq!(set.revoke(a.id().unwrap()), Err(RevokeError::AlreadyRevoked));
         assert_eq!(set.matching(&Crossing::new(CrossingClass::Net, "docs.rs"), 2_000).count(), 0);
         assert_eq!(set.matching(&Crossing::new(CrossingClass::Memory, "read"), 2_000).count(), 1);
         let bytes = set.canonical_bytes().unwrap();
@@ -357,5 +392,61 @@ mod tests {
         let spec = grant_target_spec().unwrap();
         assert_eq!(spec.risk, canon::authority::CardRisk::Critical);
         assert_eq!(spec.id.as_str(), GRANT_TARGET);
+    }
+
+    fn aged(nonce: u8, expires_at: i64) -> DoorGrant {
+        DoorGrant { nonce: ProposalId::from_bytes([nonce; 16]), not_before: 1_000, expires_at, ..grant(CrossingClass::Net, &["docs.rs"], 1) }
+    }
+
+    #[test]
+    fn a_full_revoked_list_is_told_apart_from_an_id_already_revoked() {
+        let mut set = GrantSet::default();
+        for i in 0..MAX_REVOKED {
+            let id = Digest32::sha256(&i.to_be_bytes());
+            assert_eq!(set.revoke(id), Ok(()));
+        }
+        let first = Digest32::sha256(&0usize.to_be_bytes());
+        assert_eq!(set.revoke(first), Err(RevokeError::AlreadyRevoked));
+        let fresh = Digest32::sha256(b"one more");
+        assert_eq!(set.revoke(fresh), Err(RevokeError::Full));
+        assert!(!set.is_revoked(&fresh));
+    }
+
+    #[test]
+    fn prune_drops_expired_grants_and_their_revoked_ids_and_nothing_else() {
+        let live = aged(1, 1_000 + DAY_MS);
+        let expired_revoked = aged(2, 5_000);
+        let expired_plain = aged(3, 5_000);
+        let mut set = GrantSet::default()
+            .with_grant(live.clone()).unwrap()
+            .with_grant(expired_revoked.clone()).unwrap()
+            .with_grant(expired_plain).unwrap();
+        let unknown = Digest32::sha256(b"a grant this set no longer holds");
+        assert_eq!(set.revoke(expired_revoked.id().unwrap()), Ok(()));
+        assert_eq!(set.revoke(live.id().unwrap()), Ok(()));
+        assert_eq!(set.revoke(unknown), Ok(()));
+        // Nothing has ended yet, and the end instant itself is already ended (live() is `now < expires_at`).
+        assert_eq!(set.clone().prune(4_999), 0);
+        assert_eq!(set.prune(5_000), 2);
+        assert_eq!(set.grants(), &[live.clone()]);
+        assert!(!set.is_revoked(&expired_revoked.id().unwrap()));
+        assert!(set.is_revoked(&live.id().unwrap()), "a live grant stays revoked");
+        assert!(set.is_revoked(&unknown), "an id with no grant here is kept");
+        assert_eq!(set.prune(5_000), 0, "idempotent");
+        // The pruned set is still one valid canonical set, and freed room is usable again.
+        assert_eq!(GrantSet::parse(&set.canonical_bytes().unwrap()).unwrap(), set);
+    }
+
+    #[test]
+    fn prune_frees_a_full_revoked_list() {
+        let old = aged(9, 2_000);
+        let mut set = GrantSet::default().with_grant(old.clone()).unwrap();
+        assert_eq!(set.revoke(old.id().unwrap()), Ok(()));
+        for i in 1..MAX_REVOKED {
+            assert_eq!(set.revoke(Digest32::sha256(&i.to_be_bytes())), Ok(()));
+        }
+        assert_eq!(set.revoke(Digest32::sha256(b"x")), Err(RevokeError::Full));
+        assert_eq!(set.prune(2_000), 1);
+        assert_eq!(set.revoke(Digest32::sha256(b"x")), Ok(()));
     }
 }

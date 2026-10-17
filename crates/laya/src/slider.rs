@@ -465,7 +465,7 @@ mod tests {
         }
         assert_eq!(judge(&p, &g, &usage, &net(), NOW).reason, "grant-exhausted");
         let id = g.grants()[0].id().unwrap();
-        assert!(g.revoke(id));
+        assert_eq!(g.revoke(id), Ok(()));
         assert_eq!(judge(&p, &g, &Usage::default(), &net(), NOW).reason, "no-grant");
         assert_eq!(judge(&p, &grants(), &Usage::default(), &net(), NOW + 4 * DAY_MS).reason, "no-grant");
         assert_eq!(judge(&p, &grants(), &Usage::default(), &net(), NOW - 2_000).reason, "no-grant");

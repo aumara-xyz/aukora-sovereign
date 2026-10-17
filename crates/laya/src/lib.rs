@@ -12,7 +12,7 @@ pub mod standing;
 pub mod triage;
 
 pub use crossing::{Crossing, CrossingClass, GrantShape, Risk};
-pub use grant::{DoorGrant, GrantSet};
+pub use grant::{DoorGrant, GrantSet, RevokeError};
 pub use mode::Mode;
 pub use slider::{Decision, Floor, SliderPolicy, Usage};
 pub use standing::{PermissionBody, PermissionStatus, SliderSetting, StandingRequest};
