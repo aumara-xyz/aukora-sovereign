@@ -9,6 +9,9 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { AuraCoherenceMenu } from './AuraCoherenceMenu.tsx'
 import { AuraCoherenceSurface } from './AuraCoherenceSurface.tsx'
+import { SovereigntyMenu } from './sovereignty/SovereigntyMenu.tsx'
+import { SovereigntySurface } from './sovereignty/SovereigntySurface.tsx'
+import { SOVEREIGNTY_SURFACE } from './sovereignty/model.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
@@ -206,6 +209,15 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('shell.menu.system', () => ctx.slots.register({
     name: 'shell.menu.system', id: 'aura-coherence', order: -10, locale: NS,
   }, AuraCoherenceMenu))
+
+  // Sovereignty: the owner's read-only view of everything the system governs (PREVIEW: stub data, see
+  // sovereignty/stub.ts). It runs in the engine's origin, so it only reads; every change opens the owner origin.
+  ctx.slots.inject('shell.surface', () => ctx.slots.register({
+    name: 'shell.surface', id: SOVEREIGNTY_SURFACE, order: 65,
+  }, SovereigntySurface))
+  ctx.slots.inject('shell.menu.system', () => ctx.slots.register({
+    name: 'shell.menu.system', id: SOVEREIGNTY_SURFACE, order: -40,
+  }, SovereigntyMenu))
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',

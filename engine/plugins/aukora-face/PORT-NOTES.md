@@ -147,6 +147,18 @@ Not a port of Prime: a change to the composer. Everything sits on ONE row, no wr
 - Fixed on the way: the Chat/Build command never reached the host on 0.2.1-alpha.5 (`ctx.get('remote').commands` throws "cannot get property remote.commands without inject"). `layout/src/client/index.ts` now declares `remote` and `remote.commands` and the selector calls `ctx.remote.commands.execute`, as `ui-plan` does. RAN in the preview with the stub below: Chat -> `read-only`, Build -> `workspace-write`, both confirmed by the host projection.
 - `preview-face.py --stub-confinement` (preview only) provides a no-op `aukoraConfinement` so the switch is usable to look at on a stock DSH. It confines nothing and is not part of the face.
 
+## Sovereignty (2026-10-17, face/sovereignty): a PREVIEW, stub data only
+
+Not a port of Prime: a new System app asked for by Peter ("it shows all in portal buttons, so they're all categorized").
+- `settings/src/client/sovereignty/`: `SovereigntyMenu.tsx` (System row, order -40, first), `SovereigntySurface.tsx` (surface `sovereignty`, a grid of eight
+  `PortalButton`s from `@aukora/face-layout/client`; the open portal is the surface target, its own header closes it, Escape closes it then the surface),
+  `views.tsx` (what opens under each), `parts.tsx`, `format.ts`, `model.ts` (the shapes, named after the crates that own them), `stub.ts` (**all the data, made up**).
+  Registered in `settings/src/client/index.ts`; the files are listed in `settings/tsconfig.client.json`; `settings/package.json` marks `@aukora/face-layout/client` external (as messages does).
+- **Read-only by construction.** It runs in the engine's origin. No function in the folder writes, fetches or approves; the only control that leads anywhere is
+  `OwnerAction`, a plain link to the owner origin (`/approval/<proposal>`, `/passkey`, `/phrase/refresh`, `/witness`, or the owner origin's front page where no route exists yet).
+- Wiring is a swap of `readSovereigntyStub` for a reader returning the same `SovereigntySnapshot`. The source of every field, what is stub and the open questions are in
+  Peter's review folder (`SOVEREIGNTY-APP-SPEC.md`). `app/APP-LOCK.json` still lists eight System entries; Sovereignty is not in it (an open question, not a silent change).
+
 ## Composition (what `preview-face.py` writes)
 Profile `aukora`: `dsh-base`, then `@aukora/face-bundle` = dsh-web-app's `cordis.patch.yml` and presets with the rows `ui-layout`, `ui-sidebar`, `ui-workspace`, `ui-settings-general` removed
 (Prime disabled the same four), `ui-settings-models` set to `credentialOnboarding: false` (Prime's order of 2026-09-27: no first-run form opens by itself; the harness added a "Get started" sign-in dialog), and the face rows inserted.
