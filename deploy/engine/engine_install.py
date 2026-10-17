@@ -69,7 +69,8 @@ CONTAINER_DROPIN = "/etc/systemd/system/containerd.service.d/aukora-disk.conf"
 GIB = 1 << 30
 BROKER_SOCKET = "/run/aukora-broker/broker.sock"
 # The engine's model budget the supervisor proposes for the owner's passkey (deploy/engine/NODE.md section 7). The
-# owner sees and approves exactly these terms; changing them here (in a reviewed release) proposes them again.
+# owner sees and approves exactly these terms. They are written to model-broker-v1.json at install only: a release
+# that changes them here does not reach an installed node until that file is refreshed (node sweep, node-1).
 # [PETER] The prices are placeholders set ABOVE DeepSeek's published per-million-token prices (so the budget errs
 # toward stopping early); replace them with the current prices of the models listed before the first node.
 MODEL_BUDGET = {

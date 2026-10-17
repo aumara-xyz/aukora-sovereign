@@ -387,5 +387,47 @@ class FenceTable(unittest.TestCase):
         self.assertNotEqual(self.run_block("table inet aukora_engine_fence {\n}", 0).returncode, 0, "an emptied table")
 
 
+class HostFiles(unittest.TestCase):
+    """The pre-start refreshes the polkit rule and the tmpfiles from the active release (node sweep, node-1), only
+    when they differ, and renders the tmpfiles' engine user."""
+
+    def run_block(self, release, rules, tmpfiles):
+        prelude = ('set -eu\nfail() { echo "engine-prestart: $1" >&2; exit 1; }\nREL=%s\nPOLKIT_RULE=%s\nTMPFILES_CONF=%s\n'
+                   % (release, rules, tmpfiles))
+        return subprocess.run(["sh", "-c", prelude + prestart_block("host-files") + "\necho $tmpfiles_changed"], capture_output=True)
+
+    def test_a_stale_rule_and_tmpfiles_are_replaced_once_and_a_current_pair_is_left_alone(self):
+        scratch = tempfile.mkdtemp(prefix="host-files-")
+        try:
+            release = os.path.join(scratch, "release")
+            os.mkdir(release)
+            with open(os.path.join(release, "aukora-engine.rules"), "w") as handle:
+                handle.write("// new rule: reset-failed\n")
+            with open(os.path.join(release, "aukora-engine.tmpfiles"), "w") as handle:
+                handle.write("d /run/aukora-engine/io 2770 @AUMA@ aukora -\n")
+            rules = os.path.join(scratch, "etc", "polkit", "50-aukora-engine.rules")
+            tmpfiles = os.path.join(scratch, "etc", "tmpfiles", "aukora-engine.conf")
+            os.makedirs(os.path.dirname(rules))
+            os.makedirs(os.path.dirname(tmpfiles))
+            with open(rules, "w") as handle:
+                handle.write("// old rule\n")
+            first = self.run_block(release, rules, tmpfiles)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(first.stdout.strip(), b"1")
+            with open(rules) as handle:
+                self.assertEqual(handle.read(), "// new rule: reset-failed\n")
+            with open(tmpfiles) as handle:
+                self.assertEqual(handle.read(), "d /run/aukora-engine/io 2770 auma aukora -\n")
+            self.assertEqual(stat.S_IMODE(os.stat(rules).st_mode), 0o644)
+            self.assertEqual(sorted(os.listdir(os.path.dirname(rules))), ["50-aukora-engine.rules"])
+            self.assertEqual(sorted(os.listdir(os.path.dirname(tmpfiles))), ["aukora-engine.conf"])
+            before = os.stat(rules).st_ino
+            second = self.run_block(release, rules, tmpfiles)
+            self.assertEqual((second.returncode, second.stdout.strip()), (0, b"0"), second.stderr)
+            self.assertEqual(os.stat(rules).st_ino, before, "an unchanged rule is not rewritten")
+        finally:
+            shutil.rmtree(scratch)
+
+
 if __name__ == "__main__":
     unittest.main()

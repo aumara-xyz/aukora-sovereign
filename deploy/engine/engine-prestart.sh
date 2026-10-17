@@ -67,6 +67,26 @@ done
 # inodes (engine_install.py, var-lib-containerd.mount; Codex review of node/pre-launch).
 [ "$(findmnt -n -o FSTYPE --target /var/lib/containerd 2>/dev/null)" = ext4 ] && mountpoint -q /var/lib/containerd ||
     fail "containerd's root is not its own bounded filesystem"
+# The host files the installer wrote once and a release switch never touched (node sweep, node-1; NODE.md C2 records the
+# new polkit rule "copied by hand"): the supervisor's polkit rule (reset-failed, the cleanup unit) and the engine's
+# tmpfiles. Each is replaced only when it differs, by a rename, so polkit reloads once. The gateway, docker and Caddy
+# files, the door policy and the budget terms need a restart design and are not refreshed here.
+POLKIT_RULE=/etc/polkit-1/rules.d/50-aukora-engine.rules
+TMPFILES_CONF=/etc/tmpfiles.d/aukora-engine.conf
+# >>> host-files (tests/deploy/test_engine_install.py runs this block alone)
+refresh_file() {
+    if ! cmp -s -- "$1" "$2"; then
+        cp -- "$1" "$2.new" && chmod 0644 "$2.new" && mv -f -- "$2.new" "$2" || { rm -f -- "$2.new"; fail "cannot refresh $2"; }
+    fi
+}
+mkdir -p -- "$(dirname -- "$POLKIT_RULE")" "$(dirname -- "$TMPFILES_CONF")"
+refresh_file "$REL/aukora-engine.rules" "$POLKIT_RULE"
+sed -e 's/@AUMA@/auma/g' "$REL/aukora-engine.tmpfiles" > "$TMPFILES_CONF.rendered" || fail "cannot render the tmpfiles"
+if ! cmp -s -- "$TMPFILES_CONF.rendered" "$TMPFILES_CONF"; then tmpfiles_changed=1; else tmpfiles_changed=0; fi
+refresh_file "$TMPFILES_CONF.rendered" "$TMPFILES_CONF"
+rm -f -- "$TMPFILES_CONF.rendered"
+# <<< host-files
+[ "$tmpfiles_changed" = 0 ] || systemd-tmpfiles --create "$TMPFILES_CONF"
 # 3 first: the closure is built inside the profile.
 install -d -o root -g "$AUMA_GID" -m 1770 "$HOME_DIR"
 for name in profiles node_modules; do

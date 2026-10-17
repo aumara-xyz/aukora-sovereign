@@ -71,7 +71,7 @@ Hot reload and creator mode are never loaded and never approvable (`floor::plugi
 - **Mounted**: the closure is the profile's `node_modules`; a face's relative import into a sibling folder
   (memory, messages, settings host code) finds only approved packages, so an unapproved helper fails closed.
 - **Pin**: the authority is the gate target the passkey applied (the gate checks the observed digest). Each start
-  appends `{set_hash, gate_sha256}` to `/var/lib/aukora/floor/engine-plugin-set.jsonl`. Storing the pin *inside* the signed
+  that the supervisor decides (a new or changed set; not a restart systemd performs itself) appends `{set_hash, gate_sha256}` to `/var/lib/aukora/floor/engine-plugin-set.jsonl`. Storing the pin *inside* the signed
   floor (`floor::state::ProtectedState`) needs a floor schema change and an Aura migration: open item O5.
 
 ## 4. The wall (Ring 1)
