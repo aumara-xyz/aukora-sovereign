@@ -60,7 +60,13 @@ pub struct RecallItem {
     pub lane: String,
     pub form: String,
     pub review: String,
+    /// The capture of the statement: the LOWEST-trust capture among the note shown and every note folded into it by
+    /// dedupe (web-derived is lowest), so a web-derived copy cannot hide behind an earlier model-generated one. The
+    /// note shown has its own capture in `kept_capture`.
     pub capture: String,
+    pub kept_capture: String,
+    /// The capture of each note in `also_by_ids`, in the same order.
+    pub also_by_captures: Vec<String>,
     pub created_at: u64,
     pub text: String,
     pub score: f32,

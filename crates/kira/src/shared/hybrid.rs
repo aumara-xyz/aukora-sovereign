@@ -401,6 +401,14 @@ impl Cand {
     }
 
     fn item(&self, score: f32, also_by: Vec<String>, also_by_ids: Vec<String>, roots: usize, evidence: Evidence, correction: Option<&str>) -> RecallItem {
+        self.item_with(score, also_by, also_by_ids, Vec::new(), self.note.meta.capture, roots, evidence, correction)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn item_with(
+        &self, score: f32, also_by: Vec<String>, also_by_ids: Vec<String>, also_by_captures: Vec<String>, capture: Capture, roots: usize,
+        evidence: Evidence, correction: Option<&str>,
+    ) -> RecallItem {
         // A retired note points at the note that stands where it did (the service shows the id only to a caller who
         // may read that note).
         let meta = &self.note.meta;
@@ -413,7 +421,9 @@ impl Cand {
             lane: meta.lane.wire().into(),
             form: meta.form.wire().into(),
             review: meta.review.wire().into(),
-            capture: meta.capture.wire().into(),
+            capture: capture.wire().into(),
+            kept_capture: meta.capture.wire().into(),
+            also_by_captures,
             created_at: self.note.event.created_at,
             // A quarantined note is a stub: its body never resurfaces as text.
             text: if correction == Some("quarantined") { String::new() } else { self.note.event.content.clone() },
@@ -467,6 +477,8 @@ struct Group {
     /// Authors of the roots of every note of the statement, and whether any of them is web-derived.
     root_authors: BTreeSet<String>,
     web: bool,
+    /// Every note of the statement with its capture, by id.
+    captures: BTreeMap<String, Capture>,
 }
 
 /// Reserved lanes, filled in this order.
@@ -727,6 +739,7 @@ impl Prepared {
                 g.evidence = g.evidence.max(c.provenance());
                 g.root_authors.extend(c.root_authors.iter().cloned());
                 g.web |= c.note.meta.capture == Capture::WebDerived;
+                g.captures.insert(c.id.clone(), c.note.meta.capture);
                 if c.standing() < g.keep.standing() {
                     g.keep = c;
                 }
@@ -742,6 +755,7 @@ impl Prepared {
                     evidence: c.provenance(),
                     root_authors: c.root_authors.clone(),
                     web: c.note.meta.capture == Capture::WebDerived,
+                    captures: BTreeMap::from([(c.id.clone(), c.note.meta.capture)]),
                     keep: c,
                 });
             }
@@ -780,8 +794,11 @@ impl Prepared {
                 let lane = slot(&g);
                 let exempt = lane == Slot::OwnExperience || g.keep.note.author_owner;
                 let also_by = g.names.into_iter().filter(|n| *n != g.keep.note.author_name).collect();
-                let also_by_ids = g.ids.into_iter().filter(|id| *id != g.keep.id).collect();
-                (lane, exempt, g.relevant, g.keep.item(g.score, also_by, also_by_ids, g.roots.len(), g.evidence, None))
+                let also_by_ids: Vec<String> = g.ids.into_iter().filter(|id| *id != g.keep.id).collect();
+                let also_by_captures = also_by_ids.iter().map(|id| g.captures.get(id).map_or("unknown", |c| c.wire()).to_owned()).collect();
+                // The statement is only as trustworthy as its least trusted copy.
+                let worst = g.captures.values().copied().min_by_key(|c| c.trust()).unwrap_or(g.keep.note.meta.capture);
+                (lane, exempt, g.relevant, g.keep.item_with(g.score, also_by, also_by_ids, also_by_captures, worst, g.roots.len(), g.evidence, None))
             })
             .collect();
         ordered.sort_by(|a, b| a.0.cmp(&b.0).then(b.3.score.total_cmp(&a.3.score)).then_with(|| a.3.id.cmp(&b.3.id)));

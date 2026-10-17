@@ -927,6 +927,9 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 // is the old name of `repeated_by`.
                 shown["repeated_by"] = json!(item.also_by);
                 shown["repeated_by_ids"] = json!(item.also_by_ids);
+                shown["capture"] = json!(item.capture);
+                shown["kept_capture"] = json!(item.kept_capture);
+                shown["also_by_captures"] = json!(item.also_by_captures);
                 shown["also_by"] = json!(item.also_by);
                 shown["also_by_ids"] = json!(item.also_by_ids);
                 shown["correction"] = json!(correction);

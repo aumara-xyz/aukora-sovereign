@@ -82,6 +82,10 @@ export interface KiraNote {
   /** Id of the note that stands where this retired note did (when the caller may read it). `get` on the event id resolves to it. */
   current_id?: string | null
   quarantined: boolean
+  /** In recall: the LOWEST-trust capture among the note shown and every copy folded into it (web-derived is lowest). */
+  kept_capture?: string
+  /** In recall: the capture of each note in `also_by_ids`, in order. */
+  also_by_captures?: string[]
   /** What the note stands on: owner-review, owner-words, archive-import, corroborated or unverified. */
   evidence?: 'owner-review' | 'owner-words' | 'archive-import' | 'corroborated' | 'unverified'
   /** Lifecycle, computed from relations: proposed, supported, disputed, corrected or resolved. */

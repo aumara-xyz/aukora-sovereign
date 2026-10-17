@@ -655,6 +655,27 @@ fn identical_unsourced_claims_are_one_root_repeated_not_support() {
     assert_eq!((r.status, item.evidence), (RecallStatus::Found, "corroborated"));
 }
 
+/// Argon RT-5: a web-derived note with the same words as an earlier model-generated one was folded into it, and recall
+/// reported only `model-generated`, so the web provenance never reached the caller.
+#[test]
+fn dedupe_never_hides_a_web_derived_copy_behind_a_model_generated_one() {
+    let (a, b) = (key(), key());
+    let mut s = store_with(&[("grok", &a, false), ("argon", &b, false)]);
+    let plain = put(&mut s, &a, "The relay rotates its key every Monday.", Lane::Evidence, Capture::ModelGenerated, Review::Remembered, 1);
+    let web = put(&mut s, &b, "the relay rotates its key every   Monday.", Lane::Evidence, Capture::WebDerived, Review::Remembered, 2);
+    let mut q = query("when does the relay rotate its key", "x");
+    q.include_web = true;
+    let r = s.recall(&q, None, None).unwrap();
+    assert_eq!(r.items.len(), 1);
+    let item = &r.items[0];
+    assert_eq!(item.id, plain, "the earlier note still stands for the statement");
+    assert_eq!((item.capture.as_str(), item.kept_capture.as_str()), ("web-derived", "model-generated"), "the group carries its worst capture");
+    assert_eq!((item.also_by_ids.clone(), item.also_by_captures.clone()), (vec![web], vec!["web-derived".to_owned()]));
+    // Without include_web the web-derived copy never takes part, so the plain note is just itself.
+    let r = s.recall(&query("when does the relay rotate its key", "x"), None, None).unwrap();
+    assert_eq!((r.items[0].capture.as_str(), r.items[0].also_by_ids.len()), ("model-generated", 0));
+}
+
 /// HIGH -> MEDIUM -> LOW: the oldest note names the note that stands now, not the middle one.
 #[test]
 fn a_chain_of_corrections_points_at_the_note_that_stands_now() {

@@ -212,6 +212,19 @@ impl Capture {
         }
     }
 
+    /// How far this capture is to be trusted, lowest first: web-derived, model-generated, imported, tool-observed, then
+    /// the owner's words. A statement held by several notes carries the lowest.
+    pub const fn trust(self) -> u8 {
+        match self {
+            Self::WebDerived => 0,
+            Self::ModelGenerated => 1,
+            Self::Import => 2,
+            Self::ToolObserved => 3,
+            Self::OwnerTyped => 4,
+            Self::OwnerSigned => 5,
+        }
+    }
+
     /// The owner's own words: only the owner channel may claim these.
     pub const fn owner_class(self) -> bool {
         matches!(self, Self::OwnerTyped | Self::OwnerSigned)
