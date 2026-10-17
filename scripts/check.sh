@@ -5,5 +5,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 -B checks/run.py
+# The stranger's verifier: the standalone verify.py must match its sources, and the pinned vectors replay through both
+# the Rust aukora-verify and the Python twin (known divergences are listed in scripts/verifier-vectors-known.json).
+python3 -B tools/verify/build.py --check
+cargo build --offline --quiet -p verifier
+python3 -B scripts/verifier-vectors.py
 cargo clippy --workspace --offline --quiet -- -A clippy::all -F clippy::disallowed_types -F clippy::disallowed_methods
 echo "CONSTRUCTION GREEN"
