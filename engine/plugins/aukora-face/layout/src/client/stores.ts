@@ -173,7 +173,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         delete d.surfaceTarget
         delete d.surfacePresentation
         d.detailsOpen = false
-        d.panePreset = 'balanced'
+        // RULE 3, BOTH WAYS (sweep C9): closing an app leaves the lanes as the owner set them, as opening does.
       },
       openConversation: (d) => {
         d.conversationOpen = true
