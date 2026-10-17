@@ -176,6 +176,7 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
   let session: { controller: AbortController; attempt: string; exchange: PairingExchange | null; scanStop: (() => void) | null;
     unsubscribe: (() => void) | null; unguide: (() => void) | null; terminal: boolean } | null = null;
   let arrivalTimer: ReturnType<typeof setTimeout> | undefined;
+  let finale: HTMLElement | undefined;
   let conclusion: OwnerDisposer | undefined;
   let stage = "intro";
   let recognised = false;
@@ -326,7 +327,12 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
             if (live.aborted) return;
             release(current);
             done();
-            if (options.arrival) { pentora.dispose(); conclusion = mountCeremonyConclusion(host, signal, complete); }
+            if (options.arrival) {
+              // The Pentora is the hero: it stays, alive and dim, behind the arrival screen, and fades only as the app opens.
+              finale = adoptFinale();
+              pentora.alive();
+              conclusion = mountCeremonyConclusion(host, signal, () => { retireFinale(); complete(); });
+            }
           }, 1600);
         });
       });
@@ -377,6 +383,24 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     showFailure("hidden");
   }, { signal: live });
 
+  /** Moves the Pentora out of the scene (which the arrival replaces) into a layer of its own behind it, at the size and place it has now,
+   *  then lets it ease back to the large, dim background it had before the pairing. */
+  function adoptFinale(): HTMLElement {
+    const layer = node("div", "", "finale-figure");
+    layer.dataset.phase = "front";
+    layer.append(...figure.childNodes);
+    document.body.prepend(layer);
+    void layer.offsetWidth;                  // settle at the front, then ease back
+    layer.dataset.phase = "back";
+    return layer;
+  }
+  function retireFinale(): void {
+    const layer = finale;
+    if (!layer) return;
+    layer.dataset.phase = "gone";
+    setTimeout(() => { if (finale === layer) finale = undefined; layer.remove(); }, 1600);
+  }
+
   const dispose = (): void => {
     if (live.aborted) return;
     lifetime.abort();
@@ -384,6 +408,7 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     if (session) { release(session); void finish(session, "cancelled"); session = null; }
     pentora.dispose();
     conclusion?.();
+    finale?.remove();
     panel.remove();
     signal.removeEventListener("abort", dispose);
   };

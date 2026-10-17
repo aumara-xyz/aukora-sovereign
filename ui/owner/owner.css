@@ -246,6 +246,15 @@ body::after {
 .ceremony-pairing[data-stage='lock'] .pairing-exchange { margin-top: calc(min(50vh, 460px) + 6px); }
 .ceremony-pairing[data-stage='lock'] :is(.pairing-tile, .fb-guide, .pairing-actions, .fb) { display: none; }
 .ceremony-pairing[data-explain] .pairing-phone { display: none; }
+/* The finale: the Pentora, adopted out of the scene, behind the arrival screen. It starts as the locked form at the front and eases back
+   to the large, dim background; it fades out only as the app opens. No blur here: it moves, and a filter on a moving layer is the expensive part. */
+.finale-figure { position: fixed; z-index: 0; left: 50%; top: calc(50% - 26px); width: min(50vh, 460px); height: min(50vh, 460px); translate: -50% -50%; opacity: 1;
+  pointer-events: none; transition: width 2.4s var(--owner-ease), height 2.4s var(--owner-ease), top 2.4s var(--owner-ease), opacity 2.4s ease; }
+.finale-figure .opening-pentora { position: absolute; inset: 0; width: auto; height: auto; }
+.finale-figure[data-phase='back'] { top: 50%; width: min(104vh, 100vw); height: min(104vh, 100vw); opacity: .24; }
+.finale-figure[data-phase='gone'] { top: 50%; width: min(104vh, 100vw); height: min(104vh, 100vw); opacity: 0; transition: opacity 1.4s ease; }
+#owner-root { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) { .finale-figure { transition: opacity 2.4s linear; } .finale-figure[data-phase='back'] { top: calc(50% - 26px); width: min(50vh, 460px); height: min(50vh, 460px); opacity: .24; } }
 /* Waiting for the phone to open the link: its code stays in view and the frame tile waits. */
 .ceremony-pairing[data-waiting] .pairing-tile { display: none; }
 .ceremony-pairing[data-waiting][data-stage='exchange'] .pairing-phone { display: grid; margin-top: 4px; }

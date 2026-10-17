@@ -142,20 +142,25 @@ function draw(document: Document, geometry: Geometry) {
     }
     svg.append(cube);
   });
+  // The view: how far the form leans (tilt), how far it is rolled about the line of sight, and how large it breathes. At rest, the
+  // classic view; the finale moves all three slowly.
+  let tilt = TILT, roll = 0, breath = 1;
   const place = (index: number, angle: number, size: number): readonly [number, number] => {
     const point = geometry.points.get(index);
     if (!point) invalid();
     const [x, y, z] = point;
     const c = Math.cos(angle), s = Math.sin(angle);
     const turned = -x * s + z * c;
-    const tilted = y * Math.cos(TILT) - turned * Math.sin(TILT);
-    const depth = y * Math.sin(TILT) + turned * Math.cos(TILT);
+    const tilted = y * Math.cos(tilt) - turned * Math.sin(tilt);
+    const depth = y * Math.sin(tilt) + turned * Math.cos(tilt);
     const near = size / (1 - depth / (radius * 4.5));
-    return [(x * c + z * s) * scale * near, -tilted * scale * near];
+    const px = (x * c + z * s) * scale * near, py = -tilted * scale * near;
+    return roll === 0 && breath === 1 ? [px, py] : [(px * Math.cos(roll) - py * Math.sin(roll)) * breath, (px * Math.sin(roll) + py * Math.cos(roll)) * breath];
   };
   let lit = false;
   /** `drift` is how far each cube sits out of true (0 = locked); `pulse[c]` is the light on cube c (0 to 1). */
-  const render = (angle: number, time: number, drift: number, pulse: readonly number[]): void => {
+  const render = (angle: number, time: number, drift: number, pulse: readonly number[], view?: { tilt: number; roll: number; breath: number }): void => {
+    tilt = view?.tilt ?? TILT; roll = view?.roll ?? 0; breath = view?.breath ?? 1;
     const offsets = pulse.map((_, c) => [
       drift * 0.075 * Math.sin(time * 0.0007 * (1 + 0.31 * c) + c * 1.7),
       1 + drift * 0.035 * Math.cos(time * 0.0009 + c * 2.3),
@@ -181,10 +186,16 @@ function draw(document: Document, geometry: Geometry) {
   return { svg, render, cubes: geometry.cubes.length };
 }
 
-export type PentoraView = { dispose(): void; /** Slow to rest, snap the cubes into alignment, pulse light along the edges (about 2 s). */ lock(): Promise<void> };
+export type PentoraView = {
+  dispose(): void;
+  /** Slow to rest, snap the cubes into alignment, pulse light along the edges (about 2 s). */
+  lock(): Promise<void>;
+  /** The finale: after the lock it keeps turning, tumbles slowly across its axes, breathes and lets its cubes phase-shift a little. Drawn at 30 frames a second. A still form under reduced motion. */
+  alive(): void;
+};
 
 export function mountOpeningPentora(host: HTMLElement, signal: AbortSignal): PentoraView {
-  const none: PentoraView = { dispose: () => {}, lock: async () => {} };
+  const none: PentoraView = { dispose: () => {}, lock: async () => {}, alive: () => {} };
   if (signal.aborted) return none;
   const document = host.ownerDocument;
   const frame = document.createElement("figure");
@@ -205,6 +216,7 @@ export function mountOpeningPentora(host: HTMLElement, signal: AbortSignal): Pen
   let drift = 1;
   let pulse: number[] = [];
   let lockedAt = 0;
+  let aliveAt = 0;
   let lockDone: (() => void) | null = null;
   const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const timeout = globalThis.setTimeout(() => lifetime.abort(), 5_000);
@@ -230,6 +242,8 @@ export function mountOpeningPentora(host: HTMLElement, signal: AbortSignal): Pen
     let last = performance.now();
     const turn = (now: number): void => {
       if (disposed || !view) return;
+      // The finale is drawn at 30 frames a second: it is only a background, and the page should stay cool.
+      if (aliveAt && now - last < 32) { spinner = requestAnimationFrame(turn); return; }
       angle += (now - last) * speed / 6400;
       last = now;
       if (lockedAt) {
@@ -239,7 +253,13 @@ export function mountOpeningPentora(host: HTMLElement, signal: AbortSignal): Pen
         pulse = pulse.map((_, c) => Math.exp(-(((t - 1.0 - c * 0.1) / 0.3) ** 2) * 2.2));
         if (t >= 1.95) { pulse = pulse.map(() => 0); drift = 0; speed = 0; lockedAt = 0; lockDone?.(); lockDone = null; }
       }
-      view.render(angle, now, drift, pulse);
+      if (aliveAt && !lockedAt) {
+        // Wake slowly over a few seconds, then: a steady turn, a lean that rocks, a roll, a breath, and a small standing drift of the cubes.
+        const t = now - aliveAt, ramp = easeOut(Math.min(1, t / 3500));
+        speed = 0.55 * ramp;
+        drift = 0.3 * ramp;
+        view.render(angle, now, drift, pulse, { tilt: TILT + 0.32 * Math.sin(t / 4700) * ramp, roll: 0.24 * Math.sin(t / 7300 + 1) * ramp, breath: 1 + 0.035 * Math.sin(t / 1900) * ramp });
+      } else view.render(angle, now, drift, pulse);
       spinner = requestAnimationFrame(turn);
     };
     spinner = requestAnimationFrame(turn);
@@ -249,6 +269,7 @@ export function mountOpeningPentora(host: HTMLElement, signal: AbortSignal): Pen
   }).finally(() => globalThis.clearTimeout(timeout));
   return {
     dispose,
+    alive() { if (!still && !disposed && !aliveAt) aliveAt = performance.now(); },
     lock: () => new Promise<void>(resolve => {
       if (disposed || !view) { resolve(); return; }
       if (still) { drift = 0; view.render(angle, 0, 0, pulse); setTimeout(resolve, 400); return; }
