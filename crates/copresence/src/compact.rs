@@ -30,6 +30,9 @@ use p256::ecdsa::VerifyingKey;
 pub const MAGIC: u8 = 0xC1;
 pub const FRAME_DOMAIN: &str = "copresence.compact-frame.v1";
 pub const MAX_FRAME_BYTES: usize = 512;
+/// How old a frame may be when it is read. A screen redraws its first frames all through the exchange and they cannot be re-signed (the
+/// transcript hashes their exact bytes), so a late reader must still accept them. The receipt's own 10 s freshness is unchanged.
+pub const FRAME_FRESHNESS_SECONDS: u64 = 30;
 const SIGNATURE: usize = 64;
 const TAIL: usize = 6;
 
@@ -306,6 +309,18 @@ pub fn decode(bytes: &[u8]) -> Result<CompactFrame> {
         return Err(refusal("frame-not-canonical"));
     }
     Ok(frame)
+}
+
+/// Whether a frame signed at `t_seconds` may still be read at `now` (a clock up to two seconds behind is tolerated).
+pub fn fresh(t_seconds: u32, now: u64) -> Result<()> {
+    let t = u64::from(t_seconds);
+    if t > now + 2 {
+        return Err(refusal("future-frame"));
+    }
+    if now.saturating_sub(t) > FRAME_FRESHNESS_SECONDS {
+        return Err(refusal("stale-frame"));
+    }
+    Ok(())
 }
 
 /// Verifies a whole frame's signature against the key that should have signed it.

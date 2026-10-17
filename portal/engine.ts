@@ -24,6 +24,9 @@ export type BrowserEngineOptions = {
   // The frame wire for the whole exchange: both screens must use the same. "compact-v1" (the default) is the small binary frame
   // that fits a QR code of version 6 to 9; "json-v1" is the original canonical-JSON frame, kept for old vectors and tests.
   readonly frames?: FrameWire;
+  // How many one-second ticks each frame stays on screen before the next is drawn or signed afresh (default 2). A reader that decodes a
+  // few times a second needs a frame to stay put; the peer accepts a frame up to five seconds old, so two seconds is safe.
+  readonly dwell?: number;
 };
 const cleanupSignal = (): AbortSignal => new AbortController().signal;
 const now = (): number => Math.floor(Date.now() / 1000);
@@ -129,6 +132,9 @@ class BrowserExchange implements PortalExchange {
   private input: Core | null = null;
   private receipt: Uint8Array | null = null;
   private sigB = "";
+  private ticks = 0;
+  private startedAt = 0;
+  private sighted = false;
   private bloom: Uint8Array | null = null;
   private personKeys: PersonNostrKeys | null = null;
   private phase: PortalObservation["phase"] = "FACE";
@@ -164,6 +170,7 @@ class BrowserExchange implements PortalExchange {
     this.intent = intent;
     this.options = options;
     this.compact = (options.frames ?? "compact-v1") === "compact-v1";
+    this.dwell = Math.max(1, Math.min(4, Math.floor(options.dwell ?? 2)));
     this.onContext = onContext;
     this.layers = { sound: exchange.method !== "optical", motion: exchange.method === "optical-audio-motion", intent_ack: intent !== null };
     this.outerAbort = () => this.stop();
@@ -176,6 +183,11 @@ class BrowserExchange implements PortalExchange {
     this.timer = setInterval(() => {
       this.queue = this.queue.then(async () => {
         if (this.stopped) return;
+        // A frame stays on screen for `dwell` ticks: the face, the re-signed handshake or bloom, and the cycle all move on together.
+        // After B has made its reveal and handshake, the clock for the receipt is running (it must be verified within ten seconds of that reveal),
+        // so B's two frames each stay one tick: A needs both, and nothing else, from B.
+        const dwell = this.compact && this.side === "B" && this.phase === "HANDSHAKE" && !this.receipt ? 1 : this.dwell;
+        if (this.ticks++ % dwell !== 0) { this.emit(); return; }
         if (this.phase === "FACE") await this.makeFace();
         else {
           if (this.primary && (!this.receipt || this.side === "A")) {
@@ -186,7 +198,9 @@ class BrowserExchange implements PortalExchange {
             }
           }
           // Compact frames are small enough that the receipt is never drawn: the peer rebuilds it from the BLOOM frame.
-          const sequence = this.compact ? (this.receipt ? [this.primary] : [this.primary, this.ownFace, this.ownReveal])
+          const sequence = this.compact ? (this.receipt ? [this.primary]
+            : this.side === "B" && this.phase === "HANDSHAKE" ? [this.primary, this.ownReveal]   // A already holds B's face: it needs the reveal and the handshake
+            : [this.primary, this.ownFace, this.ownReveal])
             : this.receipt ? [this.receipt, this.primary] : [this.primary, this.ownFace, this.ownReveal];
           const frames = sequence.filter((item): item is Uint8Array => item !== null);
           this.current = frames[this.displayIndex++ % frames.length] ?? this.current;
@@ -194,7 +208,18 @@ class BrowserExchange implements PortalExchange {
         }
       }).catch(error => this.fail(error));
     }, 1000);
-    this.timeout = setTimeout(() => { if (this.phase !== "BLOOM") this.fail(new Error("copresence:exchange-timeout")); else this.stop(); }, 25000);
+    this.startedAt = Date.now();
+    this.armTimeout(25000);
+  }
+  private armTimeout(milliseconds: number): void {
+    if (this.timeout) clearTimeout(this.timeout);
+    this.timeout = setTimeout(() => { if (this.phase !== "BLOOM") this.fail(new Error("copresence:exchange-timeout")); else this.stop(); }, milliseconds);
+  }
+  // The other screen has been read: the exchange is progressing, so it gets up to 45 seconds in all rather than 25.
+  private noticePeer(): void {
+    if (this.sighted || this.stopped) return;
+    this.sighted = true;
+    this.armTimeout(Math.max(1000, 45000 - (Date.now() - this.startedAt)));
   }
   subscribe(listener: (observation: PortalObservation) => void): () => void {
     this.listeners.add(listener);
@@ -222,7 +247,9 @@ class BrowserExchange implements PortalExchange {
           }
         }
       } catch (error) {
-        failed = true; failure = error;
+        // An old frame the other screen is still showing is not an attack on this exchange: it is ignored, never fatal. (It is not
+        // accepted either: staleness is checked before anything else is done with a frame.)
+        if (!(error instanceof Error && error.message === "copresence:frame-stale")) { failed = true; failure = error; }
       }
       try {
         await this.options.attempts.finish(id, failed ? "refused" : "cancelled", cleanupSignal());
@@ -330,6 +357,7 @@ class BrowserExchange implements PortalExchange {
         if (frame.nonce_commitment !== prior.nonce_commitment) refuse("nonce-commitment-changed");
       }
       this.peer = peer;
+      this.noticePeer();
       if (!this.bound) {
         this.peerFace = bytes;
         this.side = this.who.device_key < peer.device_key ? "A" : "B";
@@ -398,6 +426,7 @@ class BrowserExchange implements PortalExchange {
       if (this.peer && !same(peer, this.peer)) refuse("peer-changed");
       if (this.peerFace && frame.nonce_commitment !== this.frameOf(this.peerFace).nonce_commitment) refuse("nonce-commitment-changed");
       this.peer = peer;
+      this.noticePeer();
       if (!this.bound) {
         this.peerFace = bytes;
         this.side = this.who.device_key < peer.device_key ? "A" : "B";

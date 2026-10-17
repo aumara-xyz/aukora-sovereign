@@ -16,6 +16,10 @@ export const FRAME_SCHEMA = "aukora.copresence.frame.v1";
 export const COMPACT_SCHEMA = "aukora.copresence.compact-frame.v1";
 export const COMPACT_DOMAIN = "copresence.compact-frame.v1";
 export type FrameWire = "json-v1" | "compact-v1";
+// How old a compact frame may be when it is read. A screen redraws its first frames (the face, the reveal) all through the exchange, and
+// they cannot be re-signed (the transcript hashes their exact bytes), so a peer that reads one late must still accept it. 30 s, within
+// the exchange. (json-v1 keeps its original 5 s.) The receipt's own 10 s freshness is the node's and is unchanged.
+export const COMPACT_FRESH_SECONDS = 30;
 const PARTICIPANT_KEYS = ["node", "device_key", "device_epoch", "session_id", "attempt_sequence"];
 
 export function participant(value: Json): Participant {
@@ -217,7 +221,7 @@ export function decodeCompact(bytes: Uint8Array): { frame: Frame; body: Uint8Arr
  *  names its own key), its signature. The other frames are verified against the bound context when the engine has it. */
 export async function validateCompact(bytes: Uint8Array, now: number): Promise<{ packet: Packet; key: string }> {
   const { frame, body, signature } = decodeCompact(bytes);
-  if (frame.t_seconds > now || now - frame.t_seconds > 5) refuse("frame-stale");
+  if (frame.t_seconds > now + 2 || now - frame.t_seconds > COMPACT_FRESH_SECONDS) refuse("frame-stale");
   let key = "";
   if (frame.type === "FACE") {
     key = participant(frame.participant).device_key;

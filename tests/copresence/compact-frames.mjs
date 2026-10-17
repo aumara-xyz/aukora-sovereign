@@ -95,6 +95,8 @@ for (const bad of vectors.tampered) {
 }
 check(await throws(() => wire.validateCompact(unhex(byName['face-a'].frame, byName['face-a'].frame.length / 2), 1_900_000_000)), 'a stale frame is refused');
 check(await throws(() => wire.validateCompact(unhex(byName['face-a'].frame, byName['face-a'].frame.length / 2), 1_700_000_000)), 'a frame from the future is refused');
+const faceBytes = unhex(byName['face-a'].frame, byName['face-a'].frame.length / 2), faceTime = byName['face-a'].fields.t_seconds;
+check(!await throws(() => wire.validateCompact(faceBytes, faceTime + 30)) && await throws(() => wire.validateCompact(faceBytes, faceTime + 31)), 'a compact frame is readable for 30 seconds, not 31 (the screen redraws its first frames; json-v1 keeps 5)');
 check(!await throws(() => wire.validateCompact(unhex(byName['face-a'].frame, byName['face-a'].frame.length / 2), vectors.core.t_a_seconds)), 'a fresh FACE validates and verifies');
 
 // --- two real engines, one whole exchange ---

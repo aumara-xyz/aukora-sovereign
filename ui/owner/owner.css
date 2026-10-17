@@ -4,6 +4,7 @@
 @import url('./cards/cards.css');
 @import url('./claim/claim.css');
 @import url('/portal/feedback.css');
+@import url('/portal/pentora-lock.css');
 
 :root {
   color-scheme: dark;
@@ -243,7 +244,7 @@ body::after {
 .pairing-figure .opening-pentora { position: absolute; inset: 0; width: auto; height: auto; }
 .ceremony-pairing[data-stage='lock'] .pairing-figure { --lock: min(50vh, 460px); width: var(--lock); height: var(--lock); top: calc(50% - 26px); opacity: 1; filter: blur(0); }
 .ceremony-pairing[data-stage='lock'] .pairing-exchange { margin-top: calc(min(50vh, 460px) + 6px); }
-.ceremony-pairing[data-stage='lock'] :is(.pairing-tile, .pairing-camera, .pairing-actions, .fb) { display: none; }
+.ceremony-pairing[data-stage='lock'] :is(.pairing-tile, .fb-guide, .pairing-actions, .fb) { display: none; }
 .ceremony-pairing[data-explain] .pairing-phone { display: none; }
 /* Waiting for the phone to open the link: its code stays in view and the frame tile waits. */
 .ceremony-pairing[data-waiting] .pairing-tile { display: none; }
@@ -277,21 +278,8 @@ body::after {
 .pairing-sound { font-size: 13px; }
 
 .pairing-phase { min-height: 1.6em; color: var(--text); font-size: 18px; font-weight: 300; text-align: center; }
-.pairing-camera { position: fixed; left: 18px; bottom: 64px; z-index: 3; width: 110px; height: 110px; object-fit: cover; border-radius: 18px; transform: scaleX(-1); opacity: 0; transition: opacity 1s ease; pointer-events: none; }
-.pairing-camera[data-live] { opacity: .8; }
 
 /* The cubes arrive one after another, growing out from the centre while the whole turns. */
-.opening-pentora { display: block; width: 100%; height: 100%; margin: 0; }
-.opening-pentora-geometry { display: block; width: 100%; height: 100%; overflow: visible; }
-.opening-pentora-cube { fill: none; stroke: var(--mint); transform-box: view-box; transform-origin: 0 0; opacity: 0; animation: pentora-form 2.6s var(--owner-ease) both; }
-.opening-pentora-cube .pentora-edge { stroke-width: 1.2px; stroke-opacity: .9; }
-.opening-pentora-cube .pentora-glow { stroke-width: 6px; stroke-opacity: .09; }
-.opening-pentora-cube[data-cube='0'] { animation-delay: .5s; }
-.opening-pentora-cube[data-cube='1'] { stroke: var(--blue); animation-delay: 1.9s; }
-.opening-pentora-cube[data-cube='2'] { stroke: var(--violet); animation-delay: 3.3s; }
-.opening-pentora-cube[data-cube='3'] { stroke: var(--gold); animation-delay: 4.7s; }
-.opening-pentora-cube[data-cube='4'] { stroke: var(--mint); animation-delay: 6.1s; }
-.opening-pentora-status { color: var(--muted); font-size: 12px; text-align: center; }
 body[data-brand='hero'] .ceremony-conclusion { padding-top: 40vh; }
 
 /* ---------- Motion ---------- */
@@ -309,7 +297,6 @@ body[data-brand='hero'] .ceremony-conclusion { padding-top: 40vh; }
 @keyframes brand-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .42; } }
 @keyframes brand-name-in { from { opacity: 0; letter-spacing: .7em; transform: translate3d(0, 10px, 0); } to { opacity: 1; letter-spacing: .34em; transform: translate3d(0, 0, 0); } }
 @keyframes owner-door { 0% { opacity: 0; transform: scaleX(.02); } 25% { opacity: 1; } 100% { opacity: 0; transform: scaleX(1.25); } }
-@keyframes pentora-form { from { opacity: 0; transform: scale(.35) rotate(-40deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
 @media (prefers-reduced-motion: no-preference) {
   /* A scene enters in order: headline, line, content, and the action last. */
   .owner-scene .owner-text h2 { animation: owner-rise 1.1s var(--owner-ease) .4s both; }

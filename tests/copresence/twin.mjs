@@ -162,7 +162,10 @@ for (let run = 1; run <= RUNS; run++) {
   const twin = await owner.evaluate('JSON.stringify({ phases: window.__twin.phases, error: window.__twin.error, verdict: window.__twin.verdict })');
   check(ownerFinal?.phase === 'BLOOM' && ownerFinal.verdict?.verdict === 'UNDETERMINED' && ownerFinal.verdict.code === null,
     'the owner screen reaches BLOOM only with the node’s verdict', `${((Date.now() - started) / 1000).toFixed(1)} s ${twin} ${JSON.stringify(ownerFinal?.verdict ?? null)}`);
-  check(phoneDone === 'done', 'the phone shows "Verified by your node."', `stage=${phoneDone} ${await phone.evaluate(`document.getElementById('phase').textContent`)}`);
+  // The phone shows the same moment as the computer: the Pentora comes forward and locks (about four seconds), then "Co-presence complete."
+  let phoneSays = '';
+  for (let wait = 0; wait < 120 && phoneSays !== 'Co-presence complete.'; ++wait) { phoneSays = await phone.evaluate(`document.getElementById('phase').textContent`); if (phoneSays !== 'Co-presence complete.') await sleep(100); }
+  check(phoneDone === 'done' && phoneSays === 'Co-presence complete.', 'the phone shows "Co-presence complete." after the Pentora locks', `stage=${phoneDone} ${phoneSays}`);
   const facts = await testNode.facts();
   check(facts.length === run && facts.at(-1)?.schema === 'aukora:copresence-pairing:v1' && facts.at(-1)?.evidenceOnly === true,
     'the node recorded exactly one pairing fact for this run', `facts=${facts.length}`);

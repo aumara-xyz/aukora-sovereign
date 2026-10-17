@@ -56,6 +56,10 @@
 /* Closed, the body takes no space at all (it used to keep the primitive's 18px bottom padding, so the head sat 20px high in its frame). */
 .claim-portal[data-open="yes"] .claim-portal-body { padding-block: 6px 18px; transition: padding .9s var(--owner-ease); }
 .claim-portal-body .owner-detail { margin: 6px 0 0; color: var(--secondary); font-size: 14px; font-weight: 300; line-height: 1.6; }
+.claim-key-line { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
+.claim-check { width: 15px; height: 15px; flex: none; }
+.claim-check path { stroke: var(--mint); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.claim-mask { display: block; margin-top: 6px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; letter-spacing: .12em; }
 .claim-portal-body .owner-content { margin-top: 18px; width: 100%; }
 .claim-portal-body .owner-controls { display: flex; flex-direction: column; align-items: center; margin: 20px 0 4px; width: 100%; }
 .claim-portal-body .owner-content > .owner-input input {

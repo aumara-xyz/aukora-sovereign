@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { Guide } from "./guide.js";
 export const LEGACY_CORE_DOMAIN = "copresence.v0" as const;
 export const CONTEXT_CORE_DOMAIN = "copresence.v1" as const;
 export const INTENT_DOMAINS = Object.freeze({
@@ -69,6 +70,8 @@ export interface CopresenceEngine {
 }
 
 export interface OpticalSurface {
+  /** What the camera sees while nothing reads (the hint for the person), when the decoder can say. */
+  readonly guide?: Guide;
   showFrame(bytes: Uint8Array): void;
   scan(consume: (bytes: Uint8Array) => void, signal: AbortSignal): Promise<() => void>;
   showBloom(keys: PersonNostrKeys | null, signal?: AbortSignal): Promise<Uint8Array | null>;

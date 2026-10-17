@@ -19,7 +19,7 @@ export function compilePortal() {
       fs.writeFileSync(path.join(to, entry.name.replace(/\.ts$/, '.js')), stripTypeScriptTypes(fs.readFileSync(path.join(from, entry.name), 'utf8'), { mode: 'strip' }));
     }
   };
-  walk(path.join(ROOT, 'portal'), dir);
+  walk(process.env.PORTAL_SRC || path.join(ROOT, 'portal'), dir);   // PORTAL_SRC: compile another checkout's portal (to compare versions)
   return { dir, load: name => import(pathToFileURL(path.join(dir, name)).href), cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 export { ROOT };

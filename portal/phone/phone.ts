@@ -12,7 +12,8 @@ import type { PortalExchange, PortalObservation } from "../contracts.js";
 import { contextNode, PairingClient, sleep, type PairingStatus } from "../node/client.js";
 import { deviceKey, PHONE_DEVICE_STORE } from "../node/device-key.js";
 import { frameDecoder } from "../node/decoder.js";
-import { chimes, exchangeFeedback, feedbackFor } from "../feedback.js";
+import { cameraGuide, chimes, exchangeFeedback, feedbackFor } from "../feedback.js";
+import { mountOpeningPentora } from "../pentora-lock.js";
 
 const PHASE_BLOOM = "Done here. Waiting for your node…";
 const REFUSED = "That did not verify. Face the screens toward each other and try again.";
@@ -35,7 +36,15 @@ const lead = element<HTMLParagraphElement>("lead");
 const phase = element<HTMLOutputElement>("phase");
 const start = element<HTMLButtonElement>("start");
 const frame = element<HTMLCanvasElement>("frame");
-const video = element<HTMLVideoElement>("camera");
+const video = document.createElement("video");
+video.muted = true;
+video.playsInline = true;
+video.setAttribute("playsinline", "");
+video.addEventListener("playing", () => { video.dataset.live = ""; });
+const guide = cameraGuide(document, video);
+element<HTMLElement>("guide").append(guide.element);
+// The Pentora turns far behind the page while the screens read each other; when the node says yes it comes forward and locks.
+const pentora = mountOpeningPentora(element<HTMLElement>("figure"), new AbortController().signal);
 const tile = element<HTMLElement>("tile");
 const feedback = exchangeFeedback();
 element<HTMLElement>("feedback").append(feedback.element);
@@ -58,6 +67,7 @@ const life = new AbortController();
 
 function stage(name: "joining" | "ready" | "exchange" | "done" | "failed", message: string): void {
   page.dataset.stage = name;
+  if (name !== "exchange") guide.show(null);
   phase.textContent = message;
 }
 
@@ -80,6 +90,7 @@ async function main(): Promise<void> {
   const decode = frameDecoder();
   const attempts = new IndexedAttempts("aukora.copresence.attempts.phone.v1");
   const optical = cameraSurface(frame, video, unavailablePentora, decode);
+  optical.guide?.subscribe(hint => { if (page.dataset.stage === "exchange") guide.show(hint); });
   const engine = new BrowserCopresenceEngine({
     node: contextNode(context),
     deviceEpoch: 0,
@@ -150,11 +161,17 @@ async function main(): Promise<void> {
     await sleep(1500, life.signal);
     status = await client.phone(bearer, life.signal).catch(() => status);
     if (status.state === "spent" && status.verdict) {
-      lead.textContent = "This phone is paired with your node.";
-      stage("done", "Verified by your node.");
-      feedback.show("verified", 1, "Verified by your node.");
-      sound.locked();
+      // Co-presence is complete: the Pentora comes forward, shrinks into focus and locks, with the chime, exactly as on the computer.
+      lead.textContent = "";
+      stage("done", "");
+      feedback.show("verified", 1, "");
       start.hidden = true;
+      await sleep(2100, life.signal);
+      const locking = pentora.lock();
+      globalThis.setTimeout(() => sound.locked(), 450);
+      await locking;
+      lead.textContent = "Your two devices met, here and now.";
+      stage("done", "Co-presence complete.");
       // Keep showing the last frames a moment so the computer can finish reading them.
       await sleep(3000, life.signal);
       if (running) await finish(running, "bloom");

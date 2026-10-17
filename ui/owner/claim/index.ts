@@ -113,11 +113,36 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     secret.placeholder = "Invite secret";
     secret.setAttribute("autocapitalize", "off");
     secretLabel.append(secret);
+    // The key from a claim link is already in: say so with a check and a masked code (only its last four characters), never the code.
+    const keyIsIn = (): HTMLElement[] => {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("class", "claim-check");
+      svg.setAttribute("aria-hidden", "true");
+      const tick = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      tick.setAttribute("d", "M3.2 8.6l3.1 3.1 6.5-7.2");
+      tick.setAttribute("fill", "none");
+      svg.append(tick);
+      const line = document.createElement("span");
+      line.className = "claim-key-line";
+      line.append(svg, document.createTextNode("Your claim key is in"));
+      const tail = token.value.replace(/[^A-Za-z0-9]/g, "").slice(-4).toUpperCase().padStart(4, "•");
+      const mask = document.createElement("span");
+      mask.className = "claim-mask";
+      mask.textContent = `••••-••••-${tail}`;
+      mask.setAttribute("aria-label", "ends in " + tail);
+      return [line, mask];
+    };
     const showDetail = (): void => {
       tokenLabel.hidden = prefilled && !retyping;
-      explanation.textContent = !tokenLabel.hidden ? (mode === "invite-v2"
-        ? "Enter your claim link and private invite secret." : "Enter your claim code or link.") : "Using your claim link";
-      if (configuration.intent?.sovereignId) explanation.textContent += ". After your passkey, bring your Sovereign ID.";
+      const extra = configuration.intent?.sovereignId ? "After your passkey, bring your Sovereign ID." : "";
+      if (!tokenLabel.hidden) {
+        explanation.textContent = (mode === "invite-v2" ? "Enter your claim link and private invite secret." : "Enter your claim code or link.")
+          + (extra ? ` ${extra}` : "");
+        return;
+      }
+      explanation.replaceChildren(...keyIsIn());
+      if (extra) explanation.append(document.createElement("br"), document.createTextNode(extra));
     };
     let retyping = false;
     // The owner frame is sandboxed without allow-forms, so a form submission is dropped before any submit event fires;

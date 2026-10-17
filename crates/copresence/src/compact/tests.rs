@@ -266,3 +266,13 @@ fn carried_digests_are_the_v1_digests() {
     };
     assert_eq!(v1_crypto::core(&input).unwrap(), digest(core, "digest"));
 }
+
+#[test]
+fn a_frame_stays_readable_for_thirty_seconds() {
+    let t = 1_800_000_000_u32;
+    assert!(fresh(t, u64::from(t)).is_ok());
+    assert!(fresh(t, u64::from(t) + 30).is_ok());
+    assert!(fresh(t, u64::from(t) + 31).is_err());
+    assert!(fresh(t, u64::from(t) - 2).is_ok());
+    assert!(fresh(t, u64::from(t) - 3).is_err());
+}

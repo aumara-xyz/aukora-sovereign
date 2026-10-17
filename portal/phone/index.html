@@ -8,17 +8,19 @@
 <title>Pair this phone · AUKORA</title>
 <link rel="stylesheet" href="/portal/phone/phone.css">
 <link rel="stylesheet" href="/portal/feedback.css">
+<link rel="stylesheet" href="/portal/pentora-lock.css">
 <script src="/portal/vendor/jsQR.min.js"></script>
 <script type="module" src="/portal/phone/phone.js"></script>
 </head>
 <body>
+<div id="figure" class="pair-figure" aria-hidden="true"></div>
 <main class="pair" data-stage="joining">
   <h1>Pair this phone</h1>
   <p class="pair-lead" id="lead">Opening the pairing…</p>
   <div class="pair-stage">
     <div id="tile" class="pair-tile"><canvas id="frame" class="pair-frame" aria-label="Signed optical exchange frames"></canvas></div>
-    <video id="camera" class="pair-camera" muted playsinline aria-label="Local camera preview"></video>
   </div>
+  <div id="guide" class="pair-guide"></div>
   <output id="phase" class="pair-phase" aria-live="polite"></output>
   <div id="feedback" class="pair-feedback"></div>
   <button id="sound" type="button" class="pair-sound">Sound on</button>

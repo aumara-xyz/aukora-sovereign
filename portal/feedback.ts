@@ -5,8 +5,9 @@
 // protocol: it only listens to what the engine and the camera already report.
 export type FeedbackState = "searching" | "seen" | "exchanging" | "verified";
 export const FEEDBACK_STEPS: ReadonlyArray<readonly [FeedbackState, string]> = [
-  ["searching", "Searching"], ["seen", "Seen"], ["exchanging", "Exchanging"], ["verified", "Verified"],
+  ["searching", "Searching"], ["seen", "Seen"], ["exchanging", "Exchanging"], ["verified", "Complete"],
 ];
+import { HINT_TEXT, type Hint } from "./guide.js";
 const SVG = "http://www.w3.org/2000/svg";
 const RING = 2 * Math.PI * 16;
 
@@ -14,7 +15,7 @@ type Phase = "FACE" | "SEENYOU" | "HANDSHAKE" | "BLOOM" | "REFUSED";
 
 /** Which of the four states, and how full the ring is, for what the engine says and whether the camera has read a frame yet. */
 export function feedbackFor(phase: Phase, recognised: boolean): { state: FeedbackState; fill: number; message: string } {
-  if (phase === "BLOOM") return { state: "verified", fill: 1, message: "Verified." };
+  if (phase === "BLOOM") return { state: "verified", fill: 1, message: "Co-presence complete." };
   if (phase === "HANDSHAKE") return { state: "exchanging", fill: 0.8, message: "Exchanging. Hold steady…" };
   if (phase === "SEENYOU") return { state: "seen", fill: 0.5, message: "Seen you. Hold steady…" };
   if (!recognised) return { state: "searching", fill: 0, message: "Searching for the other screen…" };
@@ -130,6 +131,39 @@ export function chimes(): {
       off = on;
       try { globalThis.localStorage?.setItem("aukora.sound", on ? "off" : "on"); } catch { /* storage may be blocked */ }
       if (!on) this.unlock();
+    },
+  };
+}
+
+/** A small live preview of this device's own camera with a rounded-square guide where the other screen's code should land, and the
+ *  hint beneath it (portal/guide.ts decides the words). The caller owns the video element and the camera; this only frames them. */
+export function cameraGuide(doc: Document, video: HTMLVideoElement): { element: HTMLElement; show(hint: Hint | null): void } {
+  const element = doc.createElement("div");
+  element.className = "fb-guide";
+  element.hidden = true;
+  const box = doc.createElement("div");
+  box.className = "fb-camera";
+  const svg = doc.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("class", "fb-frame");
+  svg.setAttribute("aria-hidden", "true");
+  const square = doc.createElementNS(SVG, "rect");
+  // The decoder reads the middle 62 percent first; the guide shows the same square.
+  square.setAttribute("x", "19"); square.setAttribute("y", "19"); square.setAttribute("width", "62"); square.setAttribute("height", "62");
+  square.setAttribute("rx", "9"); square.setAttribute("fill", "none");
+  svg.append(square);
+  box.append(video, svg);
+  const hint = doc.createElement("p");
+  hint.className = "fb-hint";
+  hint.setAttribute("aria-live", "polite");
+  element.append(box, hint);
+  return {
+    element,
+    show(next) {
+      element.hidden = next === null;
+      if (next === null) return;
+      element.dataset.hint = next;
+      if (hint.textContent !== HINT_TEXT[next]) hint.textContent = HINT_TEXT[next];
     },
   };
 }

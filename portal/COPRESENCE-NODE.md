@@ -78,6 +78,13 @@ reference codec. A receipt is byte for byte the same either way; neither the rec
   and WebCrypto's import rejects anything that is not a point on the curve.
 - Where json-v1 repeated the context and the core, compact-v1 carries their digests: each device already holds both and
   compares the digest it computed itself, so a frame for another context or core is refused exactly as before.
+- **Freshness is 30 s for compact-v1** (json-v1 keeps 5 s). A screen redraws its first frames (the face, the reveal) all through the
+  exchange, and they cannot be re-signed because the transcript hashes their exact bytes, so a peer that reads one late must still
+  accept it; with 5 s a slow reader hit `frame-stale` on a redrawn frame and the exchange failed. A frame that is too old is now
+  ignored, never fatal. The receipt's own freshness (10 s from its second timestamp) is the node's and is unchanged.
+- **Dwell.** Each frame stays on screen two seconds (`BrowserEngineOptions.dwell`, default 2): the face, the re-signed handshake or
+  bloom, and the cycle all move on together, so a reader that decodes a few times a second sees every frame. While the other screen
+  is being read the exchange may take up to 45 s (25 s until the first frame from the peer is read).
 - **B rebuilds the receipt instead of reading it.** In json-v1 A also drew the whole receipt as a QR for B. In compact-v1
   A's BLOOM frame carries `sig_a` (and the intent signature when there is one); B already holds the core and its own
   `sig_b`, assembles the same canonical receipt, and verifies and spends it exactly as before. Both ends hold identical
@@ -112,6 +119,13 @@ The receipt's two participants must both name this node, their two keys must be 
 the participants stay the devices' own. A change of meaning is a new schema.
 
 ## Reading codes
+
+The decoder (`portal/node/decoder.ts`) never decodes a whole phone frame (1080 by 1920 cost 400 to 600 ms on an iPhone and read one
+frame a second or two): it reads the centre 62% downscaled to 512 pixels first, then the whole picture at 640 on its longer side
+on every other miss, and every fifth miss the whole picture at 1280, at a steady ten looks a second. When nothing reads, the small
+picture is searched for the code's three corner squares (`portal/guide.ts`) and both pages show one calm hint under a small camera
+preview with a framing square: "Hold steady", "Move back a little", "Move closer", "Tilt slightly to avoid glare". The phone page
+shows the same completion as the computer: the Pentora comes forward, locks with the chime, and says "Co-presence complete."
 
 Both pairing pages read the other screen with jsQR 1.4.0 (`portal/vendor/jsQR.min.js`, the exact file the
 phone-tested portal-v0 used, Apache-2.0, licence in `portal/vendor/LICENSE-jsQR`; both pinned in `checks/pins.json`).

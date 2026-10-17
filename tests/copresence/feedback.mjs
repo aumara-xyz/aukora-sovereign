@@ -14,8 +14,8 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 let failed = 0;
 const check = (ok, label, detail = '') => { if (!ok || process.env.VERBOSE) console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}${detail ? `  ${detail}` : ''}`); if (!ok) failed++; };
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'feedback-'));
-fs.writeFileSync(path.join(dir, 'feedback.mjs'), stripTypeScriptTypes(fs.readFileSync(path.join(ROOT, 'portal', 'feedback.ts'), 'utf8')));
-const url = pathToFileURL(path.join(dir, 'feedback.mjs')).href;
+for (const name of ['feedback', 'guide']) fs.writeFileSync(path.join(dir, `${name}.js`), stripTypeScriptTypes(fs.readFileSync(path.join(ROOT, 'portal', `${name}.ts`), 'utf8')));
+const url = pathToFileURL(path.join(dir, 'feedback.js')).href;
 
 const { feedbackFor, chimes } = await import(url);
 const state = (phase, seen) => feedbackFor(phase, seen).state;
@@ -23,7 +23,7 @@ check(state('FACE', false) === 'searching' && feedbackFor('FACE', false).fill ==
 check(state('FACE', true) === 'seen', 'the first code read: seen');
 check(state('SEENYOU', false) === 'seen' && state('SEENYOU', true) === 'seen', 'seen-you is a seen state either way');
 check(state('HANDSHAKE', true) === 'exchanging', 'handshake: exchanging');
-check(state('BLOOM', true) === 'verified' && feedbackFor('BLOOM', true).fill === 1, 'bloom: verified, the ring full');
+check(state('BLOOM', true) === 'verified' && feedbackFor('BLOOM', true).fill === 1 && feedbackFor('BLOOM', true).message === 'Co-presence complete.', 'bloom: complete, the ring full');
 let last = -1, rising = true;
 for (const [phase, seen] of [['FACE', false], ['FACE', true], ['SEENYOU', true], ['HANDSHAKE', true], ['BLOOM', true]]) {
   const fill = feedbackFor(phase, seen).fill; if (fill < last) rising = false; last = fill;

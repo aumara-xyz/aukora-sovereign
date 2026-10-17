@@ -7,7 +7,7 @@ import { checkAbort } from "./abort.js";
 import { brand } from "./brand.js";
 import { mountCeremonyConclusion } from "./ceremony-ending.js";
 import { mountOpeningPentora } from "./pentora-opening.js";
-import { chimes, exchangeFeedback, feedbackFor } from "../../portal/feedback.js";
+import { cameraGuide, chimes, exchangeFeedback, feedbackFor } from "../../portal/feedback.js";
 import { pairingPort } from "./pairing-port.js";
 import { actionButton, fieldTable, label, lead, portalButton, statTiles } from "./primitives.js";
 import type { PairingExchange, PairingObservation, PairingServices } from "./pairing-port.js";
@@ -159,7 +159,9 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
   soundToggle.addEventListener("click", () => { sound.mute(!sound.muted); paintSound(); }, { signal: live });
   const actions = node("div", "", "pairing-actions");
   actions.append(stop, soundToggle);
-  exchange.append(tile, phase, feedback.element, failure, video, actions);
+  // The camera preview with its framing square and the live hint (move back, closer, tilt, hold steady).
+  const guide = cameraGuide(document, video);
+  exchange.append(tile, phase, feedback.element, failure, guide.element, actions);
 
   const status = node("p", "", "owner-status");
   status.setAttribute("role", "status");
@@ -172,11 +174,12 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
 
   let services: PairingServices | undefined;
   let session: { controller: AbortController; attempt: string; exchange: PairingExchange | null; scanStop: (() => void) | null;
-    unsubscribe: (() => void) | null; terminal: boolean } | null = null;
+    unsubscribe: (() => void) | null; unguide: (() => void) | null; terminal: boolean } | null = null;
   let arrivalTimer: ReturnType<typeof setTimeout> | undefined;
   let conclusion: OwnerDisposer | undefined;
   let stage = "intro";
   let recognised = false;
+  let creeping: ReturnType<typeof setInterval> | undefined;
   let lastPhase: PairingObservation["phase"] = "FACE";
 
   function setStage(next: string): void {
@@ -196,6 +199,12 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     const state = feedbackFor(phaseNow, recognised);
     feedback.show(state.state, state.fill);
     say(state.message);
+    // From the first sight the ring keeps filling slowly between steps, so a long hold still looks like progress.
+    clearInterval(creeping);
+    if (recognised && state.state !== "searching" && state.state !== "verified") {
+      const started = performance.now(), ceiling = Math.min(0.96, state.fill + 0.2);
+      creeping = setInterval(() => { feedback.show(state.state, Math.min(ceiling, state.fill + 0.2 * (1 - Math.exp(-(performance.now() - started) / 8000)))); }, 700);
+    }
   }
 
   function say(message: string): void {
@@ -216,6 +225,9 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     current.controller.abort();
     current.scanStop?.();
     current.unsubscribe?.();
+    current.unguide?.();
+    guide.show(null);
+    clearInterval(creeping);
     current.exchange?.stop();
   }
 
@@ -248,7 +260,7 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     panel.removeAttribute("data-failed");
     start.disabled = true;
     const current = { controller: new AbortController(), attempt: "", exchange: null as PairingExchange | null,
-      scanStop: null as (() => void) | null, unsubscribe: null as (() => void) | null, terminal: false };
+      scanStop: null as (() => void) | null, unsubscribe: null as (() => void) | null, unguide: null as (() => void) | null, terminal: false };
     session = current;
     const done = (): void => { if (session === current) session = null; };
     try {
@@ -261,6 +273,8 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
       panel.toggleAttribute("data-waiting", Boolean(phoneLink));
       recognised = false;
       feedback.reset();
+      current.unguide = services.optical.guide?.subscribe(hint => guide.show(hint)) ?? null;
+      if (!services.optical.guide) guide.show(null);
       if (phoneLink) say("Waiting for your phone to open the link."); else show("FACE");
       setStage("exchange");
       current.attempt = await services.attempts.reserve("optical", current.controller.signal);
@@ -289,12 +303,13 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
         // The engine repeats its last observation while the other screen reads it; the bloom and the arrival happen once.
         if (current.terminal) return;
         // The receipt is spent and the attempt closed before anything is shown. The own-device moment is the Pentora locking
-        // into place (the relationship bloom is for pairing with another person), then "Verified", then the arrival.
+        // into place (the relationship bloom is for pairing with another person), then "Co-presence complete", then the arrival.
         void finish(current, "bloom").then(async () => {
           if (session !== current || live.aborted) return;
           // The last frame stays on screen long enough for the other device to read it; only then does the Pentora lock.
           if (observation.frameBytes) { services?.optical.showFrame(observation.frameBytes); frame.dataset.bytes = String(observation.frameBytes.length); }
           // The ring is full as soon as the node has said yes; the Pentora locks a moment later.
+          clearInterval(creeping);
           feedback.show("verified", 1);
           await new Promise<void>(resolve => setTimeout(resolve, 2400));
           if (session !== current || live.aborted) return;
@@ -306,7 +321,7 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
           setTimeout(() => sound.locked(), 450);          // the cubes snap into alignment about half a second in
           await locking;
           if (session !== current || live.aborted) return;
-          say("Verified.");
+          say("Co-presence complete.");
           arrivalTimer = setTimeout(() => {
             if (live.aborted) return;
             release(current);

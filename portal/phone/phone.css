@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-:root { color-scheme: dark; }
+:root { color-scheme: dark; --mint: #6ee7b7; --blue: #6aa8ff; --violet: #b89cff; --gold: #e8b94a; }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100dvh; background: #07131e; color: #edf8f6; font: 17px/1.5 system-ui, -apple-system, sans-serif; }
 .pair { display: grid; gap: 1rem; max-width: 30rem; margin-inline: auto; padding: max(1.25rem, env(safe-area-inset-top)) 1.25rem max(1.25rem, env(safe-area-inset-bottom)); text-align: center; }
@@ -9,7 +9,6 @@ body { margin: 0; min-height: 100dvh; background: #07131e; color: #edf8f6; font:
 .pair-stage { display: grid; gap: .75rem; justify-items: center; }
 .pair-tile { width: min(100%, 26rem); display: grid; justify-items: center; }
 .pair-frame { height: auto; image-rendering: pixelated; border-radius: .9rem; box-shadow: 0 0 40px rgba(106, 168, 255, .2); }
-.pair-camera { width: 6rem; height: auto; border-radius: .5rem; transform: scaleX(-1); opacity: .8; }
 .pair-phase { min-height: 1.5em; font-size: 1.1rem; }
 .pair-start { justify-self: center; min-width: 10rem; padding: .8rem 1.4rem; font: inherit; color: inherit; background: #0b7a5c; border: 1px solid #3fb08f; border-radius: .6rem; }
 .pair-start:disabled { opacity: .45; }
@@ -17,3 +16,17 @@ body { margin: 0; min-height: 100dvh; background: #07131e; color: #edf8f6; font:
 .pair[data-stage="joining"] .pair-stage, .pair[data-stage="ready"] .pair-tile, .pair[data-stage="done"] .pair-stage, .pair[data-stage="joining"] .pair-feedback, .pair[data-stage="ready"] .pair-feedback, .pair[data-stage="ready"] .pair-sound, .pair[data-stage="joining"] .pair-sound { display: none; }
 .pair[data-stage="done"] .pair-phase { color: #7fe0bf; }
 .pair[data-stage="failed"] .pair-phase { color: #f2b8a2; }
+
+/* The Pentora is the stage: large, dim and a little out of focus behind the page while the screens read each other; when the node has
+   said yes it comes forward, shrinks into focus and locks (the same moment as on the computer). */
+.pair-figure { position: fixed; z-index: 0; left: 50%; top: 50%; width: min(120vmax, 900px); height: min(120vmax, 900px); translate: -50% -50%; opacity: .18; filter: blur(2.4px);
+  pointer-events: none; transition: width 1.9s cubic-bezier(.16, 1, .3, 1), height 1.9s cubic-bezier(.16, 1, .3, 1), top 1.9s cubic-bezier(.16, 1, .3, 1), opacity 1.9s ease, filter 1.9s ease; }
+.pair-figure .opening-pentora { position: absolute; inset: 0; }
+.pair { position: relative; z-index: 1; }
+body:has(.pair[data-stage="done"]) .pair-figure { width: min(78vw, 360px); height: min(78vw, 360px); top: 36%; opacity: 1; filter: blur(0); }
+.pair[data-stage="done"] { padding-top: min(78vw, 360px); margin-top: 18vh; }
+.pair-guide:empty { display: none; }
+.pair-guide { justify-self: center; }
+.pair[data-stage="done"] :is(.pair-feedback, .pair-sound) { display: none; }
+.pair[data-stage="joining"] .pair-guide, .pair[data-stage="ready"] .pair-guide, .pair[data-stage="done"] .pair-guide { display: none; }
+@media (prefers-reduced-motion: reduce) { .pair-figure { transition: none; } }

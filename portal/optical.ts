@@ -2,10 +2,11 @@
 import type { OpticalSurface } from "./contracts.js";
 import { checkAbort, refuse } from "./bytes.js";
 import { frameFromQrText } from "./frame-text.js";
+import type { Guide } from "./guide.js";
 import { drawQrFrame } from "./qr.js";
 import { drawRelationshipBloom, type PentoraExpansion } from "./bloom/index.js";
 
-export type FrameDecoder = (source: HTMLVideoElement) => Promise<readonly string[]>;
+export type FrameDecoder = ((source: HTMLVideoElement) => Promise<readonly string[]>) & { readonly guide?: Guide };
 type Detector = { detect(source: HTMLVideoElement): Promise<readonly { rawValue: string }[]> };
 type DetectorConstructor = new (options: { formats: string[] }) => Detector;
 export function nativeQrDecoder(): FrameDecoder {
@@ -21,6 +22,7 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
   if (!bloomCanvas) canvas.after(relationship);
   relationship.hidden = true;
   return {
+    guide: decode?.guide,
     showFrame(bytes) { drawQrFrame(canvas, bytes); },
     async showBloom(keys, signal) {
       bloomRequest?.abort();
@@ -43,6 +45,7 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
     async scan(consume, signal) {
       checkAbort(signal);
       const decoder = decode ?? nativeQrDecoder();
+      decode?.guide?.reset();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } } });
       let stopped = false, timer: ReturnType<typeof setTimeout> | undefined;
       const stop = (): void => {
@@ -60,6 +63,7 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
       try { await video.play(); } catch (error) { stop(); throw error; }
       const scan = async (): Promise<void> => {
         if (stopped) return;
+        const began = performance.now();
         try {
           if (video.readyState >= 2) {
             for (const value of await decoder(video)) {
@@ -67,7 +71,8 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
             }
           }
         } catch { stop(); return; }
-        if (!stopped) timer = setTimeout(() => { void scan(); }, 100);
+        // A steady ten looks a second: the wait is what is left of a hundred milliseconds after the decode.
+        if (!stopped) timer = setTimeout(() => { void scan(); }, Math.max(0, 100 - (performance.now() - began)));
       };
       void scan();
       return stop;

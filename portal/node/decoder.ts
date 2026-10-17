@@ -6,33 +6,69 @@
 // copresence:camera-decoder-unavailable.
 import { nativeQrDecoder, type FrameDecoder } from "../optical.js";
 import { refuse } from "../bytes.js";
+import { findFinders, Guide } from "../guide.js";
 
 type JsQr = (data: Uint8ClampedArray, width: number, height: number, options?: { inversionAttempts?: string }) => { data: string } | null;
 
-/** Each camera frame is tried at half size first (the browser's own averaging: four times less work, and it cancels sensor noise),
- *  then at full size, which also tries the inverted picture. portal-v0 read this way, and a full-size pass alone costs several
- *  hundred milliseconds on a phone, so frames that stay on screen for one second were missed. */
+const CROP = 0.62;      // the middle of the picture, where the code should land (the framing guide shows the same square)
+const FIRST = 512;      // the crop is read at no more than this many pixels a side (a code half the picture wide is still 7 pixels a module)
+const SECOND = 640;     // then, if that missed, the whole picture at no more than this on its longer side
+const WIDE = 1280;      // every few misses, the whole picture larger, for a code that is small in view
+
+/** Reads the other screen's code from a camera frame, quickly enough that a phone sees every frame that stays on screen.
+ *
+ *  A phone's video is large (1080 by 1920 is common) and jsQR's cost grows with the pixels, so decoding the whole picture took 400 to
+ *  600 ms on an iPhone and it read one frame in a second or two. Instead: first the centre crop, downscaled to about 512 pixels (a
+ *  few tens of milliseconds); only if that misses, the whole picture at 640 on its longer side; and every fifth miss the whole picture
+ *  larger. Dark-on-light only (the frames are drawn that way), as portal-v0 read. When nothing reads, the same small picture is
+ *  searched for the code's corner squares so the page can tell the person what to do (portal/guide.ts). */
 export function jsQrDecoder(jsQR: JsQr): FrameDecoder {
-  const full = document.createElement("canvas");
-  const half = document.createElement("canvas");
-  const fullContext = full.getContext("2d", { willReadFrequently: true });
-  const halfContext = half.getContext("2d", { willReadFrequently: true });
-  if (!fullContext || !halfContext) refuse("camera-decoder-unavailable");
-  return async video => {
-    const width = Math.min(video.videoWidth || 0, 1920);
-    if (!width) return [];
-    const height = Math.round(width * video.videoHeight / video.videoWidth);
-    half.width = width >> 1; half.height = height >> 1;
-    halfContext.drawImage(video, 0, 0, half.width, half.height);
-    const small = halfContext.getImageData(0, 0, half.width, half.height);
-    const quick = jsQR(small.data, half.width, half.height, { inversionAttempts: "dontInvert" });
-    if (quick) return [quick.data];
-    full.width = width; full.height = height;
-    fullContext.drawImage(video, 0, 0, width, height);
-    const image = fullContext.getImageData(0, 0, width, height);
-    const code = jsQR(image.data, width, height, { inversionAttempts: "attemptBoth" });
-    return code ? [code.data] : [];
+  const crop = document.createElement("canvas");
+  const whole = document.createElement("canvas");
+  const cropContext = crop.getContext("2d", { willReadFrequently: true });
+  const wholeContext = whole.getContext("2d", { willReadFrequently: true });
+  if (!cropContext || !wholeContext) refuse("camera-decoder-unavailable");
+  const guide = new Guide();
+  let misses = 0;
+  const read = (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, video: HTMLVideoElement, width: number, height: number,
+    sx: number, sy: number, sw: number, sh: number): { data: string | null; pixels: ImageData } => {
+    canvas.width = width; canvas.height = height;
+    context.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
+    const pixels = context.getImageData(0, 0, width, height);
+    const code = jsQR(pixels.data, width, height, { inversionAttempts: "dontInvert" });
+    return { data: code ? code.data : null, pixels };
   };
+  const decode: FrameDecoder = async video => {
+    const vw = video.videoWidth || 0, vh = video.videoHeight || 0;
+    if (!vw || !vh) return [];
+    const side = Math.round(Math.min(vw, vh) * CROP);
+    const first = Math.min(side, FIRST);
+    const a = read(cropContext, crop, video, first, first, Math.round((vw - side) / 2), Math.round((vh - side) / 2), side, side);
+    if (a.data !== null) { misses = 0; guide.note({ hit: true, sight: { finders: 0, size: 0, clipped: false } }); return [a.data]; }
+    ++misses;
+    // The whole picture is tried on every other miss (a code larger than the crop, or off to one side, shows up there); the centre crop
+    // that was just read stands in for it in between, so a miss costs one picture, not two.
+    let seen = a.pixels, seenWidth = first, seenHeight = first, scale = 1 / CROP;
+    if (misses % 2 === 1) {
+      const factor = Math.min(1, SECOND / Math.max(vw, vh));
+      const b = read(wholeContext, whole, video, Math.round(vw * factor), Math.round(vh * factor), 0, 0, vw, vh);
+      if (b.data !== null) { misses = 0; guide.note({ hit: true, sight: { finders: 0, size: 0, clipped: false } }); return [b.data]; }
+      seen = b.pixels; seenWidth = b.pixels.width; seenHeight = b.pixels.height; scale = 1;
+    }
+    if (misses % 6 === 0) {
+      const wide = Math.min(1, WIDE / Math.max(vw, vh));
+      const c = read(wholeContext, whole, video, Math.round(vw * wide), Math.round(vh * wide), 0, 0, vw, vh);
+      if (c.data !== null) { misses = 0; guide.note({ hit: true, sight: { finders: 0, size: 0, clipped: false } }); return [c.data]; }
+    }
+    // Nothing read: look for the corner squares in the small picture, as greyscale, so the page can say what to do.
+    const gray = new Uint8Array(seenWidth * seenHeight);
+    for (let i = 0, p = 0; i < gray.length; ++i, p += 4) gray[i] = (seen.data[p]! + 2 * seen.data[p + 1]! + seen.data[p + 2]!) >> 2;
+    const sight = findFinders(gray, seenWidth, seenHeight);
+    // Sizes are fractions of the picture's shorter side; the crop is CROP of it.
+    guide.note({ hit: false, sight: scale === 1 ? sight : { ...sight, size: sight.size / scale, clipped: false } });
+    return [];
+  };
+  return Object.assign(decode, { guide });
 }
 
 export const JSQR_PATH = "/portal/vendor/jsQR.min.js";
