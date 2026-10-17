@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 /// Domain tag of the call digest; one NUL follows it, then `u32be(len(tool))`, the tool name, the canonical arguments.
 pub const DIGEST_DOMAIN: &str = "aukora:door-call:v1";
-const MAX_ID: usize = 256;
+const MAX_ID: usize = 128;
 const MAX_TOOL: usize = 256;
 
 /// A request that passed every check of the wire: strict closed fields, canonical bytes, matching digest.
@@ -51,7 +51,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// A call id is 1..=256 printable ASCII bytes with no space (it is written to a line-oriented log).
+/// A call id is 1..=128 printable ASCII bytes with no space (it is written to a line-oriented log).
 pub fn valid_call_id(id: &str) -> bool {
     (1..=MAX_ID).contains(&id.len()) && id.bytes().all(|b| (0x21..=0x7e).contains(&b))
 }
@@ -189,7 +189,6 @@ mod tests {
     use super::test_line as line;
     use super::*;
     use base64::engine::general_purpose::STANDARD;
-    use base64::Engine as _;
 
     #[test]
     fn a_well_formed_request_parses() {
@@ -270,7 +269,8 @@ mod tests {
         assert!(!valid_call_id(""));
         assert!(!valid_call_id("has space"));
         assert!(!valid_call_id("new\nline"));
-        assert!(!valid_call_id(&"x".repeat(257)));
+        assert!(valid_call_id(&"x".repeat(128)));
+        assert!(!valid_call_id(&"x".repeat(129)));
         assert!(valid_tool("mcp__server__tool") && valid_tool("web_fetch"));
         assert!(!valid_tool("") && !valid_tool("a b") && !valid_tool("a\0b") && !valid_tool("caf\u{e9}"));
         assert_eq!(parse_request(&line("has space", "web_fetch", "{}", "net")).unwrap_err(), "bad-call-id");

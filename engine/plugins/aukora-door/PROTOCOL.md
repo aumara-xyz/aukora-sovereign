@@ -28,8 +28,8 @@ re-verifies itself.
 | Field | Type | Meaning |
 |---|---|---|
 | `v` | `1` | Protocol version. Any other value is denied. |
-| `call_id` | string | Unique per request: `<process nonce>-<counter>-<the model's call id, reduced to [A-Za-z0-9_.:-] and cut to 64 characters>`. 1..=256 printable ASCII bytes, no space. Echoed in the reply; the server consumes it once. |
-| `tool` | string | The tool name as dispatched (1..256 UTF-8 bytes, no NUL). |
+| `call_id` | string | Unique per request: `<process nonce>-<counter>-<the model's call id, reduced to [A-Za-z0-9_.:-] and cut to 64 characters>`. 1..=128 printable ASCII bytes, no space. Echoed in the reply; the server consumes it once. |
+| `tool` | string | The tool name as dispatched: 1..=256 bytes of `[A-Za-z0-9_.:-]`. The plugin accepts any well-formed name up to 256 bytes for its digest; the door refuses anything outside that alphabet as `bad-tool`. |
 | `args_canonical_b64` | string | Standard base64 of the C1 canonical UTF-8 text of the tool arguments. |
 | `digest_sha256` | string | 64 lowercase hex digits, the call digest below. A claim to be checked, never trusted. |
 | `class` | string | The plugin's channel class for the call (table below). A hint to be checked, never trusted. |
@@ -116,8 +116,8 @@ Implemented by `sovereign door serve` in `crates/supervisor/src/door` (see `crat
 3. Recompute the digest from `tool` and the decoded bytes and compare in constant time. A mismatch is deny
    `digest-mismatch`. **Execute only the bytes it just verified,** never a value from elsewhere.
 4. Re-derive the class from its own tool table and use the stricter of the two.
-5. Consume `call_id` once, durably (surviving a restart); a repeat is deny `replay`.
-6. Check the caller by `SO_PEERCRED` against its allowlist; an unknown peer is deny `peer`.
+5. Consume `call_id` once, durably (surviving a restart), when the policy would allow or ask about the call; a repeat is deny `replay`. Refused calls burn no id. Replay protection covers the ledger's kept window, not forever.
+6. Check the caller first, before reading anything: `SO_PEERCRED` against its allowlist; an unknown peer is deny `peer`. Rate-limit (`rate-limited`) before reading too.
 7. Apply policy, the owner's passkey where required, and write the Aura receipt naming the digest, the class, the
    decision and the capsule or rules hash.
 8. Fail closed on every error. Close after the single reply.

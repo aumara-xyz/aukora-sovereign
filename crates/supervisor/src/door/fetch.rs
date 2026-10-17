@@ -78,7 +78,7 @@ pub fn check_url(policy: &NetPolicy, text: &str) -> Result<Target, &'static str>
     }
     // The allowlist holds plain domain names only, so an IP literal (however it is written) can never match.
     let host = url.host_str().ok_or("host-not-allowed")?.to_ascii_lowercase();
-    if !policy.hosts.iter().any(|allowed| *allowed == host) {
+    if !policy.hosts.contains(&host) {
         return Err("host-not-allowed");
     }
     let port = url.port_or_known_default().ok_or("url-invalid")?;
@@ -88,9 +88,16 @@ pub fn check_url(policy: &NetPolicy, text: &str) -> Result<Target, &'static str>
     Ok(Target { url, host, port })
 }
 
-/// Resolve the host and refuse any non-public address. Returns the addresses to connect to.
-pub fn resolve_public(policy: &NetPolicy, target: &Target) -> Result<Vec<SocketAddr>, &'static str> {
-    let addrs: Vec<SocketAddr> = (target.host.as_str(), target.port).to_socket_addrs().map_err(|_| "resolve-failed")?.take(8).collect();
+/// Resolve the host and refuse any non-public address. Returns the addresses to connect to. The lookup runs on a
+/// blocking thread under the policy deadline, so a slow resolver cannot hold the connection slot.
+pub async fn resolve_public(policy: &NetPolicy, target: &Target) -> Result<Vec<SocketAddr>, &'static str> {
+    let (host, port) = (target.host.clone(), target.port);
+    let lookup = tokio::task::spawn_blocking(move || (host.as_str(), port).to_socket_addrs().map(|found| found.take(8).collect::<Vec<_>>()));
+    let addrs = tokio::time::timeout(Duration::from_millis(policy.timeout_ms), lookup)
+        .await
+        .map_err(|_| "resolve-timeout")?
+        .map_err(|_| "resolve-failed")?
+        .map_err(|_| "resolve-failed")?;
     if addrs.is_empty() {
         return Err("resolve-failed");
     }
@@ -114,22 +121,23 @@ fn client(policy: &NetPolicy, target: &Target, addrs: &[SocketAddr]) -> Result<r
         .map_err(|_| "fetch-failed")
 }
 
-/// Fetch one allowlisted URL and shape the result as DSH's `web_fetch` output.
-pub async fn fetch(policy: &NetPolicy, text: &str) -> Result<Value, String> {
-    let target = check_url(policy, text).map_err(str::to_owned)?;
-    let addrs = resolve_public(policy, &target).map_err(str::to_owned)?;
-    let client = client(policy, &target, &addrs).map_err(str::to_owned)?;
-    let mut response = client.get(target.url.clone()).send().await.map_err(|e| if e.is_timeout() { "fetch-timeout".to_owned() } else { "fetch-failed".to_owned() })?;
+/// GET the target with an already pinned client and shape DSH's `web_fetch` output; the body is cut at `max_bytes`.
+async fn get(client: &reqwest::Client, target: &Target, max_bytes: usize) -> Result<Value, String> {
+    let mut response = client
+        .get(target.url.clone())
+        .send()
+        .await
+        .map_err(|e| if e.is_timeout() { "fetch-timeout".to_owned() } else { "fetch-failed".to_owned() })?;
     let status = response.status();
     if status.is_redirection() {
-        let location = response.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(1024).collect::<String>();
+        let location: String = response.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(1024).collect();
         return Ok(json!({"url": target.url.as_str(), "statusCode": status.as_u16(), "body": {"kind": "text", "content": format!("redirect: {location}")}, "truncated": false}));
     }
     let mut body: Vec<u8> = Vec::new();
     let mut truncated = false;
-    while let Some(chunk) = response.chunk().await.map_err(|_| "fetch-failed".to_owned())? {
-        if body.len() + chunk.len() > policy.max_bytes {
-            body.extend_from_slice(&chunk[..policy.max_bytes - body.len()]);
+    while let Some(chunk) = response.chunk().await.map_err(|e| if e.is_timeout() { "fetch-timeout".to_owned() } else { "fetch-failed".to_owned() })? {
+        if body.len() + chunk.len() > max_bytes {
+            body.extend_from_slice(&chunk[..max_bytes - body.len()]);
             truncated = true;
             break;
         }
@@ -137,6 +145,38 @@ pub async fn fetch(policy: &NetPolicy, text: &str) -> Result<Value, String> {
     }
     let content = String::from_utf8_lossy(&body).into_owned();
     Ok(json!({"url": target.url.as_str(), "statusCode": status.as_u16(), "body": {"kind": "text", "content": content}, "truncated": truncated}))
+}
+
+/// Cut the body (at a character boundary, setting `truncated`) until the whole value serializes within `limit`, so a
+/// full-size page whose JSON escaping grew it is shortened here rather than refused by the client after it ran.
+pub fn fit(value: &mut Value, limit: usize) {
+    loop {
+        if value.to_string().len() <= limit {
+            return;
+        }
+        let Some(content) = value.pointer_mut("/body/content") else { return };
+        let Some(text) = content.as_str() else { return };
+        if text.is_empty() {
+            return;
+        }
+        let mut cut = text.len() / 2;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let shorter = text[..cut].to_owned();
+        *content = Value::String(shorter);
+        value["truncated"] = Value::Bool(true);
+    }
+}
+
+/// Fetch one allowlisted URL and shape the result as DSH's `web_fetch` output, within `reply_limit` serialized bytes.
+pub async fn fetch(policy: &NetPolicy, text: &str, reply_limit: usize) -> Result<Value, String> {
+    let target = check_url(policy, text).map_err(str::to_owned)?;
+    let addrs = resolve_public(policy, &target).await.map_err(str::to_owned)?;
+    let client = client(policy, &target, &addrs).map_err(str::to_owned)?;
+    let mut value = get(&client, &target, policy.max_bytes).await?;
+    fit(&mut value, reply_limit);
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -180,43 +220,94 @@ mod tests {
         }
     }
 
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
     #[test]
     fn a_name_that_resolves_to_a_private_address_is_refused() {
         let p = policy();
         let target = Target { url: Url::parse("https://localhost/").unwrap(), host: "localhost".into(), port: 443 };
-        assert_eq!(resolve_public(&p, &target).unwrap_err(), "host-resolves-private");
+        assert_eq!(runtime().block_on(resolve_public(&p, &target)).unwrap_err(), "host-resolves-private");
     }
 
-    #[test]
-    fn a_fetch_returns_the_tool_shape_and_caps_the_body() {
+    /// A one-shot HTTP server on loopback; the allowlisted name `localhost.example` is mapped to it with
+    /// `resolve_to_addrs`, exactly as the door pins a checked address.
+    fn serve_once(response: String) -> (u16, std::thread::JoinHandle<()>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
                 let mut buffer = [0u8; 1024];
                 let _ = stream.read(&mut buffer);
-                let body = "x".repeat(10_000);
-                let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}", body.len());
+                let _ = stream.write_all(response.as_bytes());
             }
         });
+        (port, handle)
+    }
+
+    fn local_policy(port: u16) -> NetPolicy {
         let mut p = policy();
         p.hosts = vec!["localhost.example".into()];
         p.ports = vec![port];
         p.allow_http = true;
         p.allow_private = true;
-        // The allowlisted name is mapped to the loopback listener by resolve_to_addrs, standing in for DNS.
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        p
+    }
+
+    fn run_get(port: u16, max_bytes: usize) -> Value {
+        let p = local_policy(port);
         let target = check_url(&p, &format!("http://localhost.example:{port}/page")).unwrap();
         let client = client(&p, &target, &[SocketAddr::from(([127, 0, 0, 1], port))]).unwrap();
-        let value = runtime.block_on(async {
-            let mut response = client.get(target.url.clone()).send().await.unwrap();
-            let mut body = Vec::new();
-            while let Some(chunk) = response.chunk().await.unwrap() {
-                body.extend_from_slice(&chunk);
-            }
-            (response.status().as_u16(), body.len())
-        });
-        assert_eq!(value, (200, 10_000));
+        runtime().block_on(get(&client, &target, max_bytes)).unwrap()
+    }
+
+    #[test]
+    fn a_fetch_returns_the_tool_shape_and_cuts_the_body_at_the_cap() {
+        let body = "x".repeat(10_000);
+        let (port, server) = serve_once(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}", body.len()));
+        let value = run_get(port, 4096);
+        server.join().unwrap();
+        assert_eq!(value["statusCode"], 200);
+        assert_eq!(value["truncated"], true);
+        assert_eq!(value["body"]["kind"], "text");
+        assert_eq!(value["body"]["content"].as_str().unwrap().len(), 4096);
+        assert!(value["url"].as_str().unwrap().starts_with("http://localhost.example:"));
+        let small = "hello";
+        let (port, server) = serve_once(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{small}", small.len()));
+        let value = run_get(port, 4096);
+        server.join().unwrap();
+        assert_eq!((value["truncated"].clone(), value["body"]["content"].clone()), (json!(false), json!("hello")));
+    }
+
+    #[test]
+    fn a_redirect_is_reported_not_followed() {
+        let (port, server) = serve_once("HTTP/1.1 302 Found\r\nLocation: https://elsewhere.example/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned());
+        let value = run_get(port, 4096);
+        server.join().unwrap();
+        assert_eq!(value["statusCode"], 302);
+        assert_eq!(value["body"]["content"], "redirect: https://elsewhere.example/x");
+        assert_eq!(value["truncated"], false);
+    }
+
+    #[test]
+    fn a_body_that_grows_when_escaped_is_cut_to_fit_the_reply_limit() {
+        // Control characters serialize to six bytes each: a body within max_bytes can still exceed the reply line.
+        let content = "\u{1}".repeat(50_000);
+        let mut value = json!({"url": "https://docs.rs/", "statusCode": 200, "body": {"kind": "text", "content": content}, "truncated": false});
+        assert!(value.to_string().len() > 300_000);
+        fit(&mut value, 100_000);
+        assert!(value.to_string().len() <= 100_000);
+        assert_eq!(value["truncated"], true);
+        assert!(!value["body"]["content"].as_str().unwrap().is_empty());
+        // Already small: untouched.
+        let mut small = json!({"url": "u", "statusCode": 200, "body": {"kind": "text", "content": "ok"}, "truncated": false});
+        fit(&mut small, 100_000);
+        assert_eq!(small["truncated"], false);
+        // Multi-byte text is cut on a character boundary.
+        let mut wide = json!({"body": {"kind": "text", "content": "\u{20ac}".repeat(1000)}, "truncated": false});
+        fit(&mut wide, 1500);
+        assert!(wide["body"]["content"].as_str().unwrap().chars().all(|c| c == '\u{20ac}'));
     }
 }

@@ -2,14 +2,16 @@
 //! `sovereign door serve --socket PATH --policy FILE`: the Rust door for the engine's crossings.
 //!
 //! The DSH door plugin (engine/plugins/aukora-door) sends every call that is not workspace-local here, one request
-//! line per connection. The door believes nothing in the request: it checks the peer, parses strictly, re-derives the
-//! class by channel, recomputes the digest over the bytes it will act on, consumes the call id durably, applies the
-//! policy and, only if the policy says allow, executes the crossing itself. Every error is a refusal.
+//! line per connection. The door believes nothing in the request: it checks the peer first, rate-limits, parses
+//! strictly, re-derives the class by channel, recomputes the digest over the bytes it will act on, applies the policy,
+//! consumes the call id durably and, only if the policy says allow, executes the crossing itself. Every error is a
+//! refusal.
 //!
 //! What it is not: a wall. The OS confines the engine; this process is where authority and keys live.
 
 mod classify;
 mod fetch;
+mod files;
 mod ledger;
 mod memory;
 mod peer;
@@ -28,7 +30,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use wire::{Decision, Request};
 
@@ -40,28 +42,65 @@ fn refuse(reason: &'static str) -> Refusal {
     Refusal { organ: "supervisor", reason }
 }
 
-/// The door: policy, the durable ledgers and the runtime the net executor uses.
+/// A token bucket: `rate` requests per second sustained, `burst` at once.
+struct Bucket {
+    state: Mutex<(f64, Instant)>,
+    rate: f64,
+    burst: f64,
+}
+
+impl Bucket {
+    fn new(rate: u32, burst: u32) -> Self {
+        Self { state: Mutex::new((f64::from(burst), Instant::now())), rate: f64::from(rate), burst: f64::from(burst) }
+    }
+
+    fn take(&self) -> bool {
+        let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        let (tokens, last) = &mut *guard;
+        *tokens = (*tokens + now.duration_since(*last).as_secs_f64() * self.rate).min(self.burst);
+        *last = now;
+        if *tokens >= 1.0 {
+            *tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Releases a connection slot when its thread ends, however it ends.
+struct Slot(Arc<Door>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The door: policy, the durable ledgers, the rate limit and the runtime the net executor uses.
 pub struct Door {
     policy: Policy,
     ledger: Ledger,
     asks: AskLog,
+    bucket: Bucket,
     runtime: tokio::runtime::Runtime,
     active: AtomicUsize,
 }
 
 impl Door {
-    /// Open the state folder (0700), lock and load the consumed ids, open the asks log.
+    /// Open the state folder (a real directory of ours, 0700), lock and load the consumed ids, open the asks log.
     pub fn open(policy: Policy) -> Result<Door> {
-        std::fs::create_dir_all(&policy.state_dir).map_err(|_| refuse("door-state"))?;
-        std::fs::set_permissions(&policy.state_dir, std::fs::Permissions::from_mode(0o700)).map_err(|_| refuse("door-state"))?;
-        let ledger = Ledger::open(&policy.state_dir.join("consumed.log"))?;
+        files::private_dir(&policy.state_dir, "door-state")?;
+        let ledger = Ledger::open(&policy.state_dir)?;
         let asks = AskLog::open(&policy.state_dir.join("asks.jsonl"))?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .map_err(|_| refuse("door-state"))?;
-        Ok(Door { policy, ledger, asks, runtime, active: AtomicUsize::new(0) })
+        let bucket = Bucket::new(policy.rate_per_second, policy.rate_burst);
+        Ok(Door { policy, ledger, asks, bucket, runtime, active: AtomicUsize::new(0) })
     }
 
     fn peer_allowed(&self, peer: Peer) -> bool {
@@ -74,10 +113,10 @@ impl Door {
 
     /// Decide one request line. Returns the call id to echo and the decision. Never panics on input.
     pub fn judge(&self, peer: Peer, line: &[u8]) -> (String, Decision) {
-        let guess = wire::salvage_call_id(line);
         if !self.peer_allowed(peer) {
-            return (guess, Decision::Deny("peer".into()));
+            return ("unknown".to_owned(), Decision::Deny("peer".into()));
         }
+        let guess = wire::salvage_call_id(line);
         let request = match wire::parse_request(line) {
             Ok(request) => request,
             Err(code) => return (guess, Decision::Deny(code.into())),
@@ -88,15 +127,20 @@ impl Door {
             Ok(class) => class,
             Err(code) => return (id, Decision::Deny(code.into())),
         };
+        let action = self.policy.action(class);
+        if action == Action::Deny {
+            // A refusal costs the engine nothing to repeat and burns no id.
+            return (id, Decision::Deny(format!("{}-denied", class.name())));
+        }
         match self.ledger.consume(&id) {
             Ok(true) => {}
             Ok(false) => return (id, Decision::Deny("replay".into())),
             Err(_) => return (id, Decision::Deny("door-state".into())),
         }
-        let decision = match self.policy.action(class) {
-            Action::Deny => Decision::Deny(format!("{}-denied", class.name())),
+        let decision = match action {
             Action::Ask => self.ask(class, &request),
             Action::Allow => self.execute(class, &request),
+            Action::Deny => Decision::Deny(format!("{}-denied", class.name())),
         };
         (id, decision)
     }
@@ -113,7 +157,7 @@ impl Door {
         .to_string();
         match self.asks.record(&line) {
             Ok(()) => Decision::Ask(format!("ask-{}", class.name())),
-            Err(_) => Decision::Deny("door-state".into()),
+            Err(_) => Decision::Deny("asks-full".into()),
         }
     }
 
@@ -138,26 +182,60 @@ impl Door {
             (ValueView::Object(members), Some(ValueView::Text(url))) if members.len() == 1 => url,
             _ => return Decision::Deny("bad-args".into()),
         };
-        match self.runtime.block_on(fetch::fetch(net, url)) {
+        // The whole reply line must fit what the plugin accepts, so a full-size page is cut here, not refused after it ran.
+        let reply_limit = self.policy.max_frame_bytes.saturating_sub(2048);
+        match self.runtime.block_on(fetch::fetch(net, url, reply_limit)) {
             Ok(value) => Decision::Allow { value, text: None },
             Err(code) => Decision::Deny(code),
         }
     }
 
-    /// Serve one connection: read one line, decide, write one reply, close.
-    pub fn connection(&self, mut stream: UnixStream) {
-        let _ = stream.set_write_timeout(Some(WRITE_DEADLINE));
+    /// Serve one accepted connection: the caller is whoever the kernel says it is (tests; `serve` knows the peer already).
+    #[cfg(test)]
+    pub fn connection(&self, stream: UnixStream) {
+        let peer = peer::of(&stream);
+        self.serve_stream(stream, peer);
+    }
+
+    /// Check the peer and the rate first, then read one line, decide, write one reply, close.
+    pub fn serve_stream(&self, mut stream: UnixStream, peer: Peer) {
+        if !self.peer_allowed(peer) {
+            write_reply(&mut stream, &wire::reply_line("unknown", &Decision::Deny("peer".into())));
+            return;
+        }
+        if !self.bucket.take() {
+            write_reply(&mut stream, &wire::reply_line("unknown", &Decision::Deny("rate-limited".into())));
+            return;
+        }
         let reply = match read_line(&mut stream, self.policy.max_frame_bytes) {
             Read1::Gone => return,
             Read1::TooLarge => wire::reply_line("unknown", &Decision::Deny("too-large".into())),
             Read1::TrailingBytes => wire::reply_line("unknown", &Decision::Deny("bad-request".into())),
             Read1::Line(line) => {
-                let (id, decision) = self.judge(peer::of(&stream), &line);
+                let (id, decision) = self.judge(peer, &line);
                 wire::reply_line(&id, &decision)
             }
         };
-        let _ = stream.write_all(reply.as_bytes()).and_then(|()| stream.flush());
+        write_reply(&mut stream, &reply);
     }
+}
+
+/// Write the whole reply within one overall deadline (a reader that never reads cannot hold the slot).
+fn write_reply(stream: &mut UnixStream, reply: &str) {
+    let started = Instant::now();
+    let bytes = reply.as_bytes();
+    let mut sent = 0;
+    while sent < bytes.len() {
+        let Some(left) = WRITE_DEADLINE.checked_sub(started.elapsed()) else { return };
+        if stream.set_write_timeout(Some(left.max(Duration::from_millis(1)))).is_err() {
+            return;
+        }
+        match stream.write(&bytes[sent..]) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => sent += n,
+        }
+    }
+    let _ = stream.flush();
 }
 
 enum Read1 {
@@ -218,21 +296,28 @@ pub fn serve(policy: Policy, socket: &Path) -> Result<()> {
         // Without kernel peer credentials a uid allowlist would silently allow everyone.
         return Err(refuse("door-policy"));
     }
+    policy.check_peer_uids(files::euid())?;
+    files::parent_not_writable_by_others(socket, "door-socket")?;
     let door = Arc::new(Door::open(policy)?);
     let listener = bind(socket, by_uid)?;
     eprintln!("door: serving on {}", socket.display());
     for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        if door.active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
-            door.active.fetch_sub(1, Ordering::SeqCst);
-            let mut stream = stream;
-            let _ = stream.write_all(wire::reply_line("unknown", &Decision::Deny("busy".into())).as_bytes());
+        let Ok(mut stream) = stream else { continue };
+        let peer = peer::of(&stream);
+        if !door.peer_allowed(peer) {
+            // Turned away before it costs a slot or a thread.
+            write_reply(&mut stream, &wire::reply_line("unknown", &Decision::Deny("peer".into())));
             continue;
         }
-        let door = Arc::clone(&door);
-        std::thread::spawn(move || {
-            door.connection(stream);
+        if door.active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
             door.active.fetch_sub(1, Ordering::SeqCst);
+            write_reply(&mut stream, &wire::reply_line("unknown", &Decision::Deny("busy".into())));
+            continue;
+        }
+        let slot = Slot(Arc::clone(&door));
+        let _ = std::thread::Builder::new().spawn(move || {
+            let slot = slot;
+            slot.0.serve_stream(stream, peer);
         });
     }
     Ok(())
@@ -431,7 +516,8 @@ mod tests {
         let door = Arc::clone(door);
         let handle = std::thread::spawn(move || door.connection(server));
         let mut client = client;
-        client.write_all(bytes).unwrap();
+        // The door may answer and close before it reads (a refused peer or rate): a failed write is then expected.
+        let _ = client.write_all(bytes);
         let mut reply = String::new();
         std::io::BufReader::new(client).read_line(&mut reply).unwrap();
         handle.join().unwrap();
@@ -468,6 +554,82 @@ mod tests {
         let dir = temp("platform");
         let text = policy_text(&dir.join("state"), "{\"mode\":\"peercred\",\"uids\":[1001]}", "", "");
         assert!(serve(Policy::parse(&text).unwrap(), &dir.join("door.sock")).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_denied_request_burns_no_id() {
+        let (door, dir) = door("noburn", "\"net\":\"deny\"", "");
+        let request = line("call-1", "web_fetch", FETCH, "net");
+        for _ in 0..3 {
+            let (_, decision) = door.judge(Peer::Uid(1001), &request);
+            assert_eq!(denied(&decision), "net-denied");
+        }
+        assert_eq!(door.ledger.len(), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_peer_off_the_allowlist_is_answered_without_being_read() {
+        let (door, dir) = door("unread", "\"plugin\":\"ask\"", "");
+        let door = Arc::new(door);
+        let (client, server) = UnixStream::pair().unwrap();
+        let worker = Arc::clone(&door);
+        let handle = std::thread::spawn(move || worker.serve_stream(server, Peer::Uid(0)));
+        // The client never writes; the reply must still come.
+        let mut reply = String::new();
+        std::io::BufReader::new(client).read_line(&mut reply).unwrap();
+        handle.join().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(value["refusal"], "peer");
+        assert_eq!(door.ledger.len(), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn requests_beyond_the_rate_are_refused_before_they_are_read() {
+        let dir = temp("rate");
+        let text = policy_text(&dir.join("state"), "{\"mode\":\"socket-permissions\"}", "\"fs-outside\":\"deny\"", ",\"rate_per_second\":1,\"rate_burst\":2");
+        let door = Arc::new(Door::open(Policy::parse(&text).unwrap()).unwrap());
+        let ask = |id: &str| exchange(&door, &line(id, "read", "{\"file_path\":\"/etc/passwd\"}", "fs-outside"));
+        assert_eq!(ask("r-1")["refusal"], "fs-outside-denied");
+        assert_eq!(ask("r-2")["refusal"], "fs-outside-denied");
+        assert_eq!(ask("r-3")["refusal"], "rate-limited");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_bucket_refills_over_time() {
+        let bucket = Bucket::new(100, 2);
+        assert!(bucket.take() && bucket.take());
+        assert!(!bucket.take());
+        std::thread::sleep(Duration::from_millis(40));
+        assert!(bucket.take());
+    }
+
+    #[test]
+    fn the_socket_is_bound_once_and_a_stale_one_is_replaced() {
+        let dir = temp("bind");
+        let path = dir.join("door.sock");
+        let first = bind(&path, false).unwrap();
+        assert!(bind(&path, false).is_err());
+        drop(first);
+        let again = bind(&path, false);
+        assert!(again.is_ok());
+        std::fs::write(dir.join("not-a-socket"), "x").unwrap();
+        assert!(bind(&dir.join("not-a-socket"), false).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_state_folder_that_is_a_symlink_is_refused() {
+        let dir = temp("symlink-state");
+        let real = dir.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = dir.join("state");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let text = policy_text(&link, "{\"mode\":\"socket-permissions\"}", "", "");
+        assert!(Door::open(Policy::parse(&text).unwrap()).is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -10,7 +10,6 @@ use super::policy::MemoryPolicy;
 use canon::json::{self, Value};
 use serde_json::{json, Value as Json};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -59,11 +58,8 @@ pub fn check_ceilings(method: &str, params: &Json) -> Result<(), &'static str> {
 }
 
 fn read_token(policy: &MemoryPolicy) -> Result<String, &'static str> {
-    let file = std::fs::File::open(&policy.token_file).map_err(|_| "kira-unavailable")?;
-    let meta = file.metadata().map_err(|_| "kira-unavailable")?;
-    if !meta.is_file() || meta.permissions().mode() & 0o077 != 0 {
-        return Err("kira-token-mode");
-    }
+    // Opened without following a symlink and checked on the descriptor: ours (or root's), no group or other access.
+    let file = super::files::open_trusted(&policy.token_file, 4096, 0o077, "kira-token-mode").map_err(|_| "kira-token-mode")?;
     let mut text = String::new();
     file.take(257).read_to_string(&mut text).map_err(|_| "kira-unavailable")?;
     let token = text.trim();
@@ -106,6 +102,7 @@ pub fn forward(policy: &MemoryPolicy, tool: &str, args: &Value) -> Result<Json, 
 mod tests {
     use super::*;
     use canon::json::parse_strict;
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 
     fn args(text: &str) -> Value {

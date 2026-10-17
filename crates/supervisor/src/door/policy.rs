@@ -5,13 +5,16 @@
 //! something the door cannot do safely (allow `fs-outside`; allow a class that has no executor) does not load.
 
 use super::classify::Class;
+use super::files;
 use canon::{Refusal, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const MAX_POLICY_BYTES: u64 = 64 << 10;
+/// The only ports a fetch may use: the door fetches web pages, not arbitrary services.
+const WEB_PORTS: [u16; 4] = [80, 443, 8080, 8443];
 
 fn refuse() -> Refusal {
     Refusal { organ: "supervisor", reason: "door-policy" }
@@ -78,6 +81,9 @@ pub struct Policy {
     pub net: Option<NetPolicy>,
     pub memory: Option<MemoryPolicy>,
     pub max_frame_bytes: usize,
+    /// Sustained requests per second the door will look at, and the burst it tolerates.
+    pub rate_per_second: u32,
+    pub rate_burst: u32,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +99,8 @@ struct RawPolicy {
     net: Option<RawNet>,
     memory: Option<RawMemory>,
     max_frame_bytes: Option<usize>,
+    rate_per_second: Option<u32>,
+    rate_burst: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -177,7 +185,7 @@ impl Policy {
                 let ports = if net.ports.is_empty() { vec![if net.allow_http { 80 } else { 443 }] } else { net.ports };
                 let max_bytes = net.max_bytes.unwrap_or(1 << 20);
                 let timeout_ms = net.timeout_ms.unwrap_or(15_000);
-                if hosts.is_empty() || hosts.len() > 64 || !hosts.iter().all(|h| host_name(h)) || ports.contains(&0) {
+                if hosts.is_empty() || hosts.len() > 64 || !hosts.iter().all(|h| host_name(h)) || !ports.iter().all(|p| WEB_PORTS.contains(p)) {
                     return Err(refuse());
                 }
                 if !(1_024..=(8 << 20)).contains(&max_bytes) || !(100..=60_000).contains(&timeout_ms) {
@@ -211,6 +219,11 @@ impl Policy {
         if !(1_024..=(16 << 20)).contains(&max_frame_bytes) {
             return Err(refuse());
         }
+        let rate_per_second = raw.rate_per_second.unwrap_or(20);
+        let rate_burst = raw.rate_burst.unwrap_or(100);
+        if !(1..=1_000).contains(&rate_per_second) || !(1..=10_000).contains(&rate_burst) {
+            return Err(refuse());
+        }
         Ok(Policy {
             peers,
             workspace_roots: raw.workspace_roots,
@@ -219,17 +232,26 @@ impl Policy {
             net,
             memory,
             max_frame_bytes,
+            rate_per_second,
+            rate_burst,
         })
     }
 
-    /// Read a policy file: a regular file, small, and not writable by group or others.
+    /// Read a policy file: a regular file of ours (or root's), small, not writable by group or others, opened without
+    /// following a final symlink and checked on the open descriptor.
     pub fn load(path: &Path) -> Result<Policy> {
-        let meta = std::fs::symlink_metadata(path).map_err(|_| refuse())?;
-        if !meta.is_file() || meta.len() > MAX_POLICY_BYTES || meta.permissions().mode() & 0o022 != 0 {
-            return Err(refuse());
-        }
-        let text = std::fs::read_to_string(path).map_err(|_| refuse())?;
+        let mut file = files::open_trusted(path, MAX_POLICY_BYTES, 0o022, "door-policy")?;
+        let mut text = String::new();
+        file.read_to_string(&mut text).map_err(|_| refuse())?;
         Policy::parse(&text)
+    }
+
+    /// A uid allowlist that includes root or the door's own user would give the engine the door's authority.
+    pub fn check_peer_uids(&self, effective: u32) -> Result<()> {
+        match &self.peers {
+            PeerRule::Uids(uids) if uids.iter().any(|uid| *uid == 0 || *uid == effective) => Err(refuse()),
+            _ => Ok(()),
+        }
     }
 
     /// The action for a class; anything not listed is denied.
@@ -293,6 +315,32 @@ mod tests {
         assert!(Policy::parse(&BASE.replace("peercred", "anyone")).is_err());
         let dev = BASE.replace("\"mode\":\"peercred\",\"uids\":[1001]", "\"mode\":\"socket-permissions\"");
         assert_eq!(Policy::parse(&dev).unwrap().peers, PeerRule::SocketPermissions);
+    }
+
+    #[test]
+    fn the_engine_may_not_be_root_or_the_door() {
+        let policy = Policy::parse(BASE).unwrap();
+        assert!(policy.check_peer_uids(1000).is_ok());
+        assert!(policy.check_peer_uids(1001).is_err());
+        let root = Policy::parse(&BASE.replace("[1001]", "[1001,0]")).unwrap();
+        assert!(root.check_peer_uids(1000).is_err());
+        let dev = Policy::parse(&BASE.replace("\"mode\":\"peercred\",\"uids\":[1001]", "\"mode\":\"socket-permissions\"")).unwrap();
+        assert!(dev.check_peer_uids(0).is_ok());
+    }
+
+    #[test]
+    fn fetch_ports_are_web_ports_and_the_rate_is_bounded() {
+        let net = |ports: &str| with(&format!("\"net\":{{\"hosts\":[\"docs.rs\"],\"ports\":{ports}}}"));
+        assert!(Policy::parse(&net("[443,8443]")).is_ok());
+        for bad in ["[22]", "[25]", "[443,5432]", "[0]"] {
+            assert!(Policy::parse(&net(bad)).is_err(), "{bad}");
+        }
+        let defaults = Policy::parse(BASE).unwrap();
+        assert_eq!((defaults.rate_per_second, defaults.rate_burst), (20, 100));
+        assert!(Policy::parse(&with("\"rate_per_second\":0")).is_err());
+        assert!(Policy::parse(&with("\"rate_per_second\":5000")).is_err());
+        assert!(Policy::parse(&with("\"rate_burst\":0")).is_err());
+        assert_eq!(Policy::parse(&with("\"rate_per_second\":5,\"rate_burst\":7")).unwrap().rate_burst, 7);
     }
 
     #[test]
