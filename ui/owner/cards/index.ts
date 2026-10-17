@@ -49,18 +49,20 @@ export class ApprovalCards implements ApprovalPaneService {
     const signal = lifetime.signal;
     const document = context.host.ownerDocument;
     const review = document.createElement("section");
-    review.className = "approval-review";
+    // The stage: the card centred like a portal popping open; the dim over the whole site is the shell's backdrop.
+    review.className = "approval-review approval-stage";
     const stylesheet = document.createElement("link");
     stylesheet.rel = "stylesheet";
     stylesheet.href = new URL("./cards.css", import.meta.url).href;
     const status = document.createElement("p");
     const retry = document.createElement("button");
     retry.type = "button";
+    retry.className = "ak-action ak-tone-blue";
     retry.textContent = "Review again";
     retry.hidden = true;
     const again = document.createElement("button");
     again.type = "button";
-    again.className = "approval-again";
+    again.className = "ak-action ak-tone-blue approval-again";
     again.textContent = "Ask again";
     again.hidden = true;
     status.setAttribute("role", "status");
@@ -139,17 +141,27 @@ export class ApprovalCards implements ApprovalPaneService {
         await verifyCommitments(cardBytes, auth);
         const challenge = await domainDigest("aukora:owner-authorization:v1", authBytes);
         checkAbort(signal);
-        const cardView = renderCard(document, card);
-        const digest = document.createElement("div");
-        digest.className = "approval-digest";
-        const digestLabel = document.createElement("span");
-        digestLabel.textContent = "SHA-256 · exact bytes";
-        const digestValue = document.createElement("code");
-        digestValue.textContent = auth.new_sha256;
-        digest.append(digestLabel, digestValue);
-        cardView.insertBefore(digest, cardView.children[2]);
+        const cardView = renderCard(document, card, { target: auth.target, op: auth.op });
+        const body = cardView.querySelector<HTMLElement>(".approval-body");
+        if (!body) refuse("render");
+        // The SHA-256 of the exact new bytes, first and whole: the passkey signs an authorization naming it.
+        const digestLabel = document.createElement("p");
+        digestLabel.className = "ak-label";
+        digestLabel.textContent = "Exact bytes · SHA-256";
+        const digest = document.createElement("dl");
+        digest.className = "ak-fields approval-digest";
+        const digestKey = document.createElement("dt");
+        digestKey.textContent = "new_sha256";
+        const digestValue = document.createElement("dd");
+        const digestCode = document.createElement("code");
+        digestCode.textContent = auth.new_sha256;
+        digestValue.append(digestCode);
+        digest.append(digestKey, digestValue);
+        body.prepend(digestLabel, digest);
         const authorize = document.createElement("button");
         authorize.type = "button";
+        // Unmistakable: the card's tone, ringed as an opened portal, with the owner mark and the passkey cue.
+        authorize.className = `ak-action ${card.risk === "critical" ? "ak-tone-gold" : "ak-tone-blue"} approval-passkey`;
         const labels = { apply: "Approve", retire: "Retire", release: "Approve release",
           grant: "Approve grant", permission: "Approve permission" };
         const actionLabel = document.createElement("span");
@@ -159,12 +171,13 @@ export class ApprovalCards implements ApprovalPaneService {
         authorize.append(ownerIcon("owner"), actionLabel, passkeyCue);
         const decline = document.createElement("button");
         decline.type = "button";
-        decline.className = "approval-decline";
+        decline.className = "ak-action ak-tone-muted approval-decline";
         decline.textContent = "Decline";
         const controls = document.createElement("div");
-        controls.className = "approval-actions";
+        controls.className = "ak-actionrow approval-actions";
         controls.append(decline, authorize);
-        review.append(cardView, renderAuthorization(document, auth), controls);
+        body.append(renderAuthorization(document, auth), controls);
+        review.append(cardView);
         if (refresh) {
           const message = document.createElement("span");
           message.textContent = "Review renewed. Check the card, then approve.";

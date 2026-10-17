@@ -29,47 +29,140 @@ function exact(document: Document, value: JsonValue): HTMLElement {
   return body;
 }
 
-export function renderAuthorization(document: Document, authorization: Authorization): HTMLElement {
+/** A fold for exact material (changes, the whole card, the authorization): a static record row of the primitives. */
+function fold(document: Document, title: string, value: JsonValue): HTMLElement {
   const details = document.createElement("details");
+  details.className = "ak-row ak-row--static approval-fold";
   const label = document.createElement("summary");
-  label.textContent = "Authorization";
-  details.append(label, exact(document, authorization));
+  label.className = "ak-row__head";
+  const copy = document.createElement("span");
+  copy.className = "ak-row__copy";
+  const name = document.createElement("span");
+  name.className = "ak-row__title";
+  name.textContent = title;
+  copy.append(name);
+  const expander = document.createElement("span");
+  expander.className = "ak-expander";
+  expander.setAttribute("aria-hidden", "true");
+  label.append(copy, expander);
+  const body = document.createElement("div");
+  body.className = "ak-row__body";
+  body.append(exact(document, value));
+  details.append(label, body);
   return details;
 }
 
-export function renderCard(document: Document, card: ApprovalCard): HTMLElement {
+export function renderAuthorization(document: Document, authorization: Authorization): HTMLElement {
+  return fold(document, "Authorization", authorization);
+}
+
+/** What kind of card this is, by the target the owner's passkey would sign (shown, never trusted for anything). */
+export type CardKind = "release" | "plugins" | "key" | "budget" | "door" | "grant" | "change";
+
+export function cardKind(target: string, op: Authorization["op"]): CardKind {
+  if (op === "grant" || op === "permission" || target === "door/standing-grants.json") return "grant";
+  if (target === "release") return "release";
+  if (target === "engine/plugin-set.json") return "plugins";
+  if (target === "engine/model-key.json") return "key";
+  if (target === "engine/model-budget.json") return "budget";
+  if (target.startsWith("door/")) return "door";
+  return "change";
+}
+
+const KIND_TITLE: Readonly<Record<CardKind, string>> = {
+  release: "Release", plugins: "Plugin set", key: "Model key", budget: "Model budget", door: "Door ask",
+  grant: "Standing grant", change: "Change",
+};
+
+// Glyphs on a 24 grid, drawn with the icon tile's 1.4 stroke and round caps (rule 10).
+const KIND_GLYPH: Readonly<Record<CardKind, string>> = {
+  release: "M12 19V5M6 11l6-6 6 6M5 21h14",
+  plugins: "M9 3h6v4a2 2 0 1 0 0 4v4h-4a2 2 0 1 1-4 0H3V9h4a2 2 0 1 0 0-4H3",
+  key: "M14.5 9.5a4.5 4.5 0 1 0-4.2 4.5L13 16.5h2.5V19H18v2.5h3v-3.2l-6.6-6.6c.1-.4.1-.8.1-1.2zM8 8h.01",
+  budget: "M12 3v18M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3S9.5 10.4 12 11s4.5 1.8 4.5 3.5-2 3-4.5 3-4.5-1.3-4.5-3",
+  door: "M6 21V4.5L15 3v18M6 21h12M15 5h3v16M12 12h.01",
+  grant: "M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3zM9 12l2 2 4-4",
+  change: "M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4",
+};
+
+function glyph(document: Document, kind: CardKind): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.4");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", KIND_GLYPH[kind]);
+  svg.append(path);
+  return svg;
+}
+
+function label(document: Document, text: string): HTMLElement {
+  const element = document.createElement("p");
+  element.className = "ak-label";
+  element.textContent = text;
+  return element;
+}
+
+/**
+ * The card as a portal button opened over the whole site (rule 10). Everything the passkey signs is shown whole:
+ * the summary wraps (never an ellipsis), every fact is its exact JSON in a fine-lined field table that wraps anywhere,
+ * and the exact changes, card and authorization fold open in place. Every string is set with textContent.
+ * `context` (the authorization's target and operation) only chooses the glyph and the one-line kind.
+ */
+export function renderCard(document: Document, card: ApprovalCard,
+  context?: { readonly target: string; readonly op: Authorization["op"] }): HTMLElement {
+  const kind = context ? cardKind(context.target, context.op) : "change";
+  // Tone by risk: routine blue, critical gold; red only for the critical warning pill.
+  const tone = card.risk === "critical" ? "ak-tone-gold" : "ak-tone-blue";
   const cardView = document.createElement("article");
-  cardView.className = `approval-card approval-card-${card.risk}`;
+  cardView.className = `ak-portal ak-portal--free ${tone} approval-card approval-card-${card.risk}`;
+  cardView.dataset.open = "yes";
+  cardView.dataset.kind = kind;
   cardView.setAttribute("aria-label", `${card.risk} approval`);
-  const risk = document.createElement("span");
-  risk.className = "approval-risk";
-  risk.textContent = card.risk.toUpperCase();
+  const head = document.createElement("header");
+  head.className = "ak-portal__head approval-head";
+  const tile = document.createElement("span");
+  tile.className = "ak-icon-tile";
+  tile.append(glyph(document, kind));
+  const copy = document.createElement("span");
+  copy.className = "ak-portal__copy";
   const summary = document.createElement("h2");
-  summary.className = "approval-summary";
+  summary.className = "ak-portal__title approval-summary";
   summary.tabIndex = -1;
   summary.textContent = card.says;
+  const line = document.createElement("span");
+  line.className = "ak-portal__summary";
+  line.textContent = context ? `${KIND_TITLE[kind]} · ${context.target}` : KIND_TITLE[kind];
+  copy.append(summary, line);
+  const end = document.createElement("span");
+  end.className = "ak-portal__end";
+  const risk = document.createElement("span");
+  risk.className = `ak-pill approval-risk ${card.risk === "critical" ? "ak-tone-red" : "ak-tone-blue"}`;
+  risk.textContent = card.risk.toUpperCase();
+  end.append(risk);
+  head.append(tile, copy, end);
+  const body = document.createElement("div");
+  body.className = "ak-portal__body approval-body";
   const facts = document.createElement("dl");
-  facts.className = "approval-facts";
-  for (const [label, value] of card.facts) {
+  facts.className = "ak-fields approval-facts";
+  for (const [name, value] of card.facts) {
     const term = document.createElement("dt");
-    term.textContent = visibleJson(label);
+    term.textContent = visibleJson(name);
     const detail = document.createElement("dd");
     detail.append(exact(document, value));
     facts.append(term, detail);
   }
-  const changes = document.createElement("details");
-  const changesLabel = document.createElement("summary");
-  changesLabel.textContent = "Exact changes";
-  changes.append(changesLabel, exact(document, card.from_to));
-  const canonical = document.createElement("details");
-  const canonicalLabel = document.createElement("summary");
-  canonicalLabel.textContent = "Exact card";
-  canonical.append(canonicalLabel, exact(document, card));
-  const note = document.createElement("fieldset");
-  note.className = "approval-model-note";
-  const noteLabel = document.createElement("legend");
-  noteLabel.textContent = "Model note · untrusted";
-  note.append(noteLabel, exact(document, card.model_note));
-  cardView.append(risk, summary, facts, changes, canonical, note);
+  const note = document.createElement("blockquote");
+  note.className = "ak-quote ak-tone-muted approval-model-note";
+  note.append(exact(document, card.model_note));
+  body.append(label(document, "What the passkey signs"), facts,
+    fold(document, "Exact changes", card.from_to), fold(document, "Exact card", card),
+    label(document, "Model note · untrusted"), note);
+  cardView.append(head, body);
   return cardView;
 }

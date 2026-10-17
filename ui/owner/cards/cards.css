@@ -1,41 +1,65 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-.approval-review { display: grid; gap: 12px; min-width: 0; background: transparent; }
-.approval-review > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
-.approval-review [role="alert"] { color: var(--gold); }
-.approval-review > .approval-renewed { display: flex; align-items: center; gap: 8px; color: var(--gold); }
-.approval-renewed svg { flex: none; width: 18px; height: 18px; }
-.approval-card {
-  --approval-tone: var(--blue);
+/* The approval card is the primitives' portal button, opened over the whole site (SPATIAL-DESIGN-RULES rule 10).
+   Measurements come from primitives.css (copied verbatim from the face); this file only places them. Nothing here
+   may hide, clip or truncate what the passkey signs: every value wraps. */
+@import url('../primitives.css');
+
+.approval-stage {
+  box-sizing: border-box;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
   min-width: 0;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--approval-tone) 38%, transparent);
-  border-radius: var(--spatial-radius, 14px);
+  min-height: 100%;
+  padding: clamp(16px, 4vh, 48px) 16px;
   background: transparent;
+  color: var(--ak-text);
 }
-.approval-card-critical { --approval-tone: var(--failed); }
-.approval-risk { color: var(--approval-tone); font-size: 10px; font-weight: 600; letter-spacing: .17em; }
-.approval-card .approval-summary { margin: 8px 0 14px; color: var(--text); font-size: clamp(21px, 2vw, 27px); font-weight: 550; letter-spacing: -.025em; line-height: 1.25; overflow-wrap: anywhere; }
-.approval-summary:focus { outline: none; box-shadow: none; }
-.approval-digest { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: transparent; }
-.approval-digest span { color: var(--secondary); font-size: 10px; }
-.approval-digest code { display: block; margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; }
-.approval-facts { display: grid; grid-template-columns: minmax(60px, .65fr) minmax(0, 1fr); gap: 7px 10px; margin: 12px 0; font-size: 12px; }
-.approval-facts dt { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
-.approval-facts dd { min-width: 0; margin: 0; }
-.approval-exact-value { direction: ltr; unicode-bidi: isolate; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.approval-review details { min-width: 0; padding: 9px 0; border-top: 1px solid var(--border); font-size: 12px; }
-.approval-review summary { margin-bottom: 6px; color: var(--secondary); cursor: pointer; }
-.approval-review summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
-.approval-model-note { min-width: 0; margin: 10px 0 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: transparent; font-size: 12px; }
-.approval-model-note legend { padding: 0 5px; color: var(--muted); font-size: 10px; }
-.approval-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; min-width: 0; }
-.approval-actions button { --spatial-accent: var(--blue); display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 7px; min-width: 0; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--spatial-accent) 38%, transparent); border-radius: var(--spatial-radius, 14px); color: var(--spatial-accent); background: transparent; font-size: 12px; }
-.approval-actions button:is(:hover, :focus-visible, [aria-pressed="true"]):not(:disabled) { border-color: color-mix(in srgb, var(--spatial-accent) 70%, transparent); background: transparent; box-shadow: 0 0 14px color-mix(in srgb, var(--spatial-accent) 14%, transparent); }
-.approval-actions button:focus-visible { outline: 2px solid var(--spatial-accent); outline-offset: 3px; }
-.approval-actions button svg { flex: none; width: 18px; height: 18px; }
-.approval-actions button small { font-size: 10px; font-weight: 400; }
-.approval-card-critical ~ .approval-actions button:not(.approval-decline) { --spatial-accent: var(--failed); }
-.approval-actions .approval-decline { --spatial-accent: var(--secondary); }
-.approval-review > .approval-again { --spatial-accent: var(--blue); justify-self: start; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--spatial-accent) 38%, transparent); border-radius: var(--spatial-radius, 14px); color: var(--spatial-accent); background: transparent; font-size: 12px; }
-@media (prefers-reduced-motion: no-preference) { .approval-actions button { transition: border-color 180ms ease, box-shadow 180ms ease; } }
-@media (max-width: 500px) { .approval-facts { grid-template-columns: 1fr; } }
+.approval-stage > * { width: min(100%, 640px); min-width: 0; }
+.approval-stage > p { margin: 0; color: var(--ak-muted); font-size: 12px; line-height: 18px; }
+.approval-stage [role="alert"] { color: var(--ak-gold); }
+.approval-stage > .approval-renewed { display: flex; align-items: center; gap: 8px; color: var(--ak-gold); }
+.approval-renewed svg { flex: none; width: 16px; height: 16px; }
+.approval-stage > button { justify-self: center; width: auto; }
+
+.approval-card { animation: ak-glide 220ms ease both; }
+.approval-card > .approval-head { cursor: default; }
+/* The signed summary is never cut: the free portal header wraps both lines. */
+.approval-card .approval-summary { font-size: 15px; line-height: 22px; overflow-wrap: anywhere; }
+.approval-card .approval-summary:focus { outline: none; }
+.approval-card .ak-portal__summary { overflow-wrap: anywhere; }
+.approval-exact-value { direction: ltr; unicode-bidi: isolate; margin: 0; font-family: var(--ak-mono); font-size: 11px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-facts dt { overflow-wrap: anywhere; }
+.approval-digest code { font-family: var(--ak-mono); overflow-wrap: anywhere; }
+.approval-model-note { margin: 0; }
+
+/* Folds for the exact changes, the exact card and the authorization: static record rows that open in place. */
+.approval-fold { margin-top: 6px; }
+.approval-fold > summary { list-style: none; }
+.approval-fold > summary::-webkit-details-marker { display: none; }
+.approval-fold > summary .ak-expander::before { content: "+"; }
+.approval-fold[open] > summary .ak-expander::before { content: "\2212"; }
+.approval-fold > summary:focus-visible { outline: 2px solid var(--ak-tone, var(--ak-blue)); outline-offset: 3px; }
+
+.approval-actions { justify-content: flex-end; margin-top: 14px; }
+.approval-actions .ak-action { min-height: 36px; padding: 6px 14px; }
+.approval-actions .ak-action:disabled { cursor: wait; opacity: .5; }
+.approval-actions .ak-action:focus-visible { outline: 2px solid var(--ak-tone, var(--ak-blue)); outline-offset: 3px; }
+/* The passkey action rests in the opened state of the ring (70% + glow), so it is the one thing that stands out. */
+.approval-passkey {
+  border-color: color-mix(in srgb, var(--ak-tone) 70%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone) 14%, transparent);
+  font-weight: 520;
+}
+.approval-passkey svg { width: 16px; height: 16px; flex: none; }
+.approval-passkey small { color: var(--ak-muted); font-size: 11px; font-weight: 400; }
+
+/* A phone: the risk pill drops under the summary instead of squeezing it. */
+@media (max-width: 480px) {
+  .approval-card > .approval-head { flex-wrap: wrap; row-gap: 6px; }
+  .approval-card > .approval-head .ak-portal__copy { flex: 1 1 calc(100% - 42px); }
+  .approval-card > .approval-head .ak-portal__end { margin-left: 42px; }
+}
+
+@media (prefers-reduced-motion: reduce) { .approval-card { animation: none; } }
