@@ -447,6 +447,24 @@ fn an_approval_is_not_spent_on_a_call_the_door_can_tell_will_fail() {
 }
 
 #[test]
+fn a_memory_reply_too_big_for_the_frame_is_refused_with_a_reason_not_sent() {
+    let dir = temp("memory-big");
+    let big = json!({"ok": true, "result": {"status": "found", "items": ["x".repeat(5000)]}});
+    let stub = kira_stub(&dir, vec![agent(), big, found()]);
+    let token = dir.join("door.token");
+    std::fs::write(&token, "door-token\n").unwrap();
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let extra = format!(",\"max_frame_bytes\":4096,\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", dir.join("kira.sock").display(), token.display());
+    let text = policy_text(&dir.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
+    let door = Door::open(Policy::parse(&text).unwrap()).unwrap();
+    assert_eq!(denied(&call(&door, "r-1", "kira_list_recent", "{\"limit\":500}", "memory")), "reply-too-large");
+    // A reply that fits still goes through.
+    assert!(matches!(call(&door, "r-2", "kira_list_recent", "{\"limit\":5}", "memory"), Decision::Allow { .. }));
+    assert_eq!(stub.join().unwrap().len(), 3);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn an_open_ask_survives_a_restart_and_a_spent_approval_does_not() {
     let dir = temp("owner-restart");
     let stub = kira_stub(&dir, vec![agent(), found()]);

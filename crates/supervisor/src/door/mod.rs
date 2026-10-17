@@ -301,6 +301,9 @@ impl Door {
                     .and_then(|()| memory::forward(memory, &request.tool, &request.args))
                     .and_then(|value| self.taint_after(Class::Memory, request, &value).map(|()| value))
                 {
+                    // The whole reply line must fit what the plugin accepts (as for a fetch): a list the plugin would reject as
+                    // too large is refused here, with a reason the model can act on (ask for fewer).
+                    Ok(value) if value.to_string().len() > self.policy.max_frame_bytes.saturating_sub(2048) => Decision::Deny("reply-too-large".into()),
                     Ok(value) => Decision::Allow { value, text: None },
                     Err(code) => Decision::Deny(code),
                 },
