@@ -438,7 +438,7 @@ mod tests {
         let standing = open_standing(&dir, Some(grants.clone()), None);
         assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Clear));
         let mut set = GrantSet::parse(&std::fs::read(&grants).unwrap()).unwrap();
-        assert!(set.revoke(id));
+        assert!(set.revoke(id).is_ok());
         std::fs::remove_file(&grants).unwrap();
         write_private(&grants, &set.canonical_bytes().unwrap());
         assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
