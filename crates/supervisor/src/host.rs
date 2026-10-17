@@ -557,17 +557,8 @@ impl Host {
     /// Tokio runtime worker thread.
     pub fn dispatch(&self, admission: &HttpAdmission) -> Result<http::Response<Vec<u8>>> {
         let request = admission.request();
-        if request.role() == HostRole::Shell && request.method() == Method::Get && request.path() == "/engine/open" {
-            return self.engine_open(request);
-        }
-        if request.role() == HostRole::Shell && request.method() == Method::Get && request.path() == "/engine/model-key" {
-            return self.model_key_page();
-        }
-        if request.role() == HostRole::Shell && request.path() == "/api/engine/model-key" {
-            return self.model_key_entry(request);
-        }
-        if request.role() == HostRole::Shell && request.path() == "/api/session/end" {
-            return self.shell_sign_out(request);
+        if let Some(response) = self.engine_route(request) {
+            return response;
         }
         if !request.path().starts_with("/api/") {
             return self.asset(request, admission.owner_navigation());

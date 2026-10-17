@@ -113,6 +113,21 @@ impl Host {
             .map_err(|_| codes::SUPERVISOR_STATE)
     }
 
+    /// The shell origin's engine routes and its sign-out, or `None` for any other request.
+    pub(super) fn engine_route(&self, request: &AdmittedRequest) -> Option<Result<http::Response<Vec<u8>>>> {
+        if request.role() != frontdoor::ingress::HostRole::Shell {
+            return None;
+        }
+        let get = request.method() == frontdoor::ingress::Method::Get;
+        match request.path() {
+            "/engine/open" if get => Some(self.engine_open(request)),
+            "/engine/model-key" if get => Some(self.model_key_page()),
+            "/api/engine/model-key" => Some(self.model_key_entry(request)),
+            "/api/session/end" => Some(self.shell_sign_out(request)),
+            _ => None,
+        }
+    }
+
     /// `POST /api/session/end` on the shell origin: sign out. The caller's own shell session is revoked in the store
     /// (with anything derived from it), every engine-origin session minted from it ends at once, and the browser's
     /// shell cookie is cleared (O12). Nothing else is touched: the owner origin's session and the binding stay.
