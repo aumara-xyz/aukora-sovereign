@@ -75,4 +75,14 @@ pub struct RecallOutcome {
     pub total: u64,
     /// sha256 (hex) of the canonical query, for the Aura receipt.
     pub query_digest: String,
+    /// What judged this recall, so a receipt says which thresholds and models decided it: `rerank` when the
+    /// cross-encoder score against `rerank_floor` decided, `keyword+cosine` when a keyword hit or `cosine_floor` did.
+    pub judged_by: &'static str,
+    pub rerank_floor: f32,
+    pub cosine_floor: f32,
+    /// Model ids (sha256 of the model file) of the embedder and reranker that took part; None when absent.
+    pub embed_model: Option<String>,
+    pub rerank_model: Option<String>,
+    /// sha256 of the practice question set the floors were calibrated on (`hybrid::CALIBRATION_SET`).
+    pub calibration_set: &'static str,
 }

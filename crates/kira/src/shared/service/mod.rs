@@ -236,6 +236,23 @@ pub fn reissue(dir: &Path, name: &str, rotate: bool) -> Result<String> {
     issue_token(dir, name, rotate)
 }
 
+/// The gate on minting credentials (`register`, `token`): once the store has an owner, the caller must hold the
+/// owner's token file. A store with no owner yet is open, so the first owner can be created. Not isolation: a same-uid
+/// process that can read the file passes (see the trust boundary above).
+pub fn require_owner(dir: &Path, owner_token_file: Option<&Path>) -> Result<()> {
+    let mut state = State::open(dir)?;
+    if !state.store.has_owner()? {
+        return Ok(());
+    }
+    let file = owner_token_file.ok_or_else(|| refuse("owner-token-required"))?;
+    let bytes = read_private(file, 256).map_err(|_| refuse("owner-token-refused"))?;
+    let token = std::str::from_utf8(&bytes).map_err(|_| refuse("owner-token-refused"))?.trim();
+    match state.caller(token) {
+        Ok(caller) if caller.owner => Ok(()),
+        _ => Err(refuse("owner-token-refused")),
+    }
+}
+
 /// Revokes an agent: `revoked_at` is set in the store (it can no longer write or authenticate) and every token hash
 /// it holds is removed from `tokens.json`. Its notes stay readable; quarantine is the separate act that withdraws them.
 pub fn revoke(dir: &Path, name: &str) -> Result<()> {
@@ -630,6 +647,11 @@ fn recall(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Result<Valu
     Ok(json!({
         "status": status, "reason": reason, "items": items, "omitted": outcome.omitted, "indexed": outcome.indexed,
         "total": outcome.total, "query_digest": outcome.query_digest,
+        "judged": {
+            "by": outcome.judged_by, "rerank_floor": outcome.rerank_floor, "cosine_floor": outcome.cosine_floor,
+            "embed_model": outcome.embed_model, "rerank_model": outcome.rerank_model,
+            "calibration_set": outcome.calibration_set,
+        },
     }))
 }
 
@@ -729,6 +751,56 @@ mod tests {
         assert_eq!(fs::metadata(f.dir.join(KEYS)).unwrap().permissions().mode() & 0o777, 0o700);
         assert!(register(&f.dir, "claude", &["builders".to_owned()], false).is_err());
         assert!(register(&f.dir, "../evil", &["builders".to_owned()], false).is_err());
+    }
+
+    #[test]
+    fn minting_credentials_needs_the_owners_token_file_once_an_owner_exists() {
+        let f = fixture();
+        let run = |words: &[&str]| {
+            let mut arguments: Vec<OsString> = words.iter().map(OsString::from).collect();
+            arguments.extend([OsString::from("--state"), f.dir.clone().into_os_string()]);
+            cli(&arguments)
+        };
+        let file = |name: &str, token: &str| {
+            let path = f.dir.join(name);
+            write_private(&path, format!("{token}\n").as_bytes(), true).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        let (owner_file, claude_file) = (file("owner.tok", &f.owner), file("claude.tok", &f.claude));
+        // An owner exists: no file, a non-owner's token and a world-readable file are all refused.
+        assert_eq!(run(&["token", "claude"]), Err(refuse("owner-token-required")));
+        assert_eq!(run(&["register", "dot", "--owner"]), Err(refuse("owner-token-required")));
+        assert_eq!(run(&["token", "claude", "--owner-token-file", &claude_file]), Err(refuse("owner-token-refused")));
+        let loose = file("loose.tok", &f.owner);
+        fs::set_permissions(&loose, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(run(&["token", "claude", "--owner-token-file", &loose]), Err(refuse("owner-token-refused")));
+        let missing = f.dir.join("none.tok").to_string_lossy().into_owned();
+        assert_eq!(run(&["token", "claude", "--owner-token-file", &missing]), Err(refuse("owner-token-refused")));
+        assert!(!f.dir.join("minted.tok").exists());
+        // The owner's file opens the gate, for token and for register.
+        let minted = f.dir.join("minted.tok").to_string_lossy().into_owned();
+        run(&["token", "claude", "--owner-token-file", &owner_file, "--token-file", &minted]).unwrap();
+        let token = fs::read_to_string(&minted).unwrap();
+        assert_eq!(call(&f.state, token.trim(), "whoami", json!({}))["result"]["name"], "claude");
+        run(&["register", "dot", "--owner-token-file", &owner_file, "--token-file", &f.dir.join("dot.tok").to_string_lossy()]).unwrap();
+        assert!(key_path(&f.dir, "dot").exists());
+        // A revoked owner's token no longer opens it.
+        revoke(&f.dir, "peter").unwrap();
+        assert_eq!(run(&["token", "claude", "--owner-token-file", &owner_file]), Err(refuse("owner-token-refused")));
+    }
+
+    #[test]
+    fn the_first_owner_needs_no_token_file() {
+        let tag = hex(random32().unwrap().as_ref());
+        let dir = std::env::temp_dir().join(format!("kira-first-owner-{}", &tag[..16]));
+        let args = |words: &[&str]| -> Vec<OsString> {
+            words.iter().map(OsString::from).chain([OsString::from("--state"), dir.clone().into_os_string()]).collect()
+        };
+        let out = dir.join("first.tok");
+        fs::create_dir_all(&dir).unwrap();
+        cli(&args(&["register", "peter", "--owner", "--token-file", &out.to_string_lossy()])).unwrap();
+        assert_eq!(cli(&args(&["register", "claude"])), Err(refuse("owner-token-required")));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

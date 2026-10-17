@@ -2,6 +2,7 @@
 //! Note metadata as NIP-01 tags. Every field is a closed set; unknown values refuse.
 
 use canon::{Refusal, Result};
+use icu_normalizer::ComposingNormalizer;
 use sha2::{Digest, Sha256};
 
 /// A memory note.
@@ -220,11 +221,14 @@ const MAX_TEXT: usize = 32_768;
 const MAX_FIELD: usize = 256;
 const MAX_SOURCES: usize = 64;
 
-/// Statement normalisation: Unicode lowercase, every run of whitespace collapsed to one space, trimmed. No other
-/// folding (no accent stripping, no NFC): two notes dedupe only when these exact rules make them equal.
+/// Statement normalisation: Unicode compatibility composition (NFKC), Unicode lowercase, NFKC again (lowercasing can
+/// leave a sequence uncomposed), every run of whitespace collapsed to one space, trimmed. NFC and NFD spellings of
+/// one word, width variants and ligatures therefore dedupe. No accent stripping: "café" and "cafe" stay two statements.
 pub fn statement_hash(text: &str) -> [u8; 32] {
-    let lowered = text.to_lowercase();
-    let normalized = lowered.split_whitespace().collect::<Vec<_>>().join(" ");
+    let nfkc = ComposingNormalizer::new_nfkc();
+    let lowered = nfkc.normalize(text).to_lowercase();
+    let folded = nfkc.normalize(&lowered);
+    let normalized = folded.split_whitespace().collect::<Vec<_>>().join(" ");
     Sha256::digest(normalized.as_bytes()).into()
 }
 
@@ -392,8 +396,13 @@ mod tests {
     }
 
     #[test]
-    fn statement_hash_normalises_case_and_space_only() {
+    fn statement_hash_normalises_case_space_and_unicode_form_only() {
         assert_eq!(statement_hash("The  Figurine\nis here"), statement_hash("the figurine is here"));
         assert_ne!(statement_hash("café"), statement_hash("cafe"));
+        // NFC and NFD spellings of one word are one statement (a red-team finding), as are width variants and ligatures.
+        assert_eq!(statement_hash("caf\u{e9}"), statement_hash("cafe\u{301}"));
+        assert_eq!(statement_hash("CAF\u{c9} ok"), statement_hash("cafe\u{301}  OK"));
+        assert_eq!(statement_hash("\u{ff26}igurine"), statement_hash("figurine"));
+        assert_eq!(statement_hash("o\u{fb03}ce"), statement_hash("office"));
     }
 }

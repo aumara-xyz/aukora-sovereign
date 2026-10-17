@@ -8,11 +8,18 @@ fn usage() -> Refusal {
 }
 
 /// `sovereign kira <serve | register NAME | token NAME [--rotate] | revoke NAME | import [FILE] | mcp>` with
-/// `--state DIR`, `--socket PATH`, `--token-file PATH`, `--scopes a,b` and `--owner`. `--rotate` replaces every
-/// earlier token of the agent; `revoke` marks the agent revoked and removes all its tokens. Both take effect on the
-/// running service's next request.
+/// `--state DIR`, `--socket PATH`, `--token-file PATH`, `--owner-token-file PATH`, `--scopes a,b` and `--owner`.
+/// `--rotate` replaces every earlier token of the agent; `revoke` marks the agent revoked and removes all its tokens.
+/// Both take effect on the running service's next request.
+///
+/// `register` and `token` mint credentials, so once the store has an owner they require `--owner-token-file PATH`: a
+/// file (mode 0600) holding the owner's token. Without it they refuse with `kira:owner-token-required`; a token that
+/// is not the live owner's is refused with `kira:owner-token-refused`. Only a store with no owner yet (the first
+/// `register NAME --owner`) needs no file. This is a procedural gate, not isolation: a process of the same user that
+/// can read the owner's token file can still mint (same-uid trust; separate uids are Phase N).
 pub fn cli(arguments: &[OsString]) -> Result<()> {
     let (mut words, mut state, mut socket, mut token_file, mut scopes, mut owner) = (vec![], None, None, None, None, false);
+    let mut owner_token_file: Option<PathBuf> = None;
     let mut rotate = false;
     let mut iter = arguments.iter();
     while let Some(argument) = iter.next() {
@@ -22,6 +29,7 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
             "--state" => state = Some(PathBuf::from(value()?)),
             "--socket" => socket = Some(PathBuf::from(value()?)),
             "--token-file" => token_file = Some(PathBuf::from(value()?)),
+            "--owner-token-file" => owner_token_file = Some(PathBuf::from(value()?)),
             "--scopes" => scopes = Some(value()?.split(',').map(str::to_owned).collect::<Vec<_>>()),
             "--owner" => owner = true,
             "--rotate" => rotate = true,
@@ -63,6 +71,7 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
             if token_file.as_deref().is_some_and(|f| fs::symlink_metadata(f).is_ok()) {
                 return Err(refuse("token-file-exists"));
             }
+            require_owner(&dir, owner_token_file.as_deref())?;
             let token = if *command == "register" {
                 let scopes = scopes.unwrap_or_else(|| vec![if owner { "*" } else { "builders" }.to_owned()]);
                 register(&dir, name, &scopes, owner)?

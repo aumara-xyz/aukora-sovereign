@@ -58,9 +58,20 @@ pub struct StoredNote {
     pub event: Event,
     pub meta: NoteMeta,
     pub author_name: String,
+    /// The author is registered as an owner (read from the agents table, never from a tag).
+    pub author_owner: bool,
     pub roots: Vec<String>,
     pub superseded_by: Option<String>,
     pub quarantined: bool,
+}
+
+/// What the side columns say about one note of an epoch: used to share recall's places among authors before any
+/// note is loaded. Recall re-checks the author against the signed event when it loads the note.
+pub(crate) struct EpochNote {
+    pub seq: i64,
+    pub pubkey: String,
+    pub lane: String,
+    pub owner: bool,
 }
 
 pub struct SharedStore {
@@ -213,6 +224,12 @@ impl SharedStore {
             )
             .map_err(|_| refuse("agent-exists"))?;
         Ok(())
+    }
+
+    /// Whether any agent, revoked or not, was ever registered as an owner.
+    pub fn has_owner(&self) -> Result<bool> {
+        let owners: i64 = self.db.query_row("SELECT count(*) FROM agents WHERE owner = 1", [], |r| r.get(0)).map_err(sql)?;
+        Ok(owners > 0)
     }
 
     /// Marks an agent revoked at `at` (an earlier revocation time stands). It can no longer write or authenticate;
@@ -464,12 +481,14 @@ impl SharedStore {
         // Verify on read: a correctly signed event matching its columns and its chain link.
         let (event, _) = check_row(&row, &self.prev_link(seq)?, CHAIN_VERSION)?;
         let meta = NoteMeta::parse(&event.tags, &event.content)?;
-        let author_name: String = self
+        let (author_name, author_owner): (String, bool) = self
             .db
-            .query_row("SELECT name FROM agents WHERE pubkey = ?1", params![row.pubkey], |r| r.get(0))
+            .query_row("SELECT name, owner FROM agents WHERE pubkey = ?1", params![row.pubkey], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0))
+            })
             .optional()
             .map_err(sql)?
-            .unwrap_or_else(|| "unknown".into());
+            .unwrap_or_else(|| ("unknown".into(), false));
         let mut stmt = self.db.prepare("SELECT root FROM ancestry WHERE seq = ?1 ORDER BY root").map_err(sql)?;
         let roots = stmt
             .query_map(params![seq], |r| r.get::<_, String>(0))
@@ -478,7 +497,7 @@ impl SharedStore {
             .map_err(sql)?;
         let superseded_by = self.superseded_by(&row.id, &row.pubkey)?;
         let quarantined = self.quarantined(&row.pubkey)?;
-        Ok(Some(StoredNote { seq, event, meta, author_name, roots, superseded_by, quarantined }))
+        Ok(Some(StoredNote { seq, event, meta, author_name, author_owner, roots, superseded_by, quarantined }))
     }
 
     pub fn get(&self, id_hex: &str) -> Result<Option<StoredNote>> {
@@ -613,19 +632,30 @@ impl SharedStore {
             .collect())
     }
 
-    /// Seqs of every note in one epoch, read from the side column so recall can filter before loading. Recall
-    /// re-verifies each note it uses and checks this column against the signed epoch tag.
-    pub(crate) fn note_seqs_in_epoch(&self, epoch: u32) -> Result<Vec<i64>> {
+    /// Every note of one epoch with its author, owner flag and lane, read from the side columns so recall can filter
+    /// and share places among authors before loading. Recall re-verifies each note it uses and checks these columns
+    /// against the signed event.
+    pub(crate) fn note_authors_in_epoch(&self, epoch: u32) -> Result<Vec<EpochNote>> {
         let mut stmt = self
             .db
-            .prepare("SELECT seq FROM events WHERE kind = ?1 AND epoch = ?2 ORDER BY seq")
+            .prepare(
+                "SELECT e.seq, e.pubkey, e.lane, COALESCE(a.owner, 0) FROM events e LEFT JOIN agents a ON a.pubkey = e.pubkey
+                 WHERE e.kind = ?1 AND e.epoch = ?2 ORDER BY e.seq",
+            )
             .map_err(sql)?;
-        let seqs = stmt
-            .query_map(params![NOTE_KIND, epoch as i64], |r| r.get::<_, i64>(0))
+        let rows = stmt
+            .query_map(params![NOTE_KIND, epoch as i64], |r| {
+                Ok(EpochNote {
+                    seq: r.get(0)?,
+                    pubkey: r.get(1)?,
+                    lane: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    owner: r.get::<_, i64>(3)? != 0,
+                })
+            })
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
-        Ok(seqs)
+        Ok(rows)
     }
 
     /// (notes with a vector under `model`, all notes) in one epoch, for coverage.
