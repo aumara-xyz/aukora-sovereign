@@ -159,6 +159,23 @@ Not a port of Prime: a new System app asked for by Peter ("it shows all in porta
 - Wiring is a swap of `readSovereigntyStub` for a reader returning the same `SovereigntySnapshot`. The source of every field, what is stub and the open questions are in
   Peter's review folder (`SOVEREIGNTY-APP-SPEC.md`). `app/APP-LOCK.json` still lists eight System entries; Sovereignty is not in it (an open question, not a silent change).
 
+## The spatial primitives (2026-10-17, face/sovereignty): Peter's standard, locked
+
+Peter, on the Sovereignty preview: "lock this in as the new primitives". The measurements are the header of
+`layout/src/client/primitives/primitives.css` (framework-neutral `ak-` classes and their tokens; another bundle, such
+as the owner origin, copies that file verbatim), mirrored in Peter's `SPATIAL-DESIGN-RULES.md` rule 10. The React
+components beside it (`components.tsx`, `icons.tsx`) only emit that markup and are exported from
+`@aukora/face-layout/client`: AppSurface, AppHeader, PortalGrid/PortalCell, PortalButton, PortalDetail,
+DetailSection/SectionLabel, RecordList/RecordRow, FieldTable, StatTiles, StatusPill, Meter, LevelScale, Quote, Lead,
+Mono, LockedAction, Footnote, IconTile, AkIcon.
+- `PortalButton` replaces the disclosure of the same name in Prime's `primitives.tsx` (pinned, kept, no longer exported
+  under that name). It still accepts the old props, so Prime's memory app takes the new frame with no edit to it.
+- A portal opens inside the lane it is in. Never route a portal's open state through `openSurface`: the shell's
+  `selectSurface` always sets the pane preset to `center-right-wide` (that was the one-third-to-two-thirds snap).
+- Edited Prime copies (pins refreshed): `settings/src/client/AuraCoherenceMenu.tsx`, `settings/src/client/SettingsMenu.tsx`,
+  `aumlok/src/client/AumlokMenu.tsx`, `aumlok/src/client/IdentitySurface.tsx` (the System menu launchers).
+- `app/design/spatial/` (the native shell's design lock, captures from Prime 3673b98) is NOT changed by this.
+
 ## Composition (what `preview-face.py` writes)
 Profile `aukora`: `dsh-base`, then `@aukora/face-bundle` = dsh-web-app's `cordis.patch.yml` and presets with the rows `ui-layout`, `ui-sidebar`, `ui-workspace`, `ui-settings-general` removed
 (Prime disabled the same four), `ui-settings-models` set to `credentialOnboarding: false` (Prime's order of 2026-09-27: no first-run form opens by itself; the harness added a "Get started" sign-in dialog), and the face rows inserted.
