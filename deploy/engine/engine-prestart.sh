@@ -96,7 +96,16 @@ mv -fT -- "$fresh" "$path" || { rm -f -- "$fresh"; fail "cannot place the home p
     --from /opt/aukora-engine/plugins --to "$PROFILE/node_modules"
 # 2. (the path is the one the engine sees inside the wall; on the host it dangles on purpose)
 chmod 0755 "$PROFILE/node_modules"
-ln -sfn /engine/dsh/node_modules/@deepseek-ai "$PROFILE/node_modules/@deepseek-ai"
+# >>> harness-link (tests/deploy/test_engine_install.py runs this block alone)
+# The name must be free: an approved package in that scope would have made a real folder here, and `ln -sfn` into a
+# folder links INSIDE it, so the start would pass with the harness shadowed (node sweep, node-5; floor::plugins also
+# refuses the scope). Make the link without -f and check where it points.
+HARNESS_LINK=$PROFILE/node_modules/@deepseek-ai
+HARNESS_TARGET=/engine/dsh/node_modules/@deepseek-ai
+{ [ ! -e "$HARNESS_LINK" ] && [ ! -L "$HARNESS_LINK" ]; } || fail "the closure holds an @deepseek-ai package"
+ln -s -- "$HARNESS_TARGET" "$HARNESS_LINK"
+[ "$(readlink -- "$HARNESS_LINK")" = "$HARNESS_TARGET" ] || fail "the harness link is not the pinned one"
+# <<< harness-link
 chmod 0555 "$PROFILE/node_modules"
 
 # 4.

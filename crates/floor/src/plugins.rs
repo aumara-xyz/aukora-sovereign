@@ -44,7 +44,15 @@ pub fn is_hot_reload(name: &str) -> bool {
         || tokens.windows(2).any(|pair| pair == ["hot", "reload"] || pair == ["live", "reload"])
 }
 
+/// The scope of the pinned harness. The node links `node_modules/@deepseek-ai` to the pinned install inside the wall
+/// (engine-prestart.sh), so no approved package may carry that scope: it would shadow the harness by name or turn
+/// the link into a link inside a folder (node sweep, node-5).
+const HARNESS_SCOPE: &str = "@deepseek-ai/";
+
 fn valid_name(name: &str) -> bool {
+    if name.starts_with(HARNESS_SCOPE) {
+        return false;
+    }
     let body = name.strip_prefix('@').unwrap_or(name);
     let mut parts = body.split('/');
     let (Some(first), second, None) = (parts.next(), parts.next(), parts.next()) else { return false };
@@ -387,9 +395,11 @@ mod tests {
 
     #[test]
     fn names_are_package_names() {
-        for bad in ["", "Door", "@aukora", "@/x", "a/b", "../x", "x y", "_x", "@a/b/c"] {
+        for bad in ["", "Door", "@aukora", "@/x", "a/b", "../x", "x y", "_x", "@a/b/c", "@deepseek-ai/dsh-web-app", "@deepseek-ai/x"] {
             assert!(PluginSet::new(vec![entry(bad, 1, false)]).is_err(), "{bad}");
         }
         assert!(PluginSet::new(vec![entry("@aukora/door", 1, true), entry("left-pad", 2, false)]).is_ok());
+        // Only the harness's own scope is reserved: a package merely named like it is still a package.
+        assert!(PluginSet::new(vec![entry("@aukora/door", 1, true), entry("deepseek-ai", 2, false), entry("@deepseek/x", 3, false)]).is_ok());
     }
 }

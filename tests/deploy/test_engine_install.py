@@ -331,5 +331,39 @@ class EngineOriginPolicy(unittest.TestCase):
         self.assertIn("handle_errors {", block)
 
 
+def prestart_block(name):
+    with open(os.path.join(ROOT, "deploy", "engine", "engine-prestart.sh"), encoding="utf-8") as handle:
+        text = handle.read()
+    start = text.index("# >>> " + name)
+    return text[start:text.index("# <<< " + name, start)]
+
+
+class HarnessLink(unittest.TestCase):
+    """The closure's @deepseek-ai is one root-made link to the pinned harness, never a folder an approved package made
+    (node sweep, node-5). The block uses only POSIX tools, so it runs anywhere."""
+
+    def run_block(self, profile):
+        prelude = 'set -eu\nfail() { echo "engine-prestart: $1" >&2; exit 1; }\nPROFILE=%s\n' % profile
+        return subprocess.run(["sh", "-c", prelude + prestart_block("harness-link")], capture_output=True)
+
+    def test_the_link_is_made_when_the_name_is_free_and_nothing_else_passes(self):
+        scratch = tempfile.mkdtemp(prefix="harness-link-")
+        try:
+            modules = os.path.join(scratch, "node_modules")
+            os.mkdir(modules)
+            done = self.run_block(scratch)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(os.readlink(os.path.join(modules, "@deepseek-ai")), "/engine/dsh/node_modules/@deepseek-ai")
+            # A link already there (a closure that carried one) is not trusted or replaced.
+            self.assertNotEqual(self.run_block(scratch).returncode, 0, "a link already there")
+            os.unlink(os.path.join(modules, "@deepseek-ai"))
+            # A folder made by an approved package in that scope: the old `ln -sfn` linked inside it and passed.
+            os.makedirs(os.path.join(modules, "@deepseek-ai", "dsh-web-app"))
+            self.assertNotEqual(self.run_block(scratch).returncode, 0, "a package folder")
+            self.assertEqual(os.listdir(os.path.join(modules, "@deepseek-ai")), ["dsh-web-app"])
+        finally:
+            shutil.rmtree(scratch)
+
+
 if __name__ == "__main__":
     unittest.main()
