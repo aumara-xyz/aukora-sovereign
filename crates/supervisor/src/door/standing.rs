@@ -300,24 +300,44 @@ impl Standing {
         !counts.dirty
     }
 
-    /// Decide one crossing. On a clear the count is appended and synced before this returns; `preflight` (the door's
-    /// own checks) runs first so a call the door would refuse spends nothing.
-    pub fn settle(&self, crossing: &Crossing, now: i64, preflight: impl FnOnce() -> std::result::Result<(), String>) -> Settled {
-        let (policy, grants) = self.current();
-        let mut counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
+    /// The clock never runs back inside the log, and a new day starts the log afresh: yesterday's lines are not needed
+    /// and, under `trusted` (no count to run out), would only grow toward the size at which nothing clears any more.
+    fn advance(counts: &mut Counts, now: i64) -> i64 {
         let now = now.max(counts.last_ms);
         counts.last_ms = now;
-        // A new day starts the log afresh: yesterday's lines are not needed and, under `trusted` (no count to run out),
-        // would only grow toward the size at which nothing clears any more.
         if slider::day_of(now) > counts.log_day && counts.log.file.set_len(0).is_ok() {
             counts.bytes = 0;
             counts.log_day = slider::day_of(now);
         }
-        let decision = slider::judge(&policy, &grants, &counts.usage, crossing, now);
-        let (Floor::AutoClear, Some(grant)) = (decision.floor, decision.grant) else { return Settled::Ask };
+        now
+    }
+
+    /// Decide one crossing. On a clear the count is appended and synced before this returns; `preflight` (the door's
+    /// own checks) runs first so a call the door would refuse spends nothing.
+    pub fn settle(&self, crossing: &Crossing, now: i64, preflight: impl FnOnce() -> std::result::Result<(), String>) -> Settled {
+        // First look, under the lock: does a grant cover this call at all? Nothing is spent here.
+        let (policy, grants) = self.current();
+        let (now, covered) = {
+            let mut counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
+            let now = Self::advance(&mut counts, now);
+            let decision = slider::judge(&policy, &grants, &counts.usage, crossing, now);
+            (now, matches!((decision.floor, decision.grant), (Floor::AutoClear, Some(_))))
+        };
+        if !covered {
+            return Settled::Ask;
+        }
+        // The door's own checks run with no lock held: the memory check asks Kira (a read timeout of seconds), and a slow
+        // Kira must not stall every other slider-settled call, net included (SCOUT M13).
         if let Err(code) = preflight() {
             return Settled::Refuse(code);
         }
+        // Second look, under the lock again: another call may have spent the grant, or a revoke landed, while the check
+        // ran. The count is judged afresh and the line appended in the same hold, so a grant never clears twice over.
+        let (policy, grants) = self.current();
+        let mut counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = Self::advance(&mut counts, now);
+        let decision = slider::judge(&policy, &grants, &counts.usage, crossing, now);
+        let (Floor::AutoClear, Some(grant)) = (decision.floor, decision.grant) else { return Settled::Ask };
         // Everything asks while the log cannot be trusted: it held a line nobody could read today, or an append left it
         // possibly torn and it has not been cut back yet.
         if counts.void_through.is_some_and(|day| slider::day_of(now) <= day) {
@@ -663,6 +683,38 @@ mod tests {
         assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(other);
+    }
+
+    #[test]
+    fn a_slow_preflight_holds_no_lock_and_the_grant_is_judged_again_after_it() {
+        use std::sync::mpsc::{channel, RecvTimeoutError};
+        use std::time::Duration;
+        let dir = temp("slow-preflight");
+        let (file, _) = grant_file(&dir, CrossingClass::Memory, &["read"], 1);
+        let standing = std::sync::Arc::new(open_standing(&dir, Some(file), None));
+        let (in_preflight, entered) = channel::<()>();
+        let (release, released) = channel::<()>();
+        let slow = {
+            let standing = standing.clone();
+            std::thread::spawn(move || {
+                standing.settle(&read_crossing(), now_ms(), || {
+                    in_preflight.send(()).unwrap();
+                    // A lock held across this wait would stall the other call below for the whole of it.
+                    match released.recv_timeout(Duration::from_secs(10)) {
+                        Ok(()) => Ok(()),
+                        Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => Err("preflight-never-released".into()),
+                    }
+                })
+            })
+        };
+        entered.recv_timeout(Duration::from_secs(10)).unwrap();
+        // While the first call is inside its check, another call settles at once and spends the grant's one use.
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Clear), "not stalled by the slow check");
+        release.send(()).unwrap();
+        // The slow call then finds the grant spent: it asks, and nothing is cleared twice.
+        assert!(matches!(slow.join().unwrap(), Settled::Ask));
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
