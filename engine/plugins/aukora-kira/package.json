@@ -1,0 +1,40 @@
+{
+  "name": "@aukora/kira",
+  "version": "0.1.0",
+  "description": "AUKORA Kira 2 memory plugin for the DeepSeek Harness: kira_* tools routed through @aukora/door with zero token in the engine, plus aukora:self and aukora:resume system-prompt injection outside the recall budget",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/*.js",
+    "src/*.ts",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=24.11.1"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-alpha.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-alpha.5"
+  }
+}

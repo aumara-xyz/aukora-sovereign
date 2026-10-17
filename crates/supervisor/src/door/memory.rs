@@ -139,7 +139,11 @@ mod tests {
 
     #[test]
     fn only_the_engines_five_methods_exist() {
-        assert_eq!(method("kira_remember"), Ok("remember"));
+        // Every tool engine/plugins/aukora-kira registers is forwarded (KIRA_TOOL_NAMES in its src/tools.ts).
+        for (tool, forwarded) in [("kira_recall", "recall"), ("kira_remember", "remember"), ("kira_get", "get"),
+                                  ("kira_list_recent", "list_recent"), ("kira_supersede", "supersede")] {
+            assert_eq!(method(tool), Ok(forwarded), "{tool}");
+        }
         assert_eq!(method("memory_recall"), Ok("recall"));
         assert_eq!(method("kira_list_recent"), Ok("list_recent"));
         assert_eq!(method("kira_quarantine_source"), Err("owner-only"));

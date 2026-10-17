@@ -1,0 +1,10 @@
+# Mounts the Kira 2 memory plugin in a DSH profile, next to @aukora/door (which it needs: every kira_* call crosses
+# through the door to the Rust door, which holds the agent's Kira token outside the engine; without the door every
+# kira_* body refuses with door-required). At session start the aukora:self and aukora:resume slots are fetched
+# through the door and injected as literal system-prompt sections (interpolate: false) outside the recall budget.
+- insert:
+    - id: aukora-kira
+      name: '@aukora/kira'
+      config:
+        selfSlot: aukora:self
+        resumeSlot: aukora:resume
