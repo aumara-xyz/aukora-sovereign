@@ -905,3 +905,36 @@ async fn rig_error(status: u16, body: String) -> Rig {
     rig(Reply::Error(status, body), Some(budget(1_000_000, 200_000, 100)), true, true).await
 }
 
+
+/// Sockets that send a header and then nothing hold no call slot: the real call is served meanwhile, and each stalled
+/// body is cut with 408 after the body deadline (SCOUT M6).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sockets_that_stall_in_the_body_hold_no_call_slot_and_are_cut_off() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let limits = Limits { body: std::time::Duration::from_millis(600), max_calls: 2, ..Limits::default() };
+    let rig = rig_limits(Reply::Sse(tool_call_stream(10)), Some(budget(1_000_000, 200_000, 100)), true, true, limits).await;
+    let mut stalled = Vec::new();
+    for _ in 0..4 {
+        let (mut client, server) = tokio::net::UnixStream::pair().unwrap();
+        tokio::spawn(serve_connection(rig.link.clone(), server, Peer::Uid(ENGINE_UID)));
+        let head = "POST /v1/messages HTTP/1.1\r\nhost: x\r\ncontent-type: application/json\r\nanthropic-version: 2023-06-01\r\ncontent-length: 5000\r\n\r\n{\"mo";
+        client.write_all(head.as_bytes()).await.unwrap();
+        stalled.push(client);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(rig.link.calls.available_permits(), 2, "a stalled body holds no slot");
+    let (status, reply, _) = rig.call(harness_request("deepseek-flash", 100)).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+    assert_eq!(rig.upstream_calls(), 1);
+    for client in &mut stalled {
+        let mut answer = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(10), client.read_to_end(&mut answer))
+            .await
+            .expect("the stalled body was never cut off")
+            .ok();
+        let text = String::from_utf8_lossy(&answer);
+        assert!(text.starts_with("HTTP/1.1 408") && text.contains("request body did not arrive in time"), "{text}");
+    }
+    assert_eq!(rig.link.calls.available_permits(), 2);
+    assert_eq!(rig.upstream_calls(), 1, "a stalled body never reached the provider");
+}

@@ -94,6 +94,9 @@ pub mod refuse {
     pub fn too_large() -> LinkRefusal {
         r(413, "invalid_request_error", "request-too-large", "aukora broker: the request is larger than the broker forwards")
     }
+    pub fn body_timeout() -> LinkRefusal {
+        r(408, "invalid_request_error", "request-body-timeout", "aukora broker: the request body did not arrive in time")
+    }
     pub fn busy() -> LinkRefusal {
         r(429, "rate_limit_error", "busy", "aukora broker: too many calls at once")
     }
@@ -162,6 +165,9 @@ impl Upstream {
 pub struct Limits {
     pub max_request_bytes: usize,
     pub max_response_bytes: u64,
+    /// Longest to read one request body from the engine. A call slot is taken only after the body is in, so a socket
+    /// that sends headers and stalls holds nothing but itself, and for this long (SCOUT M6).
+    pub body: Duration,
     /// Longest silence from the provider while a reply streams.
     pub idle: Duration,
     /// Longest whole call.
@@ -175,6 +181,7 @@ impl Default for Limits {
         Self {
             max_request_bytes: 8 << 20,
             max_response_bytes: 64 << 20,
+            body: Duration::from_secs(30),
             idle: Duration::from_secs(300),
             total: Duration::from_secs(1800),
             max_calls: 8,

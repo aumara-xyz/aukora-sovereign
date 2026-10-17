@@ -119,7 +119,6 @@ async fn messages(link: Arc<Link>, request: Request<Incoming>) -> Result<Respons
     if link.receipts_failed.load(Ordering::SeqCst) {
         return Err(refuse::unavailable("receipts-unavailable"));
     }
-    let permit = link.calls.clone().try_acquire_owned().map_err(|_| refuse::busy())?;
     let (parts, body) = request.into_parts();
     let version = parts.headers.get("anthropic-version").map(|v| v.as_bytes().to_vec());
     if version.as_deref().is_some_and(|v| v != ANTHROPIC_VERSION.as_bytes()) {
@@ -133,11 +132,14 @@ async fn messages(link: Arc<Link>, request: Request<Incoming>) -> Result<Respons
         .flat_map(|v| v.split(','))
         .filter_map(|beta| FORWARDED_BETAS.iter().copied().find(|allowed| *allowed == beta.trim()))
         .collect();
-    let raw = Limited::new(body, link.limits.max_request_bytes)
-        .collect()
-        .await
-        .map_err(|_| refuse::too_large())?
-        .to_bytes();
+    // The body is read under a deadline and before a call slot is taken: eight sockets that send a header and then
+    // nothing would otherwise hold every slot and make the model path "busy" for the real call (SCOUT M6).
+    let raw = match tokio::time::timeout(link.limits.body, Limited::new(body, link.limits.max_request_bytes).collect()).await {
+        Err(_) => return Err(refuse::body_timeout()),
+        Ok(Err(_)) => return Err(refuse::too_large()),
+        Ok(Ok(collected)) => collected.to_bytes(),
+    };
+    let permit = link.calls.clone().try_acquire_owned().map_err(|_| refuse::busy())?;
 
     // The key the owner entered, and only if its digest is the one the owner approved with the passkey.
     let approved = link.authority.approved().await;
