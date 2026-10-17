@@ -442,6 +442,16 @@ fake DeepSeek key, headless Chrome through the SSH tunnel; shots in `~/aukora-me
 | **O14** own slots | a policy allow of `kira_get` `aukora:self`/`aukora:resume` skips the slider | inside the wall: both reached Kira at once (`kira:not-found`, no card); `resume:grok` and `kira_recall` → `ask-memory` |
 | **O15** provider errors | fixed message per status, the provider's text never passes | inside the wall, fake key: `401 {"error":{"message":"aukora broker: the provider refused the key (HTTP 401; the provider's own message is withheld)","type":"authentication_error"}}` |
 
+Also from the Sonnet sweep of d453016 (`~/aukora-memory/review/SONNET-SWEEP-d453016-2026-10-17.md`), on release
+bbe36d9…-95d2ffc1 (a fourth genesis; the new polkit rule copied by hand to `/etc/polkit-1/rules.d/50-aukora-engine.rules`,
+as `engine_install.py` writes it only at install):
+
+| Item | Fix | Live evidence |
+|---|---|---|
+| **C2** failed unit stuck | admitted + failed: `reset-failed` then the normal start, backoff 30 s doubling to 10 min; not admitted + failed: start `aukora-engine-cleanup.service` (root oneshot: `engine-run.sh delete`, then `reset-failed`); polkit allows exactly those | root SIGKILLed the engine until systemd said "Start request repeated too quickly" (unit `failed`, Result=signal): the same tick the journal said `the engine unit failed; resetting and starting it again (next try in 30 s)`, and `running` followed; a second start-limit hit recovered the same way. The not-admitted cleanup path is unit-tested only (backoff) and its unit is `static` (`check-units.sh`: units ok) |
+| **C3** stop fallback | `engine-run.sh delete` waits 10 s, then `docker rm -f`; `TimeoutStopSec=90s` | root blocked its own connections to the gateway (:690) so OpenShell's delete could not run, then a changed door byte stopped the engine: both sandbox containers removed by the docker fallback, the unit `inactive` (not failed) 13 s after "Stopping"; the rule removed, the byte restored, `running` again. With the old 30 s wait inside a 30 s stop bound the fallback could never run |
+| **C16** docs | NODE.md section 1 and the gateway unit say the fence admits root and 65534; the stale [GUESS] is gone | — |
+
 Tests (Linux, the node, umask 002): `cargo test -p supervisor -p broker -p gate -p floor -p frontdoor` (sovereign
 170 + 1 ignored, broker 13, gate 17, floor 7, frontdoor 4), `tests/deploy` (8); `scripts/check.sh` CONSTRUCTION GREEN
 on the node (the Mac stayed under its disk floor).
