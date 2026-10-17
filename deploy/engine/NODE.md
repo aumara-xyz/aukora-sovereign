@@ -125,6 +125,12 @@ clickjack seam). A sibling origin gets none of that: host-only cookies stay on t
 refusing every frame ancestor but the shell. This deviates from the brief ("the shell origin serves the DSH web UI");
 see decision D1.
 
+**Who may open it (SCOUT M18).** `GET /engine/open` mints a ticket (at most 32 a minute), and cookies are `SameSite=Strict`,
+which is site-based: a page on `engine.<shell>` is same-site with the shell, so it could send credentialed no-cors GETs and
+make the owner's open fail with `engine-busy` (the same for `GET /api/approvals`, which only burns its one-second poll
+slot). The frontdoor now admits both only with `Sec-Fetch-Site: same-origin` (the shell's own page), and `/engine/open`
+also with `none` (a typed or bookmarked address, a top-level navigation); `same-site` and `cross-site` are refused.
+
 Flow: the owner, signed in on the shell, opens `https://<shell>/engine/open`. The host (`host/engine_routes.rs`)
 checks the bound shell session against the ledger's binding and the release floor, mints a one-time ticket (60 s,
 single use) and redirects to `https://engine.<shell>/.aukora/enter/<ticket>`. The engine origin

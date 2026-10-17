@@ -145,23 +145,7 @@ fn request_metadata(input: &RequestInput) -> Result<Option<zeroize::Zeroizing<Ve
     {
         return Err(codes::FRONTDOOR_ORIGIN_REFUSED);
     }
-    let same_origin_required = input.method == Method::Post
-        || (role == HostRole::Shell
-            && input.method == Method::Get
-            && input.path == crate::fd4::DATA_PATH);
-    if input.fetch_sites.len() > 1
-        || input.fetch_sites.first().is_some_and(|value| {
-            if same_origin_required {
-                value != "same-origin"
-            } else {
-                !(matches!(value.as_str(), "same-origin" | "same-site" | "none")
-                    || (role == HostRole::Shell
-                        && !input.path.starts_with("/api/")
-                        && value == "cross-site"))
-            }
-        })
-        || (same_origin_required && input.fetch_sites.len() != 1)
-    {
+    if !fetch_site_allowed(role, input.method, &input.path, &input.fetch_sites) {
         return Err(codes::FRONTDOOR_FETCH_SITE_REFUSED);
     }
     let cookie = cookie_for(role, &input.cookies)?;
@@ -174,6 +158,34 @@ fn request_metadata(input: &RequestInput) -> Result<Option<zeroize::Zeroizing<Ve
         return Err(codes::FRONTDOOR_BODY_INVALID);
     }
     Ok(cookie)
+}
+
+/// Whether the `Sec-Fetch-Site` values are acceptable for this request.
+///
+/// Same-origin only (and exactly one value) for every POST and for the shell reads whose answer or side effect is
+/// the owner's alone: the data bridge, the approvals poll (`GET /api/approvals`: a hostile page on a sibling origin,
+/// such as the engine's, sends same-site no-cors GETs with the shell cookie, and each burns the poll slot), and the
+/// engine hand-off (`GET /engine/open` mints a capped ticket, so such a page could make the owner's open fail with
+/// "engine-busy"; it is a top-level navigation, so a typed or bookmarked address, `none`, is allowed too; SCOUT M18).
+/// Other reads accept same-origin, same-site and none, and the shell's documents also cross-site (an opaque asset).
+fn fetch_site_allowed(role: HostRole, method: Method, path: &str, sites: &[String]) -> bool {
+    let shell_read = role == HostRole::Shell && method == Method::Get;
+    let same_origin_required =
+        method == Method::Post || (shell_read && (path == crate::fd4::DATA_PATH || path == "/api/approvals"));
+    let navigation_only = shell_read && path == "/engine/open";
+    if sites.len() > 1 || ((same_origin_required || navigation_only) && sites.len() != 1) {
+        return false;
+    }
+    sites.first().is_none_or(|value| {
+        if same_origin_required {
+            value == "same-origin"
+        } else if navigation_only {
+            matches!(value.as_str(), "same-origin" | "none")
+        } else {
+            matches!(value.as_str(), "same-origin" | "same-site" | "none")
+                || (role == HostRole::Shell && !path.starts_with("/api/") && value == "cross-site")
+        }
+    })
 }
 
 fn check_header_budget(input: &RequestInput) -> Result<()> {
@@ -789,5 +801,35 @@ mod route_tests {
         assert!(require_route(HostRole::Shell, Method::Post, "/api/engine/door/clear-taint").is_ok());
         assert!(require_route(HostRole::Shell, Method::Get, "/api/engine/door/clear-taint").is_err());
         assert!(require_route(HostRole::Owner, Method::Post, "/api/engine/door/clear-taint").is_err());
+    }
+
+    fn sites(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_approvals_poll_and_the_engine_hand_off_are_not_open_to_a_sibling_origin() {
+        let shell = HostRole::Shell;
+        // The approvals poll is the shell page's own fetch: same-origin, exactly once.
+        assert!(fetch_site_allowed(shell, Method::Get, "/api/approvals", &sites(&["same-origin"])));
+        for refused in [&["same-site"][..], &["cross-site"], &["none"], &[], &["same-origin", "same-origin"]] {
+            assert!(!fetch_site_allowed(shell, Method::Get, "/api/approvals", &sites(refused)), "{refused:?}");
+        }
+        // The engine hand-off is a navigation: from the shell itself, or typed or bookmarked; not from the engine's page.
+        for ok in [&["same-origin"][..], &["none"]] {
+            assert!(fetch_site_allowed(shell, Method::Get, "/engine/open", &sites(ok)), "{ok:?}");
+        }
+        for refused in [&["same-site"][..], &["cross-site"], &[], &["none", "none"]] {
+            assert!(!fetch_site_allowed(shell, Method::Get, "/engine/open", &sites(refused)), "{refused:?}");
+        }
+        // Nothing else changed: documents and other reads keep their wider rule, POST stays same-origin only.
+        assert!(fetch_site_allowed(shell, Method::Get, "/", &sites(&["same-site"])));
+        assert!(fetch_site_allowed(shell, Method::Get, "/", &sites(&["cross-site"])));
+        assert!(fetch_site_allowed(shell, Method::Get, "/engine/model-key", &sites(&["none"])));
+        assert!(!fetch_site_allowed(shell, Method::Get, "/api/engine/door", &sites(&["cross-site"])));
+        assert!(fetch_site_allowed(shell, Method::Post, "/api/session/end", &sites(&["same-origin"])));
+        assert!(!fetch_site_allowed(shell, Method::Post, "/api/session/end", &sites(&["same-site"])));
+        // The owner origin's approvals read is not the shell's route and keeps the wider rule.
+        assert!(fetch_site_allowed(HostRole::Owner, Method::Get, "/api/approvals", &sites(&["same-site"])));
     }
 }
