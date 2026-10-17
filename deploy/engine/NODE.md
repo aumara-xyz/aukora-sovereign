@@ -502,3 +502,33 @@ passkey" panel. Fixed: every engine-origin reply carries one `Permissions-Policy
 denying `publickey-credentials-get`, `publickey-credentials-create`, `identity-credentials-get`, `otp-credentials` and
 `payment`; and `engine-v1.json` is refused (`engine-config-relying-party`) when the engine host equals the owner host
 or lies under it. Migration: none. The RP id did not change, so enrolled passkeys keep working.
+
+**P2. Resource caps on the sandbox (R3).** Before: the sandbox container had no memory or CPU limit (`docker inspect`:
+`Memory=0 NanoCpus=0`), `/tmp` lived in the container's layer on the host disk and `/work`/`/engine-home` on the host
+root filesystem, so a build or a filler could take the supervisor, Kira and the gateway down with it. Now
+(`engine-run.sh`, `engine-prestart.sh`, `engine_install.py`, `aukora-engine-disk.mount`):
+- CPU and memory: `openshell sandbox create --cpu <3/4 of the CPUs> --memory <RAM less 2.5 GiB>` (OpenShell 0.1.4 sets
+  docker `NanoCpus`/`Memory` on the sandbox container; its pids cap of 2048 was already there). On a 2 vCPU / 8 GiB
+  node: 1.5 CPUs and about 5.2 GiB for the engine; the host keeps half a CPU and 2.5 GiB (Kira's two model servers
+  about 450 MiB, the gateway 150, the supervisor 50, docker 60).
+- `/tmp` is a 1 GiB tmpfs inside that memory cap (`exec`: the harness's native addons load from it; docker refuses
+  `nosuid` as an option and applies nosuid/nodev itself). OpenShell refuses any mount on `/sandbox` (its reserved
+  workspace), which stays in the container layer: the engine does not use it, and it is the one writable path left on
+  the host disk (Landlock limits writes to the policy's `read_write` list).
+- Disk: `/var/lib/aukora-engine` (the workspace and the harness home) is its own ext4 image, fallocated (two fifths
+  of the root filesystem, 8..40 GiB, and only with 8 GiB left free beside it), loop-mounted nosuid,nodev; an
+  existing folder is copied in and kept beside it as `.pre-disk`. The pre-start refuses without it; the engine unit
+  `RequiresMountsFor` it; `check-units.sh` checks it.
+- `engine-run.sh verify` now also holds the running container to the caps (memory, CPUs, pids, the /tmp tmpfs) and
+  refuses unless exactly one sandbox container exists (before, a sandbox that failed to provision could still pass
+  the policy check).
+NODE (rehearsal, 4 vCPU / 16 GiB, so 3 CPUs / 13.1 GiB for the engine; the branch's scripts through a drop-in and
+the branch's `prepare_engine_disk`, 30 GiB image), one probe a second throughout of the shell origin through Caddy
+(HTTP 200 and its time), Kira's socket and a fixed host CPU slice: idle worst 34 ms / slice 41 ms; a bash fork bomb
+held at 2048/2048 pids, 30/30 probes fine, worst 16 ms / slice 85 ms; a node memory hog reached 12 GiB and was
+OOM-killed alone (`CONSTRAINT_MEMCG`, the sandbox's own cgroup), host used memory unchanged, worst 33 ms; 16 CPU
+spinners: worst 18 ms / slice 61 ms; `/work` filled to 30G 100% (`No space left on device`), `/tmp` stopped at
+1.0 GiB, the host disk stayed at 15G used, worst 13 ms. The engine stayed `running` through all of it. Then T2's
+usability half: 20 real no-dep Rust projects (`cargo build --offline && cargo test --offline && ./target/debug/pN`)
+inside the capped sandbox 20/20, median 281 ms, against 214 ms as auma on the host: 1.31x (bar 1.5x; the wall test
+had 293/228). `wall-check.sh`: `wall ok`.

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The engine's host-disk guard (deploy/engine/engine-run.sh watch): every 5 s, when the host's root filesystem is below
+# its floor, stop the engine, which removes its sandbox and the container layer a filler in /sandbox would grow. One
+# quiet process (it logs only when it acts), enabled on an engine node only (engine_install.py).
+[Unit]
+Description=AUKORA engine host-disk guard
+ConditionPathExists=/etc/aukora/engine-v1.json
+
+[Service]
+Type=simple
+ExecStart=/opt/aukora/current/deploy/engine/engine-run.sh watch
+Restart=always
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

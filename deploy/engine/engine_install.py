@@ -48,13 +48,19 @@ CACHE = "/var/cache/aukora-engine"
 # libgomp1: the llama.cpp CPU build links it (ldd on the node rehearsal); the stock Ubuntu 24.04 image lacks it.
 PACKAGES = ("docker.io", "nftables", "polkitd", "curl", "xz-utils", "unzip", "openssl", "libgomp1")
 ENGINE_UNITS = ("aukora-engine-fence.service", "aukora-kira-embed.service", "aukora-kira-rerank.service",
-                "aukora-kira.service", "aukora-openshell-gateway.service", "run-aukora\\x2dengine-io.mount")
+                "aukora-kira.service", "aukora-openshell-gateway.service", "run-aukora\\x2dengine-io.mount",
+                "aukora-engine-diskguard.service")
 ENGINE_LISTEN = "127.0.0.1:18081"
 OPENSHELL_HOME = "/var/lib/aukora-openshell"
 # The local gateway as the CLI knows it (engine-run.sh, wall-check.sh): mTLS, loopback, the privileged port.
 GATEWAY_NAME = "aukora"
 GATEWAY_ENDPOINT = "https://127.0.0.1:690"
 IO_MOUNT = "/etc/systemd/system/run-aukora\\x2dengine-io.mount"
+# The engine's own fixed-size disk (aukora-engine-disk.mount): an ext4 image mounted over /var/lib/aukora-engine.
+ENGINE_DISK = "/var/lib/aukora-engine"
+ENGINE_IMAGE = "/var/lib/aukora-engine.img"
+DISK_UNIT = "var-lib-aukora\\x2dengine.mount"
+GIB = 1 << 30
 BROKER_SOCKET = "/run/aukora-broker/broker.sock"
 # The engine's model budget the supervisor proposes for the owner's passkey (deploy/engine/NODE.md section 7). The
 # owner sees and approves exactly these terms; changing them here (in a reviewed release) proposes them again.
@@ -400,10 +406,54 @@ def write_config(shell_host, uid, gid, image):
     tmpfiles = core.read_regular(release_file("engine/aukora-engine.tmpfiles"), 4096, "engine-install")
     core.atomic_write("/etc/tmpfiles.d/aukora-engine.conf", tmpfiles.replace(b"@AUMA@", b"auma"), 0o644)
     run(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/aukora-engine.conf"])
+    prepare_engine_disk()
     owned_dir("/var/lib/aukora-engine", 0o755)
     owned_dir("/var/lib/aukora-engine/work", 0o700, "auma", "auma")
     owned_dir("/var/lib/aukora-engine/home", 0o1770, "root", "auma")
     configure_gateway_pki()
+
+
+def engine_disk_bytes(total, free):
+    """Two fifths of the root filesystem, at least 8 GiB and at most 40 GiB (an 80 GB node: 30 GiB; a 40 GB node: 16 GiB),
+    and only if the host keeps at least 8 GiB free beside it."""
+    size = min(max(total * 2 // 5 // GIB, 8), 40) * GIB
+    if free < size + 8 * GIB:
+        core.refuse("engine-install", "disk-too-small")
+    return size
+
+
+def prepare_engine_disk():
+    """Mount the engine's fixed-size disk over /var/lib/aukora-engine (made once; an existing workspace is copied in and
+    the old folder kept beside it, never deleted)."""
+    if os.path.ismount(ENGINE_DISK):
+        return
+    if not os.path.exists(ENGINE_IMAGE):
+        stat = os.statvfs("/var/lib")
+        size = engine_disk_bytes(stat.f_blocks * stat.f_frsize, stat.f_bavail * stat.f_frsize)
+        run(["fallocate", "-l", str(size), ENGINE_IMAGE])
+        os.chmod(ENGINE_IMAGE, 0o600)
+        # nodiscard: mke2fs discards a device by default, which on a loop file punches holes and gives the reserved
+        # blocks back to the host (found live: a 30 GiB image held 250 MB). The second fallocate fills any hole left.
+        run(["mkfs.ext4", "-q", "-F", "-m", "0", "-E", "nodiscard", "-L", "aukora-engine", ENGINE_IMAGE])
+        run(["fallocate", "-l", str(size), ENGINE_IMAGE])
+        held = os.stat(ENGINE_IMAGE)
+        if held.st_blocks * 512 < held.st_size:
+            core.refuse("engine-install", "engine-disk-not-reserved")
+    core.atomic_write("/etc/systemd/system/" + DISK_UNIT,
+                      core.read_regular(release_file("engine/aukora-engine-disk.mount"), 4096, "engine-install"), 0o644)
+    aside = None
+    if os.path.isdir(ENGINE_DISK) and os.listdir(ENGINE_DISK):
+        aside = ENGINE_DISK + ".pre-disk"
+        if os.path.lexists(aside):
+            core.refuse("engine-install", "engine-disk-aside-exists")
+        os.rename(ENGINE_DISK, aside)
+    os.makedirs(ENGINE_DISK, mode=0o755, exist_ok=True)
+    run(["systemctl", "daemon-reload"])
+    run(["systemctl", "enable", "--now", DISK_UNIT])
+    if not os.path.ismount(ENGINE_DISK):
+        core.refuse("engine-install", "engine-disk-not-mounted")
+    if aside:
+        run(["cp", "-a", "--", aside + "/.", ENGINE_DISK + "/"])
 
 
 def configure_gateway_pki():

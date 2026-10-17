@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Installed by engine_install.py as /etc/systemd/system/var-lib-aukora\x2dengine.mount (a mount unit is named after its
+# path). The engine's own disk: a fixed-size ext4 image (fallocated, so its blocks are reserved and the host keeps the
+# rest) holding the workspace (/work) and the harness home (/engine-home). A build, a cache or a filler inside the
+# wall fills this filesystem and never the host's, where the supervisor, Kira and the gateway write (Auma's review R3).
+# engine-prestart.sh refuses to start the engine unless this is mounted.
+[Unit]
+Description=AUKORA engine disk (fixed-size image for /work and the harness home)
+Before=aukora-engine.service
+
+[Mount]
+What=/var/lib/aukora-engine.img
+Where=/var/lib/aukora-engine
+Type=ext4
+Options=loop,nosuid,nodev,noatime
+
+[Install]
+WantedBy=multi-user.target

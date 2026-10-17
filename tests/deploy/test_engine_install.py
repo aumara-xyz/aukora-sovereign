@@ -278,5 +278,29 @@ class AdmissionFile(unittest.TestCase):
             shutil.rmtree(scratch)
 
 
+class EngineDisk(unittest.TestCase):
+    """The engine's fixed-size disk (Auma's review R3): two fifths of the root filesystem within 8..40 GiB, and never
+    so large that the host keeps less than 8 GiB free beside it."""
+
+    def test_sizes_for_the_node_presets_and_the_floor(self):
+        gib = engine_install.GIB
+        self.assertEqual(engine_install.engine_disk_bytes(77 * gib, 62 * gib), 30 * gib)
+        self.assertEqual(engine_install.engine_disk_bytes(40 * gib, 28 * gib), 16 * gib)
+        self.assertEqual(engine_install.engine_disk_bytes(500 * gib, 480 * gib), 40 * gib)
+        self.assertEqual(engine_install.engine_disk_bytes(10 * gib, 16 * gib), 8 * gib)
+        with self.assertRaises(core.Refusal) as caught:
+            engine_install.engine_disk_bytes(40 * gib, 20 * gib)
+        self.assertEqual(str(caught.exception), "engine-install:disk-too-small")
+
+    def test_the_unit_mounts_the_image_over_the_engine_folder_without_suid_or_devices(self):
+        with open(os.path.join(ROOT, "deploy", "engine", "aukora-engine-disk.mount"), encoding="utf-8") as handle:
+            unit = handle.read()
+        self.assertIn("What=" + engine_install.ENGINE_IMAGE + "\n", unit)
+        self.assertIn("Where=" + engine_install.ENGINE_DISK + "\n", unit)
+        self.assertIn("Options=loop,nosuid,nodev,noatime\n", unit)
+        # systemd names a mount unit after its path: /var/lib/aukora-engine -> var-lib-aukora\x2dengine.mount
+        self.assertEqual(engine_install.DISK_UNIT, "var-lib-aukora\\x2dengine.mount")
+
+
 if __name__ == "__main__":
     unittest.main()

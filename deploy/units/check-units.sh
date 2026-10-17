@@ -65,9 +65,10 @@ RestrictNamespaces=yes MemoryDenyWriteExecute=yes PrivateNetwork=yes CapabilityB
         PrivateTmp=yes PrivateDevices=yes RestrictNamespaces=yes "IPAddressDeny=::/0 0.0.0.0/0" \
         CapabilityBoundingSet=cap_net_bind_service
     for unit in aukora-kira.service aukora-kira-embed.service aukora-kira-rerank.service aukora-engine-fence.service \
-        aukora-openshell-gateway.service; do
+        aukora-openshell-gateway.service 'var-lib-aukora\x2dengine.mount' aukora-engine-diskguard.service; do
         systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
     done
+    mountpoint -q /var/lib/aukora-engine || fail var-lib-aukora-engine.mount "the engine's disk is not mounted"
     # A unit with no install section is "static" (and `is-enabled --quiet` succeeds for it): only "static" is right.
     for unit in aukora-engine.service aukora-engine-cleanup.service; do
         state=$(systemctl is-enabled "$unit" 2>/dev/null) || true

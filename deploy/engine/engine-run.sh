@@ -5,6 +5,7 @@
 #   engine-run.sh           create the sandbox and stay attached to it (systemd tracks the engine's life)
 #   engine-run.sh verify    after start: the effective policy is ours, Status Effective; refuse otherwise
 #   engine-run.sh delete    after stop: remove the sandbox
+#   engine-run.sh guard     stop the engine when the host disk is below its floor (once; `watch`: every 5 s)
 #
 # Mounts (host -> sandbox; the policy's read_only/read_write lists must name each):
 #   /opt/aukora-engine          -> /engine                 ro  node, pinned harness, in-wall scripts
@@ -15,6 +16,7 @@
 #   /run/aukora-broker          -> /run/aukora-broker      rw  the model broker's socket (the same shape; NODE.md section 7)
 #   /run/aukora-engine/io       -> /run/aukora-engine-io   rw  1 MiB tmpfs: web socket + launch line
 #   /etc/aukora/engine/resolv.conf -> /etc/resolv.conf     ro  the DNS posture: no resolver
+#   tmpfs                       -> /tmp                    rw  1 GiB, counted in the memory cap (docker: nosuid,nodev; exec, native addons load from it)
 # Never mounted: /etc/aukora (except that one file), /var/lib/aukora*, the Kira socket, the docker socket, /root.
 #
 # The argv is the wall test's (the wall-test VM's run-sandbox.sh, 2026-10-17): `--from IMAGE`, `--policy FILE` and the
@@ -34,11 +36,50 @@ MOUNTS='{"docker":{"mounts":[
 {"type":"bind","source":"/run/aukora-door","target":"/run/aukora-door","read_only":false},
 {"type":"bind","source":"/run/aukora-broker","target":"/run/aukora-broker","read_only":false},
 {"type":"bind","source":"/run/aukora-engine/io","target":"/run/aukora-engine-io","read_only":false},
-{"type":"bind","source":"/etc/aukora/engine/resolv.conf","target":"/etc/resolv.conf","read_only":true}]}}'
+{"type":"bind","source":"/etc/aukora/engine/resolv.conf","target":"/etc/resolv.conf","read_only":true},
+{"type":"tmpfs","target":"/tmp","size_bytes":1073741824,"mode":1023,"options":["exec"]}]}}'
+
+# Resource caps (Auma's review R3: a cargo build, a fork bomb or a memory hog must not take down the supervisor, Kira
+# or the gateway, which share the VM). The sandbox gets three quarters of the CPUs and the memory less 2.5 GiB, so on a
+# 2 vCPU / 8 GiB node it has 1.5 CPUs and about 5.2 GiB and the host keeps half a CPU and 2.5 GiB however hard the
+# engine works; OpenShell 0.1.4 sets these on the sandbox container (docker NanoCpus, Memory; RAN on the rehearsal
+# node) and already caps its pids at 2048. /tmp is a tmpfs inside that memory cap, not the container's layer on the
+# host disk (OpenShell refuses a mount on /sandbox, its reserved workspace); /work and /engine-home live on the engine's own fixed-size filesystem
+# (/var/lib/aukora-engine, a loop-mounted image: engine-prestart.sh refuses to start without it). verify holds the
+# running container to all of it.
+limits() {
+    cpus=$(nproc) && memory_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo) || return 1
+    ENGINE_CPU_MILLI=$((cpus * 750))
+    ENGINE_MEMORY_MIB=$((memory_kib / 1024 - 2560))
+    [ "$ENGINE_MEMORY_MIB" -ge 1536 ] || { echo "engine-run: too little memory for the engine and its host" >&2; return 1; }
+}
+
+# The host's own disk (the root filesystem, where docker keeps the sandbox container's layer): OpenShell reserves
+# /sandbox, the engine can write there (Landlock allows the workdir) and it is not on the engine's own disk, so a filler
+# there would fill the host's. Below the floor (15% of the filesystem, at least 8 GiB) the engine does not start, and
+# the guard (aukora-engine-diskguard.service: `engine-run.sh watch`, a check every 5 s) stops a running one; stopping
+# removes the sandbox and its layer, which gives the space back. Found live on the rehearsal node (node/pre-launch).
+host_disk_ok() {
+    set -- $(df -Pk /var/lib/docker | awk 'NR == 2 {print $2, $4}')
+    [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+    floor=$(($1 * 15 / 100))
+    [ "$floor" -ge 8388608 ] || floor=8388608
+    [ "$2" -ge "$floor" ]
+}
+
+guard() {
+    host_disk_ok && return 0
+    systemctl is-active --quiet aukora-engine.service || return 0
+    echo "engine-run: the host disk is below its floor; stopping the engine (its sandbox and layer are removed)" >&2
+    systemctl stop --no-block aukora-engine.service
+}
 
 create() {
+    limits || exit 1
+    host_disk_ok || { echo "engine-run: the host disk is below its floor (15%, at least 8 GiB free); not starting" >&2; exit 1; }
     exec /usr/local/bin/openshell sandbox create --name "$NAME" --from "$SANDBOX_IMAGE" --policy "$POLICY" \
         --driver-config-json "$MOUNTS" --no-auto-providers --no-tty \
+        --cpu "${ENGINE_CPU_MILLI}m" --memory "${ENGINE_MEMORY_MIB}Mi" \
         -- /engine/node/bin/node /engine/aukora/entry.mjs "$ENGINE_HOST"
 }
 
@@ -88,7 +129,22 @@ text = json.dumps(policy)
 for never in ("docker.sock", "/etc/aukora", "/var/lib/aukora", "/run/aukora-kira", "/root", "best_effort"):
     if never in text:
         fail("names " + never)
-' "$AUMA_UID" "$AUMA_GID" "$POLICY"
+' "$AUMA_UID" "$AUMA_GID" "$POLICY" || return 1
+    # The caps are on the running container, not only in the argv (fail closed: no container, or no cap, is a refusal).
+    limits || return 1
+    container=$(/usr/bin/docker ps -q --filter "name=^/openshell-default--$NAME-" | while read -r id; do
+        /usr/bin/docker inspect --format '{{.Name}} {{.Id}}' "$id"; done | grep -v -- '-supervisor ' | awk '{print $2}')
+    [ "$(printf '%s\n' "$container" | grep -c .)" = 1 ] || { echo "engine-run: not exactly one sandbox container" >&2; return 1; }
+    /usr/bin/docker inspect "$container" | python3 -I -c '
+import json, sys
+memory, nano = int(sys.argv[1]) << 20, int(sys.argv[2]) * 1000000
+host = json.load(sys.stdin)[0]["HostConfig"]
+tmpfs = {m.get("Target"): (m.get("TmpfsOptions") or {}).get("SizeBytes") for m in host.get("Mounts") or [] if m.get("Type") == "tmpfs"}
+if host.get("Memory") != memory or host.get("NanoCpus") != nano or not 0 < (host.get("PidsLimit") or 0) <= 4096 \
+        or tmpfs.get("/tmp") != 1 << 30:
+    print("engine-run: the sandbox container is not capped as asked", file=sys.stderr)
+    sys.exit(1)
+' "$ENGINE_MEMORY_MIB" "$ENGINE_CPU_MILLI"
 }
 
 # Remove the sandbox and prove it is gone (SCOUT's sweep, M10: a delete whose failure was swallowed could leave the
@@ -115,5 +171,7 @@ case "${1:-create}" in
     create) delete; create ;;
     verify) verify ;;
     delete) delete ;;
-    *) echo "usage: engine-run.sh [create|verify|delete]" >&2; exit 2 ;;
+    guard) guard ;;
+    watch) while :; do guard || true; sleep 5; done ;;
+    *) echo "usage: engine-run.sh [create|verify|delete|guard|watch]" >&2; exit 2 ;;
 esac
