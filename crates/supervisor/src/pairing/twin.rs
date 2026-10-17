@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Local stand-in node for the two-browser co-presence rehearsal (tests/copresence/twin.mjs).
+//! An ignored unit test: it runs only when the driver asks for it.
 //!
 //! Real: `supervisor::pairing` (store, context, copresence::v1 verifier, single spend, device
 //! list) and the phone page's CSP and permissions from frontdoor. Stood in: TLS, the owner
 //! session check (one fixed bound owner), and the Aura ledger (facts are kept in memory and
-//! served at /__facts). Run only by the driver: `cargo test -p supervisor --test pairing_twin
-//! -- --ignored --nocapture` with PAIRING_TWIN_ROOT set to the compiled portal folder.
+//! served at /__facts). Run only by the driver: `cargo test -p supervisor --bin sovereign
+//! pairing::twin -- --ignored --nocapture` with PAIRING_TWIN_ROOT set to the compiled portal folder.
 
 use canon::{
     digest::Digest32,
@@ -20,7 +21,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use supervisor::pairing::{FactRecorder, Owner, Pairing, Recorded};
+use super::{FactRecorder, Owner, Pairing, Recorded};
 
 #[derive(Default)]
 struct Facts(Mutex<Vec<Value>>);

@@ -61,7 +61,7 @@ pub struct Host {
     handoffs: Mutex<frontdoor::fd4::ShellHandoffs>,
     engine: Option<Arc<crate::engine::Engine>>,
     model_broker: Option<Arc<crate::model_broker::ModelBroker>>,
-    pairing: Option<Arc<supervisor::pairing::Pairing>>,
+    pairing: Option<Arc<crate::pairing::Pairing>>,
 }
 struct Assets {
     source: ReleaseFiles,
@@ -257,7 +257,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     });
     // Co-presence pairing (COPRESENCE-NODE.md); a store that cannot open refuses only pairing.
     state.subdirectory("copresence")?;
-    let pairing = supervisor::pairing::Pairing::open(
+    let pairing = crate::pairing::Pairing::open(
         &config.state_root.join("copresence").join("pairing-v1.sqlite3"),
         state.node,
         &config.owner_origin,

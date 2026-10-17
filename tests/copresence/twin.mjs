@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Co-presence pairing rehearsal: two isolated headless-Chrome contexts are the owner's computer and the phone; a
-// locally run stand-in node (crates/supervisor/tests/pairing_twin.rs) runs the real supervisor::pairing organ.
+// locally run stand-in node (crates/supervisor/src/pairing/twin.rs) runs the real supervisor::pairing organ.
 //
 //   JSQR=/path/to/jsQR.min.js node tests/copresence/twin.mjs [--runs=3]
 //
@@ -51,7 +51,7 @@ const cleanup = () => { for (const child of children) { try { child.kill('SIGKIL
 process.on('exit', cleanup);
 
 // The stand-in node.
-const node = spawn('cargo', ['test', '--offline', '-q', '-p', 'supervisor', '--test', 'pairing_twin', '--', '--ignored', '--nocapture'],
+const node = spawn('cargo', ['test', '--offline', '-q', '-p', 'supervisor', '--bin', 'sovereign', 'pairing::twin', '--', '--ignored', '--nocapture'],
   { cwd: ROOT, env: { ...process.env, PAIRING_TWIN_ROOT: served, PAIRING_TWIN_SECONDS: String(60 + RUNS * 60) }, stdio: ['ignore', 'pipe', 'inherit'] });
 children.push(node);
 const base = await new Promise((resolve, reject) => {

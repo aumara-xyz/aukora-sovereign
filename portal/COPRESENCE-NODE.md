@@ -135,12 +135,12 @@ export const pairingPort: PairingPort | null = createNodePairingPort();
 
 ## What ran
 
-- `cargo test -p supervisor --lib pairing`: 10 tests with real P-256 receipts (spend once, replay, wrong context,
+- `cargo test -p supervisor --bin sovereign pairing`: 10 tests with real P-256 receipts (spend once, replay, wrong context,
   wrong node, stranger key, stale and future frames, tampered signature, attempt bound, single-use and expiring join,
   session separation, pending fact settled once, reopen).
 - `cargo test -p frontdoor --lib`: portal paths on the owner surface only; pairing routes; phone page headers.
 - `JSQR=<jsQR.min.js> node tests/copresence/twin.mjs --runs=5`: two isolated headless-Chrome contexts against a local
-  stand-in node running `supervisor::pairing` (`crates/supervisor/tests/pairing_twin.rs`): 5 of 5 paired in about
+  stand-in node running `supervisor::pairing` (`crates/supervisor/src/pairing/twin.rs`): 5 of 5 paired in about
   4.5 s, phone verified, one fact per run, replay refused, both devices listed, no CSP violation. Cameras are canvas
   streams painted by the driver; TLS, the owner session check and Aura are stood in. Not the physical test.
 

@@ -14,6 +14,7 @@ mod health;
 mod host;
 mod identity;
 mod model_broker;
+mod pairing;
 mod release;
 mod state;
 mod web;

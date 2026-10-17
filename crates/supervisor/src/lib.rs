@@ -13,5 +13,3 @@ pub mod transport;
 pub mod exit;
 
 pub mod claim;
-
-pub mod pairing;

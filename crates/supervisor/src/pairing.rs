@@ -15,9 +15,12 @@ mod context;
 mod store;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod twin;
 
-pub use context::{session_binding, PairingContext, CONTEXT_SCHEMA, MAX_CONTEXT_BYTES, PURPOSE};
-pub use store::{DeviceRow, STORE_SCHEMA};
+use context::{session_binding, PairingContext};
+#[cfg(test)]
+use context::{CONTEXT_SCHEMA, MAX_CONTEXT_BYTES, PURPOSE};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use canon::{

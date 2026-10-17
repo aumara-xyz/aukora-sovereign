@@ -16,10 +16,8 @@ use canon::{
     Result,
 };
 use frontdoor::{ingress::AdmittedRequest, owner_origin::OwnerRoute, session::BoundSession};
-use supervisor::{
-    ingress::{BindingState, PrincipalScope},
-    pairing::{FactRecorder, Owner, Recorded, MAX_RECEIPT_BYTES},
-};
+use crate::pairing::{FactRecorder, Owner, Recorded, MAX_RECEIPT_BYTES};
+use supervisor::ingress::{BindingState, PrincipalScope};
 
 /// The one Aura fact per spent receipt: a nonauthorizing `boot.facts` row whose actor is
 /// `copresence` and whose body schema is `aukora:copresence-pairing:v1`.
@@ -65,7 +63,7 @@ fn exact<'a>(body: &'a Value, keys: &[&str]) -> Result<Vec<&'a str>> {
 }
 
 impl Host {
-    fn pairing(&self) -> Result<&supervisor::pairing::Pairing> {
+    fn pairing(&self) -> Result<&crate::pairing::Pairing> {
         self.pairing.as_deref().ok_or(canon::Refusal {
             organ: "copresence",
             reason: "pairing-unavailable",
