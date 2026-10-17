@@ -26,7 +26,7 @@ fn tools(owner: bool) -> Value {
             "privacy": {"type": "string", "enum": ["local", "builders", "public"], "description": "local: only the owner can read it back."},
             "capture": capture,
             "sources": {"type": "array", "items": {"type": "string"}, "description": "Ids of notes this one derives from."},
-            "slot": text("Optional fixed slot, e.g. aukora:resume."),
+            "slot": text(if owner { "Optional fixed slot: aukora:self, aukora:resume or resume:<agent>." } else { "Optional: resume:<your name>, your own resume slot; no other slot is yours to write." }),
             "valid_from": int("Unix seconds."), "valid_to": int("Unix seconds.")});
     if owner {
         remember["owner_signed"] = json!({"type": "boolean", "description": "Sign the review as the owner."});
@@ -41,7 +41,8 @@ fn tools(owner: bool) -> Value {
             "scopes": {"type": "array", "items": {"type": "string"}},
             "author": text("Only notes by this agent (name or public key hex)."),
             "budget_chars": int("Text budget, default 4800.")}))},
-        {"name": "get", "description": "Read one note by id, re-verified.", "inputSchema": object(&["id"], json!({"id": id}))},
+        {"name": "get", "description": "Read one note by id, re-verified, or the current note of a slot.",
+         "inputSchema": object(&["id"], json!({"id": text("A note id (64 lowercase hex) or a slot: aukora:self, aukora:resume or resume:<agent>.")}))},
         {"name": "list_recent", "description": "List the newest notes, newest first; page with next_before.",
          "inputSchema": object(&[], json!({"limit": int("Default 20, at most 500."), "before": int("The next_before cursor from the last page."), "epoch": int("Default 2.")}))},
         {"name": "supersede", "description": "Mark one of your notes as replaced (the owner may supersede any). Nothing is deleted.",

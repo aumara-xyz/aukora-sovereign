@@ -12,14 +12,14 @@
 //     (`capture-ceiling`, `owner-only`, `lane-closed`) without ever mutating `exec.arguments` (preserving
 //     @aukora/door's judge-then-lock digest invariant).
 //  4. Load `aukora:self` (capped at 4,096 UTF-8 bytes) and `aukora:resume` (capped at 2,048 UTF-8 bytes)
-//     at session start through `kira_list_recent` (routed through @aukora/door -> Rust door -> Kira 2)
+//     at session start through `kira_get` by slot name (routed through @aukora/door -> Rust door -> Kira 2)
 //     and inject them into the system prompt with `interpolate: false`, outside the 4,800-char recall budget.
 
 import {
   RESUME_SECTION_ORDER,
   SELF_SECTION_ORDER,
+  isLiveVerifiedNote,
   noteText,
-  selectSlotNote,
   truncateUtf8,
 } from './slots.ts'
 import {
@@ -85,12 +85,10 @@ export function resolveKiraConfig(raw: KiraPluginConfig = {}): ResolvedKiraConfi
     return chosen
   }
   return {
-    epoch: intInRange(raw.epoch, 2, 1, 1_000_000, 'epoch'),
     selfSlot: nonEmptyString(raw.selfSlot, 'aukora:self', 'selfSlot'),
     resumeSlot: nonEmptyString(raw.resumeSlot, 'aukora:resume', 'resumeSlot'),
     maxSelfBytes: intInRange(raw.maxSelfBytes, 4_096, 64, 65_536, 'maxSelfBytes'),
     maxResumeBytes: intInRange(raw.maxResumeBytes, 2_048, 64, 65_536, 'maxResumeBytes'),
-    scanLimit: intInRange(raw.scanLimit, 500, 1, 500, 'scanLimit'),
   }
 }
 
@@ -112,7 +110,7 @@ export interface KiraController {
   preExecute(exec: ExecLike, next: () => Promise<PreDecisionLike>): Promise<PreDecisionLike>
   /** `tools/result` observer: marks the turn tainted if an external tool ran. */
   onToolResult(exec: Readonly<ExecLike>, result?: Readonly<ResultLike>): void
-  /** Load `aukora:self` and `aukora:resume` once per session through `executeTool('kira_list_recent', ...)`. */
+  /** Load `aukora:self` and `aukora:resume` once per session through `executeTool('kira_get', { id: slot })`. */
   ensureSlotsLoaded(force?: boolean): Promise<{ selfText: string; resumeText: string; loaded: boolean }>
   /** Current cached text for the `aukora:self` section (<= maxSelfBytes UTF-8 bytes). */
   selfText(): string
@@ -171,23 +169,32 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     }
   }
 
+  /**
+   * One slot through `kira_get` by name (Kira's `get` resolves `aukora:self` / `aukora:resume` to the newest live note
+   * by an author allowed to write that slot). `undefined` when the door or Kira could not answer, so a later step
+   * retries; `''` when the slot is empty or the note is not one to inject.
+   */
+  const loadSlot = async (slot: string, maxBytes: number): Promise<string | undefined> => {
+    const result = await executeTool('kira_get', { id: slot })
+    if (result.isError) {
+      return result.error.info?.code === 'kira:not-found' ? '' : undefined
+    }
+    const note = result.value as KiraNote
+    if (typeof note !== 'object' || note === null || note.slot !== slot || !isLiveVerifiedNote(note)) return ''
+    return truncateUtf8(noteText(note), maxBytes).text
+  }
+
   const loadSlots = async (): Promise<{ selfText: string; resumeText: string; loaded: boolean }> => {
     try {
-      const result = await executeTool('kira_list_recent', {
-        limit: config.scanLimit,
-        epoch: config.epoch,
-      })
-      if (!result.isError && typeof result.value === 'object' && result.value !== null) {
-        const rawNotes = (result.value as { notes?: unknown }).notes
-        if (Array.isArray(rawNotes)) {
-          const notes = rawNotes as KiraNote[]
-          const selfNote = selectSlotNote(notes, config.selfSlot, 'self')
-          const resumeNote = selectSlotNote(notes, config.resumeSlot, 'resume')
-          cachedSelfText = selfNote !== undefined ? truncateUtf8(noteText(selfNote), config.maxSelfBytes).text : ''
-          cachedResumeText = resumeNote !== undefined ? truncateUtf8(noteText(resumeNote), config.maxResumeBytes).text : ''
-          slotsLoaded = true
-          return { selfText: cachedSelfText, resumeText: cachedResumeText, loaded: true }
-        }
+      const [selfText, resumeText] = await Promise.all([
+        loadSlot(config.selfSlot, config.maxSelfBytes),
+        loadSlot(config.resumeSlot, config.maxResumeBytes),
+      ])
+      if (selfText !== undefined && resumeText !== undefined) {
+        cachedSelfText = selfText
+        cachedResumeText = resumeText
+        slotsLoaded = true
+        return { selfText, resumeText, loaded: true }
       }
     } catch {
       // Fail closed on slot load errors: leave sections empty rather than crashing prompt assembly,

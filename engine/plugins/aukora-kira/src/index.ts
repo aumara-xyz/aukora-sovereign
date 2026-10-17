@@ -14,7 +14,7 @@
 //     `kira_remember` or `memory_remember` in that turn (across all steps of the turn) must declare
 //     `capture: "web-derived"`.
 //  4. Session-start slot injection: `aukora:self` (up to 4,096 UTF-8 bytes) and `aukora:resume` (up to 2,048
-//     UTF-8 bytes) are fetched once at session start via `kira_list_recent` through the door and injected as
+//     UTF-8 bytes) are fetched once at session start via `kira_get` by slot name through the door and injected as
 //     `systemPrompt` sections with `interpolate: false`, outside the 4,800-char `kira_recall` budget.
 
 import { randomBytes } from 'node:crypto'
@@ -26,7 +26,6 @@ import {
   SELF_SECTION_ORDER,
   isLiveVerifiedNote,
   noteText,
-  selectSlotNote,
   truncateUtf8,
 } from './slots.ts'
 import {
@@ -76,7 +75,6 @@ export {
   kiraRefusalResult,
   noteText,
   resolveKiraConfig,
-  selectSlotNote,
   truncateUtf8,
 }
 export type {

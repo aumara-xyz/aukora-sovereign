@@ -3,7 +3,7 @@
 //! vector indexes as rebuildable side tables, and an author registry. Every returned note is re-verified, and so is
 //! every supersede or quarantine event that changes how a note reads.
 
-use super::note::{check_capture_lane, NoteMeta, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
+use super::note::{check_capture_lane, may_write_slot, NoteMeta, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
 use canon::{Refusal, Result};
 use nostr::{Event, VerifiedEvent};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -380,6 +380,9 @@ impl SharedStore {
                 if meta.lane.owner_only() && !agent.owner {
                     return Err(refuse("note-capture-lane"));
                 }
+                if meta.slot.as_deref().is_some_and(|slot| !may_write_slot(slot, &agent.name, agent.owner)) {
+                    return Err(refuse("slot-refused"));
+                }
                 // Ancestry is computed here, from notes the store holds; a tag cannot declare independence.
                 let mut roots = BTreeSet::new();
                 for source in &meta.sources {
@@ -516,7 +519,8 @@ impl SharedStore {
         self.load(seq)
     }
 
-    /// Newest live note in a fixed slot (`d` tag), e.g. the owner-signed self file.
+    /// Newest live note in a fixed slot (`d` tag), e.g. the owner's self file. A note whose author may not write that
+    /// slot (one stored before append checked it) is passed over, never returned.
     pub fn slot(&self, slot: &str) -> Result<Option<StoredNote>> {
         let mut stmt = self
             .db
@@ -529,7 +533,7 @@ impl SharedStore {
             .map_err(sql)?;
         for seq in seqs {
             if let Some(note) = self.load(seq)? {
-                if note.superseded_by.is_none() && !note.quarantined {
+                if note.superseded_by.is_none() && !note.quarantined && may_write_slot(slot, &note.author_name, note.author_owner) {
                     return Ok(Some(note));
                 }
             }
@@ -806,6 +810,35 @@ mod tests {
         tags.push(vec![Lane::TAG.into(), "resume".into()]);
         let forged = Event::sign(&owner, 2, NOTE_KIND, tags, "x y".into()).unwrap();
         assert_eq!(s.append(forged).err(), Some(refuse("note-capture-lane")));
+    }
+
+    #[test]
+    fn slots_take_only_their_writers_and_read_the_newest_live_one() {
+        let (owner, a) = (key(), key());
+        let mut s = store_with(&[("peter", &owner, &["*"], true), ("grok", &a, &["builders"], false)]);
+        let mut d = draft("I am Auma", "builders");
+        d.slot = Some(SELF_SLOT.into());
+        assert_eq!(s.append(sign(&a, &d, Review::Remembered, 1)).err(), Some(refuse("slot-refused")));
+        d.slot = Some("resume:claude".into());
+        assert_eq!(s.append(sign(&a, &d, Review::Remembered, 1)).err(), Some(refuse("slot-refused")));
+        d.slot = Some("resume:grok".into());
+        let first = s.append(sign(&a, &d, Review::Remembered, 2)).unwrap();
+        d.text = "grok resumes at row 9".into();
+        let second = s.append(sign(&a, &d, Review::Remembered, 3)).unwrap();
+        assert_eq!(s.slot("resume:grok").unwrap().unwrap().event.id, second.event.id);
+        // The newest is superseded: the one before it is the head again.
+        let sup = Event::sign(&a, 4, SUPERSEDE_KIND, vec![vec!["supersedes".into(), hex32(second.event.id.as_bytes())]], String::new()).unwrap();
+        s.record(sup).unwrap();
+        assert_eq!(s.slot("resume:grok").unwrap().unwrap().event.id, first.event.id);
+        // A slot note stored before append checked the writer (simulated: grok was briefly an owner) is never the head.
+        let mine = s.append(sign(&owner, &{ let mut o = draft("I am Auma, the owner wrote this", "builders"); o.slot = Some(SELF_SLOT.into()); o }, Review::Remembered, 5)).unwrap();
+        s.db.execute("UPDATE agents SET owner = 1 WHERE name = 'grok'", []).unwrap();
+        d.slot = Some(SELF_SLOT.into());
+        d.text = "I am Grok now".into();
+        s.append(sign(&a, &d, Review::Remembered, 6)).unwrap();
+        s.db.execute("UPDATE agents SET owner = 0 WHERE name = 'grok'", []).unwrap();
+        assert_eq!(s.slot(SELF_SLOT).unwrap().unwrap().event.id, mine.event.id);
+        assert!(s.slot(RESUME_SLOT).unwrap().is_none());
     }
 
     #[test]

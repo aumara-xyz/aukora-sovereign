@@ -30,8 +30,6 @@ export type PreDecisionLike =
 
 /** Static configuration for @aukora/kira. Notice: no socket path and no token (the Rust door owns both). */
 export interface KiraPluginConfig {
-  /** Active Kira epoch to read session-start slots from. Default 2. */
-  epoch?: number
   /** Slot name for the agent's self note. Default 'aukora:self'. */
   selfSlot?: string
   /** Slot name for the session resume note. Default 'aukora:resume'. */
@@ -40,18 +38,14 @@ export interface KiraPluginConfig {
   maxSelfBytes?: number
   /** Maximum UTF-8 bytes injected for the resume slot (outside recall budget). Default 2,048. */
   maxResumeBytes?: number
-  /** Number of recent notes scanned via kira_list_recent at session start to resolve slots. Default 500. */
-  scanLimit?: number
 }
 
 /** Validated KiraPluginConfig with all defaults filled in. */
 export interface ResolvedKiraConfig {
-  epoch: number
   selfSlot: string
   resumeSlot: string
   maxSelfBytes: number
   maxResumeBytes: number
-  scanLimit: number
 }
 
 /**

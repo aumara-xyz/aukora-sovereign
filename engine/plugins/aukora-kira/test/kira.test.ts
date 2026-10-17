@@ -14,8 +14,8 @@ import {
   buildRememberArgs,
   createKiraController,
   createKiraTools,
+  isLiveVerifiedNote,
   resolveKiraConfig,
-  selectSlotNote,
   truncateUtf8,
 } from '../src/index.ts'
 import type { ExecLike, KiraNote } from '../src/index.ts'
@@ -102,15 +102,13 @@ test('truncateUtf8 respects byte boundaries without splitting multi-byte code po
   assert.equal(cutInsideAccent.byteLength, 6)
 })
 
-test('selectSlotNote picks the newest live verified note and ignores superseded or quarantined notes', () => {
-  const notes: KiraNote[] = [
-    sampleNote({ id: '1'.repeat(64), seq: 10, content: 'old self', superseded_by: '2'.repeat(64) }),
-    sampleNote({ id: '2'.repeat(64), seq: 11, content: 'current self' }),
-    sampleNote({ id: '3'.repeat(64), seq: 12, content: 'quarantined self', quarantined: true }),
-    sampleNote({ id: '4'.repeat(64), seq: 13, content: 'unverified self', sig_verified: false }),
-  ]
-  const chosen = selectSlotNote(notes, 'aukora:self', 'self')
-  assert.equal(chosen?.content, 'current self')
+test('isLiveVerifiedNote refuses superseded, quarantined, withheld, unverified and empty notes', () => {
+  assert.equal(isLiveVerifiedNote(sampleNote()), true)
+  assert.equal(isLiveVerifiedNote(sampleNote({ superseded_by: '2'.repeat(64) })), false)
+  assert.equal(isLiveVerifiedNote(sampleNote({ quarantined: true })), false)
+  assert.equal(isLiveVerifiedNote(sampleNote({ withheld: true })), false)
+  assert.equal(isLiveVerifiedNote(sampleNote({ sig_verified: false })), false)
+  assert.equal(isLiveVerifiedNote(sampleNote({ content: '' })), false)
 })
 
 test('turn taint forces capture: "web-derived" on kira_remember across steps until the next turn', async () => {
@@ -249,19 +247,13 @@ test('session-start slot loader caps aukora:self at 4 KiB and aukora:resume at 2
   const oversizedSelf = 'S'.repeat(5_000)
   const resumeWithBraces = 'Resume state with literal {{unregistered_var}} braces — ' + 'R'.repeat(2_500)
 
+  const asked: unknown[] = []
   const controller = createKiraController({}, async (name, args) => {
-    assert.equal(name, 'kira_list_recent')
-    assert.deepEqual(args, { limit: 500, epoch: 2 })
-    return {
-      isError: false,
-      value: {
-        notes: [
-          sampleNote({ seq: 20, slot: 'aukora:self', lane: 'self', content: oversizedSelf }),
-          sampleNote({ seq: 21, slot: 'aukora:resume', lane: 'resume', content: resumeWithBraces }),
-        ],
-      },
-      content: [{ type: 'text', text: '{}' }],
-    }
+    assert.equal(name, 'kira_get')
+    asked.push(args)
+    const slot = (args as { id: string }).id
+    const content = slot === 'aukora:self' ? oversizedSelf : resumeWithBraces
+    return { isError: false, value: sampleNote({ slot, lane: slot.slice(7), content }), content: [{ type: 'text', text: '{}' }] }
   })
 
   const assembly = {
@@ -285,10 +277,27 @@ test('session-start slot loader caps aukora:self at 4 KiB and aukora:resume at 2
   assert.ok(resumeSec.text.includes('{{unregistered_var}}'))
   assert.equal(controller.selfSection().order, SELF_SECTION_ORDER)
   assert.equal(controller.resumeSection().order, RESUME_SECTION_ORDER)
+  // Each slot is one kira_get by name, through the door; no scan of recent notes.
+  assert.deepEqual(asked, [{ id: 'aukora:self' }, { id: 'aukora:resume' }])
+})
+
+test('slot loading: an empty slot is loaded as empty, a door outage retries, a mismatched or dead note is never injected', async () => {
+  const refusal = (code: string) => ({ isError: true as const, error: { message: code, info: { name: 'AukoraDoorRefusal', code } }, content: [] })
+  let reply: (slot: string) => unknown = () => refusal('kira-unavailable')
+  const controller = createKiraController({}, async (_name, args) => reply((args as { id: string }).id) as never)
+  assert.equal((await controller.ensureSlotsLoaded()).loaded, false, 'the door is down: not loaded, retried later')
+  reply = slot => (slot === 'aukora:self' ? refusal('kira:not-found') : refusal('kira-unavailable'))
+  assert.equal((await controller.ensureSlotsLoaded()).loaded, false, 'half an answer is not an answer')
+  reply = () => refusal('kira:not-found')
+  assert.deepEqual(await controller.ensureSlotsLoaded(), { selfText: '', resumeText: '', loaded: true })
+  // A reply for another slot, or a superseded or quarantined note, is not injected.
+  const ok = (value: unknown) => ({ isError: false as const, value, content: [] })
+  reply = slot => ok(slot === 'aukora:self' ? sampleNote({ slot: 'resume:grok', content: 'I am Grok' }) : sampleNote({ slot, quarantined: true }))
+  assert.deepEqual(await controller.ensureSlotsLoaded(true), { selfText: '', resumeText: '', loaded: true })
 })
 
 test('resolveKiraConfig validates bounds', () => {
   assert.throws(() => resolveKiraConfig({ maxSelfBytes: 10 }))
-  assert.throws(() => resolveKiraConfig({ scanLimit: 501 }))
+  assert.throws(() => resolveKiraConfig({ maxResumeBytes: 65_537 }))
   assert.throws(() => resolveKiraConfig({ selfSlot: '' }))
 })

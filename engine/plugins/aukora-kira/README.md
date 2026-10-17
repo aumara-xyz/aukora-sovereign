@@ -34,9 +34,12 @@ itself signs as the token's agent and never lets an agent claim more than `model
    (`kira_remember` and `memory_remember`) must say `capture: "web-derived"`, or it is denied (`code: 'turn-tainted'`).
    Taint resets at `step === 1` of the agent's next turn.
 5. **Session-start `aukora:self` and `aukora:resume` injection.** At session start (`agent/created`, `agent/pre-step`,
-   and the first `system-prompt/assemble`) the plugin reads both slots through `ctx.tools.execute` (so through
-   `@aukora/door` -> Rust door -> Kira 2) and registers them as `SystemPrompt` sections with `interpolate: false`,
-   outside the 4,800-character `kira_recall` budget.
+   and the first `system-prompt/assemble`) the plugin reads each slot with one `kira_get { id: '<slot>' }` through
+   `ctx.tools.execute` (so through `@aukora/door` -> Rust door -> Kira 2) and registers them as `SystemPrompt`
+   sections with `interpolate: false`, outside the 4,800-character `kira_recall` budget. Kira resolves a slot to its
+   newest live note by an author allowed to write it (the owner for `aukora:*`; an agent only its own
+   `resume:<agent>`), so no other agent's note can become Auma's self file. The plugin injects a note only if it is
+   live and carries the slot it asked for; `kira:not-found` is an empty slot, any other failure is retried next step.
 
 ## Honest limits
 

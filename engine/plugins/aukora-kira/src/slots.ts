@@ -64,29 +64,3 @@ export function isLiveVerifiedNote(note: KiraNote): boolean {
   if (note.sig_verified === false) return false
   return true
 }
-
-function noteRank(a: KiraNote, b: KiraNote): number {
-  const seqA = typeof a.seq === 'number' ? a.seq : -1
-  const seqB = typeof b.seq === 'number' ? b.seq : -1
-  if (seqA !== seqB) return seqB - seqA
-  const timeA = typeof a.created_at === 'number' ? a.created_at : 0
-  const timeB = typeof b.created_at === 'number' ? b.created_at : 0
-  return timeB - timeA
-}
-
-/**
- * Select the newest live, verified note for a slot (`aukora:self` or `aukora:resume`).
- * Prefers an explicit `note.slot === slotName` match; falls back to `note.lane === fallbackLane`
- * (`'self'` for `aukora:self`, `'resume'` for `aukora:resume`) when notes were written to the
- * owner-only lane without a slot tag.
- */
-export function selectSlotNote(notes: readonly KiraNote[], slotName: string, fallbackLane?: string): KiraNote | undefined {
-  const live = notes.filter(isLiveVerifiedNote)
-  const bySlot = live.filter(note => note.slot === slotName).sort(noteRank)
-  if (bySlot.length > 0) return bySlot[0]
-  if (fallbackLane !== undefined) {
-    const byLane = live.filter(note => (note.slot === undefined || note.slot === null) && note.lane === fallbackLane).sort(noteRank)
-    if (byLane.length > 0) return byLane[0]
-  }
-  return undefined
-}

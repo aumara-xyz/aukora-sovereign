@@ -69,6 +69,30 @@ pub fn check_capture_lane(capture: Capture, lane: Lane) -> Result<()> {
     Ok(())
 }
 
+/// A registered agent's name: 1..=64 of `[a-z0-9_-]`, starting with a letter or digit.
+pub fn valid_agent_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_alphanumeric()
+        && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// Auma's self file and resume brief, the fixed slots the engine reads at session start.
+pub const SELF_SLOT: &str = "aukora:self";
+pub const RESUME_SLOT: &str = "aukora:resume";
+
+/// The slot names `get` resolves (spec v0.3 §12): Auma's self file and resume brief, and an agent's own
+/// `resume:<agent>`.
+pub fn readable_slot(slot: &str) -> bool {
+    slot == SELF_SLOT || slot == RESUME_SLOT || slot.strip_prefix("resume:").is_some_and(valid_agent_name)
+}
+
+/// Who may write a slot: the owner any slot; any other author only its own `resume:<name>`. A slot is read back as
+/// one note that a session puts in its system prompt, so an agent that could write `aukora:self` could rewrite
+/// Auma's self file.
+pub fn may_write_slot(slot: &str, author_name: &str, author_owner: bool) -> bool {
+    author_owner || slot.strip_prefix("resume:") == Some(author_name)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Form {
     Fact,
@@ -393,6 +417,21 @@ mod tests {
         }
         d.capture = Capture::OwnerTyped;
         assert!(d.tags(Review::Remembered).is_ok());
+    }
+
+    #[test]
+    fn slots_are_named_and_owned() {
+        for slot in [SELF_SLOT, RESUME_SLOT, "resume:claude-code", "resume:grok"] {
+            assert!(readable_slot(slot), "{slot}");
+        }
+        for slot in ["aukora:other", "resume:", "resume:../x", "resume:Grok", "self:auma", "", &"a".repeat(64)] {
+            assert!(!readable_slot(slot), "{slot}");
+        }
+        assert!(may_write_slot(SELF_SLOT, "peter", true));
+        assert!(may_write_slot("resume:grok", "grok", false));
+        for (slot, author) in [(SELF_SLOT, "grok"), (RESUME_SLOT, "grok"), ("resume:claude", "grok"), ("resume:grok:x", "grok")] {
+            assert!(!may_write_slot(slot, author, false), "{slot} by {author}");
+        }
     }
 
     #[test]

@@ -242,13 +242,13 @@ export function createKiraTools(): DshToolDefinition[] {
     },
     {
       name: 'kira_get',
-      description: 'Fetch a single verified note from shared memory (Kira 2) by its 64-hex event ID.',
+      description: 'Fetch a single verified note from shared memory (Kira 2) by its 64-hex event ID, or the current note of a slot.',
       parameters: {
         type: 'object',
         properties: {
           id: {
             type: 'string',
-            description: '64-character hex event ID of the note.',
+            description: '64-character hex event ID of the note, or a slot name: aukora:self, aukora:resume or resume:<agent>.',
           },
         },
         required: ['id'],
