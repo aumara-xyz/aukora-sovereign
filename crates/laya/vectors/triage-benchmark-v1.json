@@ -119,7 +119,7 @@
           "value": "Use a café colour."
         }
       },
-      "expected_outcome": "deterministic-rule",
+      "expected_outcome": "no-additional-evidence",
       "seeded_critical": false,
       "expected_escalation": false
     },

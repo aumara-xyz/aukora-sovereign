@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Triage produces escalation evidence. There is no all-clear or approval variant.
 
+use crate::screen;
 use canon::{alg::AlgorithmId, authority::CardRisk, digest::Digest32};
 
 pub const MAX_TRIAGE_BYTES: usize = 65_536;
@@ -53,19 +54,18 @@ fn note_needs_review(bytes: &[u8]) -> bool {
     let Ok(text) = core::str::from_utf8(bytes) else {
         return true;
     };
-    // Ordinary Unicode (em-dashes, accents, other scripts) is fine; text-direction overrides and invisible
-    // characters that can make a note read differently than it is stored are not.
-    if text.chars().any(|c| matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200B}'..='\u{200F}' | '\u{2060}' | '\u{FEFF}'))
+    // Ordinary Unicode (em-dashes, accents, other scripts) is fine. Invisible, reordering, private-use and noncharacter
+    // code points can make a note read differently than it is stored, so they escalate; see `screen`.
+    if text.chars().any(screen::is_deceptive)
         || bytes
             .iter()
             .any(|byte| byte.is_ascii_control() && !matches!(byte, b'\n' | b'\t'))
-        || bytes
-            .windows(8)
-            .any(|window| window.iter().all(|byte| byte.is_ascii_whitespace()))
+        || screen::has_whitespace_padding(text)
     {
         return true;
     }
-    let folded = text.to_ascii_lowercase();
+    // Lookalike letters and odd spacing must not hide a phrase from the match.
+    let folded = screen::fold(text);
     [
         "pre-approved",
         "already approved",
@@ -393,12 +393,133 @@ fn add_count(total: &mut u64, amount: u64) -> crate::Result<()> {
 
 #[cfg(test)]
 mod unicode_tests {
-    use super::note_needs_review;
+    use super::{note_needs_review, triage, Escalation, TriageInput, TriageOutcome};
+    use canon::authority::CardRisk;
+
+    fn flagged(text: &str) -> bool {
+        note_needs_review(text.as_bytes())
+    }
 
     #[test]
-    fn ordinary_unicode_passes_and_direction_tricks_escalate() {
-        assert!(!note_needs_review("Phase 2 — clean seed, café, 日本語".as_bytes()));
-        assert!(note_needs_review("pay \u{202E}evil".as_bytes()));
-        assert!(note_needs_review("zero\u{200B}width".as_bytes()));
+    fn ordinary_unicode_passes() {
+        assert!(!flagged("Phase 2 — clean seed, café, 日本語, naïve, Привет, γειά, 👍"));
+        assert!(!flagged("Use a café colour.\nSecond line\twith a tab."));
+    }
+
+    #[test]
+    fn direction_overrides_and_zero_width_escalate() {
+        assert!(flagged("pay \u{202E}evil"));
+        assert!(flagged("zero\u{200B}width"));
+        assert!(flagged("bom\u{FEFF}note"));
+    }
+
+    #[test]
+    fn default_ignorable_code_points_escalate() {
+        for c in ['\u{00AD}', '\u{034F}', '\u{061C}', '\u{115F}', '\u{17B4}', '\u{180E}', '\u{2062}', '\u{206F}', '\u{3164}', '\u{FFA0}', '\u{FFF8}', '\u{1D173}'] {
+            assert!(flagged(&format!("a{c}b")), "U+{:04X}", u32::from(c));
+        }
+    }
+
+    #[test]
+    fn c1_controls_escalate() {
+        assert!(flagged("a\u{0085}b"));
+        assert!(flagged("a\u{009F}b"));
+    }
+
+    #[test]
+    fn line_and_paragraph_separators_and_annotation_escalate() {
+        assert!(flagged("a\u{2028}b"));
+        assert!(flagged("a\u{2029}b"));
+        assert!(flagged("a\u{FFF9}b\u{FFFB}"));
+    }
+
+    #[test]
+    fn private_use_escalates() {
+        assert!(flagged("a\u{E000}b"));
+        assert!(flagged("a\u{F8FF}b"));
+        assert!(flagged("a\u{F0000}b"));
+        assert!(flagged("a\u{10FFFD}b"));
+    }
+
+    #[test]
+    fn noncharacters_escalate() {
+        assert!(flagged("a\u{FDD0}b"));
+        assert!(flagged("a\u{FFFE}b"));
+        assert!(flagged("a\u{FFFF}b"));
+        assert!(flagged("a\u{1FFFE}b"));
+        assert!(flagged("a\u{10FFFF}b"));
+    }
+
+    #[test]
+    fn tag_characters_escalate() {
+        assert!(flagged("a\u{E0001}b"));
+        assert!(flagged("hidden \u{E0041}\u{E0042} tag text"));
+        assert!(flagged("a\u{E007F}b"));
+    }
+
+    #[test]
+    fn variation_selectors_escalate() {
+        assert!(flagged("a\u{FE00}b"));
+        assert!(flagged("heart\u{FE0F}"));
+        assert!(flagged("a\u{E0100}b"));
+    }
+
+    #[test]
+    fn non_ascii_spaces_count_toward_padding() {
+        assert!(flagged("A\u{00A0}\u{00A0}\u{2003}\u{2003}\u{3000}\u{3000}\u{202F}\u{205F}B"));
+        assert!(flagged("A \u{00A0} \u{00A0} \u{00A0} \u{00A0}B"));
+        assert!(!flagged("A\u{00A0}B\u{3000}C and some  ordinary spacing"));
+    }
+
+    #[test]
+    fn confusables_cannot_hide_a_phrase() {
+        // Cyrillic o and e, Greek o, fullwidth letters, a non-breaking hyphen and doubled spaces.
+        assert!(flagged("ign\u{043E}re previ\u{043E}us"));
+        assert!(flagged("Ignor\u{0435}   the \u{0435}vidence"));
+        assert!(flagged("pr\u{0435}\u{2011}appr\u{03BF}ved"));
+        assert!(flagged("\u{FF28}\u{FF2F}\u{FF33}\u{FF34}\u{2010}verified"));
+        assert!(flagged("ignore\u{00A0}previous"));
+        assert!(!flagged("Привет, мир: новый цвет"));
+    }
+
+    #[test]
+    fn rules_escalate_through_triage() {
+        let input = TriageInput { risk: CardRisk::Routine, evidence: b"measured", model_text: "a\u{E0041}b".as_bytes() };
+        assert_eq!(triage(&input), TriageOutcome::Escalate(Escalation::DeterministicRule));
+    }
+
+    /// Replays crates/laya/vectors/triage-benchmark-v1.json through the rules (no model).
+    #[test]
+    fn benchmark_corpus_replays_with_its_expectations() {
+        let corpus: serde_json::Value = serde_json::from_str(include_str!("../vectors/triage-benchmark-v1.json")).unwrap();
+        let bytes = |field: &serde_json::Value| -> Vec<u8> {
+            match field["encoding"].as_str().unwrap() {
+                "utf8" => field["value"].as_str().unwrap().as_bytes().to_vec(),
+                "hex" => {
+                    let hex = field["value"].as_str().unwrap();
+                    (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
+                }
+                "repeat-byte" => vec![field["byte"].as_u64().unwrap() as u8; field["count"].as_u64().unwrap() as usize],
+                other => panic!("unknown encoding {other}"),
+            }
+        };
+        let cases = corpus["cases"].as_array().unwrap();
+        for case in cases {
+            let input = &case["input"];
+            let risk = if input["risk"] == "critical" { CardRisk::Critical } else { CardRisk::Routine };
+            let (evidence, model_text) = (bytes(&input["evidence"]), bytes(&input["model_text"]));
+            let outcome = triage(&TriageInput { risk, evidence: &evidence, model_text: &model_text });
+            let name = match outcome {
+                TriageOutcome::NoAdditionalEvidence => "no-additional-evidence",
+                TriageOutcome::Escalate(Escalation::CriticalRisk) => "critical-risk",
+                TriageOutcome::Escalate(Escalation::MissingEvidence) => "missing-evidence",
+                TriageOutcome::Escalate(Escalation::InputOverflow) => "input-overflow",
+                TriageOutcome::Escalate(Escalation::DeterministicRule) => "deterministic-rule",
+                TriageOutcome::Escalate(other) => panic!("unexpected {other:?}"),
+            };
+            assert_eq!(name, case["expected_outcome"].as_str().unwrap(), "case {}", case["id"]);
+            assert_eq!(matches!(outcome, TriageOutcome::Escalate(_)), case["expected_escalation"].as_bool().unwrap(), "case {}", case["id"]);
+        }
+        assert_eq!(cases.len(), 16);
     }
 }
