@@ -29,6 +29,8 @@ export type NodePairingPortOptions = {
   readonly pollMs?: number;
   /** Called when the node has verified and spent a receipt. */
   readonly onVerdict?: (verdict: PairingVerdict) => void;
+  /** This device's key; the durable IndexedDB key by default. */
+  readonly deviceKey?: () => Promise<DeviceKey>;
 };
 export type NodePairingPort = {
   open(canvases: PairingCanvases, signal: AbortSignal): Promise<PortalServices>;
@@ -86,22 +88,43 @@ export function createNodePairingPort(options: NodePairingPortOptions = {}): Nod
   let current: Promise<PairingStart> | null = null;
   let started: PairingStart | null = null;
   let localExpiry = 0;
+  // A phone has joined the current pairing (or an exchange runs on it): never replace it early.
+  let joined = false;
   let linkCanvas: HTMLCanvasElement | null = null;
   let refresh: ReturnType<typeof setTimeout> | undefined;
-  const ownKey = (): Promise<DeviceKey> => (key ??= deviceKey(OWNER_DEVICE_STORE).catch(error => { key = null; throw error; }));
+  const ownKey = (): Promise<DeviceKey> => (key ??= (options.deviceKey ?? (() => deviceKey(OWNER_DEVICE_STORE)))().catch(error => { key = null; throw error; }));
   const url = (): string => started ? `${origin}${started.joinPath}` : "";
+  const remaining = (): number => localExpiry - Date.now();
+
+  // Near expiry, an unjoined pairing's phone link is renewed. A joined one is left alone: starting a new pairing
+  // closes the owner's open and joined ones, which would end the phone's exchange. It is checked again at expiry.
+  async function renew(pairing: string): Promise<void> {
+    if (!started || started.pairing !== pairing) return;
+    const status = await client.status(pairing).catch(() => null);
+    // A spent pairing is finished; the next session() starts a new one when the scene asks.
+    if (status?.state === "spent") return;
+    if (status?.state === "joined") joined = true;
+    if (joined && remaining() > 0) {
+      refresh = setTimeout(() => { void renew(pairing); }, Math.max(1_000, remaining()));
+      return;
+    }
+    if (started.pairing !== pairing) return;
+    current = null;
+    joined = false;
+    if (linkCanvas) void session().catch(() => {});
+  }
 
   async function session(signal?: AbortSignal): Promise<PairingStart> {
-    if (current && started && localExpiry - Date.now() < REFRESH_BEFORE_MS) current = null;
+    if (current && started && (joined ? remaining() <= 0 : remaining() < REFRESH_BEFORE_MS)) current = null;
     current ??= (async () => {
       const value = await client.start((await ownKey()).publicKey, signal);
       started = value;
+      joined = false;
       localExpiry = Date.now() + (value.expiresAtMs - value.nodeTimeMs);
       if (linkCanvas) drawLink(linkCanvas, url());
       clearTimeout(refresh);
-      // A pairing lasts five minutes; the phone link on screen is renewed before it lapses.
-      refresh = setTimeout(() => { current = null; if (linkCanvas) void session().catch(() => {}); },
-        Math.max(1_000, value.expiresAtMs - value.nodeTimeMs - REFRESH_BEFORE_MS));
+      // A pairing lasts five minutes; an unjoined phone link on screen is renewed before it lapses.
+      refresh = setTimeout(() => { void renew(value.pairing); }, Math.max(1_000, remaining() - REFRESH_BEFORE_MS));
       return value;
     })().catch(error => { current = null; throw error; });
     return current;
@@ -109,7 +132,9 @@ export function createNodePairingPort(options: NodePairingPortOptions = {}): Nod
 
   async function begin(request: ContextExchange, signal: AbortSignal, keys: DeviceKey, attempts: IndexedAttempts): Promise<PortalExchange> {
     const pairing = await session(signal);
-    const status = await awaitContext(abort => client.status(pairing.pairing, abort), signal, options.pollMs ?? 1000);
+    const status = await awaitContext(abort => client.status(pairing.pairing, abort), signal, options.pollMs ?? 1000)
+      .catch(error => { if (started?.pairing === pairing.pairing && /pairing-(closed|expired)/.test(String(error))) current = null; throw error; });
+    if (started?.pairing === pairing.pairing) joined = true;
     if (status.state === "spent") { current = null; refuse("pairing-spent"); }
     checkAbort(signal);
     let verdictKeys: PersonNostrKeys | null = null;
