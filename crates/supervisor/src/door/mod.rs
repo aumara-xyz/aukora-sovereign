@@ -17,6 +17,7 @@ mod ledger;
 mod memory;
 mod peer;
 mod policy;
+mod standing;
 mod wire;
 
 use approver::{Approval, ApprovalLog, Approver, AskRecord, GateApprover};
@@ -92,6 +93,8 @@ pub struct Door {
     bucket: Bucket,
     runtime: tokio::runtime::Runtime,
     active: AtomicUsize,
+    /// The slider and standing grants, when the policy has a `standing` section (`standing.rs`).
+    standing: Option<standing::Standing>,
 }
 
 /// The approver, the door's durable memory of what it has asked, and the lock that keeps one ask at a time.
@@ -123,7 +126,8 @@ impl Door {
             .build()
             .map_err(|_| refuse("door-state"))?;
         let bucket = Bucket::new(policy.rate_per_second, policy.rate_burst);
-        Ok(Door { policy, ledger, asks, owner, bucket, runtime, active: AtomicUsize::new(0) })
+        let standing = policy.standing.as_ref().map(|files| standing::Standing::open(files, &policy.state_dir)).transpose()?;
+        Ok(Door { policy, ledger, asks, owner, bucket, runtime, active: AtomicUsize::new(0), standing })
     }
 
     fn peer_allowed(&self, peer: Peer) -> bool {
@@ -160,6 +164,11 @@ impl Door {
             Ok(false) => return (id, Decision::Deny("replay".into())),
             Err(_) => return (id, Decision::Deny("door-state".into())),
         }
+        // With a slider, a policy allow or ask is decided per call; a call the door would refuse anyway is refused here.
+        let action = match self.settle(class, &request, action) {
+            Ok(action) => action,
+            Err(code) => return (id, Decision::Deny(code)),
+        };
         let decision = match action {
             Action::Ask => self.ask(class, &request),
             Action::Allow => self.execute(class, &request),

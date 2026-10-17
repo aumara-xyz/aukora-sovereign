@@ -10,7 +10,7 @@ use canon::{
 };
 use serde::Deserialize;
 
-use crate::{refuse, Mode, Result};
+use crate::{crossing::Risk, refuse, Mode, Result};
 
 pub const PERMISSION_TARGET: &str = "gate/permission";
 pub const MAX_DURATION_MS: i64 = 86_400_000;
@@ -51,6 +51,16 @@ impl SliderSetting {
             Self::AskEverything => "ask",
             Self::AskRisky => "risky",
             Self::WithinTodayLimits => "limits",
+        }
+    }
+
+    /// Whether this setting lets a crossing of this risk clear without asking, given a live grant for it. `ask`
+    /// clears nothing; `risky` clears routine crossings only; `limits` clears any grantable crossing (the grant and
+    /// today's counts still bound it). A setting never grants anything by itself.
+    pub const fn clears(self, risk: Risk) -> bool {
+        match (self, risk) {
+            (Self::AskEverything, _) | (Self::AskRisky, Risk::Risky) => false,
+            (Self::AskRisky, Risk::Routine) | (Self::WithinTodayLimits, _) => true,
         }
     }
 
@@ -283,9 +293,9 @@ impl PermissionStatus {
         if now < issued_at || now > canon::json::MAX_SAFE_INTEGER {
             return Err(refuse("permission-clock"));
         }
-        if self.revoked
-            || self.body.mode == SliderSetting::AskEverything
-            || now >= self.body.expires_at
+        // A put is a routine write by construction (`require_routine_scope`), so `risky` and `limits` both clear it
+        // within the grant's count; `ask` never does.
+        if self.revoked || !self.body.mode.clears(Risk::Routine) || now >= self.body.expires_at
         {
             return Ok(0);
         }
@@ -301,6 +311,9 @@ impl PermissionStatus {
         action: OwnerOperation,
     ) -> Result<StandingCandidate> {
         require_routine_scope(target.risk, action)?;
+        if !self.body.mode.clears(target.risk.into()) {
+            return Err(refuse("standing-inactive"));
+        }
         if target.class != gate::target::TargetClass::Content
             || !eligible_target(target.id.as_str())
             || !self
@@ -327,4 +340,51 @@ pub fn require_routine_scope(risk: CardRisk, action: OwnerOperation) -> Result<(
         return Err(refuse("standing-critical"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(mode: SliderSetting) -> PermissionStatus {
+        let ask = mode == SliderSetting::AskEverything;
+        PermissionStatus {
+            v: 1,
+            algorithm: AlgorithmId::Sha256,
+            authority: AuthorityVersion { epoch: 1, sequence: 1, previous_hash: None },
+            granting_proposal: ProposalId::from_bytes([1; 16]),
+            digest: Digest32::from_bytes([2; 32]),
+            body: PermissionBody {
+                v: 1,
+                mode,
+                targets: if ask { vec![] } else { vec!["theme.json".to_owned()] },
+                kinds: vec!["put".to_owned()],
+                max_count: if ask { 0 } else { 12 },
+                expires_at: 10_000,
+                nonce: ProposalId::from_bytes([3; 16]),
+            },
+            consumed_count: if ask { 0 } else { 2 },
+            revoked: false,
+        }
+    }
+
+    #[test]
+    fn each_setting_has_its_own_answer_for_routine_and_risky_work() {
+        let table = [
+            (SliderSetting::AskEverything, false, false),
+            (SliderSetting::AskRisky, true, false),
+            (SliderSetting::WithinTodayLimits, true, true),
+        ];
+        for (setting, routine, risky) in table {
+            assert_eq!((setting.clears(Risk::Routine), setting.clears(Risk::Risky)), (routine, risky), "{}", setting.wire_name());
+        }
+    }
+
+    #[test]
+    fn the_stored_put_grant_goes_through_the_same_definition() {
+        assert_eq!(status(SliderSetting::AskEverything).remaining(0, 1).unwrap(), 0);
+        assert_eq!(status(SliderSetting::AskRisky).remaining(0, 1).unwrap(), 10);
+        assert_eq!(status(SliderSetting::WithinTodayLimits).remaining(0, 1).unwrap(), 10);
+        assert_eq!(status(SliderSetting::AskRisky).remaining(0, 10_000).unwrap(), 0);
+    }
 }

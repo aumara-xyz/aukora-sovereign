@@ -7,6 +7,7 @@ mod build;
 mod config;
 mod data;
 mod door;
+mod engine_plugins;
 pub mod faces;
 mod health;
 mod host;

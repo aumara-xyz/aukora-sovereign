@@ -105,6 +105,29 @@ lives only there) and a door that cannot start is logged, never a node crash. Th
 `door/ask-NN.json` targets; an older node needs them added to its inventory by an owner-approved sync (not built yet).
 The policy file is **not** installed by default: enabling the door is the operator's decision.
 
+## The slider and standing grants (Track 5)
+
+Add `"standing": {"policy_file": "/abs", "grants_file": "/abs"}` (both optional) to the door policy and a class the policy
+would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider`, applied in `src/door/standing.rs`):
+
+- Rust's floor comes from the owner's setting (`ask`, `risky` or `limits`), the live standing grants and today's counts;
+  Laya's deterministic escalation can only raise it (`max(floor, laya)`); nothing in it approves. Only a "clear" runs the
+  call without an owner request; everything else becomes an `ask`. `deny` stays `deny`, and the door's own checks (host
+  allowlist, memory ceilings) run first, so a refused call spends nothing and is never asked about.
+- `ask`: every call asks. `risky`: net and memory (the routine classes) clear inside a live grant; every other class asks.
+  `limits`: any grantable class clears inside a live grant and today's per-class and per-grant counts, then asks again.
+  `plugin`, `persist`, `shell-interactive` and `unknown` can never be granted and ask under every setting.
+- A grant (`laya::grant`) names one class and what inside it (hosts for `net`, `read` / `write:<lane>` for `memory`,
+  servers, providers, path prefixes), a window of at most seven days and a per-day count. It is non-onward (no field
+  creates or widens a grant, and the closed memory lanes cannot be named), and revoking narrows without a passkey.
+  Creating or widening one is a critical gate proposal for `door/standing-grants.json` (the installer must ship that
+  target; not built yet, like the `door/ask-NN.json` sync).
+- Files: root-owned, not group- or world-writable, read like the policy and re-read when they change. No policy file means
+  the shipped starter (`crates/laya/data/starter-slider-v1.json`, "only risky things", pinned by sha256); a bad policy
+  file means "ask for everything"; a missing or bad grants file means no grants. Counts are appended to
+  `autoclear.jsonl` (synced before the call runs; compacted to today's lines at start; past 4 MiB nothing clears).
+- Not done: the node does not yet read the grants from the applied gate target; the installer writes the two files.
+
 ## Deployment requirements (the code cannot check these)
 
 - The socket's parent directory must not be writable by the engine's user (the door refuses group- or

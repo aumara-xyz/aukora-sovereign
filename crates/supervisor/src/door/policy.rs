@@ -71,6 +71,14 @@ pub struct MemoryPolicy {
     pub token_file: PathBuf,
 }
 
+/// Where the owner-approved slider policy and standing grants are, when the door applies the slider (`standing.rs`).
+/// No policy file means the shipped starter; no grants file means no grants.
+#[derive(Clone, Debug)]
+pub struct StandingFiles {
+    pub policy: Option<PathBuf>,
+    pub grants: Option<PathBuf>,
+}
+
 /// The loaded policy.
 #[derive(Clone, Debug)]
 pub struct Policy {
@@ -86,6 +94,15 @@ pub struct Policy {
     pub rate_burst: u32,
     /// Where the door listens when the node runs it (`door serve --socket` overrides this one).
     pub socket: Option<PathBuf>,
+    /// The slider and standing grants; without it a class acts exactly as the policy says.
+    pub standing: Option<StandingFiles>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStanding {
+    policy_file: Option<String>,
+    grants_file: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +121,7 @@ struct RawPolicy {
     rate_per_second: Option<u32>,
     rate_burst: Option<u32>,
     socket: Option<String>,
+    standing: Option<RawStanding>,
 }
 
 #[derive(Deserialize)]
@@ -232,6 +250,17 @@ impl Policy {
             Some(_) => return Err(refuse()),
             None => None,
         };
+        let standing = match raw.standing {
+            Some(RawStanding { policy_file, grants_file }) => {
+                let path = |file: Option<String>| match file {
+                    Some(file) if absolute(&file) => Ok(Some(PathBuf::from(file))),
+                    Some(_) => Err(refuse()),
+                    None => Ok(None),
+                };
+                Some(StandingFiles { policy: path(policy_file)?, grants: path(grants_file)? })
+            }
+            None => None,
+        };
         Ok(Policy {
             peers,
             workspace_roots: raw.workspace_roots,
@@ -243,6 +272,7 @@ impl Policy {
             rate_per_second,
             rate_burst,
             socket,
+            standing,
         })
     }
 
@@ -324,6 +354,17 @@ mod tests {
         let policy = Policy::parse(&with("\"socket\":\"/run/aukora/door.sock\"")).unwrap();
         assert_eq!(policy.socket, Some(PathBuf::from("/run/aukora/door.sock")));
         assert!(Policy::parse(&with("\"socket\":\"door.sock\"")).is_err());
+    }
+
+    #[test]
+    fn the_slider_files_are_absolute_paths_and_optional() {
+        assert!(Policy::parse(BASE).unwrap().standing.is_none());
+        let policy = Policy::parse(&with("\"standing\":{}")).unwrap();
+        assert!(policy.standing.is_some_and(|s| s.policy.is_none() && s.grants.is_none()));
+        let both = Policy::parse(&with("\"standing\":{\"policy_file\":\"/etc/aukora/s.json\",\"grants_file\":\"/etc/aukora/g.json\"}")).unwrap();
+        assert_eq!(both.standing.unwrap().grants, Some(PathBuf::from("/etc/aukora/g.json")));
+        assert!(Policy::parse(&with("\"standing\":{\"grants_file\":\"g.json\"}")).is_err());
+        assert!(Policy::parse(&with("\"standing\":{\"yolo\":true}")).is_err());
     }
 
     #[test]

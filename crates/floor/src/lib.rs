@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod object;
+pub mod plugins;
 pub mod service;
 pub mod state;
 

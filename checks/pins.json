@@ -104,6 +104,7 @@
   "crates/immune/corpus/signin-counter-regression.json": "103c9fd50d2ca6c64179ef99f0be122ffdf315c8e8c6ea504416ee529cac8f38",
   "crates/immune/corpus/signin-invalid-signature.json": "d0651e56f0d2748fc4ea3d607a818598112f153d80811d4572665e1032d6b437",
   "crates/immune/corpus/stranger-owner-action.json": "48704086d97516ae05b2159e7172c4aa4c60e274f007239540d8c2914b09c82e",
+  "crates/laya/data/starter-slider-v1.json": "d6ddf3e54dd57d43850f7568c310fe035a48afac8f1661ec2c4dfcd5846a5369",
   "crates/nostr/vectors/bip340-test-vectors.csv": "34c9d1d9c3a88d524bc80778540dc43f8306ec249a7485293063c376db851c2d",
   "crates/nostr/vectors/nip44.vectors.json": "269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040",
   "crates/nostr/vectors/prime-vectors.json": "992bb5c3d714c3dfd33667ab27359235ae8632d6189b3c0f77eda466d5854005",
