@@ -16,15 +16,13 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { PortalButton } from '@aukora/face-layout/client'
+import { AppHeader, AppSurface, Footnote, PortalButton, PortalCell, PortalGrid, StatusPill } from '@aukora/face-layout/client'
 import type { CategoryId, SovereigntySnapshot, Tone } from './model.ts'
-import { CATEGORY_IDS, SETTING_FACTS, SOVEREIGNTY_COPY, SOVEREIGNTY_SURFACE, accentOf } from './model.ts'
+import { CATEGORY_IDS, SETTING_FACTS, SOVEREIGNTY_COPY, SOVEREIGNTY_SURFACE } from './model.ts'
 import { readSovereigntyStub } from './stub.ts'
 import { approvalGroup, usd } from './format.ts'
-import { CategoryIcon, LockIcon, Pill } from './parts.tsx'
 import { CategoryView, verdictTone } from './views.tsx'
 import { isEditableTarget } from '../escape.ts'
-import css from './Sovereignty.module.css'
 
 /** Full props for the Sovereignty surface. */
 export type SovereigntySurfaceProps = PropsRuntime<'shell.surface'>
@@ -112,45 +110,37 @@ export function SovereigntySurface({ activeSurface, surfaceTarget, closeSurface 
 
   const shown = open === null ? CATEGORY_IDS : CATEGORY_IDS.filter(id => id === open)
   return (
-    <section className={css.surface} hidden={!active} data-sovereignty-surface data-sovereignty-open={open ?? 'home'}>
-      {active ? (
-        <div className={css.canvas}>
-          <header className={css.hero}>
-            <div className={css.heroCopy}>
-              <p className={css.eyebrow}>{SOVEREIGNTY_COPY.eyebrow}</p>
-              <h2 className={css.title}>{SOVEREIGNTY_COPY.title}</h2>
-            </div>
-            <div className={css.badges}>
-              <span className={css.badge} data-sovereignty-read-only title={SOVEREIGNTY_COPY.footnote}><LockIcon />{SOVEREIGNTY_COPY.readOnly}</span>
-              {s.source === 'stub' ? <span className={`${css.badge} ${css.badgeStub}`} data-sovereignty-source="stub">{SOVEREIGNTY_COPY.stub}</span> : null}
-            </div>
-          </header>
-          <ul className={css.grid} data-open={open === null ? 'no' : 'yes'}>
-            {shown.map((id) => {
-              const face = faceOf(id, s)
-              return (
-                <li key={id} className={css.cell} data-sovereignty-category={id}>
-                  <PortalButton
-                    variant={accentOf(face.tone)}
-                    className={css.portal}
-                    buttonClassName={css.portalHead}
-                    contentClassName={css.detail}
-                    expanded={open === id}
-                    onExpandedChange={(next) => { setOpen(next ? id : null) }}
-                    icon={<span className={css.icon}><CategoryIcon id={id} /></span>}
-                    title={<span data-sov-title>{face.title}</span>}
-                    subtitle={<span data-sov-sub>{face.summary}</span>}
-                    trailing={face.flag === null ? null : <Pill tone={face.flag.tone}>{face.flag.text}</Pill>}
-                  >
-                    <CategoryView id={id} s={s} />
-                  </PortalButton>
-                </li>
-              )
-            })}
-          </ul>
-          <p className={css.footnote}><LockIcon />{SOVEREIGNTY_COPY.footnote}</p>
-        </div>
-      ) : null}
-    </section>
+    <AppSurface active={active} data-sovereignty-surface="" data-sovereignty-open={open ?? 'home'}>
+      <AppHeader
+        eyebrow={SOVEREIGNTY_COPY.eyebrow}
+        title={SOVEREIGNTY_COPY.title}
+        tone="violet"
+        badges={[
+          { text: SOVEREIGNTY_COPY.readOnly, icon: 'lock', title: SOVEREIGNTY_COPY.footnote },
+          ...(s.source === 'stub' ? [{ text: SOVEREIGNTY_COPY.stub, tone: 'gold' as const }] : []),
+        ]}
+      />
+      <PortalGrid open={open !== null}>
+        {shown.map((id) => {
+          const face = faceOf(id, s)
+          return (
+            <PortalCell key={id} data-sovereignty-category={id}>
+              <PortalButton
+                tone={face.tone}
+                icon={id}
+                title={face.title}
+                summary={face.summary}
+                expanded={open === id}
+                onToggle={(next) => { setOpen(next ? id : null) }}
+                badge={face.flag === null ? null : <StatusPill tone={face.flag.tone}>{face.flag.text}</StatusPill>}
+              >
+                <CategoryView id={id} s={s} />
+              </PortalButton>
+            </PortalCell>
+          )
+        })}
+      </PortalGrid>
+      <Footnote>{SOVEREIGNTY_COPY.footnote}</Footnote>
+    </AppSurface>
   )
 }

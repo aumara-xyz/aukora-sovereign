@@ -23,8 +23,11 @@ import { createLayoutStore } from './stores.ts'
 import { ThemePresenter } from './theme-presenter.ts'
 import './spatial-tokens.css'
 
-export { ActionButton, Card, Panel, PortalButton, SectionHeader } from './primitives.tsx'
-export type { Accent, PortalButtonProps } from './primitives.tsx'
+export { ActionButton, Card, Panel, SectionHeader } from './primitives.tsx'
+export type { Accent } from './primitives.tsx'
+// THE SPATIAL PRIMITIVES (2026-10-17): every portal, record and owner action in the face. The old disclosure-style
+// `PortalButton` in primitives.tsx (Prime's, pinned, unused) is superseded by this one.
+export * from './primitives/index.ts'
 
 export { LayoutController } from './service.ts'
 export type { ILayout, MainPanelId, PanelInfo } from './service.ts'

@@ -13,6 +13,8 @@
  * to the owner origin, where the owner's passkey decides (frontdoor `owner_origin.rs`, app/shell `owner-frame.ts`).
  */
 
+import type { Tone } from '@aukora/face-layout/client'
+
 /** The centre-lane surface id and the System-menu row id. */
 export const SOVEREIGNTY_SURFACE = 'sovereignty'
 
@@ -20,11 +22,8 @@ export const SOVEREIGNTY_SURFACE = 'sovereignty'
 export const CATEGORY_IDS = ['approvals', 'risk', 'door', 'plugins', 'model', 'memory', 'releases', 'devices'] as const
 export type CategoryId = typeof CATEGORY_IDS[number]
 
-/** The four spatial colours, plus red for danger only and muted for nothing-to-say. */
-export type Tone = 'mint' | 'blue' | 'violet' | 'gold' | 'red' | 'muted'
-
-/** The primitives' accent names for the same colours (layout `primitives.tsx`). */
-export type Accent = 'blue' | 'green' | 'purple' | 'gold' | 'red-warning'
+/** The primitives' palette: the four spatial colours, red for quarantine and failure only, muted for nothing-to-say. */
+export type { Tone } from '@aukora/face-layout/client'
 
 /** 64 lowercase hex, no prefix (`canon::digest::Digest32`). */
 export type Hex64 = string
@@ -445,17 +444,6 @@ export const SETTING_FACTS: Readonly<Record<SliderSetting, { readonly level: num
   risky: { level: 2, tone: 'blue', label: 'Only risky things' },
   limits: { level: 3, tone: 'violet', label: 'Within today\'s limits' },
   trusted: { level: 4, tone: 'gold', label: 'Trusted: inside live grants' },
-}
-
-/** Map a tone to the layout primitives' accent name. */
-export function accentOf(tone: Tone): Accent {
-  switch (tone) {
-    case 'mint': return 'green'
-    case 'violet': return 'purple'
-    case 'gold': return 'gold'
-    case 'red': return 'red-warning'
-    default: return 'blue'
-  }
 }
 
 /** The view's words. English only in this preview; the locale namespace comes with the wiring. */

@@ -10,10 +10,27 @@ import type {
 } from './model.ts'
 import { CLASS_FACTS, SETTING_FACTS, SLIDER_SETTINGS } from './model.ts'
 import { approvalGroup, count, relative, short, stateTone, usd, when } from './format.ts'
-import { Facts, Label, Meter, OwnerAction, Pill, Plain, Row, Rows, Stat } from './parts.tsx'
-import css from './Sovereignty.module.css'
+import {
+  FieldTable, Lead, LevelScale, LockedAction, Meter, Mono, Quote, RecordList, RecordRow, SectionLabel, StatTiles, StatusPill,
+} from '@aukora/face-layout/client'
+import type { OwnerLink } from './model.ts'
+import { SOVEREIGNTY_COPY } from './model.ts'
+import { ownerHref } from './format.ts'
 
 type ViewProps = { readonly s: SovereigntySnapshot }
+
+/** The locked action for one owner link: a link to the owner origin, never a change in place. */
+function Owner({ link, origin, tone }: { readonly link: OwnerLink; readonly origin: string; readonly tone: Tone }) {
+  return (
+    <LockedAction
+      verb={link.verb}
+      tone={tone}
+      href={ownerHref(origin, link.route)}
+      note={link.route === null ? SOVEREIGNTY_COPY.noRoute : SOVEREIGNTY_COPY.ownerNote}
+      title={link.route === null ? SOVEREIGNTY_COPY.noRoute : `${origin}${link.route}`}
+    />
+  )
+}
 
 // ── 1. Approvals ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -37,15 +54,15 @@ function ApprovalRow({ item, s }: { readonly item: ApprovalItem; readonly s: Sov
   const at = item.settled_at_ms ?? item.created_at_ms
   const auth = item.authorization
   return (
-    <Row
+    <RecordRow
       tone={stateTone(item.state)}
       title={targetWords(item)}
-      sub={`${item.target} · ${relative(at, s.now_ms)}`}
-      end={<Pill tone={stateTone(item.state)}>{item.state}</Pill>}
+      summary={`${item.target} · ${relative(at, s.now_ms)}`}
+      end={<StatusPill tone={stateTone(item.state)}>{item.state}</StatusPill>}
     >
-      <p className={css.quote}>{item.card.says}</p>
-      {item.card.model_note === '' ? null : <p className={css.lead}>{item.card.model_note}</p>}
-      <Facts title="The card" rows={[
+      <Quote>{item.card.says}</Quote>
+      {item.card.model_note === '' ? null : <Lead>{item.card.model_note}</Lead>}
+      <FieldTable title="The card" rows={[
         ['risk', item.card.risk],
         ...item.card.facts.map(([k, v]) => [k, v] as const),
         ['display_sha256', item.display_sha256],
@@ -53,7 +70,7 @@ function ApprovalRow({ item, s }: { readonly item: ApprovalItem; readonly s: Sov
         ['raised', when(item.created_at_ms)],
       ]} />
       {auth === null ? null : (
-        <Facts title="What the passkey signed" rows={[
+        <FieldTable title="What the passkey signed" rows={[
           ['op', auth.op],
           ['node', auth.node],
           ['epoch', String(auth.epoch)],
@@ -64,7 +81,7 @@ function ApprovalRow({ item, s }: { readonly item: ApprovalItem; readonly s: Sov
         ]} />
       )}
       {item.receipt_hash === null ? null : (
-        <Facts title="Receipt" rows={[
+        <FieldTable title="Receipt" rows={[
           ['state', item.state],
           ['receipt_hash', item.receipt_hash],
           ['settled', item.settled_at_ms === null ? '' : when(item.settled_at_ms)],
@@ -72,11 +89,11 @@ function ApprovalRow({ item, s }: { readonly item: ApprovalItem; readonly s: Sov
       )}
       {group === 'waiting' ? (
         <>
-          <p className={css.lead}>Expires {relative(item.expires_at_ms, s.now_ms)}.</p>
-          <OwnerAction origin={s.owner_origin} tone="gold" link={{ verb: 'Review with passkey', route: `/approval/${item.proposal}` }} />
+          <Lead>Expires {relative(item.expires_at_ms, s.now_ms)}.</Lead>
+          <Owner origin={s.owner_origin} tone="gold" link={{ verb: 'Review with passkey', route: `/approval/${item.proposal}` }} />
         </>
       ) : null}
-    </Row>
+    </RecordRow>
   )
 }
 
@@ -90,10 +107,10 @@ export function ApprovalsView({ s }: ViewProps) {
         const items = sorted.filter(item => approvalGroup(item.state) === group)
         return (
           <section key={group}>
-            <Label>{`${words[group]} · ${String(items.length)}`}</Label>
+            <SectionLabel>{`${words[group]} · ${String(items.length)}`}</SectionLabel>
             {items.length === 0
-              ? <p className={css.lead}>Nothing here.</p>
-              : <Rows>{items.map(item => <ApprovalRow key={item.proposal} item={item} s={s} />)}</Rows>}
+              ? <Lead>Nothing here.</Lead>
+              : <RecordList>{items.map(item => <ApprovalRow key={item.proposal} item={item} s={s} />)}</RecordList>}
           </section>
         )
       })}
@@ -127,13 +144,13 @@ function GrantRow({ g, s }: { readonly g: DoorGrant; readonly s: SovereigntySnap
   const state = g.revoked ? 'revoked' : live ? 'live' : 'expired'
   const tone: Tone = live ? 'mint' : 'muted'
   return (
-    <Row
+    <RecordRow
       tone={tone}
-      title={<><span className={css.mono}>{g.class}</span> · {g.scope.join(', ')}</>}
-      sub={g.revoked ? 'revoked' : `${String(used)} of ${String(g.per_day)} today · ends ${relative(g.expires_at, s.now_ms)}`}
-      end={<>{live ? <Meter used={used} cap={g.per_day} tone="mint" /> : null}<Pill tone={tone}>{state}</Pill></>}
+      title={<><Mono>{g.class}</Mono> · {g.scope.join(', ')}</>}
+      summary={g.revoked ? 'revoked' : `${String(used)} of ${String(g.per_day)} today · ends ${relative(g.expires_at, s.now_ms)}`}
+      end={<>{live ? <Meter used={used} cap={g.per_day} tone="mint" /> : null}<StatusPill tone={tone}>{state}</StatusPill></>}
     >
-      <Facts title="The grant" rows={[
+      <FieldTable title="The grant" rows={[
         ['id', g.id],
         ['class', g.class],
         ['scope', g.scope.join(' · ')],
@@ -142,8 +159,8 @@ function GrantRow({ g, s }: { readonly g: DoorGrant; readonly s: SovereigntySnap
         ['expires_at', when(g.expires_at)],
         ['nonce', g.nonce],
       ]} />
-      {live ? <OwnerAction origin={s.owner_origin} tone="mint" link={{ verb: 'Revoke', route: null }} /> : null}
-    </Row>
+      {live ? <Owner origin={s.owner_origin} tone="mint" link={{ verb: 'Revoke', route: null }} /> : null}
+    </RecordRow>
   )
 }
 
@@ -151,40 +168,36 @@ export function RiskView({ s }: ViewProps) {
   const setting = s.risk.policy.setting
   return (
     <>
-      <Label>Laya slider</Label>
-      <div className={css.notches} role="img" aria-label={`Level ${String(SETTING_FACTS[setting].level)}: ${SETTING_FACTS[setting].label}`}>
-        {SLIDER_SETTINGS.map(name => (
-          <div key={name} className={css.notch} data-tone={SETTING_FACTS[name].tone} aria-current={name === setting ? 'true' : 'false'}>
-            <span className={css.notchDot} />
-            <b>{`${String(SETTING_FACTS[name].level)} · ${name}`}</b>
-            <span>{SETTING_FACTS[name].label}</span>
-          </div>
-        ))}
-      </div>
-      <p className={css.lead}>
+      <SectionLabel>Laya slider</SectionLabel>
+      <LevelScale
+        label={`Level ${String(SETTING_FACTS[setting].level)}: ${SETTING_FACTS[setting].label}`}
+        current={setting}
+        levels={SLIDER_SETTINGS.map(name => ({ key: name, name: `${String(SETTING_FACTS[name].level)} · ${name}`, label: SETTING_FACTS[name].label, tone: SETTING_FACTS[name].tone }))}
+      />
+      <Lead>
         {`Policy ${short(s.risk.policy.policy_sha256)}${s.risk.policy.is_starter ? ' (the pinned starter)' : ''}. Moving right needs your passkey; moving left applies at once.`}
-      </p>
-      <OwnerAction origin={s.owner_origin} tone={SETTING_FACTS[setting].tone} link={{ verb: 'Move the slider', route: null }} />
+      </Lead>
+      <Owner origin={s.owner_origin} tone={SETTING_FACTS[setting].tone} link={{ verb: 'Move the slider', route: null }} />
 
-      <Label>Each kind of crossing, today</Label>
-      <Rows>
+      <SectionLabel>Each kind of crossing, today</SectionLabel>
+      <RecordList>
         {CLASS_FACTS.map(({ class: cls, plain }) => {
           const status = classStatus(s, cls)
           const cap = s.risk.policy.classes.find(c => c.class === cls)?.per_day ?? 0
           const used = s.risk.usage.per_class[cls] ?? 0
           return (
-            <Plain
+            <RecordRow tone="muted"
               key={cls}
-              title={<><span className={css.mono}>{cls}</span> · {plain}</>}
-              sub={cap > 0 ? `${status.why} · ${String(used)} of ${String(cap)} today` : status.why}
-              end={<>{cap > 0 ? <Meter used={used} cap={cap} tone={status.tone} /> : null}<Pill tone={status.tone}>{status.word}</Pill></>}
+              title={<><Mono>{cls}</Mono> · {plain}</>}
+              summary={cap > 0 ? `${status.why} · ${String(used)} of ${String(cap)} today` : status.why}
+              end={<>{cap > 0 ? <Meter used={used} cap={cap} tone={status.tone} /> : null}<StatusPill tone={status.tone}>{status.word}</StatusPill></>}
             />
           )
         })}
-      </Rows>
+      </RecordList>
 
-      <Label>{`Standing grants · ${String(s.risk.grants.filter(g => !g.revoked).length)} live`}</Label>
-      <Rows>{s.risk.grants.map(g => <GrantRow key={g.id} g={g} s={s} />)}</Rows>
+      <SectionLabel>{`Standing grants · ${String(s.risk.grants.filter(g => !g.revoked).length)} live`}</SectionLabel>
+      <RecordList>{s.risk.grants.map(g => <GrantRow key={g.id} g={g} s={s} />)}</RecordList>
     </>
   )
 }
@@ -201,22 +214,22 @@ export function DoorView({ s }: ViewProps) {
   const tally = (d: Crossing['decision']) => s.door.crossings.filter(c => c.decision === d).length
   return (
     <>
-      <div className={css.split}>
-        <Stat name="Allowed" value={tally('allow')} tone="mint" />
-        <Stat name="Asked you" value={tally('ask')} tone="gold" />
-        <Stat name="Refused" value={tally('deny')} />
-      </div>
-      <Label>Auma's recent crossings</Label>
-      <Rows>
+      <StatTiles tiles={[
+        { name: 'Allowed', value: tally('allow'), tone: 'mint' },
+        { name: 'Asked you', value: tally('ask'), tone: 'gold' },
+        { name: 'Refused', value: tally('deny') },
+      ]} />
+      <SectionLabel>Auma's recent crossings</SectionLabel>
+      <RecordList>
         {s.door.crossings.map(c => (
-          <Row
+          <RecordRow
             key={c.call_id}
             tone={DECISION[c.decision].tone}
-            title={<><span className={css.mono}>{c.tool}</span> · {c.subject}</>}
-            sub={`${c.class} · ${c.reason} · ${relative(c.at_ms, s.now_ms)}`}
-            end={<Pill tone={DECISION[c.decision].tone}>{DECISION[c.decision].word}</Pill>}
+            title={<><Mono>{c.tool}</Mono> · {c.subject}</>}
+            summary={`${c.class} · ${c.reason} · ${relative(c.at_ms, s.now_ms)}`}
+            end={<StatusPill tone={DECISION[c.decision].tone}>{DECISION[c.decision].word}</StatusPill>}
           >
-            <Facts rows={[
+            <FieldTable rows={[
               ['call_id', c.call_id],
               ['tool', c.tool],
               ['class', c.class],
@@ -226,22 +239,22 @@ export function DoorView({ s }: ViewProps) {
               ['grant', c.grant ?? 'none'],
               ['at', when(c.at_ms)],
             ]} />
-          </Row>
+          </RecordRow>
         ))}
-      </Rows>
-      <Label>{`Allowlisted hosts · ${String(s.door.net.hosts.length)}`}</Label>
-      <Rows>
+      </RecordList>
+      <SectionLabel>{`Allowlisted hosts · ${String(s.door.net.hosts.length)}`}</SectionLabel>
+      <RecordList>
         {s.door.net.hosts.map(host => (
-          <Plain key={host} title={host} sub={`https · port ${s.door.net.ports.join(', ')}`} end={<Pill tone="mint">net</Pill>} />
+          <RecordRow tone="muted" key={host} title={host} summary={`https · port ${s.door.net.ports.join(', ')}`} end={<StatusPill tone="mint">net</StatusPill>} />
         ))}
-      </Rows>
-      <Facts rows={[
+      </RecordList>
+      <FieldTable rows={[
         ['ports', s.door.net.ports.join(', ')],
         ['max_bytes', count(s.door.net.max_bytes)],
         ['timeout_ms', count(s.door.net.timeout_ms)],
         ['allow_http', String(s.door.net.allow_http)],
       ]} />
-      <OwnerAction origin={s.owner_origin} tone="mint" link={{ verb: 'Change the hosts', route: null }} />
+      <Owner origin={s.owner_origin} tone="mint" link={{ verb: 'Change the hosts', route: null }} />
     </>
   )
 }
@@ -252,39 +265,39 @@ export function PluginsView({ s }: ViewProps) {
   const p = s.plugins
   return (
     <>
-      <p className={css.lead}>{`The engine loads exactly this set, set ${short(p.set_sha256)}. A plugin whose bytes differ does not load until you approve the new set.`}</p>
+      <Lead>{`The engine loads exactly this set, set ${short(p.set_sha256)}. A plugin whose bytes differ does not load until you approve the new set.`}</Lead>
       {p.waiting.length === 0 ? null : (
         <>
-          <Label>{`Changed and waiting · ${String(p.waiting.length)}`}</Label>
-          <Rows>
+          <SectionLabel>{`Changed and waiting · ${String(p.waiting.length)}`}</SectionLabel>
+          <RecordList>
             {p.waiting.map(change => (
-              <Row key={change.name} tone="gold" title={change.name} sub={`${short(change.approved_digest ?? 'new')} → ${short(change.offered_digest)}`} end={<Pill tone="gold">waiting</Pill>}>
-                <Facts rows={[
+              <RecordRow key={change.name} tone="gold" title={change.name} summary={`${short(change.approved_digest ?? 'new')} → ${short(change.offered_digest)}`} end={<StatusPill tone="gold">waiting</StatusPill>}>
+                <FieldTable rows={[
                   ['name', change.name],
                   ['approved', change.approved_digest ?? 'none (new plugin)'],
                   ['offered', change.offered_digest],
                   ['proposal', change.proposal],
                 ]} />
-                <OwnerAction origin={s.owner_origin} tone="gold" link={{ verb: 'Review with passkey', route: `/approval/${change.proposal}` }} />
-              </Row>
+                <Owner origin={s.owner_origin} tone="gold" link={{ verb: 'Review with passkey', route: `/approval/${change.proposal}` }} />
+              </RecordRow>
             ))}
-          </Rows>
+          </RecordList>
         </>
       )}
-      <Label>{`Approved set · ${String(p.plugins.length)}`}</Label>
-      <Rows>
+      <SectionLabel>{`Approved set · ${String(p.plugins.length)}`}</SectionLabel>
+      <RecordList>
         {p.plugins.map(plugin => (
-          <Row
+          <RecordRow
             key={plugin.name}
             tone={plugin.authority ? 'violet' : 'muted'}
             title={plugin.name}
-            sub={short(plugin.digest)}
-            end={<>{plugin.authority ? <Pill tone="violet">authority</Pill> : null}<Pill tone={plugin.state === 'active' ? 'mint' : 'muted'}>{plugin.state}</Pill></>}
+            summary={short(plugin.digest)}
+            end={<>{plugin.authority ? <StatusPill tone="violet">authority</StatusPill> : null}<StatusPill tone={plugin.state === 'active' ? 'mint' : 'muted'}>{plugin.state}</StatusPill></>}
           >
-            <Facts rows={[['name', plugin.name], ['digest', plugin.digest], ['authority', String(plugin.authority)], ['state', plugin.state]]} />
-          </Row>
+            <FieldTable rows={[['name', plugin.name], ['digest', plugin.digest], ['authority', String(plugin.authority)], ['state', plugin.state]]} />
+          </RecordRow>
         ))}
-      </Rows>
+      </RecordList>
     </>
   )
 }
@@ -297,15 +310,15 @@ export function ModelView({ s }: ViewProps) {
   const left = Math.max(0, b.total_cap_microusd - m.used_microusd)
   return (
     <>
-      <div className={css.split}>
-        <Stat name="Key" value={<span className={css.mono}>{m.key_fingerprint}</span>} tone={m.key_stage === 'active' ? 'mint' : 'gold'} />
-        <Stat name="Spent" value={usd(m.used_microusd)} tone="gold" />
-        <Stat name="Left" value={usd(left)} tone="mint" />
-        <Stat name="Calls" value={`${count(m.used_requests)} / ${count(b.max_requests)}`} />
-      </div>
-      <Plain title={`${usd(m.used_microusd)} of ${usd(b.total_cap_microusd)}`} sub={`ends ${relative(b.expires_at_ms, s.now_ms)} · ${when(b.expires_at_ms)}`} end={<Meter used={m.used_microusd} cap={b.total_cap_microusd} tone="gold" />} />
-      <Label>Budget terms</Label>
-      <Facts rows={[
+      <StatTiles tiles={[
+        { name: 'Key', value: <Mono>{m.key_fingerprint}</Mono>, tone: m.key_stage === 'active' ? 'mint' : 'gold' },
+        { name: 'Spent', value: usd(m.used_microusd), tone: 'gold' },
+        { name: 'Left', value: usd(left), tone: 'mint' },
+        { name: 'Calls', value: `${count(m.used_requests)} / ${count(b.max_requests)}` },
+      ]} />
+      <RecordRow tone="muted" title={`${usd(m.used_microusd)} of ${usd(b.total_cap_microusd)}`} summary={`ends ${relative(b.expires_at_ms, s.now_ms)} · ${when(b.expires_at_ms)}`} end={<Meter used={m.used_microusd} cap={b.total_cap_microusd} tone="gold" />} />
+      <SectionLabel>Budget terms</SectionLabel>
+      <FieldTable rows={[
         ['provider', b.provider],
         ['models', b.models.join(', ')],
         ['total_cap', `${usd(b.total_cap_microusd)} (${count(b.total_cap_microusd)} µ$)`],
@@ -317,18 +330,18 @@ export function ModelView({ s }: ViewProps) {
         ['key stage', m.key_stage],
         ['budget_sha256', b.budget_sha256],
       ]} />
-      <OwnerAction origin={s.owner_origin} tone="gold" link={{ verb: 'New budget or key', route: null }} />
-      <Label>Per-call receipts</Label>
-      <Rows>
+      <Owner origin={s.owner_origin} tone="gold" link={{ verb: 'New budget or key', route: null }} />
+      <SectionLabel>Per-call receipts</SectionLabel>
+      <RecordList>
         {m.receipts.map(r => (
-          <Row
+          <RecordRow
             key={r.request_id}
             tone={r.outcome === 'completed' ? 'mint' : 'muted'}
             title={<>{r.model} · {count(r.usage.input_tokens)} in · {count(r.usage.output_tokens)} out</>}
-            sub={`${relative(r.started_at_ms, s.now_ms)}${r.detail === '' ? '' : ` · ${r.detail}`}`}
-            end={<><span className={css.mono}>{r.cost_unknown ? '?' : usd(r.charged_microusd)}</span><Pill tone={r.outcome === 'completed' ? 'mint' : 'muted'}>{r.outcome}</Pill></>}
+            summary={`${relative(r.started_at_ms, s.now_ms)}${r.detail === '' ? '' : ` · ${r.detail}`}`}
+            end={<><Mono>{r.cost_unknown ? '?' : usd(r.charged_microusd)}</Mono><StatusPill tone={r.outcome === 'completed' ? 'mint' : 'muted'}>{r.outcome}</StatusPill></>}
           >
-            <Facts rows={[
+            <FieldTable rows={[
               ['request_id', r.request_id],
               ['model', r.model],
               ['reported_model', r.reported_model === '' ? '(none)' : r.reported_model],
@@ -338,9 +351,9 @@ export function ModelView({ s }: ViewProps) {
               ['took', `${String(Math.round((r.ended_at_ms - r.started_at_ms) / 100) / 10)} s`],
               ['request_sha256', r.request_sha256],
             ]} />
-          </Row>
+          </RecordRow>
         ))}
-      </Rows>
+      </RecordList>
     </>
   )
 }
@@ -352,45 +365,45 @@ export function MemoryView({ s }: ViewProps) {
   const nowS = s.now_ms / 1000
   return (
     <>
-      <Label>Auma's self note · aukora:self</Label>
-      {m.self_note === null ? <p className={css.lead}>No self note yet.</p> : (
+      <SectionLabel>Auma's self note · aukora:self</SectionLabel>
+      {m.self_note === null ? <Lead>No self note yet.</Lead> : (
         <>
-          <p className={css.quote}>{m.self_note.text}</p>
-          <p className={css.lead}>{`Written by ${m.self_note.author_name}, ${m.self_note.capture}, ${relative(m.self_note.created_at * 1000, s.now_ms)}. Only you can write it.`}</p>
+          <Quote>{m.self_note.text}</Quote>
+          <Lead>{`Written by ${m.self_note.author_name}, ${m.self_note.capture}, ${relative(m.self_note.created_at * 1000, s.now_ms)}. Only you can write it.`}</Lead>
         </>
       )}
-      <Label>{`Agents · ${String(m.agents.length)}`}</Label>
-      <Rows>
+      <SectionLabel>{`Agents · ${String(m.agents.length)}`}</SectionLabel>
+      <RecordList>
         {m.agents.map(agent => (
-          <Plain
+          <RecordRow tone="muted"
             key={agent.name}
             title={agent.name}
-            sub={`reads and writes: ${agent.scopes.map(scope => scope === '*' ? 'every lane' : scope).join(', ')} · ${short(agent.pubkey)}`}
+            summary={`reads and writes: ${agent.scopes.map(scope => scope === '*' ? 'every lane' : scope).join(', ')} · ${short(agent.pubkey)}`}
             end={<>
-              {agent.owner ? <Pill tone="violet">owner</Pill> : null}
-              {agent.quarantined ? <Pill tone="red">quarantined</Pill> : null}
-              {agent.revoked_at !== null ? <Pill tone="muted" title={`since ${relative(agent.revoked_at * 1000, s.now_ms)}`}>revoked</Pill> : null}
-              {!agent.owner && !agent.quarantined && agent.revoked_at === null ? <Pill tone="mint">active</Pill> : null}
+              {agent.owner ? <StatusPill tone="violet">owner</StatusPill> : null}
+              {agent.quarantined ? <StatusPill tone="red">quarantined</StatusPill> : null}
+              {agent.revoked_at !== null ? <StatusPill tone="muted" title={`since ${relative(agent.revoked_at * 1000, s.now_ms)}`}>revoked</StatusPill> : null}
+              {!agent.owner && !agent.quarantined && agent.revoked_at === null ? <StatusPill tone="mint">active</StatusPill> : null}
             </>}
           />
         ))}
-      </Rows>
-      <Label>{`Quarantined notes · ${String(m.quarantined.length)}`}</Label>
-      <Rows>
+      </RecordList>
+      <SectionLabel>{`Quarantined notes · ${String(m.quarantined.length)}`}</SectionLabel>
+      <RecordList>
         {m.quarantined.map(q => (
-          <Plain key={q.id} title={`${q.author_name} · ${short(q.id)}`} sub={`text withheld · statement ${short(q.statement_hash)} · ${relative(q.created_at * 1000, s.now_ms)}`} end={<Pill tone="red">quarantined</Pill>} />
+          <RecordRow tone="muted" key={q.id} title={`${q.author_name} · ${short(q.id)}`} summary={`text withheld · statement ${short(q.statement_hash)} · ${relative(q.created_at * 1000, s.now_ms)}`} end={<StatusPill tone="red">quarantined</StatusPill>} />
         ))}
-      </Rows>
-      <OwnerAction origin={s.owner_origin} tone="mint" link={{ verb: 'Quarantine or release a source', route: null }} />
-      <Label>Recent writes</Label>
-      <Rows>
+      </RecordList>
+      <Owner origin={s.owner_origin} tone="mint" link={{ verb: 'Quarantine or release a source', route: null }} />
+      <SectionLabel>Recent writes</SectionLabel>
+      <RecordList>
         {m.recent.map(n => (
-          <Row key={n.id} tone="mint" title={n.subject} sub={`${n.author_name} · ${n.lane} · ${relative(n.created_at * 1000, s.now_ms)}`} end={<Pill tone="muted">{n.capture}</Pill>}>
-            <p className={css.quote}>{n.text}</p>
-            <Facts rows={[['id', n.id], ['seq', String(n.seq)], ['lane', n.lane], ['privacy', n.privacy], ['review', n.review], ['created_at', `${String(n.created_at)} (${relative(n.created_at * 1000, nowS * 1000)})`]]} />
-          </Row>
+          <RecordRow key={n.id} tone="mint" title={n.subject} summary={`${n.author_name} · ${n.lane} · ${relative(n.created_at * 1000, s.now_ms)}`} end={<StatusPill tone="muted">{n.capture}</StatusPill>}>
+            <Quote>{n.text}</Quote>
+            <FieldTable rows={[['id', n.id], ['seq', String(n.seq)], ['lane', n.lane], ['privacy', n.privacy], ['review', n.review], ['created_at', `${String(n.created_at)} (${relative(n.created_at * 1000, nowS * 1000)})`]]} />
+          </RecordRow>
         ))}
-      </Rows>
+      </RecordList>
     </>
   )
 }
@@ -408,49 +421,49 @@ export function ReleasesView({ s }: ViewProps) {
   const v = r.verifier
   return (
     <>
-      <Label>The node's record</Label>
-      <Plain
+      <SectionLabel>The node's record</SectionLabel>
+      <RecordRow tone="muted"
         title={<>aukora-verify · {count(v.rows)} rows</>}
-        sub={`checked ${relative(v.checked_at_ms, s.now_ms)}`}
-        end={<Pill tone={verdictTone(v.verdict)}>{v.verdict}</Pill>}
+        summary={`checked ${relative(v.checked_at_ms, s.now_ms)}`}
+        end={<StatusPill tone={verdictTone(v.verdict)}>{v.verdict}</StatusPill>}
       />
       {v.findings.length === 0 ? null : (
-        <Rows>{v.findings.map(f => <Plain key={f.code} title={<span className={css.mono}>{f.code}</span>} sub={f.plain} />)}</Rows>
+        <RecordList>{v.findings.map(f => <RecordRow tone="muted" key={f.code} title={<Mono>{f.code}</Mono>} summary={f.plain} />)}</RecordList>
       )}
-      <Facts rows={[
+      <FieldTable rows={[
         ['pinned_identity', String(v.observations.pinned_identity)],
         ['covering_checkpoint', String(v.observations.covering_checkpoint)],
         ['consistency', v.observations.consistency],
       ]} />
-      <Label>Installed release</Label>
-      <div className={css.split}>
-        <Stat name="Commit" value={<span className={css.mono}>{r.installed.commit.slice(0, 7)}</span>} />
-        <Stat name="Floor" value={r.installed.is_floor ? 'approved' : 'not yet'} tone={r.installed.is_floor ? 'mint' : 'gold'} />
-        <Stat name="Rebuilt" value={r.installed.reproduce} tone={r.installed.reproduce === 'identical' ? 'mint' : 'red'} />
-      </div>
-      <Facts rows={[
+      <SectionLabel>Installed release</SectionLabel>
+      <StatTiles tiles={[
+        { name: 'Commit', value: <Mono>{r.installed.commit.slice(0, 7)}</Mono> },
+        { name: 'Floor', value: r.installed.is_floor ? 'approved' : 'not yet', tone: r.installed.is_floor ? 'mint' : 'gold' },
+        { name: 'Rebuilt', value: r.installed.reproduce, tone: r.installed.reproduce === 'identical' ? 'mint' : 'red' },
+      ]} />
+      <FieldTable rows={[
         ['release_sha256', r.installed.release_sha256],
         ['commit', r.installed.commit],
         ['target', r.installed.target],
         ['toolchain', r.installed.toolchain],
         ['files', String(r.installed.files)],
       ]} />
-      <Label>{`Approved builds · ${String(r.builds.length)}`}</Label>
-      <Rows>
+      <SectionLabel>{`Approved builds · ${String(r.builds.length)}`}</SectionLabel>
+      <RecordList>
         {r.builds.map(b => (
-          <Row key={b.manifest_sha256} tone={b.release_sha256 === r.installed.release_sha256 ? 'violet' : 'muted'} title={<>commit <span className={css.mono}>{b.commit.slice(0, 7)}</span></>}
-            sub={`release ${short(b.release_sha256)} · ${relative(b.approved_at_ms, s.now_ms)}`}
-            end={b.release_sha256 === r.installed.release_sha256 ? <Pill tone="violet">installed</Pill> : <Pill tone="muted">earlier</Pill>}>
-            <Facts rows={[
+          <RecordRow key={b.manifest_sha256} tone={b.release_sha256 === r.installed.release_sha256 ? 'violet' : 'muted'} title={<>commit <Mono>{b.commit.slice(0, 7)}</Mono></>}
+            summary={`release ${short(b.release_sha256)} · ${relative(b.approved_at_ms, s.now_ms)}`}
+            end={b.release_sha256 === r.installed.release_sha256 ? <StatusPill tone="violet">installed</StatusPill> : <StatusPill tone="muted">earlier</StatusPill>}>
+            <FieldTable rows={[
               ['manifest_sha256', b.manifest_sha256],
               ['release_sha256', b.release_sha256],
               ['chain_sha256', b.chain_sha256],
               ['base_release', b.base_release_sha256],
               ['commit', b.commit],
             ]} />
-          </Row>
+          </RecordRow>
         ))}
-      </Rows>
+      </RecordList>
     </>
   )
 }
@@ -461,42 +474,42 @@ export function DevicesView({ s }: ViewProps) {
   const d = s.devices
   return (
     <>
-      <Label>AUMLOK</Label>
-      <div className={css.split}>
-        <Stat name="Binding" value={d.aumlok.state} tone={d.aumlok.state === 'BOUND' ? 'mint' : 'gold'} />
-        <Stat name="Epoch" value={d.aumlok.epoch} />
-        <Stat name="Handle" value={d.aumlok.handle ?? '—'} />
-      </div>
-      <Facts rows={[
+      <SectionLabel>AUMLOK</SectionLabel>
+      <StatTiles tiles={[
+        { name: 'Binding', value: d.aumlok.state, tone: d.aumlok.state === 'BOUND' ? 'mint' : 'gold' },
+        { name: 'Epoch', value: d.aumlok.epoch },
+        { name: 'Handle', value: d.aumlok.handle ?? '—' },
+      ]} />
+      <FieldTable rows={[
         ['subject', d.aumlok.subject],
         ['activeControlDigest', d.aumlok.activeControlDigest],
         ['approvalKeyDid', d.aumlok.approvalKeyDid],
         ['custodyClass', d.aumlok.custodyClass],
         ['revoked', String(d.aumlok.revoked)],
       ]} />
-      <OwnerAction origin={s.owner_origin} tone="mint" link={{ verb: 'Refresh the phrase', route: '/phrase/refresh' }} />
-      <Label>{`Passkeys · ${String(d.passkeys.length)}`}</Label>
-      <Rows>
+      <Owner origin={s.owner_origin} tone="mint" link={{ verb: 'Refresh the phrase', route: '/phrase/refresh' }} />
+      <SectionLabel>{`Passkeys · ${String(d.passkeys.length)}`}</SectionLabel>
+      <RecordList>
         {d.passkeys.map(p => (
-          <Row key={p.credential_id} tone="blue" title={p.label} sub={`${p.algorithm} · used ${String(p.sign_counter)} times`} end={<Pill tone="blue">{`epoch ${String(p.epoch)}`}</Pill>}>
-            <Facts rows={[
+          <RecordRow key={p.credential_id} tone="blue" title={p.label} summary={`${p.algorithm} · used ${String(p.sign_counter)} times`} end={<StatusPill tone="blue">{`epoch ${String(p.epoch)}`}</StatusPill>}>
+            <FieldTable rows={[
               ['credential_id', p.credential_id],
               ['algorithm', p.algorithm],
               ['relying_party', p.relying_party],
               ['owner_origin', p.owner_origin],
               ['sign_counter', String(p.sign_counter)],
             ]} />
-          </Row>
+          </RecordRow>
         ))}
-      </Rows>
-      <OwnerAction origin={s.owner_origin} tone="blue" link={{ verb: 'Add a passkey', route: '/passkey' }} />
-      <Label>{`Paired devices · ${String(d.devices.length)}`}</Label>
-      <Rows>
+      </RecordList>
+      <Owner origin={s.owner_origin} tone="blue" link={{ verb: 'Add a passkey', route: '/passkey' }} />
+      <SectionLabel>{`Paired devices · ${String(d.devices.length)}`}</SectionLabel>
+      <RecordList>
         {d.devices.map(dev => (
-          <Row key={dev.device_key} tone={dev.copresence.verdict === 'CONSISTENT_CLAIMED' ? 'mint' : 'gold'} title={dev.label}
-            sub={`${dev.copresence.label} · ${dev.copresence.method} · paired ${relative(dev.paired_at_ms, s.now_ms)}`}
-            end={<Pill tone={dev.copresence.verdict === 'CONSISTENT_CLAIMED' ? 'mint' : 'gold'}>{dev.copresence.verdict}</Pill>}>
-            <Facts title="Co-presence receipt" rows={[
+          <RecordRow key={dev.device_key} tone={dev.copresence.verdict === 'CONSISTENT_CLAIMED' ? 'mint' : 'gold'} title={dev.label}
+            summary={`${dev.copresence.label} · ${dev.copresence.method} · paired ${relative(dev.paired_at_ms, s.now_ms)}`}
+            end={<StatusPill tone={dev.copresence.verdict === 'CONSISTENT_CLAIMED' ? 'mint' : 'gold'}>{dev.copresence.verdict}</StatusPill>}>
+            <FieldTable title="Co-presence receipt" rows={[
               ['device_key', dev.device_key],
               ['scope', dev.scope],
               ['epoch', String(dev.epoch)],
@@ -505,11 +518,11 @@ export function DevicesView({ s }: ViewProps) {
               ['t_a', when(dev.copresence.t_a_ms)],
               ['t_b', `${when(dev.copresence.t_b_ms)} (+${String((dev.copresence.t_b_ms - dev.copresence.t_a_ms) / 1000)} s)`],
             ]} />
-            <OwnerAction origin={s.owner_origin} tone="gold" link={{ verb: 'Unpair', route: null }} />
-          </Row>
+            <Owner origin={s.owner_origin} tone="gold" link={{ verb: 'Unpair', route: null }} />
+          </RecordRow>
         ))}
-      </Rows>
-      <OwnerAction origin={s.owner_origin} tone="mint" link={{ verb: 'Pair a device', route: '/witness' }} />
+      </RecordList>
+      <Owner origin={s.owner_origin} tone="mint" link={{ verb: 'Pair a device', route: '/witness' }} />
     </>
   )
 }

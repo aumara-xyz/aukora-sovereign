@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Aumara and Peter Viviani
+/** The spatial primitives: components plus the framework-neutral stylesheet they emit markup for. */
+import './primitives.css'
+
+export {
+  AppHeader, AppSurface, DetailSection, FieldTable, Footnote, IconTile, Lead, LevelScale, LockedAction, Meter, Mono,
+  PortalButton, PortalCell, PortalDetail, PortalGrid, Quote, RecordList, RecordRow, SectionLabel, StatTiles, StatusPill,
+} from './components.tsx'
+export type { Badge, Level, PortalButtonProps, StatTile, Tone } from './components.tsx'
+export { AkIcon, ICON_NAMES } from './icons.tsx'
+export type { IconName } from './icons.tsx'

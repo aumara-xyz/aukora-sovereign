@@ -41,7 +41,6 @@
     "src/client/sovereignty/SovereigntySurface.tsx",
     "src/client/sovereignty/format.ts",
     "src/client/sovereignty/model.ts",
-    "src/client/sovereignty/parts.tsx",
     "src/client/sovereignty/stub.ts",
     "src/client/sovereignty/views.tsx",
     "src/css-modules.d.ts"
