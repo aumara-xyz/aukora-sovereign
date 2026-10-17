@@ -324,10 +324,12 @@ def owner_entry(sequence, auth, signing_d, bound_d):
     return {"sequence": sequence, "binding": binding, "proof": proof}
 
 
-def owner_ledger(consumed_new=NEW, **consume_extra):
+def owner_ledger(consumed_new=NEW, apply_more=None, consume_base=True, **consume_extra):
     """boot fact, propose, consume (needs the owner assertion), apply, all but the first in the authority wrapper.
     `consumed_new` is the new_sha256 the consume row records: a different one is a row the assertion does not describe;
-    `consume_extra` adds members to the consume's payload (for example `standing`)."""
+    `consume_extra` adds members to the consume's payload (for example `standing`). The real gate writes the base on both
+    rows: `apply_more` replaces the members the apply carries beyond the common ones (default its `base_sha256`, as the
+    gate writes it) and `consume_base` False leaves the base out of the consume."""
     auth = owner_authorization()
     operation = auth["operation"]
     payload = lambda state, new, **more: {"proposal": PROPOSAL, "target": TARGET, "operation": operation, "new_sha256": new,
@@ -337,8 +339,10 @@ def owner_ledger(consumed_new=NEW, **consume_extra):
         ("boot.facts", "fact", "supervisor", "", {"index": 0, "message": "honest"}),
         ("gate.propose", "intent", "owner", OPERATION, wrapped(payload("proposed", NEW))),
         ("gate.consume", "settle", "owner", OPERATION, wrapped(payload(
-            "consumed", consumed_new, base_sha256="absent", consumed_approval=hashlib.sha256(c1(auth)).hexdigest(), **consume_extra))),
-        ("gate.apply", "terminal", "owner", OPERATION, wrapped(payload("applied", consumed_new)))])
+            "consumed", consumed_new, **({"base_sha256": "absent"} if consume_base else {}),
+            consumed_approval=hashlib.sha256(c1(auth)).hexdigest(), **consume_extra))),
+        ("gate.apply", "terminal", "owner", OPERATION, wrapped(payload(
+            "applied", consumed_new, **({"base_sha256": "absent"} if apply_more is None else apply_more))))])
     return bundle, auth
 
 
@@ -347,7 +351,7 @@ def permission_ledger(operations):
     itself, no consume), all approved by the one authorization `auth` that is returned."""
     auth = owner_authorization("permission", "gate/permission")
     payload = lambda state, **more: {"proposal": PROPOSAL, "target": "gate/permission", "operation": auth["operation"],
-                                     "new_sha256": NEW, "state": state, **more}
+                                     "new_sha256": NEW, "base_sha256": "absent", "state": state, **more}
     wrapped = lambda body: (lambda number, previous: authority_wrap(number, previous, body))
     specs = [("boot.facts", "fact", "supervisor", "", {"index": 0, "message": "honest"})]
     for operation in operations:
@@ -803,6 +807,7 @@ class Replay:
                      "codes": ["verifier:owner-signatures-unchecked"]}
         # The engines name a refusal differently here, so these are held to the verdict and the exit code.
         refused = {"verdict": "INVALID_INPUT", "exit": 64}
+        refused_base = {"verdict": "REWRITTEN", "exit": 2, "codes": ["verifier:gate-reference"]}
         tampered, _ = owner_ledger("33" * 32)
         self.export_case(work, file, "assertions-verify-under-the-pinned-owner-key", bundle, export, owner, verified, True)
         self.export_case(work, file, "no-owner-pin", bundle, export, None, unchecked)
@@ -822,6 +827,16 @@ class Replay:
         malformed, auth = owner_ledger(standing={})
         self.export_case(work, file, "malformed-standing-is-refused-even-with-the-assertion", malformed,
                          export_v2(malformed, [owner_entry(3, auth, OWNER_D, OWNER_D)]), owner, refused)
+        # The apply and its consume agree on the base the owner approved, and the real gate writes it on both rows.
+        other_base = {"base_sha256": "99" * 32}
+        # (The engines list a second finding in a different order for a consume with no base: C11, so only "not VERIFIED".)
+        for case_id, ledger_args, held_to in (("apply-over-another-base-is-refused", {"apply_more": other_base}, refused_base),
+                                              ("apply-without-a-base-is-refused", {"apply_more": {}}, refused_base),
+                                              ("consume-without-a-base-is-refused", {"consume_base": False},
+                                               {"not_verdict": "VERIFIED"})):
+            changed, auth = owner_ledger(**ledger_args)
+            self.export_case(work, file, case_id, changed, export_v2(changed, [owner_entry(3, auth, OWNER_D, OWNER_D)]),
+                             owner, held_to)
         # A permission grant is approved by the assertion on its own row, and by no other row's.
         one, auth = permission_ledger([OPERATION])
         self.export_case(work, file, "permission-grant-verifies-on-its-own-assertion", one,

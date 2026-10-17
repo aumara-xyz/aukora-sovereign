@@ -173,7 +173,7 @@ fn consume(new: &str, extra: &str) -> Spec {
 fn apply_with(op: &str, target: &str, new: &str) -> Spec {
     let operation = operation_digest();
     let payload = format!(
-        r#"{{"proposal":"{PROPOSAL}","target":"{target}","operation":"{operation}","new_sha256":"{new}","state":"applied"}}"#
+        r#"{{"proposal":"{PROPOSAL}","target":"{target}","operation":"{operation}","base_sha256":"absent","new_sha256":"{new}","state":"applied"}}"#
     );
     ("gate.apply", "terminal", "owner", op.to_owned(), Some(payload))
 }
@@ -407,6 +407,36 @@ fn an_apply_of_something_else_than_was_approved_is_rewritten() {
     assert_eq!(report.findings()[0].sequence, Some(4));
 }
 
+/// The apply of the approved change, with the `base_sha256` it carries replaced (`None` leaves it out).
+fn apply_over(base: Option<&str>) -> Spec {
+    let (kind, phase, actor, op, payload) = apply();
+    let carried = base.map_or(String::new(), |base| format!(r#""base_sha256":"{base}","#));
+    let payload = payload.expect("payload").replace(r#""base_sha256":"absent","#, &carried);
+    (kind, phase, actor, op, Some(payload))
+}
+
+#[test]
+fn an_apply_over_another_base_than_was_approved_is_rewritten() {
+    let other = "99".repeat(32);
+    for (what, base) in [("another base", Some(other.as_str())), ("no base", None)] {
+        let report = unapproved(vec![fact(), propose(), consume(NEW, ""), apply_over(base)]);
+        assert_eq!(report.verdict(), Verdict::Rewritten, "{what}");
+        assert_eq!(codes(&report), ["gate-reference"], "{what}");
+        assert_eq!(report.findings()[0].sequence, Some(4), "{what}");
+    }
+    let report = unapproved(vec![fact(), propose(), consume(NEW, ""), apply_over(Some("absent"))]);
+    assert_ne!(report.verdict(), Verdict::Rewritten, "the approved base is no finding");
+}
+
+#[test]
+fn a_consume_with_no_base_is_no_approval_of_an_apply() {
+    let (kind, phase, actor, op, payload) = consume(NEW, "");
+    let payload = payload.expect("payload").replace(r#""base_sha256":"absent","#, "");
+    let report = unapproved(vec![fact(), propose(), (kind, phase, actor, op, Some(payload)), apply()]);
+    assert_eq!(report.verdict(), Verdict::Rewritten);
+    assert_eq!(report.findings()[0].sequence, Some(4));
+}
+
 #[test]
 fn an_apply_with_no_operation_id_is_rewritten() {
     let report = unapproved(vec![fact(), propose(), apply_to("", TARGET)]);
@@ -545,7 +575,7 @@ fn permission_rows(op: &str) -> [Spec; 2] {
     let approval = hex::encode(digest(auth.as_bytes()));
     let payload = |state: &str, extra: &str| {
         format!(
-            r#"{{"proposal":"{PROPOSAL}","target":"gate/permission","operation":"{operation}","new_sha256":"{NEW}","state":"{state}"{extra}}}"#
+            r#"{{"proposal":"{PROPOSAL}","target":"gate/permission","operation":"{operation}","base_sha256":"absent","new_sha256":"{NEW}","state":"{state}"{extra}}}"#
         )
     };
     [

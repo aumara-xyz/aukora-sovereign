@@ -360,7 +360,7 @@ def _owner_effect(same, row):
 def _owner_linked(row, applied):
     try: earlier = _owner_payload(row)
     except Refusal: return False
-    return row["phase"] == "settle" and earlier.get("state") == "consumed" and all(name in earlier and name in applied and earlier[name] == applied[name] for name in ("proposal", "target", "operation", "new_sha256"))
+    return row["phase"] == "settle" and earlier.get("state") == "consumed" and all(name in earlier and name in applied and earlier[name] == applied[name] for name in ("proposal", "target", "operation", "base_sha256", "new_sha256"))
 def _owner_required(rows, row):
     payload = _owner_payload(row)
     if row["kind"] == "gate.consume":
@@ -388,7 +388,7 @@ def _owner_row(row, rows, auth, proof):
         _require(auth["op"] == action and row["phase"] == phase and payload.get("state") == state
                  and payload.get("consumed_approval") == digest
                  and all(payload.get(field) == auth[field] for field in ("proposal", "target", "operation", "new_sha256"))
-                 and ("base_sha256" not in payload or payload["base_sha256"] == auth["base_sha256"]), "owner-proof-context")
+                 and (row["kind"] == "gate.retire" and "base_sha256" not in payload or payload.get("base_sha256") == auth["base_sha256"]), "owner-proof-context")
     elif row["kind"] == "floor.advance":
         floor = payload.get("floor")
         _require(row["phase"] == "terminal" and auth["op"] == "release" and auth["target"] == "release"

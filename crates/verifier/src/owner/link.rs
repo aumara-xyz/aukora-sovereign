@@ -87,7 +87,7 @@ pub(super) fn needs(rows: &[Value], row: &Value) -> Result<bool> {
 }
 
 /// A wrapped `gate.apply` changed state on the strength of exactly one consume of the same operation, earlier in the
-/// ledger, and is the only apply of that operation. An apply with no consume, a consume that came after it, a second
+/// ledger (same proposal, target, operation, base and new digest), and is the only apply of that operation. An apply with no consume, a consume that came after it, a second
 /// apply, or an empty operation is not an effect the owner approved. A permission grant (`gate/permission`) is approved
 /// by the assertion on its own row, which `check_all` binds to that row alone (one entry per row, every authorization
 /// and challenge distinct, the row's `consumed_approval` equal to the authorization's digest), so it needs no consume,
@@ -110,7 +110,7 @@ pub(super) fn effect(same: &[&Value], row: &Value) -> Result<()> {
         let linked = payload(other).is_ok_and(|earlier| {
             label(other, "phase") == Ok("settle")
                 && label(earlier, "state") == Ok("consumed")
-                && ["proposal", "target", "operation", "new_sha256"]
+                && ["proposal", "target", "operation", "base_sha256", "new_sha256"]
                     .iter()
                     .all(|name| earlier.get(name).is_some() && earlier.get(name) == body.get(name))
         });
@@ -232,8 +232,10 @@ pub(super) fn verify(rows: &[Value], entry: &Value, auth: &OwnerAuthorization) -
             for name in ["proposal", "target", "operation", "new_sha256"] {
                 require(field(body, name)? == field(&auth_value, name)?)?;
             }
-            if let Some(base) = body.get("base_sha256") {
-                require(base == field(&auth_value, "base_sha256")?)?;
+            // The gate writes the approved base on every consume and apply. Only a retirement may omit it: the
+            // immune registry's retirement rows carry none (verifier-7), and a base that is present must still match.
+            if kind != "gate.retire" || body.get("base_sha256").is_some() {
+                require(body.get("base_sha256") == Some(field(&auth_value, "base_sha256")?))?;
             }
             if kind == "gate.apply" {
                 require(auth.target == "gate/permission")?;
