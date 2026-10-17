@@ -475,9 +475,12 @@ fn budgets_and_key_approvals_are_read_strictly() {
         Budget { models: vec!["sk-model".into()], ..ok.clone() },
         Budget { provider: "openrouter".into(), ..ok.clone() },
         Budget { max_requests: 0, ..ok.clone() },
+        // A cache-hit price above the uncached one breaks the reservation (every input byte is priced uncached).
+        Budget { prices: Prices { cache_read_microusd_per_mtok: 280_001, ..ok.prices }, ..ok.clone() },
     ] {
         assert!(bad.canonical_bytes().is_err());
     }
+    assert!(Budget { prices: Prices { cache_read_microusd_per_mtok: 280_000, ..ok.prices }, ..ok.clone() }.canonical_bytes().is_ok());
     let extra = String::from_utf8(bytes).unwrap().replacen('{', "{\"extra\":1,", 1);
     assert!(Budget::parse(extra.as_bytes()).is_err());
     let approval = KeyApproval::for_key(KEY);

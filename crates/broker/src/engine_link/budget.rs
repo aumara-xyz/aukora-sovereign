@@ -69,6 +69,9 @@ impl Budget {
             || self.provider != PROVIDER
             || !models_ok
             || prices.iter().any(|p| *p == 0 || *p > MAX_PRICE)
+            // The reservation prices every input byte at the uncached price; a dearer cache-hit price would let a
+            // call cost more than was set aside.
+            || self.prices.cache_read_microusd_per_mtok > self.prices.input_microusd_per_mtok
             || self.total_cap_microusd == 0
             || self.total_cap_microusd > MAX_SAFE
             || self.per_request_cap_microusd == 0
