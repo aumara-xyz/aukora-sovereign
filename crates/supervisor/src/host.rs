@@ -3,6 +3,7 @@
 
 mod engine_routes;
 mod owner_gate;
+mod pairing_routes;
 
 use crate::{
     adapters::{HostClock, HostLedger},
@@ -60,6 +61,7 @@ pub struct Host {
     handoffs: Mutex<frontdoor::fd4::ShellHandoffs>,
     engine: Option<Arc<crate::engine::Engine>>,
     model_broker: Option<Arc<crate::model_broker::ModelBroker>>,
+    pairing: Option<Arc<supervisor::pairing::Pairing>>,
 }
 struct Assets {
     source: ReleaseFiles,
@@ -253,7 +255,18 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         eprintln!("engine: not configured: {}:{}", refusal.organ, refusal.reason);
         None
     });
+    // Co-presence pairing (COPRESENCE-NODE.md); a store that cannot open refuses only pairing.
+    state.subdirectory("copresence")?;
+    let pairing = supervisor::pairing::Pairing::open(
+        &config.state_root.join("copresence").join("pairing-v1.sqlite3"),
+        state.node,
+        &config.owner_origin,
+    )
+    .map_err(|refusal| eprintln!("copresence: pairing unavailable: {}:{}", refusal.organ, refusal.reason))
+    .ok()
+    .map(Arc::new);
     let host = Arc::new(Host {
+        pairing,
         identity,
         approvals: crate::approvals::ApprovalFeed::new(ledger.clone()),
         gate: owner_gate,
@@ -582,6 +595,9 @@ impl Host {
             if matches!(route, OwnerRoute::SigninStart | OwnerRoute::SigninFinish) {
                 return self.signin(request, route, None);
             }
+            if frontdoor::owner_origin::is_phone_pairing_route(route) {
+                return self.pairing_phone(request, route);
+            }
             let mut sessions = self.sessions()?;
             let mut identity = self.identity.lock().map_err(|_| codes::SUPERVISOR_STATE)?;
             let result = frontdoor::session::with_owner_session(
@@ -597,6 +613,13 @@ impl Host {
                             return Err(codes::AUMLOK_BINDING_REQUIRED);
                         };
                         return self.owner_gate_request(&session, route, request.body());
+                    }
+                    if frontdoor::owner_origin::is_owner_pairing_route(route) {
+                        let frontdoor::session::OwnerSession::Bound(session) = session else {
+                            return Err(codes::AUMLOK_BINDING_REQUIRED);
+                        };
+                        let body = self.pairing_owner(&session, route, request.body())?;
+                        return Ok(crate::identity::Reply { body, transition: None });
                     }
                     if route == OwnerRoute::Approvals {
                         let frontdoor::session::OwnerSession::Bound(session) = session else {

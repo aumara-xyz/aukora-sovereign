@@ -32,7 +32,21 @@ pub enum OwnerRoute {
     ApprovalCeremonyV1,
     ApprovalReviewV1,
     ApprovalAssertionV1,
+    /// Co-presence pairing, bound owner session: start, poll, submit the receipt, list devices.
+    PairingStart,
+    PairingStatus,
+    PairingReceipt,
+    PairingDevices,
+    /// Co-presence pairing, the phone: no session; a single-use join token, then a pairing bearer.
+    PairingJoin,
+    PairingPhone,
 }
+
+/// The top-level page a phone opens from the owner's screen. Its secret is in the
+/// URL fragment, which the browser never sends; the page itself is public bytes.
+pub const PHONE_PAGE_PATH: &str = "/pair";
+/// The approved-release document behind [`PHONE_PAGE_PATH`].
+pub const PHONE_PAGE_ASSET: &str = "portal/phone/index.html";
 
 impl OwnerRoute {
     pub fn resolve(host: HostRole, method: Method, path: &str) -> Result<Self> {
@@ -58,6 +72,12 @@ impl OwnerRoute {
             (Method::Post, "/api/v1/approvals/review") => Ok(Self::ApprovalReviewV1),
             (Method::Post, "/api/v1/approvals/assertion") => Ok(Self::ApprovalAssertionV1),
             (Method::Post, "/api/approvals/retire/challenge") => Ok(Self::ApprovalRetireChallenge),
+            (Method::Post, "/api/pairing/start") => Ok(Self::PairingStart),
+            (Method::Post, "/api/pairing/status") => Ok(Self::PairingStatus),
+            (Method::Post, "/api/pairing/receipt") => Ok(Self::PairingReceipt),
+            (Method::Get, "/api/pairing/devices") => Ok(Self::PairingDevices),
+            (Method::Post, "/api/pairing/join") => Ok(Self::PairingJoin),
+            (Method::Post, "/api/pairing/phone") => Ok(Self::PairingPhone),
             _ => Err(Refusal {
                 organ: "frontdoor",
                 reason: "unknown-route",
@@ -75,6 +95,22 @@ pub fn is_gate_route(route: OwnerRoute) -> bool {
             | OwnerRoute::ApprovalAssertionV1
             | OwnerRoute::ApprovalRetireChallenge
     )
+}
+
+/// Pairing routes the bound owner session reaches; a binding-only session cannot.
+pub fn is_owner_pairing_route(route: OwnerRoute) -> bool {
+    matches!(
+        route,
+        OwnerRoute::PairingStart
+            | OwnerRoute::PairingStatus
+            | OwnerRoute::PairingReceipt
+            | OwnerRoute::PairingDevices
+    )
+}
+
+/// Pairing routes for the phone, which has no owner session; each carries its own token.
+pub fn is_phone_pairing_route(route: OwnerRoute) -> bool {
+    matches!(route, OwnerRoute::PairingJoin | OwnerRoute::PairingPhone)
 }
 
 /// Client selectors and raw passkey material; no client authorization or card is admitted.
@@ -487,8 +523,9 @@ fn owner_security_headers(context: &CeremonyContext) -> Result<http::HeaderMap> 
         http::header::CONTENT_SECURITY_POLICY,
         http::HeaderValue::from_str(&policy.owner_csp).map_err(|_| configuration_refused())?,
     );
+    // The camera serves the co-presence exchange inside the owner frame and nowhere else.
     let permissions = format!(
-        "publickey-credentials-create=(self \"{0}\"), publickey-credentials-get=(self \"{0}\")",
+        "publickey-credentials-create=(self \"{0}\"), publickey-credentials-get=(self \"{0}\"), camera=(self)",
         context.expected_top_origin.as_str()
     );
     headers.insert(
@@ -503,6 +540,35 @@ fn owner_security_headers(context: &CeremonyContext) -> Result<http::HeaderMap> 
     ] {
         headers.insert(name, http::HeaderValue::from_static(value));
     }
+    Ok(headers)
+}
+
+/// The phone's top-level pairing page: never framed, no passkey, the camera only.
+/// It runs only approved portal modules and talks only to this origin.
+pub fn phone_page_headers(context: &CeremonyContext) -> Result<http::HeaderMap> {
+    context.validate()?;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_SECURITY_POLICY,
+        http::HeaderValue::from_static(crate::shell::PHONE_CSP),
+    );
+    headers.insert(
+        "permissions-policy",
+        http::HeaderValue::from_static(crate::shell::PHONE_PERMISSIONS),
+    );
+    for (name, value) in [
+        (http::header::CACHE_CONTROL, "no-store"),
+        (http::header::REFERRER_POLICY, "no-referrer"),
+        (http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (http::header::STRICT_TRANSPORT_SECURITY, "max-age=31536000"),
+        (http::header::X_FRAME_OPTIONS, "DENY"),
+    ] {
+        headers.insert(name, http::HeaderValue::from_static(value));
+    }
+    headers.insert(
+        "cross-origin-opener-policy",
+        http::HeaderValue::from_static("same-origin"),
+    );
     Ok(headers)
 }
 
@@ -531,6 +597,23 @@ pub fn serve_owner_asset_response(
             return Err(canon::codes::FRONTDOOR_ORIGIN_REFUSED);
         }
         serve_document_response(navigation, release, source)?
+    } else if request.path() == PHONE_PAGE_PATH {
+        let asset = crate::assets::serve(
+            release,
+            source,
+            crate::assets::AssetSurface::Owner,
+            PHONE_PAGE_ASSET,
+        )?;
+        if asset.kind != crate::assets::AssetKind::Html {
+            return Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE);
+        }
+        let mut response = http::Response::new(asset.bytes);
+        *response.headers_mut() = phone_page_headers(context)?;
+        response.headers_mut().insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("text/html; charset=utf-8"),
+        );
+        response
     } else {
         let asset = crate::assets::serve(
             release,
@@ -594,7 +677,13 @@ pub fn dispatch_ceremony<S: crate::session::SessionStore>(
         | OwnerRoute::ApprovalRetireChallenge
         | OwnerRoute::ApprovalCeremonyV1
         | OwnerRoute::ApprovalReviewV1
-        | OwnerRoute::ApprovalAssertionV1 => Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE),
+        | OwnerRoute::ApprovalAssertionV1
+        | OwnerRoute::PairingStart
+        | OwnerRoute::PairingStatus
+        | OwnerRoute::PairingReceipt
+        | OwnerRoute::PairingDevices
+        | OwnerRoute::PairingJoin
+        | OwnerRoute::PairingPhone => Err(canon::codes::FRONTDOOR_UNKNOWN_ROUTE),
         _ => crate::session::with_owner_session(
             sessions,
             request
@@ -718,4 +807,40 @@ pub struct OwnerOriginFacts {
     pub relying_party_id: String,
     pub accepted_top_origin: Origin,
     pub active_principal_limits: Vec<(canon::digest::Digest32, u32)>,
+}
+
+#[cfg(test)]
+mod pairing_route_tests {
+    use super::*;
+
+    #[test]
+    fn pairing_routes_resolve_on_the_owner_host_only() {
+        let owner = |method, path| OwnerRoute::resolve(HostRole::Owner, method, path);
+        assert_eq!(owner(Method::Post, "/api/pairing/start").unwrap(), OwnerRoute::PairingStart);
+        assert_eq!(owner(Method::Get, "/api/pairing/devices").unwrap(), OwnerRoute::PairingDevices);
+        assert_eq!(owner(Method::Post, "/api/pairing/join").unwrap(), OwnerRoute::PairingJoin);
+        assert!(owner(Method::Get, "/api/pairing/start").is_err());
+        assert!(OwnerRoute::resolve(HostRole::Shell, Method::Post, "/api/pairing/join").is_err());
+        assert!(is_phone_pairing_route(OwnerRoute::PairingPhone));
+        assert!(!is_phone_pairing_route(OwnerRoute::PairingReceipt));
+        assert!(is_owner_pairing_route(OwnerRoute::PairingReceipt));
+        assert!(!is_owner_pairing_route(OwnerRoute::PairingJoin));
+    }
+
+    #[test]
+    fn the_phone_page_is_never_framed_and_never_reaches_a_passkey() {
+        let context = CeremonyContext {
+            relying_party_id: "owner.example.org".into(),
+            owner_origin: Origin::parse("https://owner.example.org").unwrap(),
+            expected_top_origin: Origin::parse("https://node.example.org").unwrap(),
+        };
+        let headers = phone_page_headers(&context).unwrap();
+        let csp = headers[http::header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(csp.contains("frame-ancestors 'none'") && csp.contains("script-src 'self' 'wasm-unsafe-eval';"));
+        assert!(csp.contains("connect-src 'self';") && !csp.contains("unsafe-inline"));
+        let permissions = headers["permissions-policy"].to_str().unwrap();
+        assert!(permissions.contains("camera=(self)") && permissions.contains("publickey-credentials-get=()"));
+        let owner = owner_security_headers(&context).unwrap();
+        assert!(owner["permissions-policy"].to_str().unwrap().ends_with("camera=(self)"));
+    }
 }

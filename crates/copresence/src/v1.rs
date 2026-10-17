@@ -280,6 +280,23 @@ pub fn encode_frame(frame: &SignedFrame) -> Result<Vec<u8>> {
     codec::encode_frame(frame)
 }
 
+/// Canonical bytes of the frozen v1 receipt envelope, as the browser engine writes them.
+pub fn encode_receipt(body: &ReceiptBody) -> Result<Vec<u8>> {
+    codec::encode_receipt(body)
+}
+
+/// Decodes a canonical v1 receipt into unverified claims. Nothing here checks a
+/// signature, a timestamp or a context: the result is input for choosing the
+/// expected context, which `verify_receipt` then checks in full.
+pub fn read_receipt_claims(bytes: &[u8]) -> Result<ReceiptBody> {
+    codec::read_receipt(bytes)
+}
+
+/// Domain-separated digest of a v1 context, as both device signatures bind it.
+pub fn context_digest(context: &Context) -> Result<Digest32> {
+    crypto::context(context)
+}
+
 /// Verifies both device signatures and exact expected context after counting.
 /// A single-use success requires durable journal completion, even offline.
 pub fn verify_receipt(

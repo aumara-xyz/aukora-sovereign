@@ -322,7 +322,6 @@ pub(crate) fn hash(bytes: &[u8]) -> Digest32 {
 fn validate_asset_path(path: &str) -> Result<()> {
     if path.is_empty()
         || path == "portal"
-        || path.starts_with("portal/")
         || path.len() > 1024
         || !path
             .bytes()
@@ -348,7 +347,10 @@ fn mounted_path(surface: AssetSurface, request: &str) -> Result<String> {
     } else {
         validate_asset_path(path)?;
         match surface {
-            AssetSurface::Owner if !path.starts_with("ui/owner/") => format!("ui/owner/{path}"),
+            // The co-presence portal is served on the owner origin only, under its own prefix.
+            AssetSurface::Owner if !path.starts_with("ui/owner/") && !path.starts_with("portal/") => {
+                format!("ui/owner/{path}")
+            }
             AssetSurface::Shell if !path.starts_with("app/") => {
                 if ["core/", "faces/", "design/", "theme/", "store/", "shell/"]
                     .iter()
@@ -383,7 +385,8 @@ fn kind(path: &str) -> Result<AssetKind> {
 }
 
 fn surfaces(path: &str) -> Result<Vec<AssetSurface>> {
-    if path.starts_with("ui/owner/") {
+    if path.starts_with("ui/owner/") || path.starts_with("portal/") {
+        // Portal modules carry the camera exchange: never the shell, a face or the engine.
         Ok(vec![AssetSurface::Owner])
     } else if path.starts_with("app/shell/") || path == "app/APP-LOCK.json" {
         Ok(vec![AssetSurface::Shell])
@@ -427,4 +430,22 @@ fn read_verified(source: &mut impl ReleaseSource, entry: &AssetEntry) -> Result<
         return Err(refusal("asset-digest-mismatch"));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod portal_tests {
+    use super::*;
+
+    #[test]
+    fn portal_assets_belong_to_the_owner_surface_only() {
+        assert_eq!(surfaces("portal/engine.js").unwrap(), vec![AssetSurface::Owner]);
+        assert_eq!(surfaces("portal/phone/index.html").unwrap(), vec![AssetSurface::Owner]);
+        assert!(validate_asset_path("portal").is_err());
+        assert_eq!(mounted_path(AssetSurface::Owner, "/portal/engine.js").unwrap(), "portal/engine.js");
+        assert_eq!(mounted_path(AssetSurface::Owner, "/index.js").unwrap(), "ui/owner/index.js");
+        // The shell and faces never resolve a portal path to the portal tree.
+        assert_eq!(mounted_path(AssetSurface::Shell, "/portal/engine.js").unwrap(), "app/shell/portal/engine.js");
+        assert_eq!(mounted_path(AssetSurface::Face, "/portal/engine.js").unwrap(), "app/portal/engine.js");
+        assert!(surfaces("app/portal/engine.js").is_err());
+    }
 }

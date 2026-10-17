@@ -23,6 +23,22 @@ pub const UNIMPLEMENTED: Refusal = Refusal {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PublicKeyBytes(pub [u8; 65]);
 
+impl PublicKeyBytes {
+    /// Checks the uncompressed SEC1 form and that the point is on P-256. A valid key
+    /// names a device; it proves nothing about who holds it.
+    pub fn validate(&self) -> Result<()> {
+        if self.0[0] != 4
+            || p256::ecdsa::VerifyingKey::from_sec1_bytes(&self.0).is_err()
+        {
+            return Err(Refusal {
+                organ: "copresence",
+                reason: "public-key",
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Unchecked raw P1363 ECDSA signature, `r || s`, never DER.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignatureBytes(pub [u8; 64]);

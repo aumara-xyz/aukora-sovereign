@@ -76,6 +76,12 @@ pub fn policies(shell: &Origin, owner: &Origin) -> ShellPolicies {
     }
 }
 
+/// The phone's pairing page: approved scripts and WebAssembly from this origin, data
+/// only to this origin, never framed, no forms, no plugins, no base rewrite.
+pub const PHONE_CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; connect-src 'self'; media-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+/// The phone page may ask for the camera; never passkeys, microphone, location or payment.
+pub const PHONE_PERMISSIONS: &str = "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), publickey-credentials-create=(), publickey-credentials-get=()";
+
 /// Faces may load their approved assets and return data to the shell, never embed frames.
 pub fn face_policy(shell: &Origin, wasm: bool) -> String {
     let wasm = if wasm { " 'wasm-unsafe-eval'" } else { "" };
