@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { apply, inject, name } from '../src/index.ts'
+import { classifyCall } from '../src/classify.ts'
 import { resolveConfig } from '../src/door.ts'
 
 function fakeContext() {
@@ -45,6 +46,13 @@ test('a bad configuration stops the engine at load time instead of leaving the d
   assert.throws(() => apply(ctx as never, { socketPath: '/tmp/x.sock', workspaceRoots: ['relative'] }), /workspaceRoots/)
   assert.throws(() => apply(ctx as never, undefined as never), /config/)
   assert.equal(log.length, 0)
+})
+
+test('workspace roots are resolved the way the Rust door resolves them', () => {
+  const config = resolveConfig({ socketPath: '/tmp/x.sock', workspaceRoots: ['/sandbox/.', '//work//', '/a/b/../c/', '/sandbox/..'] })
+  assert.deepEqual(config.workspaceRoots, ['/sandbox', '/work', '/a/c', '/'])
+  // A root written with a dot no longer sends an inside path across the door (the door would refuse it as class-mismatch).
+  assert.equal(classifyCall('read', { file_path: '/sandbox/f' }, resolveConfig({ socketPath: '/tmp/x.sock', workspaceRoots: ['/sandbox/.'] }).workspaceRoots), 'local')
 })
 
 test('configuration defaults and bounds', () => {

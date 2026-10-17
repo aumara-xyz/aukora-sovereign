@@ -13,6 +13,7 @@
 // Everything fails closed: a missing socket, a timeout, a malformed reply, a mismatch, an unknown tool.
 
 import { randomBytes } from 'node:crypto'
+import { posix } from 'node:path'
 import { bindCall, CanonError } from './canonical.ts'
 import type { BoundCall } from './canonical.ts'
 import { callDoor, DoorError } from './client.ts'
@@ -58,7 +59,8 @@ export function resolveConfig(raw: DoorConfig): ResolvedConfig {
   }
   return {
     socketPath,
-    workspaceRoots: workspaceRoots.map(root => (root.length > 1 && root.endsWith('/') ? root.slice(0, -1) : root)),
+    // Resolved as the Rust door resolves them (`.`, `..` and repeated `/` fold away), so both sides judge a path against the same root.
+    workspaceRoots: workspaceRoots.map(root => posix.normalize(root)).map(root => (root.length > 1 && root.endsWith('/') ? root.slice(0, -1) : root)),
     connectTimeoutMs: number(raw.connectTimeoutMs, 2_000, 1, 60_000, 'connectTimeoutMs'),
     responseTimeoutMs: number(raw.responseTimeoutMs, 120_000, 1, 3_600_000, 'responseTimeoutMs'),
     maxFrameBytes: number(raw.maxFrameBytes, 1_048_576, 1_024, 16_777_216, 'maxFrameBytes'),
