@@ -257,6 +257,11 @@ impl Door {
             let state = if now.saturating_sub(raised) > approver::APPROVAL_TTL_SECS { Approval::Gone } else { owner.approver.state(&handle) };
             match state {
                 Approval::Approved => {
+                    // What the door can know will fail is found before the approval is spent: a Kira that is down, or a
+                    // token that is the owner's now, must not cost the owner a passkey approval for a call that never ran.
+                    if let Err(code) = self.preflight_for_clear(class, request) {
+                        return Decision::Deny(code);
+                    }
                     return match owner.log.finish(&digest, &handle, "used") {
                         Ok(()) => self.execute(class, request),
                         Err(code) => Decision::Deny(code.into()),

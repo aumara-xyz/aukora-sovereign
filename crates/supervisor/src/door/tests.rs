@@ -427,6 +427,26 @@ fn an_approved_call_runs_once_and_the_next_repeat_needs_a_new_approval() {
 }
 
 #[test]
+fn an_approval_is_not_spent_on_a_call_the_door_can_tell_will_fail() {
+    let dir = temp("owner-approved-down");
+    let fake = Arc::new(Fake::default());
+    let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+    assert_eq!(ask_code(&call(&door, "k-1", "kira_recall", RECALL, "memory")), "ask-memory");
+    fake.answer(&format!("{:032x}", 1), approver::Approval::Approved);
+    // Kira is not up: the repeat is refused and the approval stays good (no new card, no passkey asked again).
+    assert_eq!(denied(&call(&door, "k-2", "kira_recall", RECALL, "memory")), "kira-unavailable");
+    assert!(door.owner.as_ref().unwrap().log.get(&wire::call_digest("kira_recall", RECALL.as_bytes())).is_some());
+    // Kira comes up as an agent token: the next repeat spends that same approval and runs.
+    let stub = kira_stub(&dir, vec![agent(), found()]);
+    assert!(matches!(call(&door, "k-3", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+    assert_eq!(stub.join().unwrap().len(), 2);
+    assert_eq!(fake.raised.lock().unwrap().len(), 1);
+    // Now it is spent: the same call asks again.
+    assert_eq!(ask_code(&call(&door, "k-4", "kira_recall", RECALL, "memory")), "ask-memory");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn an_open_ask_survives_a_restart_and_a_spent_approval_does_not() {
     let dir = temp("owner-restart");
     let stub = kira_stub(&dir, vec![agent(), found()]);
