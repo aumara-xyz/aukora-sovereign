@@ -24,9 +24,14 @@ mod link;
 #[cfg(test)]
 mod tests;
 
-/// Whether a row needs a retained owner assertion; a row that cannot be read as one is held to the stricter answer.
-pub(crate) fn required_row(row: &Value) -> Result<bool> {
-    link::required(row)
+/// Whether any row needs a retained owner assertion; a row that cannot be read as one is held to the stricter answer.
+pub(crate) fn needed(rows: &[Value]) -> bool {
+    rows.iter().any(|row| link::needs(rows, row).unwrap_or(true))
+}
+
+/// What a wrapped apply must rest on (`gate-reference` when it rests on nothing); `same` is every row of its operation.
+pub(crate) fn effect(same: &[&Value], row: &Value) -> Result<()> {
+    link::effect(same, row)
 }
 
 /// An authority-wrapped body: the operation lives in its payload, so the row alone cannot say who authorized it.
@@ -67,7 +72,7 @@ fn check_all(
     let mut required = std::collections::BTreeSet::new();
     for row in rows {
         link::standing(rows, row)?;
-        if link::required(row)? {
+        if link::needs(rows, row)? {
             required.insert(uint(field(row, "seq")?)?);
         }
     }

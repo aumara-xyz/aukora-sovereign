@@ -141,8 +141,7 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
     if retained is not None:
         old, new = _head(_parse(retained)), _parse(presented)
         _anchor(old, values, leaves)
-        anchored = old["treeSize"] == len(values)
-        covering = covering or old["treeSize"] == len(values)
+        covering = old["treeSize"] == len(values)
         proof = verify_consistency(retained, presented)
         _require(new["treeSize"] == len(values) and new["root"] == _root(leaves).hex(), "presented-head-mismatch")
         anchored = True
@@ -174,11 +173,9 @@ def _event_value(raw):
 def _event(raw):
     try:
         return _event_value(raw)
-    except Refusal as error:
-        if error.code == "verifier:crypto-unavailable":
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError) as error:  # a Refusal is a ValueError
+        if getattr(error, "code", "") == "verifier:crypto-unavailable":
             raise
-        raise Refusal("verifier:witness-malformed") from None
-    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         raise Refusal("verifier:witness-malformed") from None
 def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
     signed = _event(event)

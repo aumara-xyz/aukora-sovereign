@@ -50,13 +50,12 @@ fn payload(row: &Value) -> Result<&Value> {
     }
 }
 
-/// Rows whose direct C5 assertion must occur exactly once in the export.
+/// Rows whose direct C5 assertion must occur exactly once in the export. A consume that names a standing grant is held
+/// to `needs`, which checks the grant: a `standing` that is present is not by itself a reason to ask for no assertion.
 pub(super) fn required(row: &Value) -> Result<bool> {
     let body = payload(row)?;
     Ok(match label(row, "kind")? {
-        "gate.consume" => {
-            body.get("standing").is_none() && body.get("standing_permission").is_none()
-        }
+        "gate.consume" => body.get("standing").is_none(),
         "gate.retire" | "floor.advance" => true,
         "gate.apply" => body
             .get("target")
@@ -69,6 +68,48 @@ pub(super) fn required(row: &Value) -> Result<bool> {
         }),
         _ => false,
     })
+}
+
+/// Whether the verdict needs this row's retained assertion. A consume is owner-free only when its `standing` is a
+/// well-formed use of a prior owner-signed grant in these rows; null, malformed or unlinked is as good as absent.
+pub(super) fn needs(rows: &[Value], row: &Value) -> Result<bool> {
+    if label(row, "kind")? == "gate.consume" && payload(row)?.get("standing").is_some() {
+        return Ok(standing(rows, row).is_err());
+    }
+    required(row)
+}
+
+/// A wrapped `gate.apply` that is not itself a permission grant changed state on the strength of exactly one consume of
+/// the same operation, earlier in the ledger, and is the only apply of that operation. An apply with no consume, a
+/// consume that came after it, a second apply, or an empty operation is not an effect the owner approved.
+pub(super) fn effect(same: &[&Value], row: &Value) -> Result<()> {
+    let body = payload(row)?;
+    let permission = body.get("target").is_some_and(|v| text(v) == Ok("gate/permission"));
+    if label(row, "kind")? != "gate.apply" || permission {
+        return Ok(());
+    }
+    let (operation, sequence) = (label(row, "op")?, uint(field(row, "seq")?)?);
+    let (mut consumes, mut applies) = (0, 0);
+    for other in same {
+        let kind = label(other, "kind")?;
+        applies += usize::from(kind == "gate.apply");
+        if kind != "gate.consume" || uint(field(other, "seq")?)? >= sequence {
+            continue;
+        }
+        // A consume that cannot be read is not the consume of this apply.
+        let linked = payload(other).is_ok_and(|earlier| {
+            label(other, "phase") == Ok("settle")
+                && label(earlier, "state") == Ok("consumed")
+                && ["proposal", "target", "operation", "new_sha256"]
+                    .iter()
+                    .all(|name| earlier.get(name).is_some() && earlier.get(name) == body.get(name))
+        });
+        consumes += usize::from(linked);
+    }
+    if operation.is_empty() || consumes != 1 || applies != 1 {
+        return Err(refusal("gate-reference"));
+    }
+    Ok(())
 }
 
 /// A standing use refers to a prior direct grant whose assertion is required above.
@@ -141,14 +182,6 @@ pub(super) fn verify(rows: &[Value], entry: &Value, auth: &OwnerAuthorization) -
     let authorization = auth.canonical_bytes()?;
     let auth_value = canon::json::parse_strict(&authorization)?;
     require(auth.expires_at > 0 && uint(field(row, "at")?)? < auth.expires_at as u64)?;
-
-    if body.get("authorization").is_some() {
-        require(
-            body == field(row, "body")?
-                && ["apply", "release", "grant", "permission"].contains(&auth.op.wire_name()),
-        )?;
-        return legacy(row, body, entry, &auth_value, &authorization);
-    }
 
     let wrapper = field(row, "body")?;
     require(label(wrapper, "schema")? == WRAPPER)?;
@@ -241,21 +274,4 @@ fn proposal(rows: &[Value], consumed: &Value, auth: &Value) -> Result<()> {
         found += 1;
     }
     require(found == 1)
-}
-
-fn legacy(row: &Value, body: &Value, entry: &Value, auth: &Value, bytes: &[u8]) -> Result<()> {
-    require(
-        label(row, "kind")? == "gate.consume"
-            && label(row, "phase")? == "settle"
-            && field(body, "authorization")? == auth
-            && field(row, "op")? == field(auth, "proposal")?,
-    )?;
-    let mut challenge = b"aukora:owner-authorization:v1\0".to_vec();
-    challenge.extend_from_slice(bytes);
-    require(digest(&challenge) == hex32(label(body, "authorization_sha256")?)?)?;
-    let proof = field(entry, "proof")?.canonical_bytes();
-    require(
-        hex::encode(&proof) == label(body, "proof_hex")?
-            && digest(&proof) == hex32(label(body, "proof_sha256")?)?,
-    )
 }

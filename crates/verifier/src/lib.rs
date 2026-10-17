@@ -382,6 +382,11 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
     let mut previous = DOMAIN.to_owned();
     let mut operations = BTreeMap::new();
     let mut binding_count = 0;
+    let values: Vec<Value> = rows.iter().map(|row| row.value.clone()).collect();
+    let mut by_operation: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+    for value in &values {
+        by_operation.entry(text(field(value, "op")?)?).or_default().push(value);
+    }
     for (index, row) in rows.iter().enumerate() {
         let sequence = Some(index as u64 + 1);
         // The first check a row fails is the finding and ends the walk, in the order the Python twin and the archived
@@ -405,9 +410,6 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
             break;
         }
         let kind = text(field(&row.value, "kind")?)?;
-        if owner::required_row(&row.value).unwrap_or(true) {
-            report.require_owner_signatures();
-        }
         if kind == "nostr.bind" {
             binding_count += 1;
             let check = if binding_count > 1 {
@@ -425,21 +427,17 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
             }
         }
         if ["gate.consume", "gate.apply"].contains(&kind) {
-            match report::owner_binding(&rows, &row.value) {
-                Ok(true) => {}
-                Ok(false) => {
-                    integrity.owner_bindings = Scope::Unchecked;
-                    report.finding(
-                        Verdict::Unchecked,
-                        refusal("owner-provenance"),
-                        sequence,
-                        true,
-                    );
-                }
-                Err(code) => {
-                    integrity.owner_bindings = Scope::Unchecked;
-                    report.finding(Verdict::Rewritten, code, sequence, true);
-                }
+            // A wrapped body is held against the retained owner assertions (the owner path) and the rows it rests on. Any
+            // other body is the archive's flat row, which this verifier no longer reads: nothing says who approved it.
+            let finding = if owner::wrapped(field(&row.value, "body")?) {
+                let same = &by_operation[text(field(&row.value, "op")?)?];
+                owner::effect(same, &row.value).err().map(|code| (Verdict::Rewritten, code))
+            } else {
+                Some((Verdict::Unchecked, refusal("owner-provenance")))
+            };
+            if let Some((verdict, code)) = finding {
+                integrity.owner_bindings = Scope::Unchecked;
+                report.finding(verdict, code, sequence, true);
             }
         }
         let op = text(field(&row.value, "op")?)?;
@@ -471,6 +469,9 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
             true,
         );
         return Ok((report, false));
+    }
+    if owner::needed(&values) {
+        report.require_owner_signatures();
     }
     if operations.values().any(|n| *n != 1) {
         integrity.owner_bindings = Scope::Unchecked;

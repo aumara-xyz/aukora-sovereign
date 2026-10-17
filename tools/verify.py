@@ -158,16 +158,6 @@ def _schnorr(key, message, signature, reason):
     except (ValueError, TypeError):
         valid = False
     _require(valid, reason)
-def _reference(rows, reference, before, kind, operation):
-    _require(isinstance(reference, dict), "gate-evidence")
-    number = reference.get("seq")
-    _require(type(number) is int and 0 < number < before and number <= len(rows), "gate-reference")
-    found = rows[number - 1]
-    _require(found["seq"] == number and found["hash"] == reference.get("hash")
-             and found["kind"] == kind and found["op"] == operation, "gate-evidence")
-    for alias, field in (("ledger_seq", "seq"), ("ledger_hash", "hash")):
-        _require(alias not in reference or _same(reference[alias], found[field]), "gate-evidence")
-    return found
 def _authorization(value, current=True):
     required = {"v", "node", "subject", "op", "proposal", "target", "base_sha256", "new_sha256",
                 "cell", "display_sha256", "challenge", "expires_at"}
@@ -210,167 +200,6 @@ def _authorization(value, current=True):
     _require("pubkey_fp" not in value or isinstance(value.get("gate"), str)
              and value["pubkey_fp"] == value["gate"][:16], "gate-evidence")
     return value
-def _card(auth, card):
-    _require(isinstance(card, dict) and set(card) == {"v", "risk", "says", "facts", "from_to", "model_note"}, "gate-evidence")
-    _require(type(card["v"]) is int and card["v"] == 1 and card["risk"] in ("routine", "critical")
-             and isinstance(card["says"], str) and "\r" not in card["says"] and "\n" not in card["says"]
-             and isinstance(card["facts"], list) and isinstance(card["model_note"], str), "gate-evidence")
-    _require(all(isinstance(fact, list) and len(fact) == 2 and isinstance(fact[0], str)
-                 for fact in card["facts"]), "gate-evidence")
-    _require(_sha(_bytes(card)).hex() == auth["display_sha256"], "gate-evidence")
-    change = card.get("from_to")
-    _require(isinstance(change, dict) and isinstance(change.get("new"), str), "gate-evidence")
-    new = change["new"].encode("utf-8")
-    _require(_sha(new).hex() == auth["new_sha256"], "gate-evidence")
-    base = change.get("base")
-    _require("base" in change and (base is None and auth["base_sha256"] == "absent"
-             or isinstance(base, str) and _sha(base.encode("utf-8")).hex() == auth["base_sha256"]), "gate-evidence")
-    cell = auth["cell"]
-    if cell is not None:
-        _require(set(cell) == {"module_sha256", "input_sha256", "effect_sha256"}
-                 and cell["module_sha256"] == "34ce6cab618b626243e876befb49ccf8a6780dc836e757484886b34ae977a438"
-                 and cell["effect_sha256"] == _sha(new).hex() and new.endswith(b"\n"), "cell-effect")
-        arguments = _parse(new[:-1], canonical=True)
-        _require(isinstance(arguments, dict) and set(arguments) == {"key", "value"}
-                 and isinstance(arguments["key"], str), "cell-effect")
-        key = arguments["key"].encode("utf-8")
-        _require(re.fullmatch(rb"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", key) is not None
-                 and len(key) + len(_bytes(arguments["value"])) <= 65_536
-                 and _sha(new[:-1]).hex() == cell["input_sha256"], "cell-effect")
-def _consume(rows, row):
-    _require(row["phase"] == "settle", "gate-evidence")
-    body = row["body"]
-    auth = _authorization(body.get("authorization"))
-    _require(auth["op"] in ("apply", "release", "grant", "permission")
-             and auth["proposal"] == row["op"] and body.get("spent") is True, "gate-evidence")
-    expected = _sha(b"aukora:owner-authorization:v1\x00" + _bytes(auth)).hex()
-    _require(expected == body.get("authorization_sha256"), "authorization-digest")
-    standing = "standing_permission" in body
-    if not standing:
-        proof = body.get("proof_hex")
-        _require(isinstance(proof, str) and len(proof) > 0 and len(proof) % 2 == 0
-                 and re.fullmatch(r"[0-9a-f]+", proof) is not None, "gate-evidence")
-        _require(_sha(bytes.fromhex(proof)).hex() == body.get("proof_sha256"), "gate-evidence")
-    review = _reference(rows, body.get("review_issue"), row["seq"], "gate.review", row["op"])
-    reviewed = review["body"]
-    _require(review["phase"] == "fact" and _same(reviewed.get("authorization"), auth)
-             and _same(reviewed.get("owner_state"), body.get("owner_state")), "gate-evidence")
-    owner = reviewed.get("owner_state")
-    _require(isinstance(owner, dict) and owner.get("subject") == auth["subject"]
-             and type(owner.get("epoch")) is int and owner["epoch"] == auth["epoch"], "gate-evidence")
-    _require("binding_sha256" not in auth or owner.get("binding_sha256") == auth["binding_sha256"], "gate-evidence")
-    _card(auth, reviewed.get("card"))
-    proposals = [entry for entry in rows[:review["seq"] - 1]
-                 if entry["kind"] == "gate.propose" and entry["phase"] == "intent" and entry["op"] == row["op"]]
-    _require(len(proposals) == 1 and sum(entry["kind"] == "gate.consume" and entry["op"] == row["op"] for entry in rows) == 1,
-             "gate-evidence")
-    proposed = proposals[0]["body"]
-    _require(all(proposed.get(field) == auth[field] for field in ("target", "base_sha256", "new_sha256"))
-             and proposed.get("digest") == auth["operation"], "gate-evidence")
-    if standing:
-        _standing(rows, row, row["at"], row["seq"])
-    return auth, True
-def _permission(raw):
-    value = _parse(raw, canonical=True)
-    columns = {"v", "mode", "targets", "kinds", "max_count", "expires_at", "nonce"}
-    _require(isinstance(value, dict) and set(value) == columns and len(raw) <= 4096
-             and all(0x20 <= byte <= 0x7E for byte in raw), "standing-permission")
-    targets = value["targets"]
-    _require(type(value["v"]) is int and value["v"] == 1 and value["mode"] in ("ask", "risky", "limits")
-             and isinstance(targets, list) and len(targets) <= 32 and value["kinds"] == ["put"]
-             and type(value["max_count"]) is int and 0 <= value["max_count"] <= 1_000_000
-             and type(value["expires_at"]) is int and value["expires_at"] > 0, "standing-permission")
-    _hex(value["nonce"], 16, "standing-permission")
-    _require((not targets and value["max_count"] == 0) if value["mode"] == "ask"
-             else bool(targets) and value["max_count"] > 0, "standing-permission")
-    protected = {"release", "broker", "grant", "floor", "identity", "aumlok", "gate", "slider", "permission"}
-    extensions = {"js", "mjs", "cjs", "ts", "sh", "py", "node", "so"}
-    for target in targets:
-        _require(isinstance(target, str), "standing-permission")
-        parts, lower = target.split("/"), target.lower()
-        _require(len(target.encode("utf-16-be")) // 2 <= 200 and "\\" not in target
-                 and all(ord(char) > 31 and ord(char) != 127 for char in target)
-                 and len(parts) >= 3 and parts[0] == "plugins" and all(part and part not in (".", "..") for part in parts)
-                 and not protected.intersection(re.split(r"[/._-]", lower))
-                 and lower.rsplit(".", 1)[-1] not in extensions, "standing-permission")
-    return value
-def _standing(rows, consumed, at, before):
-    body, auth = consumed["body"], consumed["body"]["authorization"]
-    reference = body.get("standing_permission")
-    columns = {"v", "proposal", "authorization_sha256", "proof_sha256", "consume", "kind"}
-    _require(isinstance(reference, dict) and set(reference) == columns
-             and type(reference["v"]) is int and reference["v"] == 1 and "proof_hex" not in body, "standing-reference")
-    try:
-        original = _reference(rows, reference["consume"], consumed["seq"], "gate.consume", reference["proposal"])
-    except Refusal:
-        raise Refusal("verifier:standing-reference") from None
-    approved = original["body"]
-    original_auth = approved.get("authorization")
-    _require(isinstance(original_auth, dict) and "standing_permission" not in approved
-             and original_auth.get("target") == "gate/permission" and original_auth.get("op") == "permission", "standing-permission")
-    permission_auth, checked = _consume(rows, original)
-    _require(checked and reference["authorization_sha256"] == approved.get("authorization_sha256")
-             and reference["proof_sha256"] == approved.get("proof_sha256")
-             and body.get("proof_sha256") == approved.get("proof_sha256"), "standing-reference")
-    _require(_same(body.get("owner_state"), approved.get("owner_state"))
-             and auth["node"] == permission_auth["node"], "standing-owner")
-    applications = [row for row in rows[original["seq"]:consumed["seq"] - 1]
-                    if row["kind"] == "gate.apply" and row["op"] == reference["proposal"]]
-    _require(len(applications) == 1, "standing-permission")
-    _gate(rows, applications[0])
-    permission_consumptions = [row for row in rows[:before - 1] if row["kind"] == "gate.consume"
-                               and isinstance(row["body"].get("authorization"), dict)
-                               and row["body"]["authorization"].get("target") == "gate/permission"]
-    _require(bool(permission_consumptions) and permission_consumptions[-1]["seq"] == original["seq"], "standing-revoked")
-    review = _reference(rows, approved.get("review_issue"), original["seq"], "gate.review", reference["proposal"])
-    try:
-        permission = _permission(review["body"]["card"]["from_to"]["new"].encode("utf-8"))
-    except (Refusal, KeyError, TypeError, AttributeError, UnicodeError):
-        raise Refusal("verifier:standing-permission") from None
-    _require(permission["mode"] != "ask" and auth["op"] == "apply" and auth["target"] in permission["targets"]
-             and reference["kind"] == "put", "standing-scope")
-    _require(type(at) is int and 0 <= at < permission["expires_at"]
-             and at < auth["expires_at"] <= permission["expires_at"], "standing-expired")
-    used = sum(row["kind"] == "gate.consume" and isinstance(row["body"].get("standing_permission"), dict)
-               and row["body"]["standing_permission"].get("proposal") == reference["proposal"]
-               for row in rows[:consumed["seq"]])
-    _require(used <= permission["max_count"], "standing-count")
-    current_review = _reference(rows, body.get("review_issue"), consumed["seq"], "gate.review", consumed["op"])
-    card = current_review["body"].get("card")
-    _require(isinstance(card, dict) and card.get("risk") == "routine", "standing-scope")
-    change = card.get("from_to")
-    _require(isinstance(change, dict) and "base" in change, "standing-scope")
-    base = change["base"]
-    _require(base is None or isinstance(base, str) and len(base.encode("utf-8")) <= 65_536, "standing-scope")
-    return reference["authorization_sha256"]
-def _gate(rows, row):
-    if row["kind"] == "gate.consume":
-        return _consume(rows, row)[1]
-    body = row["body"]
-    receipt = body.get("receipt")
-    _require(row["phase"] == "terminal" and isinstance(receipt, dict), "gate-evidence")
-    reference = receipt.get("owner_consumption")
-    consumption = _reference(rows, reference, row["seq"], "gate.consume", row["op"])
-    auth, semantic = _consume(rows, consumption)
-    consumed = consumption["body"]
-    _require(type(receipt.get("v")) is int and receipt["v"] == 3 and receipt.get("kind") == "change"
-             and all(receipt.get(field) == auth[field] for field in ("proposal", "target", "node", "base_sha256", "new_sha256"))
-             and receipt.get("approver") == auth["subject"], "gate-evidence")
-    review = _reference(rows, reference.get("review_issue"), consumption["seq"], "gate.review", row["op"])
-    _require(review["seq"] == consumed["review_issue"]["seq"] and review["hash"] == consumed["review_issue"]["hash"], "gate-evidence")
-    authority = receipt.get("owner_authorization")
-    _require(isinstance(authority, dict) and type(authority.get("version")) is int and authority["version"] == 1
-             and authority.get("kind") == "aukora-owner-authorization-ref/v1"
-             and authority.get("proof_sha256") == consumed.get("proof_sha256"), "gate-evidence")
-    digest = consumed["authorization_sha256"]
-    if "standing_permission" in consumed:
-        _require(_same(receipt.get("standing_permission"), consumed["standing_permission"])
-                 and type(receipt.get("applied_at")) is int and receipt["applied_at"] == row["at"], "gate-evidence")
-        digest = _standing(rows, consumption, row["at"], row["seq"])
-    else:
-        _require(receipt.get("standing_permission") is None, "gate-evidence")
-    _require(authority.get("authorization_id") == digest and authority.get("authorization_sha256") == digest, "gate-evidence")
-    return semantic
 def _owner_key(raw):
     try:
         value = raw.decode("ascii")
@@ -467,7 +296,7 @@ def _owner_assertions(rows, entries, owner_key):
     pinned = None if owner_key is None else _owner_key(owner_key)
     if entries is None: return False
     for row in rows: _owner_standing(rows, row)
-    expected = [row for row in rows if _owner_required(row)]
+    expected = [row for row in rows if _owner_required(rows, row)]
     _require(len(entries) == len(expected), "owner-assertions-coverage")
     counters, credentials, approvals, challenges = {}, {}, set(), set()
     for entry, row in zip(entries, expected):
@@ -505,7 +334,7 @@ def _owner_standing(rows, row):
     grants = [grant for grant in rows[:row["seq"] - 1] if grant["kind"] == "gate.apply" and grant["op"] == reference["permission"]]
     _require(len(grants) == 1, "owner-proof-context")
     grant, permission = grants[0], _owner_payload(grants[0])
-    _require(_owner_required(grant) and grant["phase"] == "terminal" and grant["actor"] == "owner"
+    _require(_owner_required(rows, grant) and grant["phase"] == "terminal" and grant["actor"] == "owner"
              and permission.get("state") == "applied" and permission.get("proposal") == reference["permission_proposal"]
              and permission.get("new_sha256") == reference["permission_digest"]
              and grant["body"].get("epoch") == row["body"].get("epoch") and "epoch" in row["body"], "owner-proof-context")
@@ -518,25 +347,30 @@ def _owner_payload(row):
              and _size(body["epoch"]) and isinstance(body["payload"], dict), "owner-proof-context")
     return body["payload"]
 def _owner_needed(rows):
-    try: return any(_owner_required(row) for row in rows)
+    try: return any(_owner_required(rows, row) for row in rows)
     except Refusal: return True
-def _owner_required(row):
+def _owner_effect(same, row):
     payload = _owner_payload(row)
-    return (row["kind"] == "gate.consume" and not {"standing", "standing_permission"} & set(payload)
-            or row["kind"] in ("gate.retire", "floor.advance")
+    if row["kind"] != "gate.apply" or payload.get("target") == "gate/permission": return
+    consumed = [other for other in same if other["seq"] < row["seq"] and other["kind"] == "gate.consume" and _owner_linked(other, payload)]
+    _require(bool(row["op"]) and len(consumed) == 1 and sum(other["kind"] == "gate.apply" for other in same) == 1, "gate-reference")
+def _owner_linked(row, applied):
+    try: earlier = _owner_payload(row)
+    except Refusal: return False
+    return row["phase"] == "settle" and earlier.get("state") == "consumed" and all(name in earlier and name in applied and earlier[name] == applied[name] for name in ("proposal", "target", "operation", "new_sha256"))
+def _owner_required(rows, row):
+    payload = _owner_payload(row)
+    if row["kind"] == "gate.consume":
+        try: _owner_standing(rows, row)
+        except Refusal: return True
+        return "standing" not in payload
+    return (row["kind"] in ("gate.retire", "floor.advance")
             or row["kind"] == "gate.apply" and payload.get("target") == "gate/permission"
             or row["kind"] == "aumlok.bind" and payload.get("schema") not in (
                 "aukora-aumlok-initial-binding-v2", "aukora-aumlok-envelope-refresh-v2"))
 def _owner_row(row, rows, auth, proof):
     body, payload = row["body"], _owner_payload(row)
     _require(0 <= row["at"] < auth["expires_at"], "owner-proof-context")
-    if "authorization" in payload:
-        _require(payload is body and auth["op"] in ("apply", "release", "grant", "permission"), "owner-proof-context")
-        _require(row["kind"] == "gate.consume" and row["phase"] == "settle" and _same(payload["authorization"], auth)
-                 and row["op"] == auth["proposal"] and payload.get("proof_hex") == _bytes(proof).hex() and payload.get("proof_sha256") == _sha(_bytes(proof)).hex()
-                 and payload.get("authorization_sha256") == _sha(b"aukora:owner-authorization:v1\0" + _bytes(auth)).hex(),
-                 "owner-proof-context")
-        return
     membership = "membership" in payload or isinstance(payload.get("body"), dict) and "membership" in payload["body"]
     _require(body.get("schema") == AUTHORITY_WRAPPER
              and body["epoch"] == auth["epoch"] + int(row["kind"] == "aumlok.bind" and membership)
@@ -655,7 +489,7 @@ def _nostr_binding(row, aura_key):
         _schnorr(public[role], digest, body[role + "_sig"], "nostr-" + role + "-signature")
 def _walk(rows, key):
     _require(isinstance(rows, list), "bundle-rows")
-    previous, leaves, terminals, found, bindings = AURA_DOMAIN, [], {}, [], 0
+    previous, leaves, operations, found, bindings = AURA_DOMAIN, [], {}, [], 0
     for number, row in enumerate(rows, 1):
         try:
             _require(isinstance(row, dict) and set(row) == ROW_KEYS, "row-columns")
@@ -665,6 +499,7 @@ def _walk(rows, key):
                      "bundle-row-schema")
             if row["op"]:
                 _hex(row["op"], 16, "operation-id")
+                operations.setdefault(row["op"], []).append(row)
             digest = _hex(row["hash"])
             _require(row["prev"] == previous, "prev-link")
             signed = {field: row[field] for field in ("at", "kind", "actor", "op", "phase", "body", "prev")}
@@ -675,8 +510,6 @@ def _walk(rows, key):
                 bindings += 1
                 _require(bindings == 1, "nostr-second-binding")
                 _nostr_binding(row, key)
-            if row["op"]:
-                terminals[row["op"]] = terminals.get(row["op"], 0) + int(row["phase"] == "terminal")
             previous = row["hash"]
             leaves.append(_sha(b"\x00" + digest))
         except Refusal as error:
@@ -685,23 +518,17 @@ def _walk(rows, key):
         except (ValueError, TypeError, KeyError):
             raise Refusal("verifier:bundle-row-schema", number) from None
     for row in rows:
-        if row["kind"] in ("gate.consume", "gate.apply") and row["body"].get("schema") != AUTHORITY_WRAPPER:
-            try:
-                if "auth" in row["body"]:
-                    auth = _authorization(row["body"]["auth"], current=False)
-                    if "authorization_digest" in row["body"]:
-                        _require(_sha(b"aukora:owner-authorization:v1\x00" + _bytes(auth))
-                                 == _hex(row["body"]["authorization_digest"]), "authorization-digest")
-                elif ("authorization" in row["body"] or "receipt" in row["body"]) and _gate(rows, row):
-                    continue  # the gate evidence binds this row to its owner authorization
-                found.append(_finding("owner-provenance", row["seq"]))
-            except Refusal as error:
-                if error.sequence is None:
-                    error.sequence = row["seq"]
-                raise
-            except (ValueError, TypeError, KeyError):
-                raise Refusal("verifier:gate-evidence", row["seq"]) from None
-    if any(count != 1 for count in terminals.values()): found.append(_finding("terminal-count", exact=False))
+        if row["kind"] not in ("gate.consume", "gate.apply"):
+            continue
+        if row["body"].get("schema") != AUTHORITY_WRAPPER:
+            found.append(_finding("owner-provenance", row["seq"]))  # the archive's flat rows: nothing says who approved them
+            continue
+        try:
+            _owner_effect(operations.get(row["op"], []), row)  # held against the owner assertions and the rows it rests on
+        except Refusal as error:
+            if error.sequence is None: error.sequence = row["seq"]
+            raise
+    if any(sum(other["phase"] == "terminal" for other in group) != 1 for group in operations.values()): found.append(_finding("terminal-count", exact=False))
     return leaves, found
 def _report(count, *, identity=False, covering=False, consistency=False, found=(), tree_root=True, owner=None, findings=None):
     missing = list(found) + list(findings or [])
@@ -812,8 +639,7 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
     if retained is not None:
         old, new = _head(_parse(retained)), _parse(presented)
         _anchor(old, values, leaves)
-        anchored = old["treeSize"] == len(values)
-        covering = covering or old["treeSize"] == len(values)
+        covering = old["treeSize"] == len(values)
         proof = verify_consistency(retained, presented)
         _require(new["treeSize"] == len(values) and new["root"] == _root(leaves).hex(), "presented-head-mismatch")
         anchored = True
@@ -845,11 +671,9 @@ def _event_value(raw):
 def _event(raw):
     try:
         return _event_value(raw)
-    except Refusal as error:
-        if error.code == "verifier:crypto-unavailable":
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError) as error:  # a Refusal is a ValueError
+        if getattr(error, "code", "") == "verifier:crypto-unavailable":
             raise
-        raise Refusal("verifier:witness-malformed") from None
-    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         raise Refusal("verifier:witness-malformed") from None
 def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
     signed = _event(event)
@@ -928,8 +752,7 @@ def _failure(error):
         return 2
     changes = {"entry-hash", "prev-link", "sequence", "rows-truncated", "checkpoint-mismatch", "shorter-than-checkpoint",
                "bundle-tail-size", "retained-row-mismatch", "consistency-prefix-mismatch", "presented-head-mismatch", "witness-fork",
-               "gate-evidence", "gate-reference", "authorization-digest", "cell-effect", "standing-permission",
-               "standing-reference", "standing-owner", "standing-revoked", "standing-scope", "standing-expired", "standing-count"}
+               "gate-evidence", "gate-reference"}
     located = {"row-columns", "bundle-row-schema", "bad-digest"}
     name = error.code.removeprefix("verifier:")
     if name in changes or (error.sequence is not None and name in located):
@@ -994,6 +817,6 @@ def main(arguments):
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         print("UNCHECKED verifier:malformed-or-unreadable")
         return 64
-__all__ = ('COLD_PROOF_V1', 'COLD_PROOF_V2', 'RETAINED_HEAD_V1', 'PRESENTED_HEAD_V1', 'LEAF_CONVENTION', 'AURA_DOMAIN', 'AUTHORITY_WRAPPER', 'MAX_SAFE_INTEGER', 'MAX_INPUT', 'KINDS', 'ROW_KEYS', 'Refusal', '_require', '_finding', 'export_version', '_cold', '_owner_key', '_standard', '_client_data', '_owner_assertion', '_owner_assertions', '_owner_standing', '_owner_payload', '_owner_needed', '_owner_required', '_owner_row', '_owner_bind', '_owner_epoch', '_integer', '_forbidden_number', '_object', '_validate', '_canonical', '_bytes', '_same', '_parse', '_hex', '_size', '_sha', '_node', '_root', '_checked_key', '_key', '_ed25519', '_schnorr', '_head', '_anchor', '_reference', '_authorization', '_card', '_consume', '_permission', '_standing', '_gate', '_npub', '_nostr_binding', '_walk', '_report', 'verify_bundle', '_proof_result', 'verify_consistency', '_rows', 'verify_chain', '_event_value', '_event', 'verify_witness', '_read', '_render', '_failure', '_Arguments', 'main')
+__all__ = ('COLD_PROOF_V1', 'COLD_PROOF_V2', 'RETAINED_HEAD_V1', 'PRESENTED_HEAD_V1', 'LEAF_CONVENTION', 'AURA_DOMAIN', 'AUTHORITY_WRAPPER', 'MAX_SAFE_INTEGER', 'MAX_INPUT', 'KINDS', 'ROW_KEYS', 'Refusal', '_require', '_finding', 'export_version', '_cold', '_owner_key', '_standard', '_client_data', '_owner_assertion', '_owner_assertions', '_owner_standing', '_owner_payload', '_owner_effect', '_owner_linked', '_owner_needed', '_owner_required', '_owner_row', '_owner_bind', '_owner_epoch', '_integer', '_forbidden_number', '_object', '_validate', '_canonical', '_bytes', '_same', '_parse', '_hex', '_size', '_sha', '_node', '_root', '_checked_key', '_key', '_ed25519', '_schnorr', '_head', '_anchor', '_authorization', '_npub', '_nostr_binding', '_walk', '_report', 'verify_bundle', '_proof_result', 'verify_consistency', '_rows', 'verify_chain', '_event_value', '_event', 'verify_witness', '_read', '_render', '_failure', '_Arguments', 'main')
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

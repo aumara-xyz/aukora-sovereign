@@ -24,6 +24,16 @@ need an owner approval (a consumed approval, a retirement, a floor advance, a pe
 grant, a binding) is `VERIFIED` only with both, and only when every retained assertion
 verifies under that key; with a v1 export, a v2 export without the pin, or rows alone the
 verdict is `UNCHECKED` with the single finding `verifier:owner-signatures-unchecked`.
+The need is decided from the effect: every applied change must rest on exactly one earlier
+consumed approval of the same operation (else `REWRITTEN gate-reference` at the apply), and a
+consume is free of the owner only when it names a well-formed use of an owner-signed grant
+that is in the same ledger. A missing, null or unlinked standing reference never means "no
+owner needed". Not checked: a standing grant's scope, count and revocation, and rows
+(broker grants, memory permissions) whose approvals this verifier cannot yet link.
+
+The archive's flat gate rows (a `gate.consume` or `gate.apply` whose body is not the Aura
+authority wrapper) are not verifiable: the rebuilt node never writes them, so each one is
+`verifier:owner-provenance` at its row and a ledger holding one is never `VERIFIED`.
 
 The script also accepts `--key KEY --rows ROWS` with optional `--prefix OLD_ROWS`,
 `--retained HEAD --presented HEAD`, and `--checkpoint HEAD`; `witness BUNDLE EVENT`

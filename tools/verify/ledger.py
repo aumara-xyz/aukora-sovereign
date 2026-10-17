@@ -17,9 +17,8 @@ from .common import (
     _sha,
     _size,
 )
-from .gate import (
-    _authorization,
-    _gate,
+from .owner import (
+    _owner_effect,
 )
 
 def _head(value):
@@ -69,7 +68,7 @@ def _nostr_binding(row, aura_key):
         _schnorr(public[role], digest, body[role + "_sig"], "nostr-" + role + "-signature")
 def _walk(rows, key):
     _require(isinstance(rows, list), "bundle-rows")
-    previous, leaves, terminals, found, bindings = AURA_DOMAIN, [], {}, [], 0
+    previous, leaves, operations, found, bindings = AURA_DOMAIN, [], {}, [], 0
     for number, row in enumerate(rows, 1):
         try:
             _require(isinstance(row, dict) and set(row) == ROW_KEYS, "row-columns")
@@ -79,6 +78,7 @@ def _walk(rows, key):
                      "bundle-row-schema")
             if row["op"]:
                 _hex(row["op"], 16, "operation-id")
+                operations.setdefault(row["op"], []).append(row)
             digest = _hex(row["hash"])
             _require(row["prev"] == previous, "prev-link")
             signed = {field: row[field] for field in ("at", "kind", "actor", "op", "phase", "body", "prev")}
@@ -89,8 +89,6 @@ def _walk(rows, key):
                 bindings += 1
                 _require(bindings == 1, "nostr-second-binding")
                 _nostr_binding(row, key)
-            if row["op"]:
-                terminals[row["op"]] = terminals.get(row["op"], 0) + int(row["phase"] == "terminal")
             previous = row["hash"]
             leaves.append(_sha(b"\x00" + digest))
         except Refusal as error:
@@ -99,22 +97,15 @@ def _walk(rows, key):
         except (ValueError, TypeError, KeyError):
             raise Refusal("verifier:bundle-row-schema", number) from None
     for row in rows:
-        # A wrapped body is held against the retained owner assertions (the owner path), never decided from the row alone.
-        if row["kind"] in ("gate.consume", "gate.apply") and row["body"].get("schema") != AUTHORITY_WRAPPER:
-            try:
-                if "auth" in row["body"]:
-                    auth = _authorization(row["body"]["auth"], current=False)
-                    if "authorization_digest" in row["body"]:
-                        _require(_sha(b"aukora:owner-authorization:v1\x00" + _bytes(auth))
-                                 == _hex(row["body"]["authorization_digest"]), "authorization-digest")
-                elif ("authorization" in row["body"] or "receipt" in row["body"]) and _gate(rows, row):
-                    continue  # the gate evidence binds this row to its owner authorization
-                found.append(_finding("owner-provenance", row["seq"]))
-            except Refusal as error:
-                if error.sequence is None:
-                    error.sequence = row["seq"]
-                raise
-            except (ValueError, TypeError, KeyError):
-                raise Refusal("verifier:gate-evidence", row["seq"]) from None
-    if any(count != 1 for count in terminals.values()): found.append(_finding("terminal-count", exact=False))
+        if row["kind"] not in ("gate.consume", "gate.apply"):
+            continue
+        if row["body"].get("schema") != AUTHORITY_WRAPPER:
+            found.append(_finding("owner-provenance", row["seq"]))  # the archive's flat rows: nothing says who approved them
+            continue
+        try:
+            _owner_effect(operations.get(row["op"], []), row)  # held against the owner assertions and the rows it rests on
+        except Refusal as error:
+            if error.sequence is None: error.sequence = row["seq"]
+            raise
+    if any(sum(other["phase"] == "terminal" for other in group) != 1 for group in operations.values()): found.append(_finding("terminal-count", exact=False))
     return leaves, found

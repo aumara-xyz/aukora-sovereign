@@ -135,51 +135,65 @@ struct Ledger {
     rows: Vec<String>,
 }
 
-/// boot fact, propose, consume (needs the owner assertion), apply: all but the first with the wrapper body. `consumed_new`
-/// is the `new_sha256` the consume row records, so a different one is a row the assertion no longer describes.
-fn ledger(consumed_new: &str) -> Ledger {
+/// One row to write: kind, phase, actor, operation id and the authority-wrapper payload (None: a plain fact body).
+type Spec = (&'static str, &'static str, &'static str, String, Option<String>);
+
+fn fact() -> Spec {
+    ("boot.facts", "fact", "supervisor", String::new(), None)
+}
+
+fn propose() -> Spec {
+    let operation = operation_digest();
+    let payload = format!(
+        r#"{{"proposal":"{PROPOSAL}","target":"{TARGET}","operation":"{operation}","new_sha256":"{NEW}","state":"proposed"}}"#
+    );
+    ("gate.propose", "intent", "owner", OPERATION.to_owned(), Some(payload))
+}
+
+/// The owner's approval of the change; `extra` is spliced into the payload (for example a `standing` member).
+fn consume(new: &str, extra: &str) -> Spec {
     let approval = hex::encode(digest(authorization().as_bytes()));
     let operation = operation_digest();
+    let payload = format!(
+        r#"{{"proposal":"{PROPOSAL}","target":"{TARGET}","operation":"{operation}","base_sha256":"absent","new_sha256":"{new}","state":"consumed","consumed_approval":"{approval}"{extra}}}"#
+    );
+    ("gate.consume", "settle", "owner", OPERATION.to_owned(), Some(payload))
+}
+
+fn apply_with(op: &str, target: &str, new: &str) -> Spec {
+    let operation = operation_digest();
+    let payload = format!(
+        r#"{{"proposal":"{PROPOSAL}","target":"{target}","operation":"{operation}","new_sha256":"{new}","state":"applied"}}"#
+    );
+    ("gate.apply", "terminal", "owner", op.to_owned(), Some(payload))
+}
+
+fn apply_to(op: &str, target: &str) -> Spec {
+    apply_with(op, target, NEW)
+}
+
+fn apply() -> Spec {
+    apply_to(OPERATION, TARGET)
+}
+
+/// boot fact, propose, consume (needs the owner assertion), apply: all but the first with the wrapper body. `consumed_new`
+/// is the `new_sha256` the consume row records (and the apply that rests on it), so a different one is a row the assertion
+/// no longer describes.
+fn ledger(consumed_new: &str) -> Ledger {
+    assemble(vec![fact(), propose(), consume(consumed_new, ""), apply_with(OPERATION, TARGET, consumed_new)])
+}
+
+fn assemble(specs: Vec<Spec>) -> Ledger {
     let mut rows = Vec::new();
     let mut hashes = Vec::new();
     let mut previous = DOMAIN.to_owned();
-    let specs: [(&str, &str, &str, &str, Option<String>); 4] = [
-        ("boot.facts", "fact", "supervisor", "", None),
-        (
-            "gate.propose",
-            "intent",
-            "owner",
-            OPERATION,
-            Some(format!(
-                r#"{{"proposal":"{PROPOSAL}","target":"{TARGET}","operation":"{operation}","new_sha256":"{NEW}","state":"proposed"}}"#
-            )),
-        ),
-        (
-            "gate.consume",
-            "settle",
-            "owner",
-            OPERATION,
-            Some(format!(
-                r#"{{"proposal":"{PROPOSAL}","target":"{TARGET}","operation":"{operation}","base_sha256":"absent","new_sha256":"{consumed_new}","state":"consumed","consumed_approval":"{approval}"}}"#
-            )),
-        ),
-        (
-            "gate.apply",
-            "terminal",
-            "owner",
-            OPERATION,
-            Some(format!(
-                r#"{{"proposal":"{PROPOSAL}","target":"{TARGET}","operation":"{operation}","new_sha256":"{NEW}","state":"applied"}}"#
-            )),
-        ),
-    ];
     for (index, (kind, phase, actor, op, payload)) in specs.iter().enumerate() {
         let number = index as u64 + 1;
         let body = match payload {
             Some(payload) => wrapper(number, &previous, payload),
             None => r#"{"index":0,"message":"honest"}"#.to_owned(),
         };
-        let (json, hash) = row(number, &previous, kind, phase, actor, op, &body);
+        let (json, hash) = row(number, &previous, kind, phase, actor, op.as_str(), &body);
         hashes.push(<[u8; 32]>::try_from(hex::decode(&hash).expect("hex")).expect("32 bytes"));
         rows.push(json);
         previous = hash;
@@ -342,4 +356,158 @@ fn rows_alone_never_verify_a_ledger_that_needs_the_owner() {
     .expect("admitted");
     assert_eq!(report.verdict(), Verdict::Unchecked);
     assert_eq!(codes(&report), ["owner-signatures-unchecked"]);
+}
+
+/// Rows the node signed and no owner approved: whatever else is supplied, none of these may be VERIFIED.
+fn unapproved(specs: Vec<Spec>) -> VerificationReport {
+    let ledger = assemble(specs);
+    run(ledger.proof.as_bytes(), &ledger, Some(&pin(&owner_key(0x42))))
+}
+
+#[test]
+fn an_apply_with_no_consume_is_rewritten_at_the_apply() {
+    let report = unapproved(vec![fact(), propose(), apply()]);
+    assert_eq!(report.verdict(), Verdict::Rewritten);
+    assert_eq!(codes(&report), ["gate-reference"]);
+    assert_eq!(report.findings()[0].sequence, Some(3));
+    assert_eq!(report.integrity().owner_bindings, Scope::Unchecked);
+}
+
+#[test]
+fn a_consume_that_comes_after_the_apply_is_no_approval() {
+    let report = unapproved(vec![fact(), propose(), apply(), consume(NEW, "")]);
+    assert_eq!(report.verdict(), Verdict::Rewritten);
+    assert_eq!(report.findings()[0].sequence, Some(3));
+}
+
+#[test]
+fn a_second_apply_for_one_consume_is_rewritten_at_the_first_apply() {
+    let report = unapproved(vec![fact(), propose(), consume(NEW, ""), apply(), apply()]);
+    assert_eq!(report.verdict(), Verdict::Rewritten);
+    assert_eq!(report.findings()[0].sequence, Some(4));
+    assert_eq!(codes(&report)[0], "gate-reference");
+}
+
+#[test]
+fn an_apply_of_something_else_than_was_approved_is_rewritten() {
+    let report = unapproved(vec![fact(), propose(), consume(NEW, ""), apply_to(OPERATION, "app/other")]);
+    assert_eq!(report.verdict(), Verdict::Rewritten);
+    assert_eq!(report.findings()[0].sequence, Some(4));
+}
+
+#[test]
+fn an_apply_with_no_operation_id_is_rewritten() {
+    let report = unapproved(vec![fact(), propose(), apply_to("", TARGET)]);
+    assert_eq!(report.verdict(), Verdict::Rewritten);
+    assert_eq!(codes(&report), ["gate-reference"]);
+}
+
+#[test]
+fn an_absent_null_or_unlinked_standing_never_means_no_owner_is_needed() {
+    // None of these consumes names a grant that exists in the ledger, so each needs the owner's assertion: without the
+    // v2 export that carries it, the ledger is UNCHECKED and never VERIFIED.
+    let fake = format!(
+        r#","standing":{{"permission":"{OPERATION}","permission_proposal":"{PROPOSAL}","permission_digest":"{NEW}","proposal":"{PROPOSAL}","operation":"{}","use_number":1}}"#,
+        operation_digest()
+    );
+    for extra in [
+        "",
+        r#","standing":null"#,
+        r#","standing":{}"#,
+        r#","standing":"granted""#,
+        r#","standing_permission":{}"#,
+        fake.as_str(),
+    ] {
+        let report = unapproved(vec![fact(), propose(), consume(NEW, extra), apply()]);
+        assert_eq!(report.verdict(), Verdict::Unchecked, "{extra}: {:?}", codes(&report));
+        assert_eq!(codes(&report), ["owner-signatures-unchecked"], "{extra}");
+    }
+}
+
+#[test]
+fn a_ledger_that_applies_nothing_needs_no_owner() {
+    let report = unapproved(vec![fact()]);
+    assert_eq!(report.verdict(), Verdict::Verified, "{:?}", report.findings());
+    assert_eq!(report.owner_signatures(), Scope::Unchecked);
+    // A proposal that never reached a terminal row is the existing terminal-count finding, not an approval.
+    let report = unapproved(vec![fact(), propose()]);
+    assert_eq!(report.verdict(), Verdict::Unchecked);
+    assert_eq!(codes(&report), ["terminal-count"]);
+}
+
+#[test]
+fn the_permission_grant_asserts_itself() {
+    // A permission change is approved by its own assertion; without the v2 export it is UNCHECKED, not an unlinked apply.
+    let report = unapproved(vec![fact(), propose(), apply_to(OPERATION, "gate/permission")]);
+    assert_eq!(report.verdict(), Verdict::Unchecked);
+    assert_eq!(codes(&report), ["owner-signatures-unchecked"]);
+}
+
+/// A row as a value, without hashes or signatures: enough for the checks that read rows against rows.
+fn bare(number: u64, kind: &str, phase: &str, actor: &str, op: &str, epoch: u64, payload: &str) -> canon::json::Value {
+    let prev = format!("{:0>64}", number - 1);
+    let body = format!(
+        r#"{{"schema":"aukora-aura-authority-body-v1","algorithm":"sha256","epoch":{epoch},"sequence":{number},"previous_hash":"{prev}","payload":{payload}}}"#
+    );
+    crate::format::canonical(&canonical(&format!(
+        r#"{{"seq":{number},"prev":"{prev}","hash":"{prev}","sig":"","at":1,"kind":"{kind}","actor":"{actor}","op":"{op}","phase":"{phase}","body":{body}}}"#
+    )))
+    .unwrap_or_else(|code| panic!("a row: {code}"))
+}
+
+#[test]
+fn only_a_standing_use_of_an_owner_signed_grant_in_the_ledger_needs_no_assertion() {
+    let permission = "ee".repeat(16);
+    let grant_digest = "55".repeat(32);
+    let grant_payload = |actor: &str, state: &str| {
+        (
+            actor.to_owned(),
+            format!(
+                r#"{{"proposal":"{}","target":"gate/permission","state":"{state}","new_sha256":"{grant_digest}"}}"#,
+                "99".repeat(16)
+            ),
+        )
+    };
+    let reference = |use_number: u32, digest_hex: &str| {
+        format!(
+            r#"{{"permission":"{permission}","permission_proposal":"{}","permission_digest":"{digest_hex}","proposal":"{PROPOSAL}","operation":"{}","use_number":{use_number}}}"#,
+            "99".repeat(16),
+            operation_digest()
+        )
+    };
+    let rows = |actor: &str, state: &str, epoch: u64, standing: &str| {
+        let (actor, grant) = grant_payload(actor, state);
+        let approval = hex::encode(digest(&canonical(standing)));
+        vec![
+            bare(1, "boot.facts", "fact", "supervisor", "", 1, "{}"),
+            bare(2, "gate.apply", "terminal", &actor, &permission, 1, &grant),
+            bare(
+                3,
+                "gate.consume",
+                "settle",
+                "owner",
+                OPERATION,
+                epoch,
+                &format!(
+                    r#"{{"proposal":"{PROPOSAL}","operation":"{}","state":"consumed","consumed_approval":"{approval}","standing":{standing}}}"#,
+                    operation_digest()
+                ),
+            ),
+        ]
+    };
+    let needs = |rows: &[canon::json::Value]| rows.last().is_none_or(|consume| super::link::needs(rows, consume).unwrap_or(true));
+    let honest = reference(1, &grant_digest);
+    assert!(!needs(&rows("owner", "applied", 1, &honest)), "a linked standing use needs no assertion of its own");
+    for (what, rows) in [
+        ("a grant that is not the one named", rows("owner", "applied", 1, &reference(1, &"66".repeat(32)))),
+        ("use number zero", rows("owner", "applied", 1, &reference(0, &grant_digest))),
+        ("a grant a node wrote (not the owner)", rows("supervisor", "applied", 1, &honest)),
+        ("a grant that was not applied", rows("owner", "refused", 1, &honest)),
+        ("a grant of another owner epoch", rows("owner", "applied", 2, &honest)),
+    ] {
+        assert!(needs(&rows), "{what} must need the owner's assertion");
+    }
+    let mut without = rows("owner", "applied", 1, &honest);
+    without.remove(1);
+    assert!(needs(&without), "a standing use with no grant row in the ledger needs the owner");
 }

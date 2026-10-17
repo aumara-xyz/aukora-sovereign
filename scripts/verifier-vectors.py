@@ -4,8 +4,8 @@
 
 Each case becomes input files, one run of each engine, and a comparison with the case's expected verdict, exit code,
 row, codes and scope marks. Cases whose recipe needs a signer (rehash_and_sign, sign_hash, rebuild_head, prepared or
-prefix heads) and the vector files that assemble signed rows (gate, standing, owner, witness, nostr binding, member
-exit) are counted as not replayed and named in the summary, never silently passed. The Python engine reports
+prefix heads) and the vector files that assemble signed rows (witness, nostr binding, member exit) are counted as not
+replayed and named in the summary, never silently passed. The Python engine reports
 `crypto-unavailable` when PyNaCl or `cryptography` is missing and the replay's shim is not in use; those cases are
 counted as skipped for that engine.
 
@@ -43,15 +43,11 @@ p256_ref = importlib.util.module_from_spec(_p256)
 _p256.loader.exec_module(p256_ref)
 VECTORS = ROOT / "crates/verifier/vectors"
 KNOWN = ROOT / "scripts/verifier-vectors-known.json"
-ALL = ["admission-regressions-v1", "consistency-regressions-v1", "exit-v1", "gate-regressions-v1",
-       "nostr-binding-regressions-v1", "operator-inputs-v1", "owner-bindings-v1", "regressions-v1",
-       "standing-regressions-v1", "witness-regressions-v1"]
+ALL = ["admission-regressions-v1", "consistency-regressions-v1", "exit-v1", "nostr-binding-regressions-v1",
+       "operator-inputs-v1", "regressions-v1", "witness-regressions-v1"]
 NOT_REPLAYED = {
     "exit-v1": "member-exit export is read by verifier::restore only (no CLI, no Python twin)",
-    "gate-regressions-v1": "assembles and signs gate rows",
     "nostr-binding-regressions-v1": "assembles and signs Nostr binding rows",
-    "owner-bindings-v1": "assembles and signs owner-binding rows",
-    "standing-regressions-v1": "assembles and signs standing-grant rows",
     "witness-regressions-v1": "assembles signed rows and Nostr witness events",
 }
 AURA_DOMAIN = "aukora:aura-record:v1"
@@ -291,10 +287,10 @@ def authority_wrap(number, previous, payload):
             "previous_hash": previous, "payload": payload}
 
 
-def authority_body(number, previous, state, target="theme"):
+def authority_body(number, previous, state, target="theme", **more):
     return authority_wrap(number, previous, {"proposal": PROPOSAL, "target": target, "operation": "ef" * 32,
                                              "base_sha256": "11" * 32, "new_sha256": NEW, "state": state, "retry": False,
-                                             "consumed_approval": "33" * 32})
+                                             "consumed_approval": "33" * 32, **more})
 
 
 def b64(data):
@@ -341,7 +337,7 @@ def owner_ledger(consumed_new=NEW):
         ("gate.propose", "intent", "owner", OPERATION, wrapped(payload("proposed", NEW))),
         ("gate.consume", "settle", "owner", OPERATION, wrapped(payload(
             "consumed", consumed_new, base_sha256="absent", consumed_approval=hashlib.sha256(c1(auth)).hexdigest()))),
-        ("gate.apply", "terminal", "owner", OPERATION, wrapped(payload("applied", NEW)))])
+        ("gate.apply", "terminal", "owner", OPERATION, wrapped(payload("applied", consumed_new)))])
     return bundle, auth
 
 
@@ -671,22 +667,56 @@ class Replay:
 
     def owner_rule(self, work, file):
         boot = ("boot.facts", "fact", "supervisor", "", {"index": 0, "message": "honest"})
-        wrapped = lambda state: (lambda number, previous: authority_body(number, previous, state))
+        wrapped = lambda state, **more: (lambda number, previous: authority_body(number, previous, state, **more))
+        consume, apply_, propose_ = (("gate.consume", "settle", "owner", OPERATION, wrapped("consumed")),
+                                     ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied")),
+                                     ("gate.propose", "intent", "owner", OPERATION, wrapped("proposed")))
+        # The rows are the same bodies the real gate writes; each case varies one thing.
         cases = [
             # What the real gate writes for an owner-approved change: needs the owner assertions, which a v1 export lacks.
-            ("wrapper-rows-need-owner-signatures", [boot, ("gate.consume", "settle", "owner", OPERATION, wrapped("consumed")),
-                                                    ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied"))], False,
+            ("wrapper-rows-need-owner-signatures", [boot, propose_, consume, apply_], False,
              {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None,
               "codes": ["verifier:owner-signatures-unchecked"]}),
             # An owner pin alone does not help: there is nothing to check it against.
-            ("wrapper-rows-pin-without-assertions", [boot, ("gate.consume", "settle", "owner", OPERATION, wrapped("consumed")),
-                                                     ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied"))], True,
+            ("wrapper-rows-pin-without-assertions", [boot, propose_, consume, apply_], True,
              {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None,
               "codes": ["verifier:owner-signatures-unchecked"]}),
-            # Wrapped rows that need no owner assertion (a propose, and an apply that is not a permission grant) verify.
-            ("wrapper-rows-without-owner-need-verify", [boot, ("gate.propose", "intent", "owner", OPERATION, wrapped("proposed")),
-                                                        ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied"))], False,
+            # Wrapped rows with no effect (a proposal the node refused) need no owner assertion and verify.
+            ("wrapper-rows-without-an-effect-verify", [boot, propose_, ("gate.refuse", "terminal", "owner", OPERATION, wrapped("refused"))], False,
              {"verdict": "VERIFIED", "exit": 0, "owner_bindings": "CHECKED", "signatures": "CHECKED", "chain": "CHECKED"}),
+            # An effect the owner never approved is never VERIFIED, whatever else is supplied: no consume at all, a consume
+            # that came after it, a second apply, an apply that is not what was consumed, an apply with no operation id.
+            ("apply-without-a-consume", [boot, propose_, apply_], True,
+             {"verdict": "REWRITTEN", "exit": 2, "sequence": 3, "owner_bindings": "UNCHECKED", "codes": ["verifier:gate-reference"]}),
+            ("consume-after-the-apply", [boot, propose_, apply_, consume], True,
+             {"verdict": "REWRITTEN", "exit": 2, "sequence": 3, "codes": ["verifier:gate-reference"]}),
+            ("two-applies-for-one-consume", [boot, propose_, consume, apply_, apply_], True,
+             {"verdict": "REWRITTEN", "exit": 2, "sequence": 4}),
+            ("apply-of-something-else-than-was-consumed", [boot, propose_, consume,
+                                                           ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied", target="other"))], True,
+             {"verdict": "REWRITTEN", "exit": 2, "sequence": 4, "codes": ["verifier:gate-reference"]}),
+            ("apply-with-no-operation-id", [boot, ("gate.apply", "terminal", "owner", "", wrapped("applied"))], True,
+             {"verdict": "REWRITTEN", "exit": 2, "sequence": 2, "codes": ["verifier:gate-reference"]}),
+            # Null, malformed or unlinked `standing` is as good as none: the owner is needed. Only a use of an owner-signed
+            # grant that is in the ledger is owner-free (checked with a real grant in the Rust tests).
+            ("standing-null-needs-the-owner", [boot, propose_, ("gate.consume", "settle", "owner", OPERATION, wrapped("consumed", standing=None)), apply_], True,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None, "codes": ["verifier:owner-signatures-unchecked"]}),
+            ("standing-without-a-grant-needs-the-owner", [boot, propose_, ("gate.consume", "settle", "owner", OPERATION, wrapped("consumed", standing={
+                "permission": "ee" * 16, "permission_proposal": "99" * 16, "permission_digest": "55" * 32,
+                "proposal": PROPOSAL, "operation": "ef" * 32, "use_number": 1})), apply_], True,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None, "codes": ["verifier:owner-signatures-unchecked"]}),
+            # The archive's flat gate rows (a body that is not the authority wrapper) are not read at all: whatever they
+            # carry, both engines say owner-provenance at the row, and a flat consume also needs the owner it names.
+            ("flat-consume-and-apply-are-not-verifiable", [boot, ("gate.propose", "intent", "owner", OPERATION, {"state": "proposed"}),
+                                                           ("gate.consume", "settle", "owner", OPERATION, {"authorization": {"v": 1}, "spent": True}),
+                                                           ("gate.apply", "terminal", "owner", OPERATION, {"receipt": {"v": 3}})], False,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": 3,
+              "codes": ["verifier:owner-provenance", "verifier:owner-provenance", "verifier:owner-signatures-unchecked"]}),
+            ("flat-authorization-digest-never-proves-the-owner", [boot, ("gate.propose", "intent", "owner", OPERATION, {"state": "proposed"}),
+                                                                  ("gate.apply", "terminal", "owner", OPERATION,
+                                                                   {"auth": {"v": 1}, "authorization_digest": "ab" * 32})], False,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": 3,
+              "codes": ["verifier:owner-provenance"]}),
             # A flat row with no owner proof is located by both engines, at its row.
             ("flat-apply-without-proof-is-located", [boot, ("gate.propose", "intent", "owner", OPERATION, {"state": "proposed"}),
                                                      ("gate.apply", "terminal", "owner", OPERATION, {"state": "applied"})], False,

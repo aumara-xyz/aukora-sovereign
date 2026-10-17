@@ -51,8 +51,7 @@ def _failure(error):
         return 2
     changes = {"entry-hash", "prev-link", "sequence", "rows-truncated", "checkpoint-mismatch", "shorter-than-checkpoint",
                "bundle-tail-size", "retained-row-mismatch", "consistency-prefix-mismatch", "presented-head-mismatch", "witness-fork",
-               "gate-evidence", "gate-reference", "authorization-digest", "cell-effect", "standing-permission",
-               "standing-reference", "standing-owner", "standing-revoked", "standing-scope", "standing-expired", "standing-count"}
+               "gate-evidence", "gate-reference"}
     # A row that cannot be admitted is evidence about that row (REWRITTEN at its position, exit 2), not a bad invocation:
     # these three are raised with a row position by the row walk and without one by head admission (exit 64 there).
     located = {"row-columns", "bundle-row-schema", "bad-digest"}

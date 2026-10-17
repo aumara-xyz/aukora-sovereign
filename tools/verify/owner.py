@@ -115,7 +115,7 @@ def _owner_assertions(rows, entries, owner_key):
     pinned = None if owner_key is None else _owner_key(owner_key)
     if entries is None: return False
     for row in rows: _owner_standing(rows, row)
-    expected = [row for row in rows if _owner_required(row)]
+    expected = [row for row in rows if _owner_required(rows, row)]
     _require(len(entries) == len(expected), "owner-assertions-coverage")
     counters, credentials, approvals, challenges = {}, {}, set(), set()
     for entry, row in zip(entries, expected):
@@ -153,7 +153,7 @@ def _owner_standing(rows, row):
     grants = [grant for grant in rows[:row["seq"] - 1] if grant["kind"] == "gate.apply" and grant["op"] == reference["permission"]]
     _require(len(grants) == 1, "owner-proof-context")
     grant, permission = grants[0], _owner_payload(grants[0])
-    _require(_owner_required(grant) and grant["phase"] == "terminal" and grant["actor"] == "owner"
+    _require(_owner_required(rows, grant) and grant["phase"] == "terminal" and grant["actor"] == "owner"
              and permission.get("state") == "applied" and permission.get("proposal") == reference["permission_proposal"]
              and permission.get("new_sha256") == reference["permission_digest"]
              and grant["body"].get("epoch") == row["body"].get("epoch") and "epoch" in row["body"], "owner-proof-context")
@@ -167,25 +167,31 @@ def _owner_payload(row):
     return body["payload"]
 # Whether any row needs a retained owner assertion; a row that cannot be read as one is held to the stricter answer.
 def _owner_needed(rows):
-    try: return any(_owner_required(row) for row in rows)
+    try: return any(_owner_required(rows, row) for row in rows)
     except Refusal: return True
-def _owner_required(row):
+# A wrapped apply (other than a permission grant) rests on exactly one consume of its operation before it, and is the only one.
+def _owner_effect(same, row):
     payload = _owner_payload(row)
-    return (row["kind"] == "gate.consume" and not {"standing", "standing_permission"} & set(payload)
-            or row["kind"] in ("gate.retire", "floor.advance")
+    if row["kind"] != "gate.apply" or payload.get("target") == "gate/permission": return
+    consumed = [other for other in same if other["seq"] < row["seq"] and other["kind"] == "gate.consume" and _owner_linked(other, payload)]
+    _require(bool(row["op"]) and len(consumed) == 1 and sum(other["kind"] == "gate.apply" for other in same) == 1, "gate-reference")
+def _owner_linked(row, applied):
+    try: earlier = _owner_payload(row)
+    except Refusal: return False
+    return row["phase"] == "settle" and earlier.get("state") == "consumed" and all(name in earlier and name in applied and earlier[name] == applied[name] for name in ("proposal", "target", "operation", "new_sha256"))
+def _owner_required(rows, row):
+    payload = _owner_payload(row)
+    if row["kind"] == "gate.consume":
+        try: _owner_standing(rows, row)
+        except Refusal: return True
+        return "standing" not in payload
+    return (row["kind"] in ("gate.retire", "floor.advance")
             or row["kind"] == "gate.apply" and payload.get("target") == "gate/permission"
             or row["kind"] == "aumlok.bind" and payload.get("schema") not in (
                 "aukora-aumlok-initial-binding-v2", "aukora-aumlok-envelope-refresh-v2"))
 def _owner_row(row, rows, auth, proof):
     body, payload = row["body"], _owner_payload(row)
     _require(0 <= row["at"] < auth["expires_at"], "owner-proof-context")
-    if "authorization" in payload:
-        _require(payload is body and auth["op"] in ("apply", "release", "grant", "permission"), "owner-proof-context")
-        _require(row["kind"] == "gate.consume" and row["phase"] == "settle" and _same(payload["authorization"], auth)
-                 and row["op"] == auth["proposal"] and payload.get("proof_hex") == _bytes(proof).hex() and payload.get("proof_sha256") == _sha(_bytes(proof)).hex()
-                 and payload.get("authorization_sha256") == _sha(b"aukora:owner-authorization:v1\0" + _bytes(auth)).hex(),
-                 "owner-proof-context")
-        return
     membership = "membership" in payload or isinstance(payload.get("body"), dict) and "membership" in payload["body"]
     _require(body.get("schema") == AUTHORITY_WRAPPER
              and body["epoch"] == auth["epoch"] + int(row["kind"] == "aumlok.bind" and membership)
