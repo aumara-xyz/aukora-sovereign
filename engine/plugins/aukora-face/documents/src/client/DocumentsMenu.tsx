@@ -14,7 +14,7 @@ export type DocumentsMenuProps =
  * @param props - Apps-menu owner share and localized copy.
  * @returns the Documents launcher button.
  */
-export function DocumentsMenu({ activeSurface, openSurface, t }: DocumentsMenuProps) {
+export function DocumentsMenu({ activeSurface, openSurface, closeSurface, t }: DocumentsMenuProps) {
   const active = activeSurface === 'documents'
   return (
     <button
@@ -22,7 +22,8 @@ export function DocumentsMenu({ activeSurface, openSurface, t }: DocumentsMenuPr
       data-documents-launcher
       className={clsx(css.menuItem, active && css.menuItemActive)}
       aria-current={active ? 'page' : undefined}
-      onClick={() => { openSurface('documents') }}
+      // The expander is truthful: − while this app is open, and the click closes it (sweep C8).
+      onClick={() => { if (active) closeSurface(); else openSurface('documents') }}
     >
       <span className={css.menuMark} aria-hidden="true">
         <FolderMarkIcon size={16} />

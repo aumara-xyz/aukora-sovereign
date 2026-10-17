@@ -13,7 +13,7 @@ export type MessagesMenuProps =
  * @param props - Apps-menu owner share and localized copy.
  * @returns the Messages launcher button.
  */
-export function MessagesMenu({ activeSurface, openSurface, t }: MessagesMenuProps) {
+export function MessagesMenu({ activeSurface, openSurface, closeSurface, t }: MessagesMenuProps) {
   const active = activeSurface === 'messages'
   return (
     <button
@@ -21,7 +21,8 @@ export function MessagesMenu({ activeSurface, openSurface, t }: MessagesMenuProp
       data-messages-launcher
       className={clsx(css.menuItem, active && css.menuItemActive)}
       aria-current={active ? 'page' : undefined}
-      onClick={() => { openSurface('messages') }}
+      // The expander is truthful: − while this app is open, and the click closes it (sweep C8).
+      onClick={() => { if (active) closeSurface(); else openSurface('messages') }}
     >
       <span className={css.menuCopy}>
         <strong>{t('menu.title')}</strong>

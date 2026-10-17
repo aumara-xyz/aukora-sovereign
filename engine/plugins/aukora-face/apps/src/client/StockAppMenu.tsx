@@ -29,14 +29,15 @@ export const STOCK_APPS = [
   MEDIA_APP,
 ] as const satisfies readonly MenuSpec[]
 
-function StockAppMenu({ spec, activeSurface, openSurface, t }: StockAppMenuProps & { spec: MenuSpec }) {
+function StockAppMenu({ spec, activeSurface, openSurface, closeSurface, t }: StockAppMenuProps & { spec: MenuSpec }) {
   const active = activeSurface === spec.id
   return (
     <button aria-label={t(`${spec.copy}.name`)}
       type="button"
       data-stock-app-launcher={spec.id}
       aria-current={active ? 'page' : undefined}
-      onClick={() => { openSurface(spec.id, undefined, spec.presentation) }}
+      // The expander is truthful: − while this app is open, and the click closes it (sweep C8).
+      onClick={() => { if (active) closeSurface(); else openSurface(spec.id, undefined, spec.presentation) }}
     >
       <span className={css.menuCopy}>
         <strong>{t(`${spec.copy}.name`)}</strong>

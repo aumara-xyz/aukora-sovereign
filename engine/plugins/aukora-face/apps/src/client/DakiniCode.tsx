@@ -7,13 +7,14 @@ import css from './StockApps.module.css'
 type DakiniMenuProps = PropsRuntime<'shell.menu.yours'> & PropsLocale<'stockApps'>
 
 /** Render the independent Dakini Code app launcher. */
-export function DakiniCodeMenu({ activeSurface, openSurface, t }: DakiniMenuProps) {
+export function DakiniCodeMenu({ activeSurface, openSurface, closeSurface, t }: DakiniMenuProps) {
   return (
     <button
       type="button"
       data-user-app-launcher="dakini-code"
       aria-current={activeSurface === 'dakini-code' ? 'page' : undefined}
-      onClick={() => { openSurface('dakini-code', undefined, 'full-bleed') }}
+      // The expander is truthful: − while this app is open, and the click closes it (sweep C8).
+      onClick={() => { if (activeSurface === 'dakini-code') closeSurface(); else openSurface('dakini-code', undefined, 'full-bleed') }}
     >
       <span className={css.menuCopy}>
         <strong>{t('dakini.name')}</strong>

@@ -112,11 +112,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The expander: + to open the thread, − while it is the open one. */
+/* The expander: + (the row opens its thread). */
 [role='tree'][aria-label] [role='treeitem'][draggable]::after {
   content: '+'; flex: none; width: 14px; color: var(--ak-tone, var(--ak-mint)); font-size: 18px; line-height: 1; text-align: center;
 }
-[role='tree'][aria-label] [role='treeitem'][draggable][aria-selected='true']::after { content: '−'; }
+/* No "−" on the open thread: clicking it does not close it, so the glyph would lie (sweep C8). The ring says which is open. */
 
 /* ── The settings surface (the face's own chrome around every settings page) ─────────────────────────────────── */
 /* One surface (rule 1): the panel is the lane, with a hairline, not a darker sheet. The title takes the AppHeader. */

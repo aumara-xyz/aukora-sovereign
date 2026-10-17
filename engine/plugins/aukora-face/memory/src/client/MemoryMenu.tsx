@@ -16,7 +16,7 @@ export type MemoryMenuProps =
  * @param props - the right-menu owner share and the localized copy.
  * @returns the Memory launcher button.
  */
-export function MemoryMenu({ activeSurface, openSurface, t }: MemoryMenuProps) {
+export function MemoryMenu({ activeSurface, openSurface, closeSurface, t }: MemoryMenuProps) {
   const active = activeSurface === 'memory'
   return (
     <button
@@ -25,7 +25,8 @@ export function MemoryMenu({ activeSurface, openSurface, t }: MemoryMenuProps) {
       className={css.memoryMenuItem}
       aria-current={active ? 'page' : undefined}
       title={t('menu.memory.tip')}
-      onClick={() => { openSurface('memory', undefined, 'contained') }}
+      // The expander is truthful: − while this app is open, and the click closes it (sweep C8).
+      onClick={() => { if (active) closeSurface(); else openSurface('memory', undefined, 'contained') }}
     >
       <span>
         <strong>{t('menu.memory')}</strong>
