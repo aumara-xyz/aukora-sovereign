@@ -662,7 +662,7 @@ Status says how proven each brick's cheat sheet is. Every brick is written fresh
 ### B. One link
 | # | Brick | Status | From | Lives in | Milestone |
 |---|---|---|---|---|---|
-| 18 | One link: one address per node; the owner origin invisible and only ever framed | BUILD | archive frontdoor (pop-up panes RAN) | crates/frontdoor | M1 |
+| 18 | One link: one address per node; the owner origin invisible and only ever framed, except `/pair`, the locked-down top-level page a phone opens to pair (portal/COPRESENCE-NODE.md) | BUILD | archive frontdoor (pop-up panes RAN) | crates/frontdoor | M1 |
 | 19 | Sign-in inside the app: a passkey pop-up, never a redirect | BUILD | archive frontdoor + owner panes | crates/frontdoor, ui/owner/ | M1 |
 | 20 | Claiming a fresh node happens at the one link | BUILD | archive claim screen | crates/frontdoor, ui/owner/ | M1 |
 | 21 | Approvals pop up by themselves, also while the agent is stopped | RAN | archive holding page (b0f148c) | crates/frontdoor | M1 |
@@ -1024,7 +1024,7 @@ different: it runs on the installed node, is red until the milestone is built, a
    table, the antibody registry, the attack corpora, the format vectors and the design.
 5. **The app lock.** Every app and System entry above is registered in the plugin registry. On the installed node,
    each one opens and shows what it is for. A page that merely answers is not enough.
-6. **One link.** There is one public address per node, and the owner origin never answers as a page.
+6. **One link.** There is one public address per node, and the owner origin never answers as a page, except `/pair`, the phone's locked-down co-presence pairing page.
 7. **Builds embed by relative path and content hash.** There are no absolute paths and no path into another
    repository.
 8. **Each crate depends only on what its README allows.** The scaffold lock fails if a planned piece disappears, or if
