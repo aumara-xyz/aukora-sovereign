@@ -324,7 +324,7 @@ def _owner_standing(rows, row):
     if row["kind"] != "gate.consume": return
     body = _owner_payload(row)
     _require("standing_permission" not in body, "owner-standing-format")
-    if "standing" not in body: return
+    if body.get("standing") is None: return
     reference = body["standing"]
     _require(isinstance(reference, dict) and set(reference) == {
         "permission", "permission_proposal", "permission_digest", "proposal", "operation", "use_number"}, "owner-standing-format")
@@ -351,10 +351,12 @@ def _owner_needed(rows):
     try: return any(_owner_required(rows, row) for row in rows)
     except Refusal: return True
 def _owner_effect(same, row):
-    payload = _owner_payload(row)
-    if row["kind"] != "gate.apply" or payload.get("target") == "gate/permission": return
+    try: payload = _owner_payload(row)
+    except Refusal: raise Refusal("verifier:gate-evidence") from None
+    if row["kind"] != "gate.apply": return
     consumed = [other for other in same if other["seq"] < row["seq"] and other["kind"] == "gate.consume" and _owner_linked(other, payload)]
-    _require(bool(row["op"]) and len(consumed) == 1 and sum(other["kind"] == "gate.apply" for other in same) == 1, "gate-reference")
+    _require(bool(row["op"]) and sum(other["kind"] == "gate.apply" for other in same) == 1
+             and (len(consumed) == 1 or payload.get("target") == "gate/permission"), "gate-reference")
 def _owner_linked(row, applied):
     try: earlier = _owner_payload(row)
     except Refusal: return False
@@ -364,7 +366,7 @@ def _owner_required(rows, row):
     if row["kind"] == "gate.consume":
         try: _owner_standing(rows, row)
         except Refusal: return True
-        return "standing" not in payload
+        return payload.get("standing") is None
     return (row["kind"] in ("gate.retire", "floor.advance")
             or row["kind"] == "gate.apply" and payload.get("target") == "gate/permission"
             or row["kind"] == "aumlok.bind" and payload.get("schema") not in (

@@ -69,20 +69,27 @@ fn wrapper(number: u64, previous: &str, payload: &str) -> String {
 
 /// The owner authorization the passkey signs, as the JSON object `C5` defines (14 members, operation digest recomputed).
 fn authorization() -> String {
+    authorization_for("apply", TARGET)
+}
+
+fn authorization_for(op: &str, target: &str) -> String {
     let subject = format!("aukora:1:{}", "03".repeat(32));
     let content = canonical(&format!(
-        r#"{{"v":1,"node":"{NODE_ID}","target":"{TARGET}","base_sha256":"absent","new_sha256":"{NEW}","cell":null}}"#
+        r#"{{"v":1,"node":"{NODE_ID}","target":"{target}","base_sha256":"absent","new_sha256":"{NEW}","cell":null}}"#
     ));
     let operation = hex::encode(digest(&[b"aukora:operation-content:v1\0".as_slice(), &content].concat()));
     String::from_utf8(canonical(&format!(
-        r#"{{"v":1,"node":"{NODE_ID}","subject":"{subject}","op":"apply","proposal":"{PROPOSAL}","target":"{TARGET}","base_sha256":"absent","new_sha256":"{NEW}","cell":null,"display_sha256":"{DISPLAY}","challenge":"{}","expires_at":1760000100000,"epoch":1,"operation":"{operation}"}}"#,
+        r#"{{"v":1,"node":"{NODE_ID}","subject":"{subject}","op":"{op}","proposal":"{PROPOSAL}","target":"{target}","base_sha256":"absent","new_sha256":"{NEW}","cell":null,"display_sha256":"{DISPLAY}","challenge":"{}","expires_at":1760000100000,"epoch":1,"operation":"{operation}"}}"#,
         "05".repeat(16)
     )))
     .expect("canonical JSON is UTF-8")
 }
 
 fn operation_digest() -> String {
-    let json = authorization();
+    operation_of(&authorization())
+}
+
+fn operation_of(json: &str) -> String {
     let value = canon::json::parse_strict(json.as_bytes()).expect("valid");
     match value.get("operation").map(canon::json::Value::view) {
         Some(canon::json::ValueView::Text(text)) => text.to_owned(),
@@ -92,7 +99,10 @@ fn operation_digest() -> String {
 
 /// The retained assertion entry for the consume row at `sequence`, signed by `signer`, bound to the key `bound`.
 fn entry(sequence: u64, signer: &OwnerKey, bound: &OwnerKey) -> String {
-    let auth = authorization();
+    entry_for(sequence, &authorization(), signer, bound)
+}
+
+fn entry_for(sequence: u64, auth: &str, signer: &OwnerKey, bound: &OwnerKey) -> String {
     let credential = [7_u8; 32];
     let key = format!(
         r#"{{"v":1,"algorithm":"ecdsa-p256-sha256","bytes":"{}"}}"#,
@@ -190,6 +200,8 @@ fn assemble(specs: Vec<Spec>) -> Ledger {
     for (index, (kind, phase, actor, op, payload)) in specs.iter().enumerate() {
         let number = index as u64 + 1;
         let body = match payload {
+            // A body written as it is, to build a wrapper the node should never have signed.
+            Some(payload) if payload.starts_with("raw:") => payload["raw:".len()..].to_owned(),
             Some(payload) => wrapper(number, &previous, payload),
             None => r#"{"index":0,"message":"honest"}"#.to_owned(),
         };
@@ -523,5 +535,103 @@ fn a_spend_grant_a_revocation_and_a_memory_permission_are_never_bound() {
         assert_eq!(codes(&report), ["owner-provenance"], "{kind}");
         assert_eq!(report.findings()[0].sequence, Some(2), "{kind}");
         assert_eq!(report.integrity().owner_bindings, Scope::Unchecked, "{kind}");
+    }
+}
+
+/// A permission grant: approved by the assertion on its own row, so no consume.
+fn permission_rows(op: &str) -> [Spec; 2] {
+    let auth = authorization_for("permission", "gate/permission");
+    let operation = operation_of(&auth);
+    let approval = hex::encode(digest(auth.as_bytes()));
+    let payload = |state: &str, extra: &str| {
+        format!(
+            r#"{{"proposal":"{PROPOSAL}","target":"gate/permission","operation":"{operation}","new_sha256":"{NEW}","state":"{state}"{extra}}}"#
+        )
+    };
+    [
+        ("gate.propose", "intent", "owner", op.to_owned(), Some(payload("proposed", ""))),
+        (
+            "gate.apply",
+            "terminal",
+            "owner",
+            op.to_owned(),
+            Some(payload("applied", &format!(r#","consumed_approval":"{approval}""#))),
+        ),
+    ]
+}
+
+fn permission_entry(sequence: u64) -> String {
+    entry_for(sequence, &authorization_for("permission", "gate/permission"), &owner_key(0x42), &owner_key(0x42))
+}
+
+fn verify_v2(ledger: &Ledger, entries: &[String]) -> VerificationReport {
+    run(&ledger.v2(entries), ledger, Some(&pin(&owner_key(0x42))))
+}
+
+#[test]
+fn a_null_standing_with_the_owners_assertion_is_an_ordinary_approval() {
+    // The real gate writes no `standing` on a passkey consume (outcome_body has none); a null one is as good as absent: the
+    // consume needs the assertion, and with it the ledger verifies.
+    for extra in ["", r#","standing":null"#] {
+        let ledger = assemble(vec![fact(), propose(), consume(NEW, extra), apply()]);
+        let report = verify_v2(&ledger, &[entry(3, &owner_key(0x42), &owner_key(0x42))]);
+        assert_eq!(report.verdict(), Verdict::Verified, "{extra:?}: {:?}", codes(&report));
+        assert_eq!(report.owner_signatures(), Scope::Checked);
+    }
+}
+
+#[test]
+fn a_present_malformed_standing_is_a_finding_even_with_an_assertion() {
+    for extra in [r#","standing":{}"#, r#","standing":"granted""#, r#","standing_permission":{}"#] {
+        let ledger = assemble(vec![fact(), propose(), consume(NEW, extra), apply()]);
+        let report = verify_v2(&ledger, &[entry(3, &owner_key(0x42), &owner_key(0x42))]);
+        assert_eq!(report.verdict(), Verdict::InvalidInput, "{extra}");
+        assert_eq!(report.owner_signatures(), Scope::Unchecked, "{extra}");
+    }
+}
+
+#[test]
+fn a_permission_grant_verifies_on_its_own_assertion() {
+    let [propose, apply] = permission_rows(OPERATION);
+    let ledger = assemble(vec![fact(), propose, apply]);
+    let report = verify_v2(&ledger, &[permission_entry(3)]);
+    assert_eq!(report.verdict(), Verdict::Verified, "{:?}", codes(&report));
+}
+
+#[test]
+fn one_assertion_cannot_approve_two_permission_grants() {
+    let other = "bc".repeat(16);
+    let [first_propose, first_apply] = permission_rows(OPERATION);
+    let [second_propose, second_apply] = permission_rows(&other);
+    let ledger = assemble(vec![fact(), first_propose, first_apply, second_propose, second_apply]);
+    // The same authorization offered for both rows: the second is a reuse.
+    let report = verify_v2(&ledger, &[permission_entry(3), permission_entry(5)]);
+    assert_eq!(report.verdict(), Verdict::InvalidInput);
+    assert_eq!(codes(&report), ["owner-proof"]);
+    // And an assertion at the wrong row is refused, not matched by operation.
+    let report = verify_v2(&ledger, &[permission_entry(5)]);
+    assert_ne!(report.verdict(), Verdict::Verified);
+}
+
+#[test]
+fn two_permission_applies_for_one_operation_are_rewritten_at_the_first() {
+    let [propose, apply] = permission_rows(OPERATION);
+    let [_, again] = permission_rows(OPERATION);
+    let report = unapproved(vec![fact(), propose, apply, again]);
+    assert_eq!(report.verdict(), Verdict::Rewritten);
+    assert_eq!(report.findings()[0].sequence, Some(3));
+    assert_eq!(codes(&report)[0], "gate-reference");
+}
+
+#[test]
+fn a_wrapper_the_node_signed_malformed_is_rewritten_at_its_row() {
+    // A consume that declares the authority wrapper but has no epoch (and no sequence or links): REWRITTEN gate-evidence.
+    let bad = r#"raw:{"schema":"aukora-aura-authority-body-v1","algorithm":"sha256","payload":{}}"#.to_owned();
+    for kind in [("gate.consume", "settle"), ("gate.apply", "terminal")] {
+        let rows = vec![fact(), propose(), (kind.0, kind.1, "owner", OPERATION.to_owned(), Some(bad.clone()))];
+        let report = unapproved(rows);
+        assert_eq!(report.verdict(), Verdict::Rewritten, "{kind:?}");
+        assert_eq!(codes(&report), ["gate-evidence"], "{kind:?}");
+        assert_eq!(report.findings()[0].sequence, Some(3), "{kind:?}");
     }
 }

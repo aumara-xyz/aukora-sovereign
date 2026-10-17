@@ -50,12 +50,19 @@ fn payload(row: &Value) -> Result<&Value> {
     }
 }
 
+/// The standing grant a consume names; a `standing` that is null is as good as none (the node never writes one, and the
+/// consume then needs the owner's assertion like any other).
+fn standing_of(body: &Value) -> Option<&Value> {
+    body.get("standing")
+        .filter(|reference| !matches!(reference.view(), canon::json::ValueView::Null))
+}
+
 /// Rows whose direct C5 assertion must occur exactly once in the export. A consume that names a standing grant is held
 /// to `needs`, which checks the grant: a `standing` that is present is not by itself a reason to ask for no assertion.
 pub(super) fn required(row: &Value) -> Result<bool> {
     let body = payload(row)?;
     Ok(match label(row, "kind")? {
-        "gate.consume" => body.get("standing").is_none(),
+        "gate.consume" => standing_of(body).is_none(),
         "gate.retire" | "floor.advance" => true,
         "gate.apply" => body
             .get("target")
@@ -73,21 +80,24 @@ pub(super) fn required(row: &Value) -> Result<bool> {
 /// Whether the verdict needs this row's retained assertion. A consume is owner-free only when its `standing` is a
 /// well-formed use of a prior owner-signed grant in these rows; null, malformed or unlinked is as good as absent.
 pub(super) fn needs(rows: &[Value], row: &Value) -> Result<bool> {
-    if label(row, "kind")? == "gate.consume" && payload(row)?.get("standing").is_some() {
+    if label(row, "kind")? == "gate.consume" && standing_of(payload(row)?).is_some() {
         return Ok(standing(rows, row).is_err());
     }
     required(row)
 }
 
-/// A wrapped `gate.apply` that is not itself a permission grant changed state on the strength of exactly one consume of
-/// the same operation, earlier in the ledger, and is the only apply of that operation. An apply with no consume, a
-/// consume that came after it, a second apply, or an empty operation is not an effect the owner approved.
+/// A wrapped `gate.apply` changed state on the strength of exactly one consume of the same operation, earlier in the
+/// ledger, and is the only apply of that operation. An apply with no consume, a consume that came after it, a second
+/// apply, or an empty operation is not an effect the owner approved. A permission grant (`gate/permission`) is approved
+/// by the assertion on its own row, which `check_all` binds to that row alone (one entry per row, every authorization
+/// and challenge distinct, the row's `consumed_approval` equal to the authorization's digest), so it needs no consume,
+/// but it too must be the only apply of its operation. A wrapped row that cannot be read is `gate-evidence`.
 pub(super) fn effect(same: &[&Value], row: &Value) -> Result<()> {
-    let body = payload(row)?;
-    let permission = body.get("target").is_some_and(|v| text(v) == Ok("gate/permission"));
-    if label(row, "kind")? != "gate.apply" || permission {
+    let body = payload(row).map_err(|_| refusal("gate-evidence"))?;
+    if label(row, "kind")? != "gate.apply" {
         return Ok(());
     }
+    let permission = body.get("target").is_some_and(|v| text(v) == Ok("gate/permission"));
     let (operation, sequence) = (label(row, "op")?, uint(field(row, "seq")?)?);
     let (mut consumes, mut applies) = (0, 0);
     for other in same {
@@ -106,7 +116,7 @@ pub(super) fn effect(same: &[&Value], row: &Value) -> Result<()> {
         });
         consumes += usize::from(linked);
     }
-    if operation.is_empty() || consumes != 1 || applies != 1 {
+    if operation.is_empty() || applies != 1 || (consumes != 1 && !permission) {
         return Err(refusal("gate-reference"));
     }
     Ok(())
@@ -121,7 +131,7 @@ pub(super) fn standing(rows: &[Value], row: &Value) -> Result<()> {
     if body.get("standing_permission").is_some() {
         return Err(refusal("owner-standing-format"));
     }
-    let Some(reference) = body.get("standing") else {
+    let Some(reference) = standing_of(body) else {
         return Ok(());
     };
     keys(

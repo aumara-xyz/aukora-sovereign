@@ -297,10 +297,10 @@ def b64(data):
     return base64.b64encode(data).decode()
 
 
-def owner_authorization():
-    """The 14-member C5 owner authorization for a theme change, its operation digest recomputed as the spec says."""
-    content = {"v": 1, "node": NODE_ID, "target": TARGET, "base_sha256": "absent", "new_sha256": NEW, "cell": None}
-    return {**content, "subject": "aukora:1:" + "03" * 32, "op": "apply", "proposal": PROPOSAL, "display_sha256": "44" * 32,
+def owner_authorization(op="apply", target=TARGET):
+    """The 14-member C5 owner authorization for a change, its operation digest recomputed as the spec says."""
+    content = {"v": 1, "node": NODE_ID, "target": target, "base_sha256": "absent", "new_sha256": NEW, "cell": None}
+    return {**content, "subject": "aukora:1:" + "03" * 32, "op": op, "proposal": PROPOSAL, "display_sha256": "44" * 32,
             "challenge": "05" * 16, "expires_at": 1760000100000, "epoch": 1,
             "operation": hashlib.sha256(b"aukora:operation-content:v1\0" + c1(content)).hexdigest()}
 
@@ -324,9 +324,10 @@ def owner_entry(sequence, auth, signing_d, bound_d):
     return {"sequence": sequence, "binding": binding, "proof": proof}
 
 
-def owner_ledger(consumed_new=NEW):
+def owner_ledger(consumed_new=NEW, **consume_extra):
     """boot fact, propose, consume (needs the owner assertion), apply, all but the first in the authority wrapper.
-    `consumed_new` is the new_sha256 the consume row records: a different one is a row the assertion does not describe."""
+    `consumed_new` is the new_sha256 the consume row records: a different one is a row the assertion does not describe;
+    `consume_extra` adds members to the consume's payload (for example `standing`)."""
     auth = owner_authorization()
     operation = auth["operation"]
     payload = lambda state, new, **more: {"proposal": PROPOSAL, "target": TARGET, "operation": operation, "new_sha256": new,
@@ -336,9 +337,24 @@ def owner_ledger(consumed_new=NEW):
         ("boot.facts", "fact", "supervisor", "", {"index": 0, "message": "honest"}),
         ("gate.propose", "intent", "owner", OPERATION, wrapped(payload("proposed", NEW))),
         ("gate.consume", "settle", "owner", OPERATION, wrapped(payload(
-            "consumed", consumed_new, base_sha256="absent", consumed_approval=hashlib.sha256(c1(auth)).hexdigest()))),
+            "consumed", consumed_new, base_sha256="absent", consumed_approval=hashlib.sha256(c1(auth)).hexdigest(), **consume_extra))),
         ("gate.apply", "terminal", "owner", OPERATION, wrapped(payload("applied", consumed_new)))])
     return bundle, auth
+
+
+def permission_ledger(operations):
+    """boot fact, then for each operation id a propose and a permission-grant apply (the owner's assertion is on the apply
+    itself, no consume), all approved by the one authorization `auth` that is returned."""
+    auth = owner_authorization("permission", "gate/permission")
+    payload = lambda state, **more: {"proposal": PROPOSAL, "target": "gate/permission", "operation": auth["operation"],
+                                     "new_sha256": NEW, "state": state, **more}
+    wrapped = lambda body: (lambda number, previous: authority_wrap(number, previous, body))
+    specs = [("boot.facts", "fact", "supervisor", "", {"index": 0, "message": "honest"})]
+    for operation in operations:
+        specs += [("gate.propose", "intent", "owner", operation, wrapped(payload("proposed"))),
+                  ("gate.apply", "terminal", "owner", operation,
+                   wrapped(payload("applied", consumed_approval=hashlib.sha256(c1(auth)).hexdigest())))]
+    return signed_ledger(specs), auth
 
 
 def export_v2(bundle, entries):
@@ -722,6 +738,25 @@ class Replay:
             *[(kind.replace(".", "-") + "-is-not-linkable", [boot, (kind, "terminal", "owner", OPERATION, wrapped("applied"))], False,
                {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": 2, "codes": ["verifier:owner-provenance"]})
               for kind in ("broker.grant", "broker.revoke", "kira.permission")],
+            # A permission grant is approved by the assertion on its own row: without the v2 export it is UNCHECKED, not an
+            # unlinked apply; two applies of one grant operation are refused at the first.
+            ("permission-apply-needs-its-own-assertion", [boot, propose_, ("gate.apply", "terminal", "owner", OPERATION,
+                                                                           wrapped("applied", target="gate/permission"))], True,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None,
+              "codes": ["verifier:owner-signatures-unchecked"]}),
+            ("two-permission-applies-for-one-operation", [boot, propose_, ("gate.apply", "terminal", "owner", OPERATION,
+                                                                           wrapped("applied", target="gate/permission")),
+                                                          ("gate.apply", "terminal", "owner", OPERATION,
+                                                           wrapped("applied", target="gate/permission"))], True,
+             {"verdict": "REWRITTEN", "exit": 2, "sequence": 3}),
+            # A consume or apply that declares the authority wrapper but is not one (no epoch) was signed malformed by the
+            # node: REWRITTEN gate-evidence at its row, the same in both engines.
+            *[(f"malformed-wrapper-{kind.split('.')[1]}", [boot, propose_, (kind, phase, "owner", OPERATION,
+                                                                           lambda number, previous, state=state: {
+                                                                               k: v for k, v in authority_body(number, previous, state).items()
+                                                                               if k != "epoch"})], True,
+               {"verdict": "REWRITTEN", "exit": 2, "sequence": 3, "codes": ["verifier:gate-evidence"]})
+              for kind, phase, state in (("gate.consume", "settle", "consumed"), ("gate.apply", "terminal", "applied"))],
             # A flat row with no owner proof is located by both engines, at its row.
             ("flat-apply-without-proof-is-located", [boot, ("gate.propose", "intent", "owner", OPERATION, {"state": "proposed"}),
                                                      ("gate.apply", "terminal", "owner", OPERATION, {"state": "applied"})], False,
@@ -779,6 +814,21 @@ class Replay:
                          export_v2(bundle, [owner_entry(3, auth, OTHER_D, OWNER_D)]), owner,
                          {"verdict": "FORGED", "exit": 2, "codes": ["verifier:owner-signature"]})
         self.export_case(work, file, "row-resigned-after-its-payload-changed", tampered, export_v2(tampered, [honest]), owner, refused)
+        # The real gate writes no `standing` on a passkey consume; a null one is as good as none and needs the assertion.
+        null_standing, auth = owner_ledger(standing=None)
+        self.export_case(work, file, "null-standing-with-the-owner-assertion-verifies", null_standing,
+                         export_v2(null_standing, [owner_entry(3, auth, OWNER_D, OWNER_D)]), owner, verified, True)
+        # A standing that is present but malformed is a finding, with or without an assertion.
+        malformed, auth = owner_ledger(standing={})
+        self.export_case(work, file, "malformed-standing-is-refused-even-with-the-assertion", malformed,
+                         export_v2(malformed, [owner_entry(3, auth, OWNER_D, OWNER_D)]), owner, refused)
+        # A permission grant is approved by the assertion on its own row, and by no other row's.
+        one, auth = permission_ledger([OPERATION])
+        self.export_case(work, file, "permission-grant-verifies-on-its-own-assertion", one,
+                         export_v2(one, [owner_entry(3, auth, OWNER_D, OWNER_D)]), owner, verified, True)
+        two, auth = permission_ledger([OPERATION, "bc" * 16])
+        self.export_case(work, file, "one-assertion-cannot-approve-two-permission-grants", two,
+                         export_v2(two, [owner_entry(3, auth, OWNER_D, OWNER_D), owner_entry(5, auth, OWNER_D, OWNER_D)]), owner, refused)
 
     def operator_inputs(self, work, file, document):
         for case in document["cases"]:
