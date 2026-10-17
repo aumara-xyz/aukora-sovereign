@@ -316,5 +316,20 @@ class EngineDisk(unittest.TestCase):
         self.assertEqual(engine_install.DISK_UNIT, "var-lib-aukora\\x2dengine.mount")
 
 
+class EngineOriginPolicy(unittest.TestCase):
+    """Caddy and the supervisor's proxy deny WebAuthn on the engine origin with one and the same value, and Caddy's
+    block carries it on its own answers (Codex review of node/pre-launch)."""
+
+    def test_caddy_and_the_proxy_say_the_same_thing_everywhere(self):
+        with open(os.path.join(ROOT, "crates", "supervisor", "src", "engine", "proxy.rs"), encoding="utf-8") as handle:
+            rust = handle.read().replace('\\\n             ', '')
+        self.assertIn(engine_install.ENGINE_PERMISSIONS, rust)
+        block = engine_install.ENGINE_BLOCK.format(name="n", engine="engine.n.example", upstream="127.0.0.1:18081",
+                                                   permissions=engine_install.ENGINE_PERMISSIONS)
+        self.assertEqual(block.count('Permissions-Policy "%s"' % engine_install.ENGINE_PERMISSIONS), 3)
+        self.assertIn("\t\tdefer\n", block)
+        self.assertIn("handle_errors {", block)
+
+
 if __name__ == "__main__":
     unittest.main()

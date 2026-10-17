@@ -361,9 +361,16 @@ async fn websocket(
             socket::splice(TokioIo::new(browser), TokioIo::new(harness), watch).await;
         }
     });
+    switching(accept)
+}
+
+/// The browser's 101: hardened like every other engine-origin reply (Codex review of node/pre-launch: it carried no
+/// Permissions-Policy), then the upgrade's own headers.
+fn switching(accept: http::HeaderValue) -> Response<Body> {
     let mut response: Response<Body> = Response::new(Empty::new().map_err(|never| match never {}).boxed());
     *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     let headers = response.headers_mut();
+    harden(headers);
     headers.insert("upgrade", http::HeaderValue::from_static("websocket"));
     headers.insert("connection", http::HeaderValue::from_static("Upgrade"));
     headers.insert("sec-websocket-accept", accept);
@@ -596,6 +603,16 @@ mod tests {
         assert_eq!(relay(&engine, browser(), "/api/x").await.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(relay(&engine, browser(), "/api/x").await.status(), StatusCode::OK);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_websocket_switch_is_hardened_too() {
+        let reply = switching(http::HeaderValue::from_static("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+        assert_eq!(reply.status(), StatusCode::SWITCHING_PROTOCOLS);
+        let headers = reply.headers();
+        assert!(headers.get("permissions-policy").unwrap().to_str().unwrap().contains("publickey-credentials-create=()"));
+        assert_eq!(headers.get("upgrade").unwrap(), "websocket");
+        assert_eq!(headers.get("sec-websocket-accept").unwrap(), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
     }
 
     #[test]

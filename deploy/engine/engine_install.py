@@ -563,13 +563,25 @@ def register_kira():
     os.rmdir(scratch)
 
 
+# No page on the engine origin may run a WebAuthn ceremony (NODE.md section 12, P1). The supervisor's engine proxy sets
+# the same value on everything it serves (crates/supervisor/src/engine/proxy.rs, harden); Caddy sets it on what Caddy
+# answers itself as well (the launch-token 404, the redirect, an upstream error), deferred so that it replaces the
+# proxy's copy rather than doubling it (Codex review of node/pre-launch).
+ENGINE_PERMISSIONS = ("publickey-credentials-get=(), publickey-credentials-create=(), identity-credentials-get=(), "
+                      "otp-credentials=(), payment=()")
 ENGINE_BLOCK = """# BEGIN AUKORA ENGINE {name}
 https://{engine} {{
 	header {{
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
+		Permissions-Policy "{permissions}"
 		-Server
+		defer
+	}}
+	handle_errors {{
+		header Permissions-Policy "{permissions}"
+		respond "{{http.error.status_code}} {{http.error.status_text}}"
 	}}
 	request_body {{
 		max_size 16MiB
@@ -591,6 +603,7 @@ https://{engine} {{
 }}
 
 http://{engine} {{
+	header Permissions-Policy "{permissions}"
 	@launch_token query token=*
 	handle @launch_token {{
 		respond 404
@@ -608,7 +621,8 @@ def configure_caddy(name, shell_host):
     before = core.read_regular(path, 1 << 20, "engine-install")
     if b"# BEGIN AUKORA ENGINE " in before:
         return
-    block = ENGINE_BLOCK.format(name=name, engine="engine." + shell_host, upstream=ENGINE_LISTEN)
+    block = ENGINE_BLOCK.format(name=name, engine="engine." + shell_host, upstream=ENGINE_LISTEN,
+                                permissions=ENGINE_PERMISSIONS)
     core.atomic_write(path, before.rstrip(b"\n") + b"\n\n" + block.encode("utf-8"), 0o644, (0, 0))
     if (run(["caddy", "validate", "--config", path, "--adapter", "caddyfile"], check=False).returncode != 0
             or run(["systemctl", "reload", "caddy"], check=False).returncode != 0):

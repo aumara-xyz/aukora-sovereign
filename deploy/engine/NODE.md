@@ -501,11 +501,12 @@ origin of the rehearsal node (headless Chrome, software passkey): `navigator.cre
 `NotAllowedError` (no credential there). So the owner's passkey cannot be exercised from the engine origin: refuted.
 What was true: the engine origin could run a WebAuthn ceremony of its own (`featurePolicy` allowed both, and
 `credentials.create({rp: {id: "engine.<shell>"}})` made a look-alike passkey), the raw material of a fake "confirm your
-passkey" panel. Fixed: every engine-origin reply carries one `Permissions-Policy` (ours replaces the harness's)
+passkey" panel. Fixed: every reply the supervisor's engine proxy sends carries one `Permissions-Policy` (ours replaces
+the harness's; the WebSocket 101 too since P1b) and so does everything Caddy answers itself on the engine host (P1b)
 denying `publickey-credentials-get`, `publickey-credentials-create`, `identity-credentials-get`, `otp-credentials` and
 `payment`; and `engine-v1.json` is refused (`engine-config-relying-party`) when the engine host equals the owner host
 or lies under it. Migration: none. The RP id did not change, so enrolled passkeys keep working. NODE after the fix
-(release 791de25…-6dfa9e66, re-run genesis): every engine-origin reply carries the header; in an engine-origin page
+(release 791de25…-6dfa9e66, re-run genesis): every proxied engine-origin reply carries the header; in an engine-origin page
 `featurePolicy` allows neither, and `get` (owner RP and parent RP) and `create` all end `NotAllowedError` ("the
 'publickey-credentials-…' feature is not enabled in this document"); the owner's own sign-in on the owner origin
 works as before.
@@ -643,3 +644,15 @@ the three images in it): from inside the wall, a node loop of empty files in `/s
 inodes (unchanged), a file could still be made in `/var/lib/aukora`, the shell's worst answer was 14 ms and the engine,
 Kira and the supervisor stayed active; a `dd` into `/sandbox` stopped at containerd's 5.2 GB with the host's free
 space unchanged (24,132 MB). Both fillers removed, the filesystem was back where it began.
+
+**P1b. The policy on the paths P1 missed (Codex review of node/pre-launch, LOW).** The WebSocket `101` was built fresh,
+without `harden()`, and what Caddy answers itself on the engine host (the `?token=` 404, the http-to-https redirect, an
+upstream error) carried no `Permissions-Policy`. Neither made a document an engine page could script, but they made
+"every engine-origin reply" untrue. Now the 101 is hardened before its upgrade headers (unit test), and the Caddy block
+(`engine_install.ENGINE_BLOCK`) sets the same value (`ENGINE_PERMISSIONS`, a test holds it equal to the proxy's) on the
+https site deferred, so it replaces the proxy's copy instead of doubling it, in `handle_errors`, and on the http site.
+NODE (the block re-rendered on the rehearsal node, keeping its rehearsal-only `tls internal` line): `?token=x` 404,
+`/` 401 and a bogus ticket 403 each carry exactly one `Permissions-Policy`; with the supervisor stopped, Caddy's own
+502 carries it; `http://…/?token=x` 404 carries it. The 101 path is covered by the unit test, not yet by a running
+release (the node's binary predates it). A node installed before this branch keeps its old block (the installer
+writes the block once); re-render it by hand as above.
