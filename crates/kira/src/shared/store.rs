@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS agents(
 CREATE TABLE IF NOT EXISTS events(
   seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
   kind INTEGER NOT NULL, raw BLOB NOT NULL, chain BLOB NOT NULL, epoch INTEGER, scope TEXT, lane TEXT,
-  privacy TEXT, slot TEXT, statement_hash BLOB, target TEXT);
+  privacy TEXT, slot TEXT, statement_hash BLOB, target TEXT, capture TEXT);
 CREATE INDEX IF NOT EXISTS events_target ON events(target);
 CREATE INDEX IF NOT EXISTS events_slot ON events(slot);
 CREATE TABLE IF NOT EXISTS ancestry(seq INTEGER NOT NULL, root TEXT NOT NULL, PRIMARY KEY(seq, root));
@@ -116,6 +116,7 @@ pub(crate) struct EpochNote {
     pub scope: String,
     pub privacy: String,
     pub slot: String,
+    pub capture: String,
 }
 
 pub struct SharedStore {
@@ -213,12 +214,13 @@ fn walk(db: &Connection, version: u8) -> Result<Vec<(i64, [u8; 32])>> {
 }
 
 mod upgrade;
-use upgrade::{upgrade_chain, upgrade_citations, upgrade_lineage, upgrade_links};
+use upgrade::{upgrade_capture, upgrade_chain, upgrade_citations, upgrade_lineage, upgrade_links};
 
 impl SharedStore {
     pub fn open(path: &Path) -> Result<Self> {
         let mut db = Connection::open(path).map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
+        upgrade_capture(&mut db)?;
         upgrade_chain(&mut db)?;
         upgrade_lineage(&mut db)?;
         upgrade_links(&mut db)?;
@@ -229,6 +231,7 @@ impl SharedStore {
     pub fn open_in_memory() -> Result<Self> {
         let mut db = Connection::open_in_memory().map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
+        upgrade_capture(&mut db)?;
         upgrade_chain(&mut db)?;
         upgrade_lineage(&mut db)?;
         upgrade_links(&mut db)?;
@@ -602,11 +605,11 @@ impl SharedStore {
                     roots.insert(earlier.unwrap_or_else(|| id.clone()));
                 }
                 tx.execute(
-                    "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, epoch, scope, lane, privacy, slot, statement_hash, target)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)",
+                    "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, epoch, scope, lane, privacy, slot, statement_hash, target, capture)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14)",
                     params![
                         seq, id, author, created_at, NOTE_KIND, raw, chain, meta.epoch as i64, meta.scope,
-                        meta.lane.wire(), meta.privacy.wire(), meta.slot, meta.statement_hash.to_vec()
+                        meta.lane.wire(), meta.privacy.wire(), meta.slot, meta.statement_hash.to_vec(), meta.capture.wire()
                     ],
                 )
                 .map_err(sql)?;
@@ -908,7 +911,7 @@ impl SharedStore {
         let mut stmt = self
             .db
             .prepare(
-                "SELECT e.seq, e.pubkey, e.lane, COALESCE(a.owner, 0), e.scope, e.privacy, e.slot FROM events e LEFT JOIN agents a ON a.pubkey = e.pubkey
+                "SELECT e.seq, e.pubkey, e.lane, COALESCE(a.owner, 0), e.scope, e.privacy, e.slot, e.capture FROM events e LEFT JOIN agents a ON a.pubkey = e.pubkey
                  WHERE e.kind = ?1 AND e.epoch = ?2 ORDER BY e.seq",
             )
             .map_err(sql)?;
@@ -922,25 +925,11 @@ impl SharedStore {
                     scope: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
                     privacy: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
                     slot: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    capture: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
                 })
             })
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(sql)?;
-        Ok(rows)
-    }
-
-    /// The distinct authors (public keys, hex) of the root notes of note `seq`: how many different hands the note's
-    /// ancestry goes back to. A root whose author is not in the store counts as no one.
-    pub fn root_authors(&self, seq: i64) -> Result<BTreeSet<String>> {
-        let mut stmt = self
-            .db
-            .prepare("SELECT DISTINCT e.pubkey FROM ancestry a JOIN events e ON e.id = a.root AND e.kind = ?2 WHERE a.seq = ?1")
-            .map_err(sql)?;
-        let rows = stmt
-            .query_map(params![seq, NOTE_KIND], |r| r.get::<_, String>(0))
-            .map_err(sql)?
-            .collect::<std::result::Result<BTreeSet<_>, _>>()
             .map_err(sql)?;
         Ok(rows)
     }

@@ -324,10 +324,12 @@ fn web_derived_notes_are_left_out_of_recall_unless_asked_for() {
         let r = call(&f.state, token, "recall", json!({"query": "where is the relay"}));
         let ids: Vec<&str> = r["result"]["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
         assert_eq!(ids, [honest.as_str()], "web-derived notes must not be in automatic recall: {r}");
-        assert_eq!(r["result"]["total"], 3, "they are still counted: the caller may read them");
+        // Counts cover what the recall may use: web-derived notes are out of it until asked for.
+        assert_eq!(r["result"]["total"], 1, "{r}");
         let asked = call(&f.state, token, "recall", json!({"query": "where is the relay", "include_web": true}));
         let ids: Vec<&str> = asked["result"]["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
         assert!(ids.contains(&web.as_str()) && ids.contains(&derived.as_str()) && ids.contains(&honest.as_str()), "{asked}");
+        assert_eq!(asked["result"]["total"], 3);
     }
     // Only web material matches: not found, until asked for.
     let mut lone = note("The vendor page promises a nine hour battery", "builders");

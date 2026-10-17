@@ -170,3 +170,31 @@ pub(super) fn upgrade_citations(db: &mut Connection) -> Result<()> {
     tx.commit().map_err(sql)
 }
 
+
+/// Gives a store written before the `capture` side column existed that column, and fills it from the signed events. Like
+/// the other side columns it only finds candidates; recall re-checks the capture against the signed event it loads.
+pub(super) fn upgrade_capture(db: &mut Connection) -> Result<()> {
+    let tx = db.transaction().map_err(sql)?;
+    let has: i64 = tx
+        .query_row("SELECT count(*) FROM pragma_table_info('events') WHERE name = 'capture'", [], |r| r.get(0))
+        .map_err(sql)?;
+    if has == 0 {
+        tx.execute("ALTER TABLE events ADD COLUMN capture TEXT", []).map_err(sql)?;
+    }
+    let rows: Vec<(i64, Vec<u8>)> = {
+        let mut stmt = tx.prepare("SELECT seq, raw FROM events WHERE kind = ?1 AND capture IS NULL").map_err(sql)?;
+        let rows = stmt
+            .query_map(params![NOTE_KIND], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows
+    };
+    for (seq, raw) in rows {
+        let event = Event::decode(&raw)?;
+        if let Ok(meta) = NoteMeta::parse(&event.tags, &event.content) {
+            tx.execute("UPDATE events SET capture = ?1 WHERE seq = ?2", params![meta.capture.wire(), seq]).map_err(sql)?;
+        }
+    }
+    tx.commit().map_err(sql)
+}

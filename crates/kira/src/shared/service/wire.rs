@@ -71,7 +71,7 @@ pub(super) fn lifecycle(store: &SharedStore, caller: &Caller, note: &StoredNote,
 /// statement to stand on (all its repeaters together); without one it is worked out from the note's own roots.
 pub(super) fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote, evidence: Option<&str>) -> Value {
     let (m, current) = (&note.meta, current_visible(store, caller, note));
-    let evidence = evidence.unwrap_or_else(|| crate::shared::hybrid::evidence_of(store, note));
+    let evidence = evidence.unwrap_or_else(|| crate::shared::hybrid::evidence_of(store, note, &|n| visible(caller, n)).unwrap_or("unverified"));
     json!({
         "id": hex(note.event.id.as_bytes()), "seq": note.seq, "author": hex(note.event.pubkey.as_bytes()),
         "author_name": note.author_name, "created_at": note.event.created_at, "text": note.event.content,

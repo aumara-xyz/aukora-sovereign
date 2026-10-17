@@ -274,6 +274,38 @@ fn the_ancestry_upgrade_follows_the_write_rule_rewrites_no_event_and_is_idempote
     }
 }
 
+#[test]
+fn the_capture_side_column_is_added_and_filled_for_an_old_store() {
+    let a = key();
+    let path = std::env::temp_dir().join(format!("kira-capture-{}.sqlite", pub_hex(&key())));
+    {
+        let mut s = SharedStore::open(&path).unwrap();
+        s.register_agent("a", &pub_hex(&a), &["builders".into()], false).unwrap();
+        let mut web = draft("a web claim here", "builders");
+        web.capture = Capture::WebDerived;
+        s.append(sign(&a, &web, Review::Remembered, 1)).unwrap();
+        s.append(sign(&a, &draft("an observed claim", "builders"), Review::Remembered, 2)).unwrap();
+        s.db.execute("ALTER TABLE events DROP COLUMN capture", []).unwrap();
+    }
+    let s = SharedStore::open(&path).unwrap();
+    let got: Vec<(i64, Option<String>)> = s
+        .db
+        .prepare("SELECT seq, capture FROM events ORDER BY seq")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(got, vec![(1, Some("web-derived".to_owned())), (2, Some("tool-observed".to_owned()))]);
+    drop(s);
+    assert!(SharedStore::open(&path).is_ok(), "a second open is a no-op");
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = path.clone().into_os_string();
+        name.push(suffix);
+        let _ = std::fs::remove_file(name);
+    }
+}
+
 /// Grok review part 6: T corrected to R, then to X, then back to R: R stands. A second chain that points at R keeps it
 /// standing when the first moves on.
 #[test]

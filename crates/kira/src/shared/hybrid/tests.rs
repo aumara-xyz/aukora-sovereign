@@ -676,6 +676,81 @@ fn dedupe_never_hides_a_web_derived_copy_behind_a_model_generated_one() {
     assert_eq!((r.items[0].capture.as_str(), r.items[0].also_by_ids.len()), ("model-generated", 0));
 }
 
+/// Grok review part 1: corroboration counts only roots the caller can read and that are not web-derived.
+#[test]
+fn unreadable_and_web_derived_roots_are_not_corroboration() {
+    let (peter, a, b, c) = (key(), key(), key(), key());
+    let mut s = store_with(&[("peter", &peter, true), ("a", &a, false), ("b", &b, false), ("c", &c, false)]);
+    // Two authors' web-derived roots, cited by a note that is not itself marked web-derived.
+    let web_a = put_sourced(&mut s, &a, "The manual says the oven runs hot.", Capture::WebDerived, vec![], 1);
+    let web_b = put_sourced(&mut s, &b, "A forum post says the oven runs hot.", Capture::WebDerived, vec![], 2);
+    put_sourced(&mut s, &c, "So the oven runs hot.", Capture::ModelGenerated, vec![web_a, web_b], 3);
+    let mut q = query("does the oven run hot", "x");
+    q.include_web = true;
+    let r = s.recall(&q, None, None).unwrap();
+    let item = r.items.iter().find(|i| i.text == "So the oven runs hot.").unwrap();
+    assert_eq!((item.evidence, r.status), ("unverified", RecallStatus::Undetermined("similar-note-unverified")));
+    // A hidden root: the owner's local note and an agent's own note, cited by a third. Only one root is readable.
+    let hidden = put_private(&mut s, &peter, "The cellar key hangs by the door.", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, Privacy::Local, 4);
+    let seen = put_sourced(&mut s, &a, "A key hangs near the cellar door.", Capture::ModelGenerated, vec![], 5);
+    let both = put_sourced(&mut s, &c, "The cellar key is by the door.", Capture::ModelGenerated, vec![hidden, seen], 6);
+    let r = s.recall(&query("where is the cellar key", "x"), None, None).unwrap();
+    let item = r.items.iter().find(|i| i.id == both).unwrap();
+    assert_eq!((item.evidence, item.roots), ("unverified", 1), "a root the caller cannot read adds neither an author nor a count");
+    let mut owner = query("where is the cellar key", "x");
+    owner.include_local = true;
+    let item = s.recall(&owner, None, None).unwrap().items.into_iter().find(|i| i.id == both).unwrap();
+    assert_eq!((item.evidence, item.roots), ("corroborated", 2), "the owner can read both roots");
+}
+
+/// Grok review part 1: with include_web false, a web-derived note neither moves total/indexed nor can make the recall
+/// index-incomplete.
+#[test]
+fn web_derived_notes_are_outside_the_counts_unless_asked_for() {
+    let a = key();
+    let mut s = store_with(&[("a", &a, false)]);
+    vnote(&mut s, &a, "The figurine is on the left shelf.", 1);
+    s.index_missing(&Words, 8).unwrap();
+    put_sourced(&mut s, &a, "A web page says the figurine is on the right shelf.", Capture::WebDerived, vec![], 2);
+    let q = query("figurine shelf", "x");
+    let r = s.recall(&q, Some(&Words), None).unwrap();
+    assert_eq!((r.status.clone(), r.indexed, r.total), (RecallStatus::Found, 1, 1), "an unindexed web note is not in this recall");
+    let mut web = q.clone();
+    web.include_web = true;
+    let r = s.recall(&web, Some(&Words), None).unwrap();
+    assert_eq!((r.status, r.indexed, r.total), (RecallStatus::Undetermined("index-incomplete"), 1, 2));
+}
+
+/// Grok review part 1: a replacement the store cannot verify is an integrity failure, not a silent skip.
+#[test]
+fn an_unverifiable_replacement_makes_recall_undetermined() {
+    let path = std::env::temp_dir().join(format!("kira-repl-{}.sqlite", pub_hex(&key())));
+    {
+        let a = key();
+        let mut s = SharedStore::open(&path).unwrap();
+        register(&s, &[("claude", &a, false)]);
+        let old = vnote(&mut s, &a, "Redirect finding K2-9 is rated HIGH.", 1);
+        let new = vnote(&mut s, &a, "Downgraded after retest.", 2);
+        let tags = vec![vec!["supersedes".into(), old], vec!["replacement".into(), new.clone()]];
+        s.record(Event::sign(&a, 3, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
+        let q = query("redirect finding K2-9 rating", "x");
+        assert_eq!(s.recall(&q, None, None).unwrap().status, RecallStatus::Found);
+        // The replacement shares no word with the question, so only the pull-in loads it. Forge its row.
+        let stored = s.get(&new).unwrap().unwrap();
+        let mut forged = stored.event.clone();
+        forged.content = "Downgraded after a forged retest.".into();
+        let side = rusqlite::Connection::open(&path).unwrap();
+        side.execute("UPDATE events SET raw = ?1 WHERE seq = ?2", rusqlite::params![forged.encode().unwrap(), stored.seq]).unwrap();
+        let r = s.recall(&q, None, None).unwrap();
+        assert_eq!(r.status, RecallStatus::Undetermined("integrity"), "{:?}", r.items.iter().map(|i| &i.text).collect::<Vec<_>>());
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = path.clone().into_os_string();
+        name.push(suffix);
+        let _ = std::fs::remove_file(name);
+    }
+}
+
 /// HIGH -> MEDIUM -> LOW: the oldest note names the note that stands now, not the middle one.
 #[test]
 fn a_chain_of_corrections_points_at_the_note_that_stands_now() {

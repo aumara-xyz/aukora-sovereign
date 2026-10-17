@@ -244,14 +244,19 @@ impl Loader<'_> {
         self.cache.get(&seq).and_then(Option::as_ref)
     }
 
-    /// Privacy first: a `local` note never reaches a caller who may not read it, so it cannot claim a pool place,
-    /// join a dedupe group or make the answer `found`.
-    fn passes(&self, note: &StoredNote) -> bool {
+    /// May this caller read the note at all (privacy, handoff slot and scope), whatever the question asks for?
+    fn readable(&self, note: &StoredNote) -> bool {
         let own = hex(note.event.pubkey.as_bytes()) == self.caller;
         (self.include_local || own || note.meta.privacy != Privacy::Local)
             && slot_readable_by(note.meta.slot.as_deref(), own, self.include_local)
-            && (self.include_web || note.meta.capture != Capture::WebDerived)
             && (self.scopes.is_empty() || self.scopes.contains(note.meta.scope.as_str()))
+    }
+
+    /// The question's filters on top of `readable`. Privacy first: a `local` note never reaches a caller who may not read it, so it cannot claim a pool place,
+    /// join a dedupe group or make the answer `found`.
+    fn passes(&self, note: &StoredNote) -> bool {
+        self.readable(note)
+            && (self.include_web || note.meta.capture != Capture::WebDerived)
             && self.author.is_none_or(|a| a == note.author_name || a.eq_ignore_ascii_case(&hex(note.event.pubkey.as_bytes())))
     }
 }
@@ -345,15 +350,43 @@ fn provenance(meta: &NoteMeta, root_authors: usize) -> Evidence {
     }
 }
 
-/// The wire label of what a single note stands on (see `RecallItem::evidence`), from its own roots.
-pub fn evidence_of(store: &SharedStore, note: &StoredNote) -> &'static str {
-    provenance(&note.meta, store.root_authors(note.seq).map_or(0, |a| a.len())).wire()
+/// The roots of `note` that `readable` accepts, as ids: what the caller can be told about a note's ancestry.
+pub fn readable_roots(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(&StoredNote) -> bool) -> Result<BTreeSet<String>> {
+    let mut out = BTreeSet::new();
+    for root in &note.roots {
+        if store.get(root)?.is_some_and(|n| readable(&n)) {
+            out.insert(root.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// The distinct authors whose notes `note` goes back to, counting only roots the caller can read, that are not
+/// web-derived and whose author is not quarantined: a root nobody can read, or one taken from the web, is not an
+/// independent hand however many authors repeated it.
+pub fn corroborating_authors(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(&StoredNote) -> bool) -> Result<BTreeSet<String>> {
+    let mut out = BTreeSet::new();
+    for root in &note.roots {
+        if let Some(n) = store.get(root)? {
+            if readable(&n) && n.meta.capture != Capture::WebDerived && !n.quarantined {
+                out.insert(hex(n.event.pubkey.as_bytes()));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The wire label of what a single note stands on (see `RecallItem::evidence`), from the roots `readable` accepts.
+pub fn evidence_of(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(&StoredNote) -> bool) -> Result<&'static str> {
+    Ok(provenance(&note.meta, corroborating_authors(store, note, readable)?.len()).wire())
 }
 
 struct Cand {
     note: StoredNote,
-    /// Distinct authors of the root notes of this note's ancestry.
+    /// Distinct authors of the root notes of this note's ancestry that count as corroboration (`corroborating_authors`).
     root_authors: BTreeSet<String>,
+    /// The roots of this note the caller can read.
+    roots: BTreeSet<String>,
     id: String,
     fused: f64,
     cosine: Option<f32>,
@@ -539,6 +572,7 @@ impl SharedStore {
                 let own = n.pubkey == caller;
                 (q.include_local || own || n.privacy != Privacy::Local.wire())
                     && slot_readable_by((!n.slot.is_empty()).then_some(n.slot.as_str()), own, q.include_local)
+                    && (q.include_web || n.capture != Capture::WebDerived.wire())
                     && (scopes.is_empty() || scopes.contains(n.scope.as_str()))
             })
             .map(|n: EpochNote| {
@@ -610,7 +644,7 @@ impl SharedStore {
                 let note = loader.cache.remove(&seq).flatten()?;
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
                 let id = hex(note.event.id.as_bytes());
-                Some(Cand { note, root_authors: BTreeSet::new(), id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, past: None, inherited: false })
+                Some(Cand { note, root_authors: BTreeSet::new(), roots: BTreeSet::new(), id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, past: None, inherited: false })
             })
             .collect();
         cands.sort_by(|a, b| b.fused.total_cmp(&a.fused).then_with(|| a.id.cmp(&b.id)));
@@ -634,19 +668,29 @@ impl SharedStore {
             if pulled >= MAX_CORRECTIONS || live.iter().any(|c| c.id == current) {
                 continue;
             }
-            let Ok(Some(found)) = self.get(current) else { continue };
+            // A replacement the store cannot verify is an integrity failure of this recall, never a quiet skip.
+            let found = match self.get(current) {
+                Ok(Some(found)) => found,
+                Ok(None) => continue,
+                Err(_) => {
+                    loader.integrity = true;
+                    break;
+                }
+            };
             if retired(&found, now).is_some() {
                 continue;
             }
             if let Some(note) = loader.note(found.seq).cloned() {
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
-                live.push(Cand { id: current.to_owned(), root_authors: BTreeSet::new(), note, fused: stale.fused, cosine: None, hit, rerank: None, past: None, inherited: true });
+                live.push(Cand { id: current.to_owned(), root_authors: BTreeSet::new(), roots: BTreeSet::new(), note, fused: stale.fused, cosine: None, hit, rerank: None, past: None, inherited: true });
                 pulled += 1;
             }
         }
         history.truncate(MAX_HISTORY_CANDIDATES);
+        let readable = |n: &StoredNote| loader.readable(n);
         for c in live.iter_mut().chain(history.iter_mut()) {
-            c.root_authors = self.root_authors(c.note.seq)?;
+            c.root_authors = corroborating_authors(self, &c.note, &readable)?;
+            c.roots = readable_roots(self, &c.note, &readable)?;
         }
         Ok(Prepared {
             text: text.to_owned(),
@@ -735,7 +779,7 @@ impl Prepared {
                 g.carried |= is_weak;
                 g.names.insert(c.note.author_name.clone());
                 g.ids.insert(c.id.clone());
-                g.roots.extend(c.note.roots.iter().cloned());
+                g.roots.extend(c.roots.iter().cloned());
                 g.evidence = g.evidence.max(c.provenance());
                 g.root_authors.extend(c.root_authors.iter().cloned());
                 g.web |= c.note.meta.capture == Capture::WebDerived;
@@ -751,7 +795,7 @@ impl Prepared {
                     carried: is_weak,
                     names: BTreeSet::from([c.note.author_name.clone()]),
                     ids: BTreeSet::from([c.id.clone()]),
-                    roots: c.note.roots.iter().cloned().collect(),
+                    roots: c.roots.clone(),
                     evidence: c.provenance(),
                     root_authors: c.root_authors.clone(),
                     web: c.note.meta.capture == Capture::WebDerived,
@@ -842,7 +886,7 @@ impl Prepared {
         let mut past: Vec<RecallItem> = history
             .iter()
             .filter(|c| c.past != Some("superseded") || c.note.current_id.as_deref().is_some_and(|id| shown.contains(id)))
-            .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), c.provenance(), c.past))
+            .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.roots.len(), c.provenance(), c.past))
             .collect();
         past.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
         for item in past.into_iter().take(MAX_CORRECTIONS) {
