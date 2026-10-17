@@ -82,6 +82,8 @@ export interface KiraNote {
   /** Id of the note that stands where this retired note did (when the caller may read it). `get` on the event id resolves to it. */
   current_id?: string | null
   quarantined: boolean
+  /** `current`, `expired` (past valid_to) or `not-yet-valid` (before valid_from) now. */
+  validity?: 'current' | 'expired' | 'not-yet-valid'
   withheld?: boolean
   correction?: string | null
   sig_verified?: boolean

@@ -443,6 +443,11 @@ fn parse<T: DeserializeOwned>(params: Value) -> Result<T> {
     serde_json::from_value(params).map_err(|_| refuse("params-invalid"))
 }
 
+/// `current`, `expired` (past its `valid_to`) or `not-yet-valid` (before its `valid_from`) at time `at`.
+fn validity(meta: &super::note::NoteMeta, at: u64) -> &'static str {
+    super::hybrid::validity(meta, at)
+}
+
 fn visible(caller: &Caller, note: &StoredNote) -> bool {
     (caller.owner || note.meta.privacy != Privacy::Local) && caller.reads_scope(&note.meta.scope)
 }
@@ -464,6 +469,7 @@ fn note_json(note: &StoredNote, current: Option<String>) -> Value {
         "privacy": m.privacy.wire(), "capture": m.capture.wire(), "scope": m.scope, "epoch": m.epoch,
         "sources": m.sources, "slot": m.slot, "valid_from": m.valid_from, "valid_to": m.valid_to,
         "roots": note.roots, "superseded_by": note.superseded_by, "current_id": current, "quarantined": note.quarantined,
+        "validity": validity(&note.meta, now()),
     })
 }
 
@@ -742,6 +748,7 @@ fn recall_gather(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Resu
             author,
             budget_chars: p.budget_chars.unwrap_or(DEFAULT_BUDGET).min(MAX_BUDGET),
             include_local: caller.owner,
+            now: now(),
         };
         (query, s.embedder.clone(), s.reranker.clone())
     };
@@ -768,7 +775,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
     for item in &outcome.items {
         match s.store.get(&item.id) {
             Ok(Some(note)) if visible(&caller, &note) => {
-                let dead = note.quarantined || note.superseded_by.is_some();
+                let dead = note.quarantined || note.superseded_by.is_some() || validity(&note.meta, now()) != "current";
                 if item.correction.is_none() && dead {
                     changed = true;
                     continue;

@@ -31,6 +31,8 @@ pub struct RecallQuery {
     /// Whether `local` notes may be read. The service sets it for the owner only; when false, local notes are dropped
     /// before ranking, dedupe and the found decision.
     pub include_local: bool,
+    /// The time notes are judged against for `valid_from` / `valid_to` (unix seconds). 0 means the system clock.
+    pub now: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,7 +63,8 @@ pub struct RecallItem {
     pub score: f32,
     /// Independent ancestry roots (computed by the store, never taken from tags).
     pub roots: usize,
-    /// "superseded" or "quarantined" when shown as history after the current items. A quarantined item's text is empty.
+    /// "superseded", "quarantined", "expired" or "not-yet-valid" when shown as history after the current items: none of
+    /// these is live memory. A quarantined item's text is empty.
     pub correction: Option<String>,
     /// For a superseded item, the id of the note that stands where it did (always among the live items returned).
     pub current_id: Option<String>,

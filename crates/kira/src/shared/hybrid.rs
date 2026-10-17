@@ -6,7 +6,7 @@
 //! Similarity alone never answers: every item carries its score and the status decides. A recall that cannot see
 //! its whole index, loses a model, or meets a note that fails verification says `undetermined`, never `empty`.
 
-use super::note::{Capture, Lane, Privacy, Review};
+use super::note::{Capture, Lane, NoteMeta, Privacy, Review};
 use super::recall::{Embedder, RecallItem, RecallOutcome, RecallQuery, RecallStatus, Reranker};
 use super::store::{EpochNote, SharedStore, StoredNote};
 use canon::{Refusal, Result};
@@ -132,6 +132,31 @@ fn query_digest(q: &RecallQuery, epoch: u32, budget: usize) -> Result<String> {
     canonical.push('}');
     let digest: [u8; 32] = Sha256::digest(canonical.as_bytes()).into();
     Ok(hex(&digest))
+}
+
+/// `current`, `expired` (after its `valid_to`) or `not-yet-valid` (before its `valid_from`) at time `at`.
+pub fn validity(meta: &NoteMeta, at: u64) -> &'static str {
+    if meta.valid_to.is_some_and(|to| at > to) {
+        "expired"
+    } else if meta.valid_from.is_some_and(|from| at < from) {
+        "not-yet-valid"
+    } else {
+        "current"
+    }
+}
+
+/// Why a note is not live memory, if it is not: the label it is shown under as history.
+fn retired(note: &StoredNote, at: u64) -> Option<&'static str> {
+    if note.quarantined {
+        Some("quarantined")
+    } else if note.superseded_by.is_some() {
+        Some("superseded")
+    } else {
+        match validity(&note.meta, at) {
+            "current" => None,
+            label => Some(label),
+        }
+    }
 }
 
 /// The query text recall searches with, or a refusal for an empty or oversized query.
@@ -271,6 +296,8 @@ struct Cand {
     /// Shares a content word (not a stopword) with the query.
     hit: bool,
     rerank: Option<f32>,
+    /// Set for a note that is not live memory: why (`retired`).
+    past: Option<&'static str>,
     /// Added because the stale note it replaced matched the question: it stands for that statement whatever words it
     /// shares with the question, so it is relevant by inheritance.
     inherited: bool,
@@ -491,7 +518,7 @@ impl SharedStore {
                 let note = loader.cache.remove(&seq).flatten()?;
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
                 let id = hex(note.event.id.as_bytes());
-                Some(Cand { note, id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, inherited: false })
+                Some(Cand { note, id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, past: None, inherited: false })
             })
             .collect();
         cands.sort_by(|a, b| b.fused.total_cmp(&a.fused).then_with(|| a.id.cmp(&b.id)));
@@ -499,22 +526,29 @@ impl SharedStore {
         // Superseded and quarantined notes never stand as memory. A superseded note that matches is history of the note
         // that replaced it, so that note is a candidate too, even when it shares fewer words with the question than the
         // stale one did: the question gets the current answer, never only the retired one.
-        let (dead, mut live): (Vec<Cand>, Vec<Cand>) =
-            cands.into_iter().partition(|c| c.note.quarantined || c.note.superseded_by.is_some());
-        let mut history: Vec<Cand> = dead.into_iter().filter(Cand::evidence).collect();
+        let now = if q.now == 0 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) } else { q.now };
+        let (dead, mut live): (Vec<Cand>, Vec<Cand>) = cands.into_iter().partition(|c| retired(&c.note, now).is_some());
+        let mut history: Vec<Cand> = dead
+            .into_iter()
+            .map(|mut c| {
+                c.past = retired(&c.note, now);
+                c
+            })
+            .filter(Cand::evidence)
+            .collect();
         let mut pulled = 0;
-        for stale in history.iter().filter(|c| !c.note.quarantined) {
+        for stale in history.iter().filter(|c| c.past == Some("superseded")) {
             let Some(current) = stale.note.current_id.as_deref() else { continue };
             if pulled >= MAX_CORRECTIONS || live.iter().any(|c| c.id == current) {
                 continue;
             }
             let Ok(Some(found)) = self.get(current) else { continue };
-            if found.quarantined || found.superseded_by.is_some() {
+            if retired(&found, now).is_some() {
                 continue;
             }
             if let Some(note) = loader.note(found.seq).cloned() {
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
-                live.push(Cand { id: current.to_owned(), note, fused: stale.fused, cosine: None, hit, rerank: None, inherited: true });
+                live.push(Cand { id: current.to_owned(), note, fused: stale.fused, cosine: None, hit, rerank: None, past: None, inherited: true });
                 pulled += 1;
             }
         }
@@ -692,8 +726,8 @@ impl Prepared {
         let shown: BTreeSet<&str> = items.iter().flat_map(|i| std::iter::once(i.id.as_str()).chain(i.also_by_ids.iter().map(String::as_str))).collect();
         let mut past: Vec<RecallItem> = history
             .iter()
-            .filter(|c| c.note.quarantined || c.note.current_id.as_deref().is_some_and(|id| shown.contains(id)))
-            .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), Some(if c.note.quarantined { "quarantined" } else { "superseded" })))
+            .filter(|c| c.past != Some("superseded") || c.note.current_id.as_deref().is_some_and(|id| shown.contains(id)))
+            .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), c.past))
             .collect();
         past.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
         for item in past.into_iter().take(MAX_CORRECTIONS) {

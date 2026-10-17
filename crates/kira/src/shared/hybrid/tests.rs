@@ -118,6 +118,7 @@ fn query(text: &str, caller: &str) -> RecallQuery {
         author: None,
         budget_chars: 0,
         include_local: false,
+        now: 0,
     }
 }
 
@@ -470,6 +471,58 @@ fn a_superseded_note_is_admitted_only_as_history_of_a_returned_current_note() {
     let live = note(&mut s, &a, "Finding K2-12 was checked twice.", 9);
     let r = s.recall(&query("Finding K2-12 token replay", "x"), None, None).unwrap();
     assert!(r.items.iter().any(|i| i.id == live) && r.items.iter().all(|i| i.id != wrong));
+}
+
+fn put_valid(s: &mut SharedStore, k: &SecretKey, text: &str, from: Option<u64>, to: Option<u64>, at: u64) -> String {
+    let d = NoteDraft {
+        text: text.into(),
+        subject: "test".into(),
+        scope: "builders".into(),
+        lane: Lane::Evidence,
+        form: Form::Fact,
+        privacy: Privacy::Builders,
+        capture: Capture::ToolObserved,
+        sources: vec![],
+        slot: None,
+        valid_from: from,
+        valid_to: to,
+        epoch: 2,
+    };
+    let note = s.append(Event::sign(k, at, NOTE_KIND, d.tags(Review::Remembered).unwrap(), d.text.clone()).unwrap()).unwrap();
+    hex(note.event.id.as_bytes())
+}
+
+/// Bench F1/F2: an expired endpoint and a not-yet-valid one came back live and unlabelled beside the current one.
+#[test]
+fn expired_and_not_yet_valid_notes_are_labelled_never_live() {
+    let a = key();
+    let mut s = store_with(&[("claude", &a, false)]);
+    let old = put_valid(&mut s, &a, "The relay endpoint is relay-old.example", None, Some(1_000), 1);
+    let current = put_valid(&mut s, &a, "The relay endpoint is relay-now.example", Some(1_000), Some(9_000), 2);
+    let next = put_valid(&mut s, &a, "The relay endpoint is relay-next.example", Some(9_000), None, 3);
+    let mut q = query("what is the relay endpoint", "x");
+    q.now = 5_000;
+    let r = s.recall(&q, None, None).unwrap();
+    assert_eq!(r.status, RecallStatus::Found);
+    let label = |id: &str| r.items.iter().find(|i| i.id == id).map(|i| i.correction.clone());
+    assert_eq!(label(&current), Some(None), "the current endpoint is live");
+    assert_eq!(label(&old), Some(Some("expired".to_owned())));
+    assert_eq!(label(&next), Some(Some("not-yet-valid".to_owned())));
+    assert_eq!(r.items[0].id, current, "history follows the live note");
+    // Before the second window opens the first is current; after it closes, nothing is.
+    q.now = 500;
+    assert_eq!(s.recall(&q, None, None).unwrap().items.iter().find(|i| i.correction.is_none()).map(|i| i.id.clone()), Some(old.clone()));
+    q.now = 20_000;
+    let late = s.recall(&q, None, None).unwrap();
+    assert_eq!(late.items.iter().find(|i| i.correction.is_none()).map(|i| i.id.clone()), Some(next));
+    // A note that is only history cannot answer: expired is not found.
+    let mut only = store_with(&[("claude", &a, false)]);
+    put_valid(&mut only, &a, "The vault door code is 1234", None, Some(10), 1);
+    q.now = 5_000;
+    q.text = "vault door code".into();
+    let r = only.recall(&q, None, None).unwrap();
+    assert_eq!(r.status, RecallStatus::Empty);
+    assert!(r.items.is_empty());
 }
 
 /// HIGH -> MEDIUM -> LOW: the oldest note names the note that stands now, not the middle one.
