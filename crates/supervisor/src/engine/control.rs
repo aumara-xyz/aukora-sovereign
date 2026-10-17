@@ -139,6 +139,13 @@ fn may_run(state: &str) -> bool {
     state != "inactive"
 }
 
+/// Whether the first look at the unit calls for the root cleanup pass: only a cleanly `inactive` unit. A unit that may
+/// run is stopped instead (its ExecStopPost removes the sandbox), and an unreadable state starts nothing: the cleanup
+/// unit conflicts with the engine unit and must never stop a start that is under way.
+fn sweep_at_start(state: &str) -> bool {
+    state == "inactive"
+}
+
 /// Whether the engine may be served: the unit is `active`, which for this Type=exec unit is reached only after its
 /// ExecStartPost (engine-run.sh verify: the effective policy is exactly ours) succeeded. Until then the engine
 /// origin answers 503 (SCOUT's sweep: the check ran after the sandbox was up, the proxy did not wait for it).
@@ -217,8 +224,13 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut failed_try: Option<(Instant, Duration)> = None;
     // Nothing from an earlier run admits anything: this run decides afresh (Grok review, part 2 #2 and part 4 #2).
     withdraw(&engine);
-    if may_run(&unit_state().await) {
+    let state = unit_state().await;
+    if may_run(&state) {
         let _ = systemctl("stop").await;
+    } else if sweep_at_start(&state) {
+        // The unit is cleanly inactive, which says nothing about a sandbox container left behind (a reboot or a
+        // container that came back by itself): one cleanup pass now, before anything is decided (node sweep, node-6).
+        let _ = systemctl_unit("start", CLEANUP_UNIT).await;
     }
     loop {
         tokio::time::sleep(TICK).await;
@@ -280,7 +292,10 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
             let wait = next_backoff(failed_try.map(|(_, wait)| wait));
             failed_try = Some((Instant::now(), wait));
             eprintln!("engine: the engine unit failed; resetting and starting it again (next try in {} s)", wait.as_secs());
-            let _ = systemctl("reset-failed").await;
+            if !systemctl("reset-failed").await {
+                // Most likely an older polkit rule without the verb (engine-prestart.sh refreshes it on the next start).
+                eprintln!("engine: reset-failed of the engine unit was refused or failed");
+            }
             running = false;
             started_from = None;
         }
@@ -326,7 +341,9 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
                     if due(failed_try) {
                         let wait = next_backoff(failed_try.map(|(_, wait)| wait));
                         failed_try = Some((Instant::now(), wait));
-                        let _ = systemctl_unit("start", CLEANUP_UNIT).await;
+                        if !systemctl_unit("start", CLEANUP_UNIT).await {
+                            eprintln!("engine: starting the cleanup unit was refused or failed (polkit rule out of date?)");
+                        }
                     }
                 } else if running {
                     let _ = systemctl("stop").await;
@@ -437,5 +454,17 @@ mod tests {
         assert!(!due(Some((Instant::now(), FAILED_BACKOFF_MIN))));
         assert!(due(Some((Instant::now(), Duration::ZERO))));
         assert!(FAILED_BACKOFF_MIN >= TICK * 6, "a try is at least six ticks apart");
+    }
+
+    #[test]
+    fn only_a_cleanly_inactive_unit_gets_the_start_up_cleanup_pass() {
+        assert!(sweep_at_start("inactive"));
+        for state in ["active", "activating", "reloading", "failed", "deactivating", "unknown", ""] {
+            assert!(!sweep_at_start(state), "{state}");
+        }
+        // The two never overlap: what may run is stopped (its own ExecStopPost removes the sandbox), the rest is swept.
+        for state in ["inactive", "active", "failed", "unknown"] {
+            assert!(!(may_run(state) && sweep_at_start(state)), "{state}");
+        }
     }
 }
