@@ -141,8 +141,13 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
   restart.
 - The engine's uid must not be root or the door's own user (the door refuses both).
 - The door's Kira token must belong to a **non-owner agent** registered for the engine; with an owner token the
-  service would let `supersede`, `get` and `list_recent` act with owner powers on the engine's behalf. The Kira socket
-  directory must be 0700 and not engine-writable: the token is sent to whatever listens on that path.
+  service would let `supersede`, `get` and `list_recent` act with owner powers on the engine's behalf. The door now
+  checks this itself: it asks the service's `whoami` when it starts (an owner token, or a policy `memory` section whose
+  token the service says is the owner's, means the door does not start; a service that is not up yet does not stop it)
+  and again before the first memory call and then every 30 seconds, so a token re-issued as the owner's stops the memory
+  crossings (`kira-token-owner`) at the next check. A call the door refuses on its own (ceilings, owner-only tools) does
+  not contact the service. What the check cannot do: the Kira socket directory must still be 0700 and not
+  engine-writable, because the token is sent to whatever listens on that path.
 - `workspace_roots` in the policy must match the plugin's `workspaceRoots`, or honest file calls will be
   `class-mismatch`. `max_frame_bytes` must not exceed the plugin's `maxFrameBytes`.
 - The `net` allowlist is itself an exfiltration channel: up to 4 KiB per call leaves in the URL to an allowed host.

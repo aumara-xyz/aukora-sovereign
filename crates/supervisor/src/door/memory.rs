@@ -98,6 +98,19 @@ pub fn preflight(tool: &str, args: &Value) -> Result<(&'static str, Json), Strin
     Ok((method, params))
 }
 
+/// Ask the service who the door's token is (its `whoami`). With an owner token the engine's calls would run with owner
+/// powers (read `local` notes, supersede any note), whatever ceilings the door applies first, so an owner token is a
+/// refusal (`kira-token-owner`), and so is any answer that does not say plainly that it is not the owner's.
+pub fn check_token(policy: &MemoryPolicy) -> Result<(), String> {
+    let token = read_token(policy).map_err(str::to_owned)?;
+    let who = send(policy, &token, "whoami", &json!({}))?;
+    match who.get("owner").and_then(Json::as_bool) {
+        Some(false) => Ok(()),
+        Some(true) => Err("kira-token-owner".to_owned()),
+        None => Err("kira-reply".to_owned()),
+    }
+}
+
 /// Forward one memory tool call. The error is the refusal token (the service's own `kira:<reason>` passes through).
 pub fn forward(policy: &MemoryPolicy, tool: &str, args: &Value) -> Result<Json, String> {
     let (method, params) = preflight(tool, args)?;

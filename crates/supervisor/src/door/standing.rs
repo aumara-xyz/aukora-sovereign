@@ -345,14 +345,20 @@ mod tests {
         listener.set_nonblocking(false).unwrap();
         let service = std::thread::spawn(move || {
             let mut served = 0;
-            // One request at most: the test closes the listener by connecting once more when it is done.
-            if let Ok((stream, _)) = listener.accept() {
+            // The door asks `whoami` before its first memory call, then at most one `recall` follows; the test ends the
+            // stand-in by connecting once more when no call was expected.
+            while let Ok((stream, _)) = listener.accept() {
                 let mut text = String::new();
                 std::io::BufReader::new(stream.try_clone().unwrap()).read_line(&mut text).unwrap();
-                if text.contains("recall") {
+                let mut stream = stream;
+                if text.contains("whoami") {
+                    writeln!(stream, "{}", serde_json::json!({"ok": true, "result": {"owner": false}})).unwrap();
+                } else if text.contains("recall") {
                     served = 1;
-                    let mut stream = stream;
                     writeln!(stream, "{}", serde_json::json!({"ok": true, "result": {"status": "found", "items": []}})).unwrap();
+                    break;
+                } else {
+                    break;
                 }
             }
             served

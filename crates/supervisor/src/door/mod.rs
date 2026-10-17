@@ -40,6 +40,8 @@ use wire::{Decision, Request};
 const MAX_CONNECTIONS: usize = 32;
 const READ_DEADLINE: Duration = Duration::from_secs(5);
 const WRITE_DEADLINE: Duration = Duration::from_secs(10);
+/// How long a `whoami` that said "not the owner" holds before the door asks the Kira service again.
+const TOKEN_CHECK_EVERY: Duration = Duration::from_secs(30);
 /// How often an approver settles what the owner left unanswered.
 const SWEEP_EVERY: Duration = Duration::from_secs(60);
 
@@ -93,6 +95,9 @@ pub struct Door {
     bucket: Bucket,
     runtime: tokio::runtime::Runtime,
     active: AtomicUsize,
+    /// When the Kira token was last confirmed not to be the owner's, and how long that confirmation holds.
+    memory_checked: Mutex<Option<Instant>>,
+    token_check_every: Duration,
     /// The slider and standing grants, when the policy has a `standing` section (`standing.rs`).
     standing: Option<standing::Standing>,
 }
@@ -127,7 +132,7 @@ impl Door {
             .map_err(|_| refuse("door-state"))?;
         let bucket = Bucket::new(policy.rate_per_second, policy.rate_burst);
         let standing = policy.standing.as_ref().map(|files| standing::Standing::open(files, &policy.state_dir)).transpose()?;
-        Ok(Door { policy, ledger, asks, owner, bucket, runtime, active: AtomicUsize::new(0), standing })
+        Ok(Door { policy, ledger, asks, owner, bucket, runtime, active: AtomicUsize::new(0), memory_checked: Mutex::new(None), token_check_every: TOKEN_CHECK_EVERY, standing })
     }
 
     fn peer_allowed(&self, peer: Peer) -> bool {
@@ -271,7 +276,7 @@ impl Door {
         match class {
             Class::Net => self.execute_net(request),
             Class::Memory => match &self.policy.memory {
-                Some(memory) => match memory::forward(memory, &request.tool, &request.args) {
+                Some(memory) => match memory::preflight(&request.tool, &request.args).and_then(|_| self.memory_token_ok(memory)).and_then(|()| memory::forward(memory, &request.tool, &request.args)) {
                     Ok(value) => Decision::Allow { value, text: None },
                     Err(code) => Decision::Deny(code),
                 },
@@ -279,6 +284,19 @@ impl Door {
             },
             _ => Decision::Deny("no-executor".into()),
         }
+    }
+
+    /// The Kira token is not the owner's, as the service itself says, within the last `token_check_every`. A token that
+    /// was re-issued as the owner's, or a service that does not answer, stops the memory crossings at the next call.
+    fn memory_token_ok(&self, memory: &policy::MemoryPolicy) -> std::result::Result<(), String> {
+        let mut checked = self.memory_checked.lock().unwrap_or_else(PoisonError::into_inner);
+        if checked.is_some_and(|at| at.elapsed() < self.token_check_every) {
+            return Ok(());
+        }
+        *checked = None;
+        memory::check_token(memory)?;
+        *checked = Some(Instant::now());
+        Ok(())
     }
 
     fn execute_net(&self, request: &Request) -> Decision {
@@ -413,6 +431,15 @@ fn start(policy: Policy, socket: &Path, approver: Option<Arc<dyn Approver>>) -> 
     policy.check_peer_uids(files::euid())?;
     files::parent_not_writable_by_others(socket, "door-socket")?;
     let door = Arc::new(Door::open_with(policy, approver)?);
+    // A door whose Kira token is the owner's would hand the engine owner powers: it does not start. A service that is
+    // not up yet is not a reason to stay down; the first memory call checks again.
+    if let Some(memory) = &door.policy.memory {
+        match memory::check_token(memory) {
+            Ok(()) => *door.memory_checked.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now()),
+            Err(code) if code == "kira-token-owner" => return Err(refuse("door-policy")),
+            Err(code) => eprintln!("door: the Kira token was not checked at start ({code}); memory calls check it first"),
+        }
+    }
     let listener = bind(socket, by_uid)?;
     if door.owner.is_some() {
         let door = Arc::clone(&door);

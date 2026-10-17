@@ -150,15 +150,7 @@ fn memory_calls_reach_the_service_with_the_doors_token_and_the_engines_ceilings(
     let token = dir.join("door.token");
     std::fs::write(&token, "door-token\n").unwrap();
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let listener = UnixListener::bind(&socket).unwrap();
-    let service = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        let mut text = String::new();
-        std::io::BufReader::new(stream.try_clone().unwrap()).read_line(&mut text).unwrap();
-        let mut stream = stream;
-        writeln!(stream, "{}", json!({"ok": true, "result": {"status": "found", "items": []}})).unwrap();
-        text
-    });
+    let service = kira_stub(&dir, vec![agent(), found()]);
     let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", socket.display(), token.display());
     let text = policy_text(&dir.join("state"), "{\"mode\":\"peercred\",\"uids\":[1001]}", "\"memory\":\"allow\"", &extra);
     let door = Door::open(Policy::parse(&text).unwrap()).unwrap();
@@ -172,7 +164,10 @@ fn memory_calls_reach_the_service_with_the_doors_token_and_the_engines_ceilings(
     let (_, allowed) = door.judge(Peer::Uid(1001), &line("m3", "kira_recall", "{\"query\":\"figurine\"}", "memory"));
     let Decision::Allow { value, .. } = allowed else { panic!("expected allow") };
     assert_eq!(value["status"], "found");
-    let seen: serde_json::Value = serde_json::from_str(&service.join().unwrap()).unwrap();
+    // The service saw `whoami` first, then the recall, both with the door's own token.
+    let lines = service.join().unwrap();
+    let (who, seen): (serde_json::Value, serde_json::Value) = (serde_json::from_str(&lines[0]).unwrap(), serde_json::from_str(&lines[1]).unwrap());
+    assert_eq!((who["token"].as_str(), who["method"].as_str()), (Some("door-token"), Some("whoami")));
     assert_eq!(seen["token"], "door-token");
     assert_eq!(seen["method"], "recall");
     let _ = std::fs::remove_dir_all(dir);
@@ -329,17 +324,32 @@ fn owner_door(dir: &Path, fake: &Arc<Fake>, classes: &str) -> Door {
     Door::open_with(Policy::parse(&text).unwrap(), Some(approver)).unwrap()
 }
 
-/// A stand-in for the Kira service answering `count` requests; yields the request lines it saw.
-fn kira_stub(dir: &Path, count: usize) -> std::thread::JoinHandle<Vec<String>> {
+/// What the Kira stand-in says to `whoami`: an agent token, or the owner's.
+fn agent() -> serde_json::Value {
+    json!({"ok": true, "result": {"name": "engine", "owner": false, "scopes": ["builders"]}})
+}
+
+fn owner() -> serde_json::Value {
+    json!({"ok": true, "result": {"name": "peter", "owner": true, "scopes": ["local", "builders"]}})
+}
+
+fn found() -> serde_json::Value {
+    json!({"ok": true, "result": {"status": "found", "items": []}})
+}
+
+/// A stand-in for the Kira service: it answers the connections that come, one scripted reply each, and yields the
+/// request lines it saw. The door asks `whoami` before its first memory call, so a script starts with `agent()`.
+fn kira_stub(dir: &Path, replies: Vec<serde_json::Value>) -> std::thread::JoinHandle<Vec<String>> {
     let listener = UnixListener::bind(dir.join("kira.sock")).unwrap();
     std::thread::spawn(move || {
-        (0..count)
-            .map(|_| {
+        replies
+            .into_iter()
+            .map(|reply| {
                 let (stream, _) = listener.accept().unwrap();
                 let mut text = String::new();
                 std::io::BufReader::new(stream.try_clone().unwrap()).read_line(&mut text).unwrap();
                 let mut stream = stream;
-                writeln!(stream, "{}", json!({"ok": true, "result": {"status": "found", "items": []}})).unwrap();
+                writeln!(stream, "{reply}").unwrap();
                 text
             })
             .collect()
@@ -377,14 +387,14 @@ fn an_ask_with_an_owner_raises_one_request_and_a_repeat_while_it_waits_raises_no
 #[test]
 fn an_approved_call_runs_once_and_the_next_repeat_needs_a_new_approval() {
     let dir = temp("owner-approved");
-    let stub = kira_stub(&dir, 1);
+    let stub = kira_stub(&dir, vec![agent(), found()]);
     let fake = Arc::new(Fake::default());
     let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
     assert_eq!(ask_code(&call(&door, "b-1", "kira_recall", RECALL, "memory")), "ask-memory");
     fake.answer(&format!("{:032x}", 1), approver::Approval::Approved);
     let Decision::Allow { value, .. } = call(&door, "b-2", "kira_recall", RECALL, "memory") else { panic!("the approved call must run") };
     assert_eq!(value["status"], "found");
-    let seen: serde_json::Value = serde_json::from_str(&stub.join().unwrap()[0]).unwrap();
+    let seen: serde_json::Value = serde_json::from_str(&stub.join().unwrap()[1]).unwrap();
     assert_eq!((seen["token"].as_str(), seen["method"].as_str()), (Some("door-token"), Some("recall")));
     // The approval is spent: the same call again raises a new request.
     assert_eq!(ask_code(&call(&door, "b-3", "kira_recall", RECALL, "memory")), "ask-memory");
@@ -397,7 +407,7 @@ fn an_approved_call_runs_once_and_the_next_repeat_needs_a_new_approval() {
 #[test]
 fn an_open_ask_survives_a_restart_and_a_spent_approval_does_not() {
     let dir = temp("owner-restart");
-    let stub = kira_stub(&dir, 1);
+    let stub = kira_stub(&dir, vec![agent(), found()]);
     let fake = Arc::new(Fake::default());
     {
         let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
@@ -493,5 +503,81 @@ fn no_card_goes_up_for_an_ask_that_cannot_be_remembered() {
     assert_eq!(denied(&call(&door, "h-2", "kira_recall", "{\"query\":\"other\"}", "memory")), "approvals-full");
     // The second ask raised nothing: one card, not two.
     assert_eq!(fake.raised.lock().unwrap().len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A policy whose memory executor points at a stub, with the check made on every call.
+fn memory_door(dir: &Path, every: Duration) -> Door {
+    let token = dir.join("door.token");
+    std::fs::write(&token, "door-token\n").unwrap();
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", dir.join("kira.sock").display(), token.display());
+    let text = policy_text(&dir.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
+    let mut door = Door::open(Policy::parse(&text).unwrap()).unwrap();
+    door.token_check_every = every;
+    door
+}
+
+#[test]
+fn a_door_whose_kira_token_is_the_owners_does_not_start() {
+    let dir = temp("whoami-start-owner");
+    let stub = kira_stub(&dir, vec![owner()]);
+    let token = dir.join("door.token");
+    std::fs::write(&token, "door-token\n").unwrap();
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", dir.join("kira.sock").display(), token.display());
+    let text = policy_text(&dir.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
+    let started = start(Policy::parse(&text).unwrap(), &dir.join("door.sock"), None);
+    assert!(started.is_err(), "an owner token must stop the door from starting");
+    assert!(stub.join().unwrap()[0].contains("\"whoami\""));
+    assert!(!dir.join("door.sock").exists(), "nothing was bound");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_door_starts_without_the_service_and_asks_again_before_its_first_memory_call() {
+    let dir = temp("whoami-start-down");
+    // The service is not there at start: the door starts anyway.
+    let token = dir.join("door.token");
+    std::fs::write(&token, "door-token\n").unwrap();
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", dir.join("kira.sock").display(), token.display());
+    let text = policy_text(&dir.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
+    let (door, _listener) = start(Policy::parse(&text).unwrap(), &dir.join("door.sock"), None).expect("a missing service is not a reason to stay down");
+    assert_eq!(denied(&call(&door, "w-1", "kira_recall", RECALL, "memory")), "kira-unavailable");
+    // It comes up as an agent token: the next call checks, then goes through.
+    let stub = kira_stub(&dir, vec![agent(), found()]);
+    assert!(matches!(call(&door, "w-2", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+    assert_eq!(stub.join().unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_token_re_issued_as_the_owners_stops_the_memory_crossings_at_the_next_check() {
+    let dir = temp("whoami-flip");
+    // Checked on every call: agent, then the owner's. The second call must never reach `recall`.
+    let stub = kira_stub(&dir, vec![agent(), found(), owner()]);
+    let door = memory_door(&dir, Duration::ZERO);
+    assert!(matches!(call(&door, "f-1", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+    assert_eq!(denied(&call(&door, "f-2", "kira_recall", RECALL, "memory")), "kira-token-owner");
+    let lines = stub.join().unwrap();
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().filter(|line| line.contains("\"recall\"")).count() == 1);
+    // A refusal of the engine's own making does not contact the service at all.
+    let silent = temp("whoami-silent");
+    let door = memory_door(&silent, Duration::ZERO);
+    assert_eq!(denied(&call(&door, "f-3", "kira_quarantine_source", "{\"pubkey\":\"00\"}", "memory")), "owner-only");
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(silent);
+}
+
+#[test]
+fn a_whoami_that_does_not_say_plainly_who_the_token_is_stops_the_call() {
+    let dir = temp("whoami-garbled");
+    let stub = kira_stub(&dir, vec![json!({"ok": true, "result": {"owner": "no"}}), json!({"ok": false, "error": "kira:token-refused"})]);
+    let door = memory_door(&dir, Duration::ZERO);
+    assert_eq!(denied(&call(&door, "g-1", "kira_recall", RECALL, "memory")), "kira-reply");
+    assert_eq!(denied(&call(&door, "g-2", "kira_recall", RECALL, "memory")), "kira:token-refused");
+    assert_eq!(stub.join().unwrap().len(), 2);
     let _ = std::fs::remove_dir_all(dir);
 }
