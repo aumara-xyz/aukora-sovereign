@@ -19,7 +19,11 @@ These providers must already be installed in the offline Python environment. An
 unavailable provider refuses with `verifier:crypto-unavailable`.
 
 For C5 owner signatures, supply a v2 export and `--owner-key PIN.hex`, an independently
-retained, uncompressed P-256 SEC1 public key encoded as lowercase hex.
+retained, uncompressed P-256 SEC1 public key encoded as lowercase hex. A ledger whose rows
+need an owner approval (a consumed approval, a retirement, a floor advance, a permission
+grant, a binding) is `VERIFIED` only with both, and only when every retained assertion
+verifies under that key; with a v1 export, a v2 export without the pin, or rows alone the
+verdict is `UNCHECKED` with the single finding `verifier:owner-signatures-unchecked`.
 
 The script also accepts `--key KEY --rows ROWS` with optional `--prefix OLD_ROWS`,
 `--retained HEAD --presented HEAD`, and `--checkpoint HEAD`; `witness BUNDLE EVENT`

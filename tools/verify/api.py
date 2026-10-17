@@ -7,6 +7,7 @@ from .common import (
     _bytes,
     _checked_key,
     _cold,
+    _finding,
     _hex,
     _key,
     _node,
@@ -20,6 +21,7 @@ from .common import (
 )
 from .owner import (
     _owner_assertions,
+    _owner_needed,
 )
 from .ledger import (
     _anchor,
@@ -27,14 +29,16 @@ from .ledger import (
     _walk,
 )
 
-def _report(count, *, identity=False, covering=False, consistency=False, semantic=True, tree_root=True, findings=None):
-    missing = list(findings or [])
+def _report(count, *, identity=False, covering=False, consistency=False, found=(), tree_root=True, owner=None, findings=None):
+    # `found`: what the row walk could not decide. `owner`: None when no row needs an owner assertion, else whether
+    # every one verified under the pinned key.
+    missing = list(found) + list(findings or [])
     for checked, code in ((identity, "identity-no-pinned-key"), (covering, "completeness-no-covering-checkpoint"),
-                          (semantic, "owner-bindings-or-terminal-count"), (tree_root, "tree-root-no-anchor")):
+                          (tree_root, "tree-root-no-anchor"), (owner is not False, "owner-signatures-unchecked")):
         if not checked:
-            missing.append({"code": "verifier:" + code, "sequence": None, "exact_location": True})
+            missing.append(_finding(code))
     return {"verdict": "VERIFIED" if not missing else "UNCHECKED", "rows": count,
-            "integrity": {"signatures": True, "chain": True, "tree_root": tree_root, "owner_bindings": semantic},
+            "integrity": {"signatures": True, "chain": True, "tree_root": tree_root, "owner_bindings": not found and owner is not False},
             "observations": {"pinned_identity": identity, "covering_checkpoint": covering, "consistency": consistency},
             "findings": missing}
 def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
@@ -44,7 +48,7 @@ def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=
         _require(_key(pinned_key) == key, "bundle-key-mismatch")
     head = _head(value["head"])
     rows = value["rows"]
-    leaves, semantic = _walk(rows, key)
+    leaves, found = _walk(rows, key)
     _require(len(rows) == head["treeSize"], "bundle-tail-size", min(len(rows), head["treeSize"]) + 1)
     _anchor(head, rows, leaves)
     covering = False
@@ -53,18 +57,12 @@ def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=
         _anchor(retained, rows, leaves)
         covering = retained["treeSize"] == len(rows)
     owner_checked = _owner_assertions(rows, assertions, owner_key)
-    findings = [] if owner_checked or assertions is None and owner_key is None else [{"code": "verifier:" + (
-        "owner-assertions-unavailable" if not assertions else "owner-no-pinned-key"),
-        "sequence": None, "exact_location": True}]
-    report = _report(len(rows), identity=pinned_key is not None, covering=covering,
-                     semantic=semantic, findings=findings)
-    report["owner_signatures"] = owner_checked
-    return report
-def _proof_result(old, new):
+    return {**_report(len(rows), identity=pinned_key is not None, covering=covering, found=found,
+                      owner=owner_checked if _owner_needed(rows) else None), "owner_signatures": owner_checked}
+def _proof_result(old, new, proof):
     m, n = old["treeSize"], new["treeSize"]
     if m > n:
         return "UNDETERMINED", "invalid-tree-sizes"
-    proof = [_hex(item) for item in new["proofFromPrevious"]]
     first, second = _hex(old["root"]), _hex(new["root"])
     if m == 0:
         return "UNDETERMINED", "missing-prior-observation"
@@ -106,20 +104,20 @@ def verify_consistency(retained: bytes, presented: bytes):
              and _size(new["treeSize"]) and new["treeSize"] > 0 and _size(new["retainedTreeSize"]) and new["retainedTreeSize"] > 0
              and isinstance(new["proofFromPrevious"], list) and len(new["proofFromPrevious"]) <= 64, "presented-format")
     _hex(new["root"])
-    if new["retainedTreeSize"] != old["treeSize"]:
-        # A well-formed presented head that names a different earlier size than the one retained proves nothing.
-        return {"verdict": "UNDETERMINED", "retained_size": old["treeSize"], "presented_size": new["treeSize"], "reason": "verifier:retained-proof-size"}
-    verdict, reason = _proof_result(old, new)
+    proof = [_hex(item) for item in new["proofFromPrevious"]]
+    # A well-formed presented head that names a different earlier size than the one retained proves nothing.
+    verdict, reason = (("UNDETERMINED", "retained-proof-size") if new["retainedTreeSize"] != old["treeSize"]
+                       else _proof_result(old, new, proof))
     return {"verdict": verdict, "retained_size": old["treeSize"], "presented_size": new["treeSize"], "reason": "verifier:" + reason}
 def _rows(raw):
     _require(isinstance(raw, bytes) and len(raw) <= MAX_INPUT, "input-too-large")
-    _require(bool(raw) and b"\r" not in raw, "rows-format")
+    _require(bool(raw), "rows-format")
     lines, values = raw.split(b"\n"), []
     for number, line in enumerate(lines, 1):
         try:
             _require(number < len(lines) or not line, "rows-truncated", number)
             if number < len(lines):
-                _require(bool(line), "rows-format", number)
+                _require(bool(line) and b"\r" not in line, "rows-format", number)
                 values.append(_parse(line, canonical=True))
         except Refusal as error:
             if error.sequence is None: error.sequence = number
@@ -129,7 +127,7 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
                  presented=None, retained_rows=None, checkpoint=None):
     values, malformed = _rows(rows)
     key = _key(pinned_key)
-    leaves, semantic = _walk(values, key)
+    leaves, found = _walk(values, key)
     if malformed: raise malformed
     findings, consistent, covering, anchored = [], False, False, False
     if retained_rows is not None:
@@ -157,7 +155,8 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
         _anchor(kept, values, leaves)
         covering = covering or kept["treeSize"] == len(values)
         anchored = anchored or kept["treeSize"] == len(values)
-    return _report(len(values), identity=True, covering=covering, consistency=consistent, semantic=semantic, tree_root=anchored, findings=findings)
+    return _report(len(values), identity=True, covering=covering, consistency=consistent, found=found, tree_root=anchored,
+                    owner=False if _owner_needed(values) else None, findings=findings)
 def _event_value(raw):
     _require(len(raw) <= 65_536, "witness-malformed")
     event = _parse(raw)

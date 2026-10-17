@@ -84,6 +84,7 @@ pub struct VerificationReport {
     integrity: IntegrityScope,
     observations: ObservationScope,
     owner_signatures: Scope,
+    owner_required: bool,
     findings: Vec<Finding>,
 }
 
@@ -96,6 +97,26 @@ impl VerificationReport {
 
     pub(crate) fn owner_signatures_checked(&mut self) {
         self.owner_signatures = Scope::Checked;
+        self.settle();
+    }
+
+    /// The rows include an operation only the owner can authorize, so nothing short of every retained assertion
+    /// verifying under the pinned credential key makes the ledger verified.
+    pub(crate) fn require_owner_signatures(&mut self) {
+        self.owner_required = true;
+    }
+
+    /// The one finding for owner-required rows whose assertions were not (all) verified. A report that already says the
+    /// bytes are not what they claim to be keeps that and nothing else.
+    pub(crate) fn finish_owner(&mut self) {
+        if self.owner_required && self.owner_signatures != Scope::Checked && !self.failed() {
+            self.finding(
+                Verdict::Unchecked,
+                refusal("owner-signatures-unchecked"),
+                None,
+                false,
+            );
+        }
     }
     /// Overall verification outcome; an embedded head alone never fills missing scope.
     pub const fn verdict(&self) -> Verdict {
@@ -107,8 +128,18 @@ impl VerificationReport {
         self.rows
     }
 
-    /// Scope for node signatures, chain links, tree root and owner binding data.
-    pub const fn integrity(&self) -> IntegrityScope {
+    /// Scope for node signatures, chain links, tree root and owner binding data. Owner bindings are checked only when
+    /// the rows need no owner assertion or every retained one verified.
+    pub fn integrity(&self) -> IntegrityScope {
+        let mut integrity = self.integrity;
+        if self.owner_required && self.owner_signatures != Scope::Checked {
+            integrity.owner_bindings = Scope::Unchecked;
+        }
+        integrity
+    }
+
+    /// The scopes as the checks set them, before owner assertions are held against them.
+    pub(crate) const fn walked(&self) -> IntegrityScope {
         self.integrity
     }
 
@@ -141,6 +172,7 @@ impl VerificationReport {
             },
             findings: Vec::new(),
             owner_signatures: Scope::Unchecked,
+            owner_required: false,
         }
     }
 
@@ -169,15 +201,21 @@ impl VerificationReport {
         }
         self.integrity = integrity;
         self.observations = observations;
+        self.settle();
+    }
+
+    fn settle(&mut self) {
         if !matches!(self.verdict, Verdict::Verified | Verdict::Unchecked) {
             return;
         }
+        let (integrity, observations) = (self.integrity, self.observations);
         self.verdict = if integrity.signatures == Scope::Checked
             && integrity.chain == Scope::Checked
             && integrity.tree_root == Scope::Checked
             && integrity.owner_bindings == Scope::Checked
             && observations.pinned_identity == Scope::Checked
             && observations.covering_checkpoint == Scope::Checked
+            && (!self.owner_required || self.owner_signatures == Scope::Checked)
             && self.findings.is_empty()
         {
             Verdict::Verified
@@ -225,6 +263,10 @@ use canon::{
 
 pub(crate) fn owner_binding(rows: &[Row], row: &Value) -> Result<bool> {
     let body = field(row, "body")?;
+    if crate::owner::wrapped(body) {
+        // The owner path holds the retained assertions against these rows; nothing here can decide it.
+        return Ok(true);
+    }
     if let Some(auth) = body.get("auth") {
         owner_authorization(auth, false)?;
         if let Some(recorded) = body.get("authorization_digest") {

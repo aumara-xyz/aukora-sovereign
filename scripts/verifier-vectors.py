@@ -6,11 +6,20 @@ Each case becomes input files, one run of each engine, and a comparison with the
 row, codes and scope marks. Cases whose recipe needs a signer (rehash_and_sign, sign_hash, rebuild_head, prepared or
 prefix heads) and the vector files that assemble signed rows (gate, standing, owner, witness, nostr binding, member
 exit) are counted as not replayed and named in the summary, never silently passed. The Python engine reports
-`crypto-unavailable` when PyNaCl is missing; those cases are counted as skipped for that engine.
+`crypto-unavailable` when PyNaCl or `cryptography` is missing and the replay's shim is not in use; those cases are
+counted as skipped for that engine.
+
+The last two sections, "owner-rule" and "owner-rule-v2", are not vector files. They build small signed ledgers here and
+hold both engines to the owner rule: rows that need an owner assertion (what the real gate writes, the Aura authority
+wrapper as the row body) verify only with the v2 export and every assertion verifying under the pinned owner key, so
+without them both engines say UNCHECKED with exactly one finding, `owner-signatures-unchecked`, and ledgers without such
+rows can verify; "owner-rule-v2" signs a real P-256 passkey assertion (scripts/replay-shim/p256_ref.py) and checks the
+positive path and its refusals the same way, for the Python twin too (which needs `cryptography`, stood in for by the shim).
 
     python3 -B scripts/verifier-vectors.py [--engine rust|python|both] [--rust-bin PATH]
 """
 import argparse
+import atexit
 import base64
 import collections
 import copy
@@ -19,6 +28,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,6 +38,9 @@ SHIM = ROOT / "scripts/replay-shim"
 _reference = importlib.util.spec_from_file_location("ed25519_ref", SHIM / "ed25519_ref.py")
 ed25519_ref = importlib.util.module_from_spec(_reference)
 _reference.loader.exec_module(ed25519_ref)
+_p256 = importlib.util.spec_from_file_location("p256_ref", SHIM / "p256_ref.py")
+p256_ref = importlib.util.module_from_spec(_p256)
+_p256.loader.exec_module(p256_ref)
 VECTORS = ROOT / "crates/verifier/vectors"
 KNOWN = ROOT / "scripts/verifier-vectors-known.json"
 ALL = ["admission-regressions-v1", "consistency-regressions-v1", "exit-v1", "gate-regressions-v1",
@@ -42,6 +55,20 @@ NOT_REPLAYED = {
     "witness-regressions-v1": "assembles signed rows and Nostr witness events",
 }
 AURA_DOMAIN = "aukora:aura-record:v1"
+OWNER_SEED = "25" * 32
+OPERATION = "ab" * 16
+NODE_ID = "01" * 16
+PROPOSAL = "cd" * 16
+NEW = "22" * 32
+TARGET = "app/theme"
+RELYING_PARTY = "owner.example"
+OWNER_ORIGIN = "https://owner.example"
+TOP_ORIGIN = "https://top.example"
+OWNER_D = int.from_bytes(bytes([0x42]) * 32, "big")
+OTHER_D = int.from_bytes(bytes([0x43]) * 32, "big")
+# Any valid uncompressed P-256 point will do as an owner pin where no assertion is supplied (the curve's generator).
+P256_PIN = ("046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e16"
+            "2bce33576b315ececbb6406837bf51f5")
 LEAF_CONVENTION = "rfc6962-leaf-sha256-0x00-prefixed-v1"
 # Edits on the serialized document rather than the parsed one; applied after serialization, in listed order.
 BYTE_OPS = {"bytes_insert_utf8", "bytes_append_hex", "row_bytes_replace"}
@@ -258,15 +285,102 @@ def raw_apply(lines, raw_edits):
     return prefix + b"".join(lines) + suffix
 
 
-def python_environment():
-    """The Python engine's environment. tools/verify.py takes no Ed25519 provider but PyNaCl; where that is missing the
-    replay puts scripts/replay-shim (verification only, self-tested here) first on the engine's path, so signature cases
-    run instead of being skipped. Returns (environment, a note for the summary)."""
+def authority_wrap(number, previous, payload):
+    """The body the real gate writes: the Aura authority wrapper around the operation's payload."""
+    return {"schema": "aukora-aura-authority-body-v1", "algorithm": "sha256", "epoch": 1, "sequence": number,
+            "previous_hash": previous, "payload": payload}
+
+
+def authority_body(number, previous, state, target="theme"):
+    return authority_wrap(number, previous, {"proposal": PROPOSAL, "target": target, "operation": "ef" * 32,
+                                             "base_sha256": "11" * 32, "new_sha256": NEW, "state": state, "retry": False,
+                                             "consumed_approval": "33" * 32})
+
+
+def b64(data):
+    return base64.b64encode(data).decode()
+
+
+def owner_authorization():
+    """The 14-member C5 owner authorization for a theme change, its operation digest recomputed as the spec says."""
+    content = {"v": 1, "node": NODE_ID, "target": TARGET, "base_sha256": "absent", "new_sha256": NEW, "cell": None}
+    return {**content, "subject": "aukora:1:" + "03" * 32, "op": "apply", "proposal": PROPOSAL, "display_sha256": "44" * 32,
+            "challenge": "05" * 16, "expires_at": 1760000100000, "epoch": 1,
+            "operation": hashlib.sha256(b"aukora:operation-content:v1\0" + c1(content)).hexdigest()}
+
+
+def owner_entry(sequence, auth, signing_d, bound_d):
+    """The retained assertion for the row at `sequence`: a passkey (key `bound_d`) approval signed with `signing_d`."""
+    credential = bytes([7]) * 32
+    key = {"v": 1, "algorithm": "ecdsa-p256-sha256", "bytes": b64(p256_ref.encode(p256_ref.public_point(bound_d)))}
+    binding = {"schema": "aukora-aura-owner-binding-storage-v1", "v": 1, "algorithm": "ecdsa-p256-sha256",
+               "credential": b64(credential), "key": key, "epoch": 1, "relying_party": RELYING_PARTY,
+               "owner_origin": OWNER_ORIGIN, "top_origin": TOP_ORIGIN, "counter": 0}
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(b"aukora:owner-authorization:v1\0" + c1(auth)).digest()).decode().rstrip("=")
+    client = json.dumps({"type": "webauthn.get", "challenge": challenge, "origin": OWNER_ORIGIN, "topOrigin": TOP_ORIGIN,
+                         "crossOrigin": True}, separators=(",", ":")).encode()
+    authenticator = hashlib.sha256(RELYING_PARTY.encode()).digest() + b"\x05" + (1).to_bytes(4, "big")
+    signed = authenticator + hashlib.sha256(client).digest()
+    proof = {"authorization": auth, "credential": base64.urlsafe_b64encode(credential).decode().rstrip("="),
+             "authenticator_data": b64(authenticator), "client_data_json": b64(client), "signed_bytes": b64(signed),
+             "public_keys": [key], "signatures": {"v": 1, "components": [
+                 {"v": 1, "algorithm": "ecdsa-p256-sha256", "bytes": b64(p256_ref.sign(signing_d, signed))}]}}
+    return {"sequence": sequence, "binding": binding, "proof": proof}
+
+
+def owner_ledger(consumed_new=NEW):
+    """boot fact, propose, consume (needs the owner assertion), apply, all but the first in the authority wrapper.
+    `consumed_new` is the new_sha256 the consume row records: a different one is a row the assertion does not describe."""
+    auth = owner_authorization()
+    operation = auth["operation"]
+    payload = lambda state, new, **more: {"proposal": PROPOSAL, "target": TARGET, "operation": operation, "new_sha256": new,
+                                          "state": state, **more}
+    wrapped = lambda body: (lambda number, previous: authority_wrap(number, previous, body))
+    bundle = signed_ledger([
+        ("boot.facts", "fact", "supervisor", "", {"index": 0, "message": "honest"}),
+        ("gate.propose", "intent", "owner", OPERATION, wrapped(payload("proposed", NEW))),
+        ("gate.consume", "settle", "owner", OPERATION, wrapped(payload(
+            "consumed", consumed_new, base_sha256="absent", consumed_approval=hashlib.sha256(c1(auth)).hexdigest()))),
+        ("gate.apply", "terminal", "owner", OPERATION, wrapped(payload("applied", NEW)))])
+    return bundle, auth
+
+
+def export_v2(bundle, entries):
+    return {"schema": "aukora-aura-cold-proof-v2", "body": {"proof": bundle, "owner_assertions": entries}}
+
+
+def signed_ledger(specs):
+    """A v1 cold export of rows (kind, phase, actor, op, body or body(number, previous)) signed with OWNER_SEED."""
+    rows, previous = [], AURA_DOMAIN
+    for number, (kind, phase, actor, op, body) in enumerate(specs, 1):
+        row = {"seq": number, "prev": previous, "at": 1760000000000 + number, "kind": kind, "actor": actor, "op": op,
+               "phase": phase, "body": body(number, previous) if callable(body) else body}
+        row["hash"] = row_hash(row, number, previous)
+        row["sig"] = sign_hex(OWNER_SEED, row["hash"])
+        rows.append(row)
+        previous = row["hash"]
+    public = ed25519_ref.public_key(bytes.fromhex(OWNER_SEED)).hex()
+    return {"schema": "aukora-aura-cold-proof-v1", "publicKey": public, "head": head_over(rows), "rows": rows}
+
+
+def python_environment(force=False):
+    """The Python engine's environment. tools/verify.py takes no Ed25519 provider but PyNaCl and no ES256 provider but
+    `cryptography`. For each one that is not installed (or for both, with `force`) the replay puts a stand-in from
+    scripts/replay-shim (verification only, self-tested here) first on the engine's path, so signature cases run instead of
+    being skipped; a provider that is installed is never shadowed. Returns (environment, a note for the summary)."""
     environment = dict(os.environ)
-    if importlib.util.find_spec("nacl") is not None:
-        return environment, "PyNaCl"
-    environment["PYTHONPATH"] = os.pathsep.join([str(SHIM)] + ([environment["PYTHONPATH"]] if environment.get("PYTHONPATH") else []))
-    return environment, "the reference Ed25519 in scripts/replay-shim (PyNaCl is not installed)"
+    providers = (("PyNaCl", "nacl", "ed25519_ref.py", "Ed25519"), ("cryptography", "cryptography", "p256_ref.py", "P-256"))
+    standing = [entry for entry in providers if force or importlib.util.find_spec(entry[1]) is None]
+    note = " and ".join(f"{name} ({'reference ' + kind + ' in scripts/replay-shim' if (name, package, module, kind) in standing else 'installed'})"
+                        for name, package, module, kind in providers)
+    if standing:
+        folder = pathlib.Path(tempfile.mkdtemp(prefix="replay-shim-"))
+        atexit.register(shutil.rmtree, folder, True)
+        for _, package, module, _ in standing:
+            (folder / package).symlink_to(SHIM / package, target_is_directory=True)
+            (folder / module).symlink_to(SHIM / module)
+        environment["PYTHONPATH"] = os.pathsep.join([str(folder)] + ([environment["PYTHONPATH"]] if environment.get("PYTHONPATH") else []))
+    return environment, note
 
 
 class Engine:
@@ -555,6 +669,82 @@ class Replay:
         runner.check = lambda code, out, err, report: check_consistency(expected, code, report, err)
         self.run_all(work, file, case["id"], runner)
 
+    def owner_rule(self, work, file):
+        boot = ("boot.facts", "fact", "supervisor", "", {"index": 0, "message": "honest"})
+        wrapped = lambda state: (lambda number, previous: authority_body(number, previous, state))
+        cases = [
+            # What the real gate writes for an owner-approved change: needs the owner assertions, which a v1 export lacks.
+            ("wrapper-rows-need-owner-signatures", [boot, ("gate.consume", "settle", "owner", OPERATION, wrapped("consumed")),
+                                                    ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied"))], False,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None,
+              "codes": ["verifier:owner-signatures-unchecked"]}),
+            # An owner pin alone does not help: there is nothing to check it against.
+            ("wrapper-rows-pin-without-assertions", [boot, ("gate.consume", "settle", "owner", OPERATION, wrapped("consumed")),
+                                                     ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied"))], True,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None,
+              "codes": ["verifier:owner-signatures-unchecked"]}),
+            # Wrapped rows that need no owner assertion (a propose, and an apply that is not a permission grant) verify.
+            ("wrapper-rows-without-owner-need-verify", [boot, ("gate.propose", "intent", "owner", OPERATION, wrapped("proposed")),
+                                                        ("gate.apply", "terminal", "owner", OPERATION, wrapped("applied"))], False,
+             {"verdict": "VERIFIED", "exit": 0, "owner_bindings": "CHECKED", "signatures": "CHECKED", "chain": "CHECKED"}),
+            # A flat row with no owner proof is located by both engines, at its row.
+            ("flat-apply-without-proof-is-located", [boot, ("gate.propose", "intent", "owner", OPERATION, {"state": "proposed"}),
+                                                     ("gate.apply", "terminal", "owner", OPERATION, {"state": "applied"})], False,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": 3,
+              "codes": ["verifier:owner-provenance"]}),
+            # Two terminal rows for one operation: one unlocated finding, the same code in both.
+            ("two-terminals-are-unlocated", [boot, ("sandbox.exit", "terminal", "supervisor", OPERATION, {}),
+                                             ("sandbox.exit", "terminal", "supervisor", OPERATION, {})], False,
+             {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None,
+              "codes": ["verifier:terminal-count"]}),
+        ]
+        for case_id, specs, with_pin, expected in cases:
+            self.export_case(work, file, case_id, signed_ledger(specs), None, P256_PIN if with_pin else None, expected)
+
+    def export_case(self, work, file, case_id, bundle, export, pin, expected, passkeys=False):
+        """One run of both engines on `export` (default: the v1 `bundle` itself) with the bundle's own key and head, and
+        the owner pin `pin` (hex, or None). `passkeys` is whether the report must say the owner signatures were checked."""
+        def runner(engine, directory):
+            (directory / "proof.json").write_bytes(c1(bundle if export is None else export))
+            (directory / "key.hex").write_text(bundle["publicKey"])
+            (directory / "head.json").write_bytes(c1(bundle["head"]))
+            arguments = ["--bundle", "proof.json", "--key", "key.hex", "--checkpoint", "head.json"]
+            if pin is not None:
+                (directory / "pin.hex").write_text(pin)
+                arguments += ["--owner-key", "pin.hex"]
+            return engine.run(arguments, directory)
+
+        def check(code, out, err, report):
+            bad = check_report(expected, code, out, err, report)
+            checked = '"owner_signatures":true' in out or "PASSKEY VERIFIED" in out
+            return bad + ([] if checked == passkeys else [f"owner signatures checked {checked}, expected {passkeys}"])
+
+        runner.check = check
+        self.run_all(work, file, case_id, runner)
+
+    def owner_rule_v2(self, work, file):
+        """The positive path with a real passkey assertion, and what each way of breaking it must say."""
+        owner, other = (p256_ref.encode(p256_ref.public_point(d)).hex() for d in (OWNER_D, OTHER_D))
+        bundle, auth = owner_ledger()
+        honest = owner_entry(3, auth, OWNER_D, OWNER_D)
+        export = export_v2(bundle, [honest])
+        verified = {"verdict": "VERIFIED", "exit": 0, "owner_bindings": "CHECKED", "signatures": "CHECKED", "chain": "CHECKED"}
+        unchecked = {"verdict": "UNCHECKED", "exit": 1, "owner_bindings": "UNCHECKED", "sequence": None,
+                     "codes": ["verifier:owner-signatures-unchecked"]}
+        # The engines name a refusal differently here, so these are held to the verdict and the exit code.
+        refused = {"verdict": "INVALID_INPUT", "exit": 64}
+        tampered, _ = owner_ledger("33" * 32)
+        self.export_case(work, file, "assertions-verify-under-the-pinned-owner-key", bundle, export, owner, verified, True)
+        self.export_case(work, file, "no-owner-pin", bundle, export, None, unchecked)
+        self.export_case(work, file, "v1-export-with-owner-pin", bundle, None, owner, unchecked)
+        self.export_case(work, file, "other-owner-pin", bundle, export, other,
+                         {"verdict": "KEY_MISMATCH", "exit": 2, "codes": ["verifier:owner-key-mismatch"]})
+        self.export_case(work, file, "missing-assertion", bundle, export_v2(bundle, []), owner, refused)
+        self.export_case(work, file, "assertion-signed-by-another-key", bundle,
+                         export_v2(bundle, [owner_entry(3, auth, OTHER_D, OWNER_D)]), owner,
+                         {"verdict": "FORGED", "exit": 2, "codes": ["verifier:owner-signature"]})
+        self.export_case(work, file, "row-resigned-after-its-payload-changed", tampered, export_v2(tampered, [honest]), owner, refused)
+
     def operator_inputs(self, work, file, document):
         for case in document["cases"]:
             variants = case.get("argument_variants") or [case.get("args")]
@@ -607,14 +797,16 @@ def main():
     parser.add_argument("--notes", action="store_true", help="list every case that was not replayed or skipped")
     parser.add_argument("--write-known", action="store_true", help="record today's divergences as the known list (review the diff)")
     parser.add_argument("--engine", choices=["rust", "python", "both"], default="both")
+    parser.add_argument("--stand-ins", action="store_true", help="use the replay's own Ed25519 and P-256 even where PyNaCl and cryptography are installed")
     parser.add_argument("--rust-bin", default=str(pathlib.Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/aukora-verify"))
     arguments = parser.parse_args()
     ed25519_ref.selftest()
+    p256_ref.selftest()
     engines = []
     if arguments.engine in ("rust", "both"):
         engines.append(Engine("rust", [arguments.rust_bin]))
     if arguments.engine in ("python", "both"):
-        environment, provider = python_environment()
+        environment, provider = python_environment(arguments.stand_ins)
         print(f"python engine signatures: {provider}")
         engines.append(Engine("python", [sys.executable, "-B", str(ROOT / "tools/verify.py")], environment))
     # Pinned vector files must all be present and named here; a new vector file needs a decision.
@@ -631,6 +823,8 @@ def main():
             document = json.loads((VECTORS / f"{name}.json").read_text())
             {"admission-regressions-v1": replay.admission, "regressions-v1": replay.regressions,
              "consistency-regressions-v1": replay.consistency, "operator-inputs-v1": replay.operator_inputs}[name](work, name, document)
+        replay.owner_rule(work, "owner-rule")
+        replay.owner_rule_v2(work, "owner-rule-v2")
     if arguments.write_known:
         if arguments.engine != "both":
             print("FAIL verifier-vectors: --write-known needs both engines")

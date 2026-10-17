@@ -255,12 +255,13 @@ export async function m3(c) {
   const bundle = await c.text("m3-bundle", "Relative path to the exported bundle");
   const key = await c.text("m3-pinned-key", "Relative path to the independently pinned node public key file");
   const checkpoint = await c.text("m3-checkpoint", "Relative path to the owner-retained covering checkpoint file");
-  await c.verifier(bundle, key, checkpoint);
+  const ownerKey = await c.text("m3-owner-key", "Relative path to the independently pinned owner passkey public key file (uncompressed P-256 SEC1, lowercase hex); the bundle must be the v2 export with its retained owner assertions");
+  await c.verifier(bundle, key, checkpoint, "VERIFIED", undefined, ownerKey);
   await c.witness("m3-forged-receipt-twin", "In a separate disposable export copy, forge an apply receipt or alter signed theme bytes while preserving valid JSON and the original signatures. Keep the genuine independently pinned key and covering checkpoint. Do not modify live Aura data or either trust anchor. The runner will invoke the actual cold verifier on the forged copy.");
   const forgedBundle = await c.text("m3-forged-bundle", "Relative path to the forged disposable bundle copy");
   c.different("m3-forged-copy", forgedBundle, bundle);
   const forgedVerdict = await c.text("m3-forged-verdict", "Expected exact refusal verdict for this deliberate corruption: FORGED, REWRITTEN, KEY_MISMATCH or INVALID_INPUT");
   c.require("m3-forged-verdict", ["FORGED", "REWRITTEN", "KEY_MISMATCH", "INVALID_INPUT"].includes(forgedVerdict));
-  await c.verifierRefuses(forgedBundle, key, checkpoint, forgedVerdict);
+  await c.verifierRefuses(forgedBundle, key, checkpoint, forgedVerdict, ownerKey);
   await crashTwins(c);
 }

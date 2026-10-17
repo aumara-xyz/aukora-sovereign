@@ -192,7 +192,7 @@ class Context {
     this.same(`${id}-code`, value.code, expected);
   }
 
-  async verifier(bundle, key, checkpoint, expected = 'VERIFIED', expectedHead) {
+  async verifier(bundle, key, checkpoint, expected = 'VERIFIED', expectedHead, ownerKey) {
     const program = await realpath(relativeFile(this.flags.verifier));
     this.require('verifier-not-build-tree', !relative(repoRoot, program).split(sep).includes('target'));
     const metadata = await lstat(program);
@@ -209,7 +209,9 @@ class Context {
       this.same('verifier-executable-pinned', actualDigest, expectedDigest);
       this.verifierIdentity = actualDigest;
     }
-    const paths = [bundle, key, checkpoint].map(relativeFile);
+    // A ledger holding an owner approval is verified only with the v2 export and the independently pinned owner key.
+    if (expected === 'VERIFIED') this.require('verifier-owner-key', typeof ownerKey === 'string');
+    const paths = [bundle, key, checkpoint, ...(ownerKey === undefined ? [] : [ownerKey])].map(relativeFile);
     for (const path of paths) this.require('verifier-input-regular', (await lstat(path)).isFile());
     let checkpointDigest;
     if (expectedHead !== undefined) {
@@ -222,7 +224,7 @@ class Context {
       checkpointDigest = sha256(bytes);
     }
     this.same('verifier-before-exec', sha256(await readFile(program)), actualDigest);
-    const result = await command(program, ['--bundle', paths[0], '--key', paths[1], '--checkpoint', paths[2]]);
+    const result = await command(program, ['--bundle', paths[0], '--key', paths[1], '--checkpoint', paths[2], ...(paths[3] === undefined ? [] : ['--owner-key', paths[3]])]);
     this.same('verifier-after-exec', sha256(await readFile(program)), actualDigest);
     if (checkpointDigest !== undefined) {
       this.require('verifier-checkpoint-size', (await lstat(paths[2])).size <= 8_388_608);
@@ -241,13 +243,14 @@ class Context {
       for (const name of ['pinned_identity', 'covering_checkpoint']) {
         this.same(`verifier-${name}`, report.observations?.[name], true);
       }
+      this.same('verifier-owner_signatures', report.owner_signatures, true);
     } else this.require('verifier-refused', Number.isInteger(result.code) && result.code !== 0);
     return report;
   }
 
-  async verifierRefuses(bundle, key, checkpoint, expected) {
+  async verifierRefuses(bundle, key, checkpoint, expected, ownerKey) {
     this.require('verifier-refusal-known', ['REWRITTEN', 'FORGED', 'KEY_MISMATCH', 'INVALID_INPUT'].includes(expected));
-    return await this.verifier(bundle, key, checkpoint, expected);
+    return await this.verifier(bundle, key, checkpoint, expected, undefined, ownerKey);
   }
 
   async secret(prompt) {

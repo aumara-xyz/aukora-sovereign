@@ -102,15 +102,16 @@ export async function m5(c) {
   const bundle = await relativeFile(c, 'm5-bundle', 'Enter the existing cold bundle path relative to this runner working directory.');
   const key = await relativeFile(c, 'm5-key', 'Enter the existing independently retained public signing-key file path, relative to this runner.');
   const checkpoint = await relativeFile(c, 'm5-checkpoint', 'Enter the existing independently retained covering checkpoint file path, relative to this runner.');
-  await c.verifier(bundle, key, checkpoint);
+  const ownerKey = await relativeFile(c, 'm5-owner-key', 'Enter the existing independently retained owner passkey public-key file path (uncompressed P-256 SEC1, lowercase hex), relative to this runner; the bundle must be the v2 export.');
+  await c.verifier(bundle, key, checkpoint, 'VERIFIED', undefined, ownerKey);
   for (const [id, description, verdict] of [
     ['forged-key', 'an independently prepared wrong public signing-key file', 'KEY_MISMATCH'],
     ['edited-history', 'an independently prepared canonical export with one signed row body changed and its original hash and signature retained', 'REWRITTEN'],
     ['truncated-export', 'an independently prepared valid-prefix export omitting a signed tail covered by the retained checkpoint', 'REWRITTEN'],
   ]) {
     const twin = await relativeFile(c, `m5-${id}-file`, `Enter the existing relative path for ${description}. The runner does not create mutation artifacts.`);
-    if (id === 'forged-key') await c.verifierRefuses(bundle, twin, checkpoint, verdict);
-    else await c.verifierRefuses(twin, key, checkpoint, verdict);
+    if (id === 'forged-key') await c.verifierRefuses(bundle, twin, checkpoint, verdict, ownerKey);
+    else await c.verifierRefuses(twin, key, checkpoint, verdict, ownerKey);
   }
   await c.witness('m5-two-canvases', 'Open Aura Coherence. Observe separate canvases labelled Organ health and Aura fingerprint. The fingerprint derives from the Aura root, never from a health cell or health snapshot.');
   c.same('m5-health-title', await c.text('m5-health-label', 'Enter the first canvas visible label.'), 'Organ health');
@@ -204,11 +205,12 @@ export async function m7(c) {
     const bundle = await relativeFile(c, `m7-${label}-bundle`, `Enter node ${label.toUpperCase()} existing cold bundle relative path.`);
     const key = await relativeFile(c, `m7-${label}-key-file`, `Enter node ${label.toUpperCase()} independently retained public signing-key file relative path.`);
     const checkpoint = await relativeFile(c, `m7-${label}-checkpoint`, `Enter node ${label.toUpperCase()} independently retained covering checkpoint relative path.`);
-    await c.verifier(bundle, key, checkpoint, 'VERIFIED', coveringHeads.get(label));
-    exports.push({ bundle, key, checkpoint });
+    const ownerKey = await relativeFile(c, `m7-${label}-owner-key`, `Enter node ${label.toUpperCase()} independently retained owner passkey public-key file relative path (uncompressed P-256 SEC1, lowercase hex).`);
+    await c.verifier(bundle, key, checkpoint, 'VERIFIED', coveringHeads.get(label), ownerKey);
+    exports.push({ bundle, key, checkpoint, ownerKey });
   }
   for (const [own, other] of [[0, 1], [1, 0]]) {
-    await c.verifierRefuses(exports[own].bundle, exports[other].key, exports[own].checkpoint, 'KEY_MISMATCH');
+    await c.verifierRefuses(exports[own].bundle, exports[other].key, exports[own].checkpoint, 'KEY_MISMATCH', exports[own].ownerKey);
   }
   await c.crossNode();
   await c.witness('m7-other-proof-refused', 'Submit node A exact owner authorization and assertion bytes to node B through its installed apply route, then repeat B to A. Observe both refusals against the actual node binding and inspect both targets. A cold verifier key mismatch alone is insufficient.');

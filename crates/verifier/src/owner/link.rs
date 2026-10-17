@@ -18,9 +18,13 @@ fn label<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
     text(field(value, name)?)
 }
 
+pub(super) fn wrapped(body: &Value) -> bool {
+    body.get("schema").is_some_and(|v| text(v) == Ok(WRAPPER))
+}
+
 fn payload(row: &Value) -> Result<&Value> {
     let body = field(row, "body")?;
-    if body.get("schema").is_some_and(|v| text(v) == Ok(WRAPPER)) {
+    if wrapped(body) {
         keys(
             body,
             &[

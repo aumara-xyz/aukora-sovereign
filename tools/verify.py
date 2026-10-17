@@ -9,6 +9,7 @@ RETAINED_HEAD_V1 = "aukora-aura-retained-head-v1"
 PRESENTED_HEAD_V1 = "aukora-aura-presented-head-v1"
 LEAF_CONVENTION = "rfc6962-leaf-sha256-0x00-prefixed-v1"
 AURA_DOMAIN = "aukora:aura-record:v1"
+AUTHORITY_WRAPPER = "aukora-aura-authority-body-v1"
 MAX_SAFE_INTEGER = (1 << 53) - 1
 MAX_INPUT = 8_388_608
 KINDS = frozenset((
@@ -27,6 +28,8 @@ class Refusal(ValueError):
         self.exact_location = exact_location
 def _require(condition, reason, sequence=None, exact=True):
     if not condition: raise Refusal("verifier:" + reason, sequence, exact)
+def _finding(code, sequence=None, exact=True):
+    return {"code": "verifier:" + code, "sequence": sequence, "exact_location": exact}
 def export_version(schema: str):
     _require(schema in (COLD_PROOF_V1, COLD_PROOF_V2), "unsupported-schema")
     return schema
@@ -508,12 +511,15 @@ def _owner_standing(rows, row):
              and grant["body"].get("epoch") == row["body"].get("epoch") and "epoch" in row["body"], "owner-proof-context")
 def _owner_payload(row):
     body = row["body"]
-    if body.get("schema") != "aukora-aura-authority-body-v1": return body
+    if body.get("schema") != AUTHORITY_WRAPPER: return body
     _require(set(body) == {"schema", "algorithm", "epoch", "sequence", "previous_hash", "payload"}
              and body["algorithm"] == "sha256" and type(body["sequence"]) is int
              and body["sequence"] == row["seq"] and body["previous_hash"] == row["prev"]
              and _size(body["epoch"]) and isinstance(body["payload"], dict), "owner-proof-context")
     return body["payload"]
+def _owner_needed(rows):
+    try: return any(_owner_required(row) for row in rows)
+    except Refusal: return True
 def _owner_required(row):
     payload = _owner_payload(row)
     return (row["kind"] == "gate.consume" and not {"standing", "standing_permission"} & set(payload)
@@ -532,7 +538,7 @@ def _owner_row(row, rows, auth, proof):
                  "owner-proof-context")
         return
     membership = "membership" in payload or isinstance(payload.get("body"), dict) and "membership" in payload["body"]
-    _require(body.get("schema") == "aukora-aura-authority-body-v1"
+    _require(body.get("schema") == AUTHORITY_WRAPPER
              and body["epoch"] == auth["epoch"] + int(row["kind"] == "aumlok.bind" and membership)
              and row["actor"] == (auth["subject"] if row["kind"] in ("aumlok.bind", "floor.advance") else "owner"), "owner-proof-context")
     proposals = [_owner_payload(prior) for prior in rows[:row["seq"] - 1]
@@ -649,7 +655,7 @@ def _nostr_binding(row, aura_key):
         _schnorr(public[role], digest, body[role + "_sig"], "nostr-" + role + "-signature")
 def _walk(rows, key):
     _require(isinstance(rows, list), "bundle-rows")
-    previous, leaves, terminals, semantic, bindings = AURA_DOMAIN, [], {}, True, 0
+    previous, leaves, terminals, found, bindings = AURA_DOMAIN, [], {}, [], 0
     for number, row in enumerate(rows, 1):
         try:
             _require(isinstance(row, dict) and set(row) == ROW_KEYS, "row-columns")
@@ -679,33 +685,32 @@ def _walk(rows, key):
         except (ValueError, TypeError, KeyError):
             raise Refusal("verifier:bundle-row-schema", number) from None
     for row in rows:
-        if row["kind"] in ("gate.consume", "gate.apply"):
+        if row["kind"] in ("gate.consume", "gate.apply") and row["body"].get("schema") != AUTHORITY_WRAPPER:
             try:
                 if "auth" in row["body"]:
                     auth = _authorization(row["body"]["auth"], current=False)
                     if "authorization_digest" in row["body"]:
                         _require(_sha(b"aukora:owner-authorization:v1\x00" + _bytes(auth))
                                  == _hex(row["body"]["authorization_digest"]), "authorization-digest")
-                    semantic = False
-                elif "authorization" in row["body"] or "receipt" in row["body"]:
-                    semantic = _gate(rows, row) and semantic
-                else:
-                    semantic = False
+                elif ("authorization" in row["body"] or "receipt" in row["body"]) and _gate(rows, row):
+                    continue  # the gate evidence binds this row to its owner authorization
+                found.append(_finding("owner-provenance", row["seq"]))
             except Refusal as error:
                 if error.sequence is None:
                     error.sequence = row["seq"]
                 raise
             except (ValueError, TypeError, KeyError):
                 raise Refusal("verifier:gate-evidence", row["seq"]) from None
-    return leaves, semantic and all(count == 1 for count in terminals.values())
-def _report(count, *, identity=False, covering=False, consistency=False, semantic=True, tree_root=True, findings=None):
-    missing = list(findings or [])
+    if any(count != 1 for count in terminals.values()): found.append(_finding("terminal-count", exact=False))
+    return leaves, found
+def _report(count, *, identity=False, covering=False, consistency=False, found=(), tree_root=True, owner=None, findings=None):
+    missing = list(found) + list(findings or [])
     for checked, code in ((identity, "identity-no-pinned-key"), (covering, "completeness-no-covering-checkpoint"),
-                          (semantic, "owner-bindings-or-terminal-count"), (tree_root, "tree-root-no-anchor")):
+                          (tree_root, "tree-root-no-anchor"), (owner is not False, "owner-signatures-unchecked")):
         if not checked:
-            missing.append({"code": "verifier:" + code, "sequence": None, "exact_location": True})
+            missing.append(_finding(code))
     return {"verdict": "VERIFIED" if not missing else "UNCHECKED", "rows": count,
-            "integrity": {"signatures": True, "chain": True, "tree_root": tree_root, "owner_bindings": semantic},
+            "integrity": {"signatures": True, "chain": True, "tree_root": tree_root, "owner_bindings": not found and owner is not False},
             "observations": {"pinned_identity": identity, "covering_checkpoint": covering, "consistency": consistency},
             "findings": missing}
 def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
@@ -715,7 +720,7 @@ def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=
         _require(_key(pinned_key) == key, "bundle-key-mismatch")
     head = _head(value["head"])
     rows = value["rows"]
-    leaves, semantic = _walk(rows, key)
+    leaves, found = _walk(rows, key)
     _require(len(rows) == head["treeSize"], "bundle-tail-size", min(len(rows), head["treeSize"]) + 1)
     _anchor(head, rows, leaves)
     covering = False
@@ -724,18 +729,12 @@ def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=
         _anchor(retained, rows, leaves)
         covering = retained["treeSize"] == len(rows)
     owner_checked = _owner_assertions(rows, assertions, owner_key)
-    findings = [] if owner_checked or assertions is None and owner_key is None else [{"code": "verifier:" + (
-        "owner-assertions-unavailable" if not assertions else "owner-no-pinned-key"),
-        "sequence": None, "exact_location": True}]
-    report = _report(len(rows), identity=pinned_key is not None, covering=covering,
-                     semantic=semantic, findings=findings)
-    report["owner_signatures"] = owner_checked
-    return report
-def _proof_result(old, new):
+    return {**_report(len(rows), identity=pinned_key is not None, covering=covering, found=found,
+                      owner=owner_checked if _owner_needed(rows) else None), "owner_signatures": owner_checked}
+def _proof_result(old, new, proof):
     m, n = old["treeSize"], new["treeSize"]
     if m > n:
         return "UNDETERMINED", "invalid-tree-sizes"
-    proof = [_hex(item) for item in new["proofFromPrevious"]]
     first, second = _hex(old["root"]), _hex(new["root"])
     if m == 0:
         return "UNDETERMINED", "missing-prior-observation"
@@ -777,19 +776,19 @@ def verify_consistency(retained: bytes, presented: bytes):
              and _size(new["treeSize"]) and new["treeSize"] > 0 and _size(new["retainedTreeSize"]) and new["retainedTreeSize"] > 0
              and isinstance(new["proofFromPrevious"], list) and len(new["proofFromPrevious"]) <= 64, "presented-format")
     _hex(new["root"])
-    if new["retainedTreeSize"] != old["treeSize"]:
-        return {"verdict": "UNDETERMINED", "retained_size": old["treeSize"], "presented_size": new["treeSize"], "reason": "verifier:retained-proof-size"}
-    verdict, reason = _proof_result(old, new)
+    proof = [_hex(item) for item in new["proofFromPrevious"]]
+    verdict, reason = (("UNDETERMINED", "retained-proof-size") if new["retainedTreeSize"] != old["treeSize"]
+                       else _proof_result(old, new, proof))
     return {"verdict": verdict, "retained_size": old["treeSize"], "presented_size": new["treeSize"], "reason": "verifier:" + reason}
 def _rows(raw):
     _require(isinstance(raw, bytes) and len(raw) <= MAX_INPUT, "input-too-large")
-    _require(bool(raw) and b"\r" not in raw, "rows-format")
+    _require(bool(raw), "rows-format")
     lines, values = raw.split(b"\n"), []
     for number, line in enumerate(lines, 1):
         try:
             _require(number < len(lines) or not line, "rows-truncated", number)
             if number < len(lines):
-                _require(bool(line), "rows-format", number)
+                _require(bool(line) and b"\r" not in line, "rows-format", number)
                 values.append(_parse(line, canonical=True))
         except Refusal as error:
             if error.sequence is None: error.sequence = number
@@ -799,7 +798,7 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
                  presented=None, retained_rows=None, checkpoint=None):
     values, malformed = _rows(rows)
     key = _key(pinned_key)
-    leaves, semantic = _walk(values, key)
+    leaves, found = _walk(values, key)
     if malformed: raise malformed
     findings, consistent, covering, anchored = [], False, False, False
     if retained_rows is not None:
@@ -827,7 +826,8 @@ def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
         _anchor(kept, values, leaves)
         covering = covering or kept["treeSize"] == len(values)
         anchored = anchored or kept["treeSize"] == len(values)
-    return _report(len(values), identity=True, covering=covering, consistency=consistent, semantic=semantic, tree_root=anchored, findings=findings)
+    return _report(len(values), identity=True, covering=covering, consistency=consistent, found=found, tree_root=anchored,
+                    owner=False if _owner_needed(values) else None, findings=findings)
 def _event_value(raw):
     _require(len(raw) <= 65_536, "witness-malformed")
     event = _parse(raw)
@@ -912,7 +912,7 @@ def _read(path, limit=MAX_INPUT):
 def _render(report):
     print(report["verdict"] + " rows=1.." + str(report["rows"]))
     for finding in report["findings"]:
-        print("UNCHECKED " + finding["code"])
+        print("UNCHECKED " + ("" if finding["sequence"] is None else "seq=" + str(finding["sequence"]) + " ") + finding["code"])
     if "witness" in report:
         print("WITNESS verified prefix=" + str(report["witness"]["prefix"]) + " proof=" + str(report["witness"]["proof"]))
     print("PASSKEY " + ("VERIFIED C5 owner approval signatures against independently pinned credential key"
@@ -994,6 +994,6 @@ def main(arguments):
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         print("UNCHECKED verifier:malformed-or-unreadable")
         return 64
-__all__ = ('COLD_PROOF_V1', 'COLD_PROOF_V2', 'RETAINED_HEAD_V1', 'PRESENTED_HEAD_V1', 'LEAF_CONVENTION', 'AURA_DOMAIN', 'MAX_SAFE_INTEGER', 'MAX_INPUT', 'KINDS', 'ROW_KEYS', 'Refusal', '_require', 'export_version', '_cold', '_owner_key', '_standard', '_client_data', '_owner_assertion', '_owner_assertions', '_owner_standing', '_owner_payload', '_owner_required', '_owner_row', '_owner_bind', '_owner_epoch', '_integer', '_forbidden_number', '_object', '_validate', '_canonical', '_bytes', '_same', '_parse', '_hex', '_size', '_sha', '_node', '_root', '_checked_key', '_key', '_ed25519', '_schnorr', '_head', '_anchor', '_reference', '_authorization', '_card', '_consume', '_permission', '_standing', '_gate', '_npub', '_nostr_binding', '_walk', '_report', 'verify_bundle', '_proof_result', 'verify_consistency', '_rows', 'verify_chain', '_event_value', '_event', 'verify_witness', '_read', '_render', '_failure', '_Arguments', 'main')
+__all__ = ('COLD_PROOF_V1', 'COLD_PROOF_V2', 'RETAINED_HEAD_V1', 'PRESENTED_HEAD_V1', 'LEAF_CONVENTION', 'AURA_DOMAIN', 'AUTHORITY_WRAPPER', 'MAX_SAFE_INTEGER', 'MAX_INPUT', 'KINDS', 'ROW_KEYS', 'Refusal', '_require', '_finding', 'export_version', '_cold', '_owner_key', '_standard', '_client_data', '_owner_assertion', '_owner_assertions', '_owner_standing', '_owner_payload', '_owner_needed', '_owner_required', '_owner_row', '_owner_bind', '_owner_epoch', '_integer', '_forbidden_number', '_object', '_validate', '_canonical', '_bytes', '_same', '_parse', '_hex', '_size', '_sha', '_node', '_root', '_checked_key', '_key', '_ed25519', '_schnorr', '_head', '_anchor', '_reference', '_authorization', '_card', '_consume', '_permission', '_standing', '_gate', '_npub', '_nostr_binding', '_walk', '_report', 'verify_bundle', '_proof_result', 'verify_consistency', '_rows', 'verify_chain', '_event_value', '_event', 'verify_witness', '_read', '_render', '_failure', '_Arguments', 'main')
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

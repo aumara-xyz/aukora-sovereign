@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 from .common import (
     AURA_DOMAIN,
+    AUTHORITY_WRAPPER,
     KINDS,
     LEAF_CONVENTION,
     RETAINED_HEAD_V1,
@@ -8,6 +9,7 @@ from .common import (
     Refusal,
     _bytes,
     _ed25519,
+    _finding,
     _hex,
     _require,
     _root,
@@ -67,7 +69,7 @@ def _nostr_binding(row, aura_key):
         _schnorr(public[role], digest, body[role + "_sig"], "nostr-" + role + "-signature")
 def _walk(rows, key):
     _require(isinstance(rows, list), "bundle-rows")
-    previous, leaves, terminals, semantic, bindings = AURA_DOMAIN, [], {}, True, 0
+    previous, leaves, terminals, found, bindings = AURA_DOMAIN, [], {}, [], 0
     for number, row in enumerate(rows, 1):
         try:
             _require(isinstance(row, dict) and set(row) == ROW_KEYS, "row-columns")
@@ -97,22 +99,22 @@ def _walk(rows, key):
         except (ValueError, TypeError, KeyError):
             raise Refusal("verifier:bundle-row-schema", number) from None
     for row in rows:
-        if row["kind"] in ("gate.consume", "gate.apply"):
+        # A wrapped body is held against the retained owner assertions (the owner path), never decided from the row alone.
+        if row["kind"] in ("gate.consume", "gate.apply") and row["body"].get("schema") != AUTHORITY_WRAPPER:
             try:
                 if "auth" in row["body"]:
                     auth = _authorization(row["body"]["auth"], current=False)
                     if "authorization_digest" in row["body"]:
                         _require(_sha(b"aukora:owner-authorization:v1\x00" + _bytes(auth))
                                  == _hex(row["body"]["authorization_digest"]), "authorization-digest")
-                    semantic = False
-                elif "authorization" in row["body"] or "receipt" in row["body"]:
-                    semantic = _gate(rows, row) and semantic
-                else:
-                    semantic = False
+                elif ("authorization" in row["body"] or "receipt" in row["body"]) and _gate(rows, row):
+                    continue  # the gate evidence binds this row to its owner authorization
+                found.append(_finding("owner-provenance", row["seq"]))
             except Refusal as error:
                 if error.sequence is None:
                     error.sequence = row["seq"]
                 raise
             except (ValueError, TypeError, KeyError):
                 raise Refusal("verifier:gate-evidence", row["seq"]) from None
-    return leaves, semantic and all(count == 1 for count in terminals.values())
+    if any(count != 1 for count in terminals.values()): found.append(_finding("terminal-count", exact=False))
+    return leaves, found

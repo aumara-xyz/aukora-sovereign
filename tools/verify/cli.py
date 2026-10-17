@@ -35,7 +35,7 @@ def _read(path, limit=MAX_INPUT):
 def _render(report):
     print(report["verdict"] + " rows=1.." + str(report["rows"]))
     for finding in report["findings"]:
-        print("UNCHECKED " + finding["code"])
+        print("UNCHECKED " + ("" if finding["sequence"] is None else "seq=" + str(finding["sequence"]) + " ") + finding["code"])
     if "witness" in report:
         print("WITNESS verified prefix=" + str(report["witness"]["prefix"]) + " proof=" + str(report["witness"]["proof"]))
     print("PASSKEY " + ("VERIFIED C5 owner approval signatures against independently pinned credential key"

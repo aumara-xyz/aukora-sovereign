@@ -3,6 +3,7 @@ import base64
 import binascii
 import json
 from .common import (
+    AUTHORITY_WRAPPER,
     MAX_SAFE_INTEGER,
     Refusal,
     _bytes,
@@ -158,12 +159,16 @@ def _owner_standing(rows, row):
              and grant["body"].get("epoch") == row["body"].get("epoch") and "epoch" in row["body"], "owner-proof-context")
 def _owner_payload(row):
     body = row["body"]
-    if body.get("schema") != "aukora-aura-authority-body-v1": return body
+    if body.get("schema") != AUTHORITY_WRAPPER: return body
     _require(set(body) == {"schema", "algorithm", "epoch", "sequence", "previous_hash", "payload"}
              and body["algorithm"] == "sha256" and type(body["sequence"]) is int
              and body["sequence"] == row["seq"] and body["previous_hash"] == row["prev"]
              and _size(body["epoch"]) and isinstance(body["payload"], dict), "owner-proof-context")
     return body["payload"]
+# Whether any row needs a retained owner assertion; a row that cannot be read as one is held to the stricter answer.
+def _owner_needed(rows):
+    try: return any(_owner_required(row) for row in rows)
+    except Refusal: return True
 def _owner_required(row):
     payload = _owner_payload(row)
     return (row["kind"] == "gate.consume" and not {"standing", "standing_permission"} & set(payload)
@@ -182,7 +187,7 @@ def _owner_row(row, rows, auth, proof):
                  "owner-proof-context")
         return
     membership = "membership" in payload or isinstance(payload.get("body"), dict) and "membership" in payload["body"]
-    _require(body.get("schema") == "aukora-aura-authority-body-v1"
+    _require(body.get("schema") == AUTHORITY_WRAPPER
              and body["epoch"] == auth["epoch"] + int(row["kind"] == "aumlok.bind" and membership)
              and row["actor"] == (auth["subject"] if row["kind"] in ("aumlok.bind", "floor.advance") else "owner"), "owner-proof-context")
     proposals = [_owner_payload(prior) for prior in rows[:row["seq"] - 1]

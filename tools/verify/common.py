@@ -11,6 +11,7 @@ RETAINED_HEAD_V1 = "aukora-aura-retained-head-v1"
 PRESENTED_HEAD_V1 = "aukora-aura-presented-head-v1"
 LEAF_CONVENTION = "rfc6962-leaf-sha256-0x00-prefixed-v1"
 AURA_DOMAIN = "aukora:aura-record:v1"
+AUTHORITY_WRAPPER = "aukora-aura-authority-body-v1"
 MAX_SAFE_INTEGER = (1 << 53) - 1
 MAX_INPUT = 8_388_608
 KINDS = frozenset((
@@ -29,6 +30,8 @@ class Refusal(ValueError):
         self.exact_location = exact_location
 def _require(condition, reason, sequence=None, exact=True):
     if not condition: raise Refusal("verifier:" + reason, sequence, exact)
+def _finding(code, sequence=None, exact=True):
+    return {"code": "verifier:" + code, "sequence": sequence, "exact_location": exact}
 def export_version(schema: str):
     _require(schema in (COLD_PROOF_V1, COLD_PROOF_V2), "unsupported-schema")
     return schema

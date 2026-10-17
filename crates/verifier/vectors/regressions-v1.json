@@ -258,6 +258,14 @@
       "fixture": "aura-4",
       "edits": [{"op": "sign_hash", "pointer": "/rows/1", "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}, {"op": "row_bytes_replace", "row": 4, "utf8": "{"}],
       "expected": {"verdict": "FORGED", "exit": 2, "sequence": 2, "exact_location": true, "codes": ["verifier:signature"]}
+    },
+    {
+      "id": "earlier-forgery-not-hidden-by-trailing-crlf",
+      "mode": "chain",
+      "fixture": "aura-4",
+      "edits": [{"op": "sign_hash", "pointer": "/rows/0", "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}],
+      "raw_edits": [{"op": "suffix_document", "utf8": "\r\n"}],
+      "expected": {"verdict": "FORGED", "exit": 2, "sequence": 1, "exact_location": true, "codes": ["verifier:signature"]}
     }
   ]
 }

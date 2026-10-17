@@ -21,6 +21,18 @@ use canon::{
 pub const COLD_PROOF_V2: &str = "aukora-aura-cold-proof-v2";
 
 mod link;
+#[cfg(test)]
+mod tests;
+
+/// Whether a row needs a retained owner assertion; a row that cannot be read as one is held to the stricter answer.
+pub(crate) fn required_row(row: &Value) -> Result<bool> {
+    link::required(row)
+}
+
+/// An authority-wrapped body: the operation lives in its payload, so the row alone cannot say who authorized it.
+pub(crate) fn wrapped(body: &Value) -> bool {
+    link::wrapped(body)
+}
 
 pub(crate) fn check(value: &Value, pinned: Option<&[u8]>, report: &mut crate::VerificationReport) {
     if let Err(code) = check_all(value, pinned, report) {
@@ -37,6 +49,7 @@ pub(crate) fn check(value: &Value, pinned: Option<&[u8]>, report: &mut crate::Ve
             false,
         );
     }
+    report.finish_owner();
 }
 
 fn check_all(
@@ -46,15 +59,8 @@ fn check_all(
 ) -> Result<()> {
     let pin = pinned.map(pin).transpose()?;
     let (proof, entries) = unpack(value)?;
+    // A v1 export carries no assertions, so nothing is checked here and the report says so (`finish_owner`).
     let Some(entries) = entries else {
-        if pin.is_some() {
-            report.finding(
-                crate::Verdict::Unchecked,
-                refusal("owner-assertions-unavailable"),
-                None,
-                false,
-            );
-        }
         return Ok(());
     };
     let rows = array(field(proof, "rows")?)?;
@@ -123,22 +129,11 @@ fn check_all(
         credentials.insert(credential, credential_key);
     }
     require(seen == required)?;
-    if entries.is_empty() {
-        report.finding(
-            crate::Verdict::Unchecked,
-            refusal("owner-assertions-unavailable"),
-            None,
-            false,
-        );
-    } else if pin.is_none() {
-        report.finding(
-            crate::Verdict::Unchecked,
-            refusal("owner-no-pinned-key"),
-            None,
-            false,
-        );
-    } else if report.integrity().chain == crate::Scope::Checked
-        && report.integrity().signatures == crate::Scope::Checked
+    // Without a pin the assertions only agree with their own keys, which says nothing about the owner.
+    if pin.is_some()
+        && !entries.is_empty()
+        && report.walked().chain == crate::Scope::Checked
+        && report.walked().signatures == crate::Scope::Checked
     {
         report.owner_signatures_checked();
     }

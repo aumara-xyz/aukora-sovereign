@@ -89,7 +89,9 @@ pub fn verify_bundle_with_owner_pin(
 
 /// Verifies contiguous signed rows and supplied independent observations.
 pub fn verify_chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
-    chain(inputs)
+    let mut report = chain(inputs)?;
+    report.finish_owner();
+    Ok(report)
 }
 
 /// Verifies a detached signed Nostr observation bound by the exported ledger.
@@ -328,11 +330,11 @@ fn bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
             false,
         );
     } else {
-        let mut integrity = report.integrity();
+        let mut integrity = report.walked();
         integrity.tree_root = Scope::Checked;
         report.scopes(integrity, report.observations());
     }
-    report.scopes(report.integrity(), report.observations());
+    report.scopes(report.walked(), report.observations());
     Ok(report)
 }
 
@@ -403,6 +405,9 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
             break;
         }
         let kind = text(field(&row.value, "kind")?)?;
+        if owner::required_row(&row.value).unwrap_or(true) {
+            report.require_owner_signatures();
+        }
         if kind == "nostr.bind" {
             binding_count += 1;
             let check = if binding_count > 1 {
