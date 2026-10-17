@@ -28,6 +28,10 @@ impl Identity {
     }
 }
 
+/// A held lock is tried again this often, this far apart (about one second in all), before `floor:locked`.
+const LOCK_ATTEMPTS: u32 = 40;
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(25);
+
 pub(crate) struct Store {
     path: PathBuf,
     directory: File,
@@ -41,7 +45,17 @@ impl Store {
         let handle = directory_handle(directory)?;
         let directory_identity = Identity::of(&metadata(&handle)?);
         let lock = open_lock(&handle)?;
-        fs::flock(&lock, FlockOperation::NonBlockingLockExclusive).map_err(|_| refuse("locked"))?;
+        // Another reader (the engine controller's tick, a request's release check, an approval) holds the lock for
+        // milliseconds: wait for it briefly instead of refusing at once (NODE.md O11; found live: an owner's release
+        // approval answered floor:locked). Still bounded, still refused if it stays held.
+        let mut attempts = 0;
+        while fs::flock(&lock, FlockOperation::NonBlockingLockExclusive).is_err() {
+            attempts += 1;
+            if attempts >= LOCK_ATTEMPTS {
+                return Err(refuse("locked"));
+            }
+            std::thread::sleep(LOCK_WAIT);
+        }
         let lock_identity = Identity::of(&metadata(&lock)?);
         let store = Self {
             path: directory.to_path_buf(),
