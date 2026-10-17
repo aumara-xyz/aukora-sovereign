@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Host composition for the deployed supervisor entry point.
 
+mod door_routes;
 mod engine_routes;
 pub use engine_routes::ReleaseStanding;
 mod owner_gate;

@@ -124,6 +124,10 @@ impl Host {
             "/engine/model-key" if get => Some(self.model_key_page()),
             "/api/engine/model-key" => Some(self.model_key_entry(request)),
             "/api/session/end" => Some(self.shell_sign_out(request)),
+            // The door's taint, for the owner (door_routes.rs).
+            "/engine/door" if get => Some(self.door_page()),
+            "/api/engine/door" if get => Some(self.door_status(request)),
+            "/api/engine/door/clear-taint" => Some(self.door_clear_taint(request)),
             _ => None,
         }
     }

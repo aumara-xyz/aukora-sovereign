@@ -292,6 +292,12 @@ fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
             Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
         };
     }
+    // The door's taint (crates/supervisor/DOOR.md, "Taint"): the bound owner reads it and clears it from the shell; the
+    // supervisor requires the bound shell session. The engine origin is another host and never reaches these.
+    if role == HostRole::Shell && (path == "/api/engine/door" || path == "/api/engine/door/clear-taint") {
+        let expected = if path == "/api/engine/door" { Method::Get } else { Method::Post };
+        return if method == expected { Ok(()) } else { Err(codes::FRONTDOOR_UNKNOWN_ROUTE) };
+    }
     if role == HostRole::Shell && path == crate::api::service_reads::PATH {
         return crate::api::service_reads::resolve(role, method, path);
     }
@@ -774,5 +780,14 @@ mod route_tests {
         assert!(require_route(HostRole::Shell, Method::Post, "/api/session/end").is_ok());
         assert!(require_route(HostRole::Shell, Method::Get, "/api/session/end").is_err());
         assert!(require_route(HostRole::Owner, Method::Post, "/api/session/end").is_err());
+    }
+
+    #[test]
+    fn the_shell_reads_the_doors_taint_by_get_and_clears_it_by_post_only() {
+        assert!(require_route(HostRole::Shell, Method::Get, "/api/engine/door").is_ok());
+        assert!(require_route(HostRole::Shell, Method::Post, "/api/engine/door").is_err());
+        assert!(require_route(HostRole::Shell, Method::Post, "/api/engine/door/clear-taint").is_ok());
+        assert!(require_route(HostRole::Shell, Method::Get, "/api/engine/door/clear-taint").is_err());
+        assert!(require_route(HostRole::Owner, Method::Post, "/api/engine/door/clear-taint").is_err());
     }
 }

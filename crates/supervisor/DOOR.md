@@ -75,6 +75,35 @@ file).
 
 Every error is a refusal, and a refusal says nothing ran.
 
+## Taint: fetched content is sticky (2026-10-18)
+
+Once fetched content has reached the engine, the crossings that could carry it on ask the owner, whatever the slider
+and the grants would clear (Auma's review R2, "fetched content becomes instruction"). `src/door/taint.rs`:
+
+- **Set by** any `net` result that reached the engine, and any memory read whose result carries a `web-derived` note.
+  The record (`taint.json` in the state folder: first cause, first time) is written and synced *before* the result is
+  released; if it cannot be, the result is withheld (`door-state`). An unreadable record counts as tainted.
+- **While tainted**, every `net` call and every memory write (`kira_remember`, `kira_supersede`) is an `ask`, even
+  where the policy says `allow` or a grant would clear it; such a call spends no grant count. The door's own checks
+  still come first (a host off the allowlist is refused, never asked about). Reads (`kira_recall`, `kira_get`,
+  `kira_list_recent`) are not held.
+- **Always**, tainted or not: a memory write the engine itself labels `capture: "web-derived"` asks.
+- **Sticky, not per turn.** A turn boundary clears nothing (Argon, ARGON-LIVE-3 RT-1..RT-3: the page stays in the
+  session's history, children do not inherit a per-agent flag, an async child's result lands in the parent's next
+  turn). The door cannot see sessions or agents: only the engine says which one a call belongs to, and an
+  engine-written key could only be used to escape (claim a fresh session). So the door's taint covers the whole
+  engine, every session and child of it: the strict superset of per-session. It survives restarts (the harness keeps
+  its sessions on disk).
+- **Cleared only by the owner**: `POST /api/engine/door/clear-taint` from the bound owner's shell session; the page is
+  `https://<shell>/engine/door` (state, cause, since when, one button). Nothing the engine can send clears it.
+- **The shared rule with `@aukora/kira`.** The plugin's memory taint is the in-engine half and is session-sticky the
+  same way (a tainted session must label its writes `web-derived`); the door's is the half a hostile engine cannot
+  skip. Together: once untrusted content is in, nothing it says leaves by `net` or lands in memory without a card, and a
+  write that admits it came from the web always takes a card.
+- **Cost.** After the first fetch, each further fetch and each memory write is a card until the owner clears the
+  taint; a docs-heavy session pays one card per page. That is the price of R2; the grants still clear reads, and
+  everything before the first fetch.
+
 ## Policy file
 
 JSON, at most 64 KiB, a regular file owned by the door's user or root that is not group- or world-writable, opened

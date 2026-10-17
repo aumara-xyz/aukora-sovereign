@@ -532,3 +532,8 @@ spinners: worst 18 ms / slice 61 ms; `/work` filled to 30G 100% (`No space left 
 usability half: 20 real no-dep Rust projects (`cargo build --offline && cargo test --offline && ./target/debug/pN`)
 inside the capped sandbox 20/20, median 281 ms, against 214 ms as auma on the host: 1.31x (bar 1.5x; the wall test
 had 293/228). `wall-check.sh`: `wall ok`.
+
+**P4. Door-level taint (R2), sticky.** After any `net` result (or a memory read carrying a `web-derived` note), the
+engine's next `net` calls and memory writes ask, whatever the slider and grants say, until the owner clears it at
+`https://<shell>/engine/door`; a `web-derived` write always asks. Per session, not per turn (Argon RT-1..RT-3), and
+since the door cannot tell sessions apart without trusting the engine, per engine: crates/supervisor/DOOR.md, "Taint".

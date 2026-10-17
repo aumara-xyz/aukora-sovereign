@@ -18,6 +18,7 @@ mod memory;
 mod peer;
 mod policy;
 mod standing;
+mod taint;
 mod wire;
 
 use approver::{Approval, ApprovalLog, Approver, AskRecord, GateApprover};
@@ -100,6 +101,8 @@ pub struct Door {
     token_check_every: Duration,
     /// The slider and standing grants, when the policy has a `standing` section (`standing.rs`).
     standing: Option<standing::Standing>,
+    /// Fetched content reached the engine: its next net calls and memory writes ask (`taint.rs`).
+    taint: taint::Taint,
 }
 
 /// The approver, the door's durable memory of what it has asked, and the lock that keeps one ask at a time.
@@ -132,7 +135,8 @@ impl Door {
             .map_err(|_| refuse("door-state"))?;
         let bucket = Bucket::new(policy.rate_per_second, policy.rate_burst);
         let standing = policy.standing.as_ref().map(|files| standing::Standing::open(files, &policy.state_dir)).transpose()?;
-        Ok(Door { policy, ledger, asks, owner, bucket, runtime, active: AtomicUsize::new(0), memory_checked: Mutex::new(None), token_check_every: TOKEN_CHECK_EVERY, standing })
+        let taint = taint::Taint::new(&policy.state_dir);
+        Ok(Door { policy, ledger, asks, owner, bucket, runtime, active: AtomicUsize::new(0), memory_checked: Mutex::new(None), token_check_every: TOKEN_CHECK_EVERY, standing, taint })
     }
 
     fn peer_allowed(&self, peer: Peer) -> bool {
@@ -169,10 +173,20 @@ impl Door {
             Ok(false) => return (id, Decision::Deny("replay".into())),
             Err(_) => return (id, Decision::Deny("door-state".into())),
         }
-        // With a slider, a policy allow or ask is decided per call; a call the door would refuse anyway is refused here.
-        let action = match self.settle(class, &request, action) {
-            Ok(action) => action,
-            Err(code) => return (id, Decision::Deny(code)),
+        // A tainted engine's net calls and memory writes, and every web-derived write, ask whatever the slider says
+        // (taint.rs); they never spend a grant's count. Otherwise, with a slider, a policy allow or ask is decided per
+        // call; a call the door would refuse anyway is refused here.
+        let action = if self.taint_asks(class, &request) {
+            // Never an ask about a call the door would refuse anyway (a host off the allowlist stays a refusal).
+            if let Err(code) = self.preflight(class, &request) {
+                return (id, Decision::Deny(code));
+            }
+            Action::Ask
+        } else {
+            match self.settle(class, &request, action) {
+                Ok(action) => action,
+                Err(code) => return (id, Decision::Deny(code)),
+            }
         };
         let decision = match action {
             Action::Ask => self.ask(class, &request),
@@ -276,7 +290,11 @@ impl Door {
         match class {
             Class::Net => self.execute_net(request),
             Class::Memory => match &self.policy.memory {
-                Some(memory) => match memory::preflight(&request.tool, &request.args).and_then(|_| self.memory_token_ok(memory)).and_then(|()| memory::forward(memory, &request.tool, &request.args)) {
+                Some(memory) => match memory::preflight(&request.tool, &request.args)
+                    .and_then(|_| self.memory_token_ok(memory))
+                    .and_then(|()| memory::forward(memory, &request.tool, &request.args))
+                    .and_then(|value| self.taint_after(Class::Memory, request, &value).map(|()| value))
+                {
                     Ok(value) => Decision::Allow { value, text: None },
                     Err(code) => Decision::Deny(code),
                 },
@@ -317,7 +335,8 @@ impl Door {
         };
         // The whole reply line must fit what the plugin accepts, so a full-size page is cut here, not refused after it ran.
         let reply_limit = self.policy.max_frame_bytes.saturating_sub(2048);
-        match self.runtime.block_on(fetch::fetch(net, url, reply_limit)) {
+        // The page reaches the engine only once the taint it brings is durable.
+        match self.runtime.block_on(fetch::fetch(net, url, reply_limit)).and_then(|value| self.taint_after(Class::Net, request, &value).map(|()| value)) {
             Ok(value) => Decision::Allow { value, text: None },
             Err(code) => Decision::Deny(code),
         }
@@ -529,6 +548,28 @@ pub fn start_in_node(config: &crate::config::NodeConfig, ledger: Arc<crate::adap
     if spawned.is_err() {
         log(refuse("door-state"));
     }
+}
+
+/// Where the in-node door keeps its taint (`taint.rs`), for the owner's page: `None` when the node has no door.
+fn node_taint(config: &crate::config::NodeConfig) -> Result<Option<taint::Taint>> {
+    let Some(text) = config.door_policy_text()? else { return Ok(None) };
+    Ok(Some(taint::Taint::new(&Policy::parse(&text)?.state_dir)))
+}
+
+/// The engine's taint as the owner sees it: `Some((since_ms, cause))` while fetched content holds its net calls and
+/// memory writes to a card each, `None` when clean. `Err` when the node has no door.
+pub fn taint_status(config: &crate::config::NodeConfig) -> Result<Option<(i64, String)>> {
+    match node_taint(config)?.ok_or_else(|| refuse("door-not-configured"))?.state() {
+        taint::State::Clean => Ok(None),
+        taint::State::Tainted { since_ms, cause } => Ok(Some((since_ms, cause))),
+    }
+}
+
+/// The owner's action that ends the taint (`POST /api/engine/door/clear-taint`). Returns whether it was tainted.
+pub fn clear_taint(config: &crate::config::NodeConfig) -> Result<bool> {
+    let cleared = node_taint(config)?.ok_or_else(|| refuse("door-not-configured"))?.clear()?;
+    eprintln!("door: the owner cleared the engine's taint (was tainted: {cleared})");
+    Ok(cleared)
 }
 
 /// Whether the door would start on this policy text (the engine controller treats anything else as no door).
