@@ -92,14 +92,17 @@ def pin_door_hosts(plan, node):
     door host is already pinned."""
     import egress  # noqa: E402
     hosts = door_hosts()
-    current = core.validate_policy(plan.state.get("egress.json").encode("utf-8"))
+    # The node's own policy decides what is pinned (the operator's copy can lag a failed run); the new epoch is past
+    # both, so the node never takes it for a replay.
+    current = core.validate_policy(node.run(["cat", "--", "/etc/aukora/egress.json"]).stdout)
+    known = core.validate_policy(plan.state.get("egress.json").encode("utf-8"))
     pinned = {rule["host"] for rule in current["providers"] if rule["port"] == egress.PORT}
     if all(host in pinned for host in hosts):
         return False
     names = {host: name for name, host in egress.PROVIDERS.items()}
     providers = [names[rule["host"]] for rule in current["providers"] if rule["host"] in names]
-    policy = egress.build(current["epoch"] + 1, [rule["url"] for rule in current["relays"]], providers,
-                          egress.pinned_hosts(current) + hosts)
+    policy = egress.build(max(current["epoch"], known["epoch"]) + 1, [rule["url"] for rule in current["relays"]],
+                          providers, egress.pinned_hosts(current) + hosts)
     plan.state.put("egress.json", policy.decode("utf-8"))  # a retry then uses the next epoch, never this one
     scratch = tempfile.mkdtemp(prefix="aukora-egress-")
     try:
