@@ -44,7 +44,7 @@ def _render(report):
     return 0 if report["verdict"] == "VERIFIED" else 1
 def _failure(error):
     if error.code in ("verifier:bundle-key-mismatch", "verifier:owner-key-mismatch", "verifier:owner-signature"):
-        print("FORGED " + error.code)
+        print(("FORGED " if error.code == "verifier:owner-signature" else "KEY_MISMATCH ") + error.code)
         return 2
     if error.sequence is not None and error.code in {"verifier:signature", "verifier:nostr-node-signature", "verifier:nostr-agent-signature"}:
         print("FORGED seq=" + str(error.sequence) + " " + error.code)
@@ -53,7 +53,11 @@ def _failure(error):
                "bundle-tail-size", "retained-row-mismatch", "consistency-prefix-mismatch", "presented-head-mismatch", "witness-fork",
                "gate-evidence", "gate-reference", "authorization-digest", "cell-effect", "standing-permission",
                "standing-reference", "standing-owner", "standing-revoked", "standing-scope", "standing-expired", "standing-count"}
-    if error.code.removeprefix("verifier:") in changes:
+    # A row that cannot be admitted is evidence about that row (REWRITTEN at its position, exit 2), not a bad invocation:
+    # these three are raised with a row position by the row walk and without one by head admission (exit 64 there).
+    located = {"row-columns", "bundle-row-schema", "bad-digest"}
+    name = error.code.removeprefix("verifier:")
+    if name in changes or (error.sequence is not None and name in located):
         location = "" if error.sequence is None else " seq=" + str(error.sequence)
         print("REWRITTEN" + location + " " + error.code)
         if error.sequence is not None:

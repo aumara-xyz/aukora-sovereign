@@ -137,6 +137,7 @@
       "id": "claimed-key-substitution",
       "mode": "bundle",
       "fixture": "aura-4",
+      "pinned_key": null,
       "edits": [{"op": "derive_public_key", "pointer": "/publicKey", "signing_seed_hex": "0808080808080808080808080808080808080808080808080808080808080808"}],
       "expected": {"verdict": "FORGED", "exit": 2, "sequence": 1, "exact_location": true, "codes": ["verifier:signature"]}
     },
@@ -249,7 +250,7 @@
       "mode": "bundle",
       "fixture": "aura-4",
       "edits": [{"op": "replace", "pointer": "/rows/0/actor", "value": 2}],
-      "expected": {"verdict": "INVALID_INPUT", "exit": 64, "sequence": 1, "codes": ["verifier:bundle-row-schema"]}
+      "expected": {"verdict": "REWRITTEN", "exit": 2, "sequence": 1, "exact_location": true, "codes": ["verifier:bundle-row-schema"]}
     },
     {
       "id": "earlier-forgery-not-hidden-by-later-malformed-row",

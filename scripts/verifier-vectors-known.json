@@ -1,43 +1,4 @@
 {
- "python": {
-  "admission-regressions-v1:positive-size-fields-reject-wrong-types-and-bounds:presented/treeSize=0": "expected refusal, exit 1",
-  "consistency-regressions-v1:declared-earlier-size-disagrees-with-retained": "exit 64, no report ()"
- },
- "rust": {
-  "admission-regressions-v1:all-row-locations-retain-one-based-position:0": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:all-row-locations-retain-one-based-position:1": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:all-row-locations-retain-one-based-position:2": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:all-row-locations-retain-one-based-position:3": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-actor-int": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:text'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-at-NoneType": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:row-schema'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-body-NoneType": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:row-schema'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-body-list": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:row-schema'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-body-str": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:row-schema'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-digest-nonhex": "exit 64 != 2; verdict None != REWRITTEN; codes ['verifier:bad-digest'] not in 'verifier:hex'",
-  "admission-regressions-v1:third-row-digest-short": "exit 64 != 2; verdict None != REWRITTEN; codes ['verifier:bad-digest'] not in 'verifier:hex'",
-  "admission-regressions-v1:third-row-digest-uppercase": "exit 64 != 2; verdict None != REWRITTEN; codes ['verifier:bad-digest'] not in 'verifier:hex'",
-  "admission-regressions-v1:third-row-duplicate-sequence": "codes ['verifier:sequence', 'verifier:entry-hash'] != ['verifier:sequence']",
-  "admission-regressions-v1:third-row-gap-sequence": "codes ['verifier:sequence', 'verifier:entry-hash'] != ['verifier:sequence']",
-  "admission-regressions-v1:third-row-kind-int": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:text'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-kind-unknown": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:row-schema'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-missing-actor": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-at": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-body": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-hash": "exit 64 != 2; verdict None != REWRITTEN; codes ['verifier:row-columns'] not in 'verifier:missing-field'",
-  "admission-regressions-v1:third-row-missing-kind": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-op": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-phase": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-prev": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-seq": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-missing-sig": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:keys'] != ['verifier:row-columns']",
-  "admission-regressions-v1:third-row-op-NoneType": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:text'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-phase-list": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:text'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-phase-unknown": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:row-schema'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-prev-int": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:text'] != ['verifier:bundle-row-schema']",
-  "admission-regressions-v1:third-row-sig-int": "exit 64 != 2; verdict INVALID_INPUT != REWRITTEN; codes ['verifier:text'] != ['verifier:bundle-row-schema']",
-  "regressions-v1:dropped-tail-with-original-embedded-head": "codes ['verifier:shorter-than-checkpoint', 'verifier:completeness-no-covering-checkpoint', 'verifier:bundle-tail-size'] != ['verifier:bundle-tail-size']",
-  "regressions-v1:embedded-claims-never-independent": "codes ['verifier:completeness-no-covering-checkpoint', 'verifier:identity-no-pinned-key'] != ['verifier:identity-no-pinned-key', 'verifier:completeness-no-covering-checkpoint']",
-  "regressions-v1:extra-v1-bundle-key": "codes ['verifier:bundle-format'] not in 'verifier:keys'",
-  "regressions-v1:malformed-row-shape": "codes ['verifier:text'] != ['verifier:bundle-row-schema']"
- }
+ "python": {},
+ "rust": {}
 }

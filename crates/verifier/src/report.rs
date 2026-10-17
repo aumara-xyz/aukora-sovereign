@@ -144,6 +144,14 @@ impl VerificationReport {
         }
     }
 
+    /// Whether a finding already says the supplied bytes are not what they claim to be.
+    pub(crate) fn failed(&self) -> bool {
+        matches!(
+            self.verdict,
+            Verdict::Rewritten | Verdict::Forged | Verdict::KeyMismatch | Verdict::InvalidInput
+        )
+    }
+
     pub(crate) fn scopes(&mut self, mut integrity: IntegrityScope, observations: ObservationScope) {
         if self.findings.iter().any(|finding| {
             finding.code.organ == "verifier"

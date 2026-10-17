@@ -774,34 +774,37 @@ def verify_consistency(retained: bytes, presented: bytes):
     old, new = _head(_parse(retained)), _parse(presented)
     _require(isinstance(new, dict) and set(new) == {"schema", "leafConvention", "treeSize", "root", "retainedTreeSize", "proofFromPrevious"}
              and new["schema"] == PRESENTED_HEAD_V1 and new["leafConvention"] == LEAF_CONVENTION
-             and _size(new["treeSize"]) and type(new["retainedTreeSize"]) is int
-             and new["retainedTreeSize"] == old["treeSize"] and isinstance(new["proofFromPrevious"], list)
-             and len(new["proofFromPrevious"]) <= 64, "presented-format")
+             and _size(new["treeSize"]) and new["treeSize"] > 0 and _size(new["retainedTreeSize"]) and new["retainedTreeSize"] > 0
+             and isinstance(new["proofFromPrevious"], list) and len(new["proofFromPrevious"]) <= 64, "presented-format")
     _hex(new["root"])
+    if new["retainedTreeSize"] != old["treeSize"]:
+        return {"verdict": "UNDETERMINED", "retained_size": old["treeSize"], "presented_size": new["treeSize"], "reason": "verifier:retained-proof-size"}
     verdict, reason = _proof_result(old, new)
     return {"verdict": verdict, "retained_size": old["treeSize"], "presented_size": new["treeSize"], "reason": "verifier:" + reason}
 def _rows(raw):
     _require(isinstance(raw, bytes) and len(raw) <= MAX_INPUT, "input-too-large")
     _require(bool(raw) and b"\r" not in raw, "rows-format")
-    _require(raw.endswith(b"\n"), "rows-truncated", len(raw.split(b"\n")))
-    lines = raw[:-1].split(b"\n")
-    values = []
+    lines, values = raw.split(b"\n"), []
     for number, line in enumerate(lines, 1):
-        _require(bool(line), "rows-format", number)
         try:
-            values.append(_parse(line, canonical=True))
+            _require(number < len(lines) or not line, "rows-truncated", number)
+            if number < len(lines):
+                _require(bool(line), "rows-format", number)
+                values.append(_parse(line, canonical=True))
         except Refusal as error:
             if error.sequence is None: error.sequence = number
-            raise
-    return values
+            return values, error
+    return values, None
 def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
                  presented=None, retained_rows=None, checkpoint=None):
-    values = _rows(rows)
+    values, malformed = _rows(rows)
     key = _key(pinned_key)
     leaves, semantic = _walk(values, key)
+    if malformed: raise malformed
     findings, consistent, covering, anchored = [], False, False, False
     if retained_rows is not None:
-        earlier = _rows(retained_rows)
+        earlier, malformed = _rows(retained_rows)
+        if malformed: raise malformed
         _walk(earlier, key)
         for index, entry in enumerate(earlier):
             _require(index < len(values), "shorter-than-checkpoint", index + 1)
@@ -918,7 +921,7 @@ def _render(report):
     return 0 if report["verdict"] == "VERIFIED" else 1
 def _failure(error):
     if error.code in ("verifier:bundle-key-mismatch", "verifier:owner-key-mismatch", "verifier:owner-signature"):
-        print("FORGED " + error.code)
+        print(("FORGED " if error.code == "verifier:owner-signature" else "KEY_MISMATCH ") + error.code)
         return 2
     if error.sequence is not None and error.code in {"verifier:signature", "verifier:nostr-node-signature", "verifier:nostr-agent-signature"}:
         print("FORGED seq=" + str(error.sequence) + " " + error.code)
@@ -927,7 +930,9 @@ def _failure(error):
                "bundle-tail-size", "retained-row-mismatch", "consistency-prefix-mismatch", "presented-head-mismatch", "witness-fork",
                "gate-evidence", "gate-reference", "authorization-digest", "cell-effect", "standing-permission",
                "standing-reference", "standing-owner", "standing-revoked", "standing-scope", "standing-expired", "standing-count"}
-    if error.code.removeprefix("verifier:") in changes:
+    located = {"row-columns", "bundle-row-schema", "bad-digest"}
+    name = error.code.removeprefix("verifier:")
+    if name in changes or (error.sequence is not None and name in located):
         location = "" if error.sequence is None else " seq=" + str(error.sequence)
         print("REWRITTEN" + location + " " + error.code)
         if error.sequence is not None:

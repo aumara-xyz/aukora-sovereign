@@ -145,20 +145,24 @@ fn check_all(
     Ok(())
 }
 
-/// Select a closed wrapper without adding any member to the v1 proof.
+/// Select a closed wrapper without adding any member to the v1 proof. A wrapper or proof whose members are not exactly
+/// the closed set is `verifier:bundle-format`, as in the Python twin.
 pub(crate) fn unpack(value: &Value) -> Result<(&Value, Option<&[Value]>)> {
+    let shape = |wanted: &[&str], value: &Value| keys(value, wanted).map_err(|_| refusal("bundle-format"));
     match text(field(value, "schema")?)? {
         crate::format::COLD_PROOF_V1 => {
-            keys(value, &["schema", "publicKey", "head", "rows"])?;
+            shape(&["schema", "publicKey", "head", "rows"], value)?;
             Ok((value, None))
         }
         COLD_PROOF_V2 => {
-            keys(value, &["schema", "body"])?;
+            shape(&["schema", "body"], value)?;
             let body = field(value, "body")?;
-            keys(body, &["proof", "owner_assertions"])?;
+            shape(&["proof", "owner_assertions"], body)?;
             let proof = field(body, "proof")?;
-            keys(proof, &["schema", "publicKey", "head", "rows"])?;
-            require(text(field(proof, "schema")?)? == crate::format::COLD_PROOF_V1)?;
+            shape(&["schema", "publicKey", "head", "rows"], proof)?;
+            if text(field(proof, "schema")?)? != crate::format::COLD_PROOF_V1 {
+                return Err(refusal("bundle-format"));
+            }
             Ok((proof, Some(array(field(body, "owner_assertions")?)?)))
         }
         _ => Err(crate::UNSUPPORTED_SCHEMA),

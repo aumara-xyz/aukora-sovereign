@@ -11,8 +11,11 @@ exit) are counted as not replayed and named in the summary, never silently passe
     python3 -B scripts/verifier-vectors.py [--engine rust|python|both] [--rust-bin PATH]
 """
 import argparse
+import base64
 import collections
 import copy
+import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -21,6 +24,10 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+SHIM = ROOT / "scripts/replay-shim"
+_reference = importlib.util.spec_from_file_location("ed25519_ref", SHIM / "ed25519_ref.py")
+ed25519_ref = importlib.util.module_from_spec(_reference)
+_reference.loader.exec_module(ed25519_ref)
 VECTORS = ROOT / "crates/verifier/vectors"
 KNOWN = ROOT / "scripts/verifier-vectors-known.json"
 ALL = ["admission-regressions-v1", "consistency-regressions-v1", "exit-v1", "gate-regressions-v1",
@@ -34,20 +41,82 @@ NOT_REPLAYED = {
     "standing-regressions-v1": "assembles and signs standing-grant rows",
     "witness-regressions-v1": "assembles signed rows and Nostr witness events",
 }
-SIGNER_OPS = {"rehash_and_sign", "sign_hash", "rebuild_head", "derive_public_key", "base64_set_unused_bits",
-              "string_truncate", "row_bytes_replace", "bytes_insert_utf8", "bytes_append_hex"}
+AURA_DOMAIN = "aukora:aura-record:v1"
+LEAF_CONVENTION = "rfc6962-leaf-sha256-0x00-prefixed-v1"
+# Edits on the serialized document rather than the parsed one; applied after serialization, in listed order.
+BYTE_OPS = {"bytes_insert_utf8", "bytes_append_hex", "row_bytes_replace"}
 
 
 class NotReplayed(Exception):
     pass
 
 
+def byte_edits(data, edits):
+    """Edits the vectors make on the serialized document or rows file, after serialization."""
+    for edit in edits:
+        if edit["op"] == "bytes_append_hex":
+            data += bytes.fromhex(edit["value"])
+        elif edit["op"] == "bytes_insert_utf8":
+            data = data[:edit["offset"]] + edit["value"].encode() + data[edit["offset"]:]
+        elif edit["op"] == "row_bytes_replace":
+            lines = data.split(b"\n")
+            lines[edit["row"] - 1] = edit["utf8"].encode()
+            data = b"\n".join(lines)
+    return data
+
+
 def c1(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    """C1 canonical bytes: object keys in UTF-16 code unit order, no whitespace, literal Unicode."""
+    if isinstance(value, dict):
+        members = sorted(value.items(), key=lambda item: item[0].encode("utf-16-be"))
+        return b"{" + b",".join(c1(key) + b":" + c1(item) for key, item in members) + b"}"
+    if isinstance(value, list):
+        return b"[" + b",".join(c1(item) for item in value) + b"]"
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
 
 
 def load(path):
     return json.loads((ROOT / path).read_text())
+
+
+def merkle_root(leaves):
+    """RFC 6962 tree hash over already-hashed leaves."""
+    if not leaves:
+        return hashlib.sha256(b"").digest()
+    if len(leaves) == 1:
+        return leaves[0]
+    cut = 1 << ((len(leaves) - 1).bit_length() - 1)
+    return hashlib.sha256(b"\x01" + merkle_root(leaves[:cut]) + merkle_root(leaves[cut:])).digest()
+
+
+def head_over(rows):
+    """The six-key retained head over these rows."""
+    leaves = [hashlib.sha256(b"\x00" + bytes.fromhex(row["hash"])).digest() for row in rows]
+    return {"schema": "aukora-aura-retained-head-v1", "leafConvention": LEAF_CONVENTION, "sequence": len(rows),
+            "hash": rows[-1]["hash"], "treeSize": len(rows), "root": merkle_root(leaves).hex()}
+
+
+def row_hash(row, number, previous):
+    fields = {"prev": previous, "at": row["at"], "kind": row["kind"], "actor": row["actor"], "op": row["op"],
+              "phase": row["phase"], "body": row["body"], "sequence": number, "domain": AURA_DOMAIN}
+    return hashlib.sha256(c1(fields)).hexdigest()
+
+
+def sign_hex(seed_hex, digest_hex):
+    return base64.b64encode(ed25519_ref.sign(bytes.fromhex(seed_hex), bytes.fromhex(digest_hex))).decode()
+
+
+def rehash_and_sign(document, edit, seed):
+    """Recompute every hash from `first_row` on, relink each predecessor, and sign the raw hashes (the vectors' recipe)."""
+    rows, first = document["rows"], edit["first_row"]
+    previous = AURA_DOMAIN if first == 1 else rows[first - 2]["hash"]
+    for number in range(first, len(rows) + 1):
+        row = rows[number - 1]
+        if not (number == first and edit.get("preserve_first_predecessor")):
+            row["prev"] = previous
+        row["hash"] = row_hash(row, number, row["prev"])
+        row["sig"] = sign_hex(edit.get("signing_seed_hex", seed), row["hash"])
+        previous = row["hash"]
 
 
 def pointer_parts(pointer):
@@ -60,12 +129,39 @@ def walk(document, parts):
     return document
 
 
-def apply_edit(document, edit):
+def apply_edit(document, edit, seed=None):
     op, parts = edit["op"], pointer_parts(edit.get("pointer", ""))
-    if op in SIGNER_OPS:
+    if op in BYTE_OPS or op == "copy":
         raise NotReplayed(op)
-    if op == "copy":
-        raise NotReplayed(op)
+    if op == "rehash_and_sign":
+        rehash_and_sign(document, edit, seed)
+        return document
+    if op == "rebuild_head":
+        document["head"] = head_over(document["rows"])
+        return document
+    if op == "sign_hash":
+        row = walk(document, parts)
+        row["sig"] = sign_hex(edit["signing_seed_hex"], row["hash"])
+        return document
+    if op == "derive_public_key":
+        walk(document, parts[:-1])[parts[-1]] = ed25519_ref.public_key(bytes.fromhex(edit["signing_seed_hex"])).hex()
+        return document
+    if op == "swap":
+        left, right = pointer_parts(edit["left"]), pointer_parts(edit["right"])
+        first, second = walk(document, left), walk(document, right)
+        walk(document, left[:-1])[int(left[-1])] = second
+        walk(document, right[:-1])[int(right[-1])] = first
+        return document
+    if op == "base64_set_unused_bits":
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        text = walk(document, parts[:-1])[parts[-1]]
+        at = text.index("=") - 1 if "=" in text else len(text) - 1
+        mask = (1 << edit["unused_low_bits"]) - 1
+        walk(document, parts[:-1])[parts[-1]] = text[:at] + alphabet[alphabet.index(text[at]) | mask] + text[at + 1:]
+        return document
+    if op == "string_truncate":
+        walk(document, parts[:-1])[parts[-1]] = walk(document, parts)[:edit["length"]]
+        return document
     parent = walk(document, parts[:-1]) if parts else None
     key = parts[-1] if parts else None
     index = int(key) if isinstance(parent, list) and key not in (None, "-") else key
@@ -101,18 +197,22 @@ def apply_edit(document, edit):
     return document
 
 
-def apply_edits(document, edits):
+def apply_edits(document, edits, seed=None):
     document = copy.deepcopy(document)
     for edit in edits:
-        document = apply_edit(document, edit)
+        document = apply_edit(document, edit, seed)
     return document
 
 
-def reference(source, ref):
-    """A head, key or rows reference: a pointer into the original fixture, with local edits."""
-    if ref.get("source") != "original" or "prefix_rows" in ref:
-        raise NotReplayed("prepared or prefix reference")
-    value = walk(source, pointer_parts(ref["pointer"]))
+def reference(source, ref, prepared=None):
+    """A head, key or rows reference: a pointer into the original fixture (or, for `prepared`, into the document after the
+    case's own edits and signing), with local edits. `prefix_rows` first rebuilds the head over that many leading rows."""
+    if ref.get("source") not in ("original", "prepared") or (ref["source"] == "prepared" and prepared is None):
+        raise NotReplayed("unknown reference source")
+    document = source if ref["source"] == "original" else prepared
+    if "prefix_rows" in ref:
+        document = {**document, "head": head_over(document["rows"][:ref["prefix_rows"]])}
+    value = walk(document, pointer_parts(ref["pointer"]))
     if "slice" in ref:
         value = value[ref["slice"][0]:ref["slice"][1]]
     return apply_edits(value, ref.get("edits", []))
@@ -158,12 +258,23 @@ def raw_apply(lines, raw_edits):
     return prefix + b"".join(lines) + suffix
 
 
+def python_environment():
+    """The Python engine's environment. tools/verify.py takes no Ed25519 provider but PyNaCl; where that is missing the
+    replay puts scripts/replay-shim (verification only, self-tested here) first on the engine's path, so signature cases
+    run instead of being skipped. Returns (environment, a note for the summary)."""
+    environment = dict(os.environ)
+    if importlib.util.find_spec("nacl") is not None:
+        return environment, "PyNaCl"
+    environment["PYTHONPATH"] = os.pathsep.join([str(SHIM)] + ([environment["PYTHONPATH"]] if environment.get("PYTHONPATH") else []))
+    return environment, "the reference Ed25519 in scripts/replay-shim (PyNaCl is not installed)"
+
+
 class Engine:
-    def __init__(self, name, command):
-        self.name, self.command = name, command
+    def __init__(self, name, command, environment=None):
+        self.name, self.command, self.environment = name, command, environment
 
     def run(self, arguments, cwd):
-        done = subprocess.run(self.command + arguments, cwd=cwd, capture_output=True, timeout=120)
+        done = subprocess.run(self.command + arguments, cwd=cwd, capture_output=True, timeout=120, env=self.environment)
         out, err = done.stdout.decode(errors="replace"), done.stderr.decode(errors="replace")
         return done.returncode, out, err, (self.rust_report if self.name == "rust" else self.python_report)(out)
 
@@ -193,7 +304,7 @@ class Engine:
             if words[0] == "REWRITTEN" and len(words) > 2 and words[1] == "first":
                 report["findings"][-1]["exact_location"] = not words[-1].startswith("unknown") and words[-4:-1] != ["at", "or", "before"]
                 continue
-            if words[0] in ("UNCHECKED", "FORGED", "REWRITTEN") and words[-1].startswith("verifier:"):
+            if words[0] in ("UNCHECKED", "FORGED", "REWRITTEN", "KEY_MISMATCH") and words[-1].startswith("verifier:"):
                 sequence = next((int(w[4:]) for w in words if w.startswith("seq=")), None)
                 report["findings"].append({"code": words[-1], "sequence": sequence, "exact_location": True})
         if report["verdict"] == "UNCHECKED" and report["rows"] is None:
@@ -333,17 +444,20 @@ class Replay:
         source = self.fixture(document, case["fixture"])
         edits = case.get("edits", []) + ([extra_edit] if extra_edit else [])
         mode = case["mode"]
+        seed = document["fixtures"][case["fixture"]].get("signing_seed_hex")
+        structured = [edit for edit in edits if edit["op"] not in BYTE_OPS]
+        on_bytes = [edit for edit in edits if edit["op"] in BYTE_OPS]
 
         def runner(engine, directory):
-            edited = apply_edits(source, edits)
+            edited = apply_edits(source, structured, seed)
             arguments = []
             if mode == "bundle":
-                (directory / "proof.json").write_bytes(raw_apply([c1(edited)], case.get("raw_edits", [])))
+                (directory / "proof.json").write_bytes(byte_edits(raw_apply([c1(edited)], case.get("raw_edits", [])), on_bytes))
                 arguments += ["--bundle", "proof.json"]
             else:
-                (directory / "rows.jsonl").write_bytes(rows_bytes(edited["rows"], case.get("raw_edits", [])))
+                (directory / "rows.jsonl").write_bytes(byte_edits(rows_bytes(edited["rows"], case.get("raw_edits", [])), on_bytes))
                 arguments += ["--rows", "rows.jsonl"]
-            key = reference(source, case["pinned_key"]) if isinstance(case.get("pinned_key"), dict) else (
+            key = reference(source, case["pinned_key"], edited) if isinstance(case.get("pinned_key"), dict) else (
                 None if "pinned_key" in case else source["publicKey"])
             if key is not None:
                 (directory / "key.hex").write_text(key)
@@ -351,17 +465,17 @@ class Replay:
             for name, flag in (("checkpoint", "--checkpoint"), ("retained", "--retained"), ("presented", "--presented")):
                 ref = case.get(name, {"source": "original", "pointer": "/head"} if name == "checkpoint" else None)
                 if isinstance(ref, dict):
-                    (directory / f"{name}.json").write_bytes(c1(reference(source, ref)))
+                    (directory / f"{name}.json").write_bytes(c1(reference(source, ref, edited)))
                     arguments += [flag, f"{name}.json"]
             if isinstance(case.get("retained_rows"), dict):
-                (directory / "prefix.jsonl").write_bytes(rows_bytes(reference(source, case["retained_rows"]), []))
+                (directory / "prefix.jsonl").write_bytes(rows_bytes(reference(source, case["retained_rows"], edited), []))
                 arguments += ["--prefix", "prefix.jsonl"]
             return engine.run(arguments, directory)
 
         runner.check = lambda code, out, err, report: check_report(expected, code, out, err, report, row_index)
         self.run_all(work, file, case["id"], runner)
 
-    def head_admission(self, work, file, document, case, expected, target, edits=(), raw=None):
+    def head_admission(self, work, file, document, case, expected, target, edits=(), raw=None, raw_edits=()):
         tree = self.fixture(document, case["fixture"])
         pair = head_pair(tree, case["pair"]["retained_size"], case["pair"]["presented_size"])
 
@@ -373,6 +487,8 @@ class Replay:
                 held = copy.deepcopy(pair)
                 walk(held, pointer_parts("/" + target))[pointer_parts(raw[0])[-1]] = marker
                 texts[target] = c1(held[target]).replace(f'"{marker}"'.encode(), raw[1].encode())
+            if raw_edits:
+                texts[target] = raw_apply([texts[target]], list(raw_edits))
             for name, text in texts.items():
                 (directory / f"{name}.json").write_bytes(text)
             return engine.run(["consistency", "retained.json", "presented.json"], directory)
@@ -403,12 +519,9 @@ class Replay:
         for case in document["cases"]:
             if case["mode"] == "head-admission":
                 edits = case.get("edits", [])
-                if case.get("raw_edits"):
-                    self.not_replayed(file, case["id"], "raw head edit")
-                    continue
                 target = case["target"]
                 self.head_admission(work, file, document, case, case["expected"], target,
-                                    [{**e, "pointer": f"/{target}{e['pointer']}"} for e in edits])
+                                    [{**e, "pointer": f"/{target}{e['pointer']}"} for e in edits], raw_edits=case.get("raw_edits", ()))
             else:
                 self.chain_or_bundle(work, file, document, case, case["expected"])
 
@@ -496,11 +609,14 @@ def main():
     parser.add_argument("--engine", choices=["rust", "python", "both"], default="both")
     parser.add_argument("--rust-bin", default=str(pathlib.Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/aukora-verify"))
     arguments = parser.parse_args()
+    ed25519_ref.selftest()
     engines = []
     if arguments.engine in ("rust", "both"):
         engines.append(Engine("rust", [arguments.rust_bin]))
     if arguments.engine in ("python", "both"):
-        engines.append(Engine("python", [sys.executable, "-B", str(ROOT / "tools/verify.py")]))
+        environment, provider = python_environment()
+        print(f"python engine signatures: {provider}")
+        engines.append(Engine("python", [sys.executable, "-B", str(ROOT / "tools/verify.py")], environment))
     # Pinned vector files must all be present and named here; a new vector file needs a decision.
     present = sorted(p.stem for p in VECTORS.glob("*.json"))
     if present != sorted(ALL):

@@ -158,52 +158,88 @@ fn public_key(encoded: &str) -> Result<VerifyingKey> {
     }
 }
 
-fn row(value: Value, _index: usize) -> Result<Row> {
+/// Admit one parsed row, checking in the order the Python twin and the archived verifier walk a row, so that all of them
+/// name the same first failure: the field set (`row-columns`), the sequence, the field types (`bundle-row-schema`), the
+/// operation id and the hash (`bad-digest`). `index` is the row's zero-based position.
+fn row(value: Value, index: usize) -> Result<Row> {
     keys(
         &value,
         &[
             "seq", "prev", "hash", "sig", "at", "kind", "actor", "op", "phase", "body",
         ],
-    )?;
-    if uint(field(&value, "seq")?)? == 0 {
+    )
+    .map_err(|_| refusal("row-columns"))?;
+    let seq = field(&value, "seq")?;
+    if !matches!(seq.view(), ValueView::Integer(n) if n.get() == index as i64 + 1) {
         return Err(refusal("sequence"));
     }
-    let hash = hex32(text(field(&value, "hash")?)?)?;
-    for name in ["prev", "sig", "actor", "op"] {
-        text(field(&value, name)?)?;
+    let word = |name: &str| match field(&value, name).map(Value::view) {
+        Ok(ValueView::Text(s)) => Some(s),
+        _ => None,
+    };
+    let typed = matches!(field(&value, "at")?.view(), ValueView::Integer(_))
+        && word("kind").is_some_and(|kind| KINDS.contains(&kind))
+        && word("phase").is_some_and(|phase| ["intent", "settle", "terminal", "fact"].contains(&phase))
+        && matches!(field(&value, "body")?.view(), ValueView::Object(_))
+        && ["prev", "sig", "actor", "op"].iter().all(|name| word(name).is_some());
+    if !typed {
+        return Err(refusal("bundle-row-schema"));
     }
-    let operation = text(field(&value, "op")?)?;
-    if !operation.is_empty() {
+    if let Some(operation) = word("op").filter(|operation| !operation.is_empty()) {
         format::hex_bytes::<16>(operation).map_err(|_| refusal("operation-id"))?;
     }
-    if !matches!(field(&value, "at")?.view(), ValueView::Integer(_))
-        || !KINDS.contains(&text(field(&value, "kind")?)?)
-        || !["intent", "settle", "terminal", "fact"].contains(&text(field(&value, "phase")?)?)
-        || !matches!(field(&value, "body")?.view(), ValueView::Object(_))
-    {
-        return Err(refusal("row-schema"));
-    }
+    let hash = hex32(word("hash").ok_or(refusal("bundle-row-schema"))?).map_err(|_| refusal("bad-digest"))?;
     Ok(Row { value, hash })
 }
 
-fn rows(bytes: &[u8]) -> std::result::Result<Vec<Row>, (usize, canon::Refusal)> {
-    let mut result = Vec::new();
+/// Why admitting rows stopped, and what that says: a row that is not a ledger row is evidence about that row
+/// (`Rewritten`, located); bytes that are not canonical JSON at all, or an operation id that is not one, are a bad input.
+struct Stop {
+    /// One-based position of the row that was not admitted.
+    row: usize,
+    error: canon::Refusal,
+    verdict: Verdict,
+}
+
+/// The rows admitted before the first one that is not, and why admitting stopped there. Rows are not admitted all at
+/// once: the caller walks the admitted ones first, so an earlier signature or link failure is still found and is never
+/// hidden by a later malformed row.
+struct Admitted {
+    rows: Vec<Row>,
+    stop: Option<Stop>,
+}
+
+fn admit_rows(bytes: &[u8]) -> Admitted {
+    let mut rows = Vec::new();
+    let stop = |rows, row, error, verdict| Admitted {
+        rows,
+        stop: Some(Stop { row, error, verdict }),
+    };
     if bytes.len() > 8_388_608 {
-        return Err((1, refusal("input-too-large")));
-    }
-    if bytes.is_empty() {
-        return Ok(result);
+        return stop(rows, 1, refusal("input-too-large"), Verdict::InvalidInput);
     }
     for (index, line) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
-        let line = line
-            .strip_suffix(b"\n")
-            .ok_or((index + 1, refusal("rows-truncated")))?;
-        let value = canonical(line)
-            .and_then(|v| row(v, index + 1))
-            .map_err(|e| (index + 1, e))?;
-        result.push(value);
+        let Some(line) = line.strip_suffix(b"\n") else {
+            return stop(rows, index + 1, refusal("rows-truncated"), Verdict::Rewritten);
+        };
+        match canonical(line).and_then(|value| row(value, index)) {
+            Ok(row) => rows.push(row),
+            Err(error) => {
+                let located = ["row-columns", "sequence", "bundle-row-schema", "bad-digest"].contains(&error.reason);
+                let verdict = if located { Verdict::Rewritten } else { Verdict::InvalidInput };
+                return stop(rows, index + 1, error, verdict);
+            }
+        }
     }
-    Ok(result)
+    Admitted { rows, stop: None }
+}
+
+/// Every row, or the first one that is not a row (for a retained prefix, which must be whole).
+fn rows(bytes: &[u8]) -> std::result::Result<Vec<Row>, (usize, canon::Refusal)> {
+    match admit_rows(bytes) {
+        Admitted { rows, stop: None } => Ok(rows),
+        Admitted { stop: Some(stop), .. } => Err((stop.row, stop.error)),
+    }
 }
 
 fn hash_row(value: &Value) -> Result<[u8; 32]> {
@@ -230,8 +266,13 @@ fn signature(value: &Value, hash: &[u8; 32], key: &VerifyingKey) -> Result<()> {
 
 fn bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
     let value = canonical(inputs.bundle)?;
-    keys(&value, &["schema", "publicKey", "head", "rows"])?;
-    format::ExportVersion::from_schema(text(field(&value, "schema")?)?)?;
+    // The schema names the format, so an unsupported one is named as such before the key set is held against it.
+    let schema = value.get("schema").map(Value::view);
+    let Some(ValueView::Text(schema)) = schema else {
+        return Err(refusal("bundle-format"));
+    };
+    format::ExportVersion::from_schema(schema)?;
+    keys(&value, &["schema", "publicKey", "head", "rows"]).map_err(|_| refusal("bundle-format"))?;
     let embedded = text(field(&value, "publicKey")?)?;
     let embedded_key = public_key(embedded)?;
     let values = array(field(&value, "rows")?)?;
@@ -254,14 +295,24 @@ fn bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
     }
     let head_bytes = field(&value, "head")?.canonical_bytes();
     let head = consistency::retained(&head_bytes)?;
-    let mut report = chain(ChainInputs {
-        pinned_key: embedded.as_bytes(),
-        rows: &bytes,
-        retained: None,
-        presented: None,
-        retained_rows: None,
-        checkpoint: inputs.checkpoint,
-    })?;
+    let (mut report, whole) = chain_with(
+        ChainInputs {
+            pinned_key: embedded.as_bytes(),
+            rows: &bytes,
+            retained: None,
+            presented: None,
+            retained_rows: None,
+            checkpoint: inputs.checkpoint,
+        },
+        Extras {
+            bundle_size: Some(head.size),
+            unpinned_identity: inputs.pinned_key.is_none(),
+        },
+    )?;
+    if !whole {
+        // A row that could not be admitted, or a tail that is not the size the head claims, ends the walk there.
+        return Ok(report);
+    }
     if let Some(pinned) = inputs.pinned_key {
         key(pinned)?;
     }
@@ -269,14 +320,7 @@ fn bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
         .iter()
         .map(|v| hex32(text(field(v, "hash")?)?))
         .collect::<Result<Vec<_>>>()?;
-    if head.size != values.len() as u64 {
-        report.finding(
-            Verdict::Rewritten,
-            refusal("bundle-tail-size"),
-            Some(head.size.min(values.len() as u64) + 1),
-            true,
-        );
-    } else if row_hashes.last() != Some(&head.hash) || consistency::root(&row_hashes) != head.root {
+    if row_hashes.last() != Some(&head.hash) || consistency::root(&row_hashes) != head.root {
         report.finding(
             Verdict::Rewritten,
             refusal("bundle-head"),
@@ -286,22 +330,7 @@ fn bundle(inputs: BundleInputs<'_>) -> Result<VerificationReport> {
     } else {
         let mut integrity = report.integrity();
         integrity.tree_root = Scope::Checked;
-        let mut observations = report.observations();
-        if inputs.pinned_key.is_none() {
-            observations.pinned_identity = Scope::Unchecked;
-        }
-        report.scopes(integrity, observations);
-    }
-    if inputs.pinned_key.is_none() {
-        let mut observations = report.observations();
-        observations.pinned_identity = Scope::Unchecked;
-        report.scopes(report.integrity(), observations);
-        report.finding(
-            Verdict::Unchecked,
-            refusal("identity-no-pinned-key"),
-            None,
-            false,
-        );
+        report.scopes(integrity, report.observations());
     }
     report.scopes(report.integrity(), report.observations());
     Ok(report)
@@ -318,21 +347,24 @@ fn anchor(head: &consistency::RetainedHead, rows: &[Row]) -> bool {
     hashes.last() == Some(&head.hash) && consistency::root(&hashes) == head.root
 }
 
+/// What only a bundle knows about the rows it carries.
+#[derive(Clone, Copy, Debug, Default)]
+struct Extras {
+    /// The size the bundle's own head claims for the tail; a different number of rows ends the walk.
+    bundle_size: Option<u64>,
+    /// No independently supplied key: the embedded identity is a claim, and the report says so.
+    unpinned_identity: bool,
+}
+
 fn chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
+    chain_with(inputs, Extras::default()).map(|(report, _)| report)
+}
+
+/// The report, and whether the walk covered every row and the whole tail (false: it ended early, at a row that is not a
+/// row or at a tail of the wrong size, and the report says where).
+fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationReport, bool)> {
     let key = key(inputs.pinned_key)?;
-    let rows = match rows(inputs.rows) {
-        Ok(rows) => rows,
-        Err((sequence, error)) => {
-            let mut report = VerificationReport::new((sequence - 1) as u64);
-            let verdict = if error.reason == "rows-truncated" {
-                Verdict::Rewritten
-            } else {
-                Verdict::InvalidInput
-            };
-            report.finding(verdict, error, Some(sequence as u64), true);
-            return Ok(report);
-        }
-    };
+    let Admitted { rows, stop } = admit_rows(inputs.rows);
     let mut report = VerificationReport::new(rows.len() as u64);
     let mut integrity = IntegrityScope {
         signatures: Scope::Checked,
@@ -350,21 +382,25 @@ fn chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
     let mut binding_count = 0;
     for (index, row) in rows.iter().enumerate() {
         let sequence = Some(index as u64 + 1);
-        if uint(field(&row.value, "seq")?)? != index as u64 + 1 {
-            integrity.chain = Scope::Unchecked;
-            report.finding(Verdict::Rewritten, refusal("sequence"), sequence, true);
-        }
-        if text(field(&row.value, "prev")?)? != previous {
-            integrity.chain = Scope::Unchecked;
-            report.finding(Verdict::Rewritten, refusal("prev-link"), sequence, true);
-        }
-        if hash_row(&row.value)? != row.hash {
-            integrity.chain = Scope::Unchecked;
-            report.finding(Verdict::Rewritten, refusal("entry-hash"), sequence, true);
-        }
-        if let Err(code) = signature(&row.value, &row.hash, &key) {
-            integrity.signatures = Scope::Unchecked;
-            report.finding(Verdict::Forged, code, sequence, true);
+        // The first check a row fails is the finding and ends the walk, in the order the Python twin and the archived
+        // verifier check: sequence, predecessor, entry hash, signature.
+        let failure = if uint(field(&row.value, "seq")?)? != index as u64 + 1 {
+            Some((Verdict::Rewritten, refusal("sequence")))
+        } else if text(field(&row.value, "prev")?)? != previous {
+            Some((Verdict::Rewritten, refusal("prev-link")))
+        } else if hash_row(&row.value)? != row.hash {
+            Some((Verdict::Rewritten, refusal("entry-hash")))
+        } else {
+            signature(&row.value, &row.hash, &key).err().map(|code| (Verdict::Forged, code))
+        };
+        if let Some((verdict, code)) = failure {
+            if verdict == Verdict::Forged {
+                integrity.signatures = Scope::Unchecked;
+            } else {
+                integrity.chain = Scope::Unchecked;
+            }
+            report.finding(verdict, code, sequence, true);
+            break;
         }
         let kind = text(field(&row.value, "kind")?)?;
         if kind == "nostr.bind" {
@@ -409,6 +445,27 @@ fn chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
             }
         }
         previous = hex::encode(row.hash);
+    }
+    if let Some(stop) = stop {
+        // Findings on earlier rows come first and win; a later malformed row is reported only when nothing earlier is.
+        if !report.failed() {
+            report.finding(stop.verdict, stop.error, Some(stop.row as u64), true);
+        }
+        return Ok((report, false));
+    }
+    if report.failed() {
+        // A row that is forged, rewritten or out of line is the finding. What is checked against heads and checkpoints
+        // after it would only add to it, so the walk ends here, as the Python twin's does.
+        return Ok((report, false));
+    }
+    if let Some(size) = extras.bundle_size.filter(|size| *size != rows.len() as u64) {
+        report.finding(
+            Verdict::Rewritten,
+            refusal("bundle-tail-size"),
+            Some(size.min(rows.len() as u64) + 1),
+            true,
+        );
+        return Ok((report, false));
     }
     if operations.values().any(|n| *n != 1) {
         integrity.owner_bindings = Scope::Unchecked;
@@ -537,7 +594,19 @@ fn chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
         integrity.chain = Scope::Unchecked;
         report.finding(Verdict::Unchecked, refusal("no-rows"), None, false);
     }
-    if observations.covering_checkpoint != Scope::Checked {
+    if extras.unpinned_identity {
+        observations.pinned_identity = Scope::Unchecked;
+        if !report.failed() {
+            report.finding(
+                Verdict::Unchecked,
+                refusal("identity-no-pinned-key"),
+                None,
+                false,
+            );
+        }
+    }
+    // Missing scope is reported when nothing contradicts the bytes; evidence of a rewrite stands alone.
+    if observations.covering_checkpoint != Scope::Checked && !report.failed() {
         report.finding(
             Verdict::Unchecked,
             refusal("completeness-no-covering-checkpoint"),
@@ -546,7 +615,7 @@ fn chain(inputs: ChainInputs<'_>) -> Result<VerificationReport> {
         );
     }
     report.scopes(integrity, observations);
-    Ok(report)
+    Ok((report, true))
 }
 
 /// Computes the registry's GateAura check 16 from supplied retained-export bytes.
