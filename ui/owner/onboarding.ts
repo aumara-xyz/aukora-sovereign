@@ -11,6 +11,7 @@ import type { Options, RecordValue } from "./transport.js";
 import { loadAumlok } from "./aumlok.js";
 import { explainOwnerError, normaliseWord, phraseForm, recoveryInput, renderPhrase } from "./phrase-layout.js";
 import { mountPairing } from "./pairing.js";
+import { pairingPort } from "./pairing-port.js";
 import { brand } from "./brand.js";
 import { actionButton } from "./primitives.js";
 
@@ -228,7 +229,7 @@ export function createOnboarding(
 
     function enrolScreen(): void {
       ceremony = undefined;
-      screen("passkey", "Create your passkey", "It lives on your device.\nOnly you can use it.");
+      screen("passkey", "Create your passkey", "It lives on your device.\nIt unlocks with your face, fingerprint or device PIN.");
       button("Create passkey", async () => {
         if (ceremony && ceremony.expires <= performance.now()) ceremony = undefined;
         ceremony ??= options(await post("/api/enrol/start", {}, signal), true, config.relyingParty);
@@ -331,11 +332,12 @@ export function createOnboarding(
     }
 
     function phraseIntroScreen(): void {
-      screen("phrase", "Your decentralized key", "");
+      screen("phrase", "Your seven words", "");
       line(["Your first word is your anchor.", "aumlok"]);
+      line("Six more words follow, in three themed pairs:");
       themes(["ROOT", "band-root", "ak-tone-mint", "the earth"], ["UNITE", "band-unite", "ak-tone-blue", "the people"],
         ["RISE", "band-rise", "ak-tone-violet", "the above"]);
-      line("Keep it offline. Give it to no one, and to no AI.");
+      line("Keep them offline. Give them to no one, and to no AI.");
       button("I understand", () => drawWords(false));
       button("Back", () => { bindingScreen(); }, true);
     }
@@ -478,7 +480,7 @@ export function createOnboarding(
     }
 
     function showWords(): void {
-      screen("phrase", "Your seven words", "Write them down, in order.");
+      screen("phrase", "Write them down", "Your seven words, in order.");
       panel.dataset.scene = "words";
       content.append(renderPhrase(phrase, stepLifetime.signal));
       button("Rotate phrase", () => drawWords(true), true);
@@ -498,7 +500,7 @@ export function createOnboarding(
       line("Close your eyes. Walk through it.");
       line("Then see if you can recall them first try.");
       line("The next step is that test.");
-      line("Sovereignty takes work.");
+      line(["YOUR MIND HOLDS THE KEYS TO FREEDOM.", "owner-motto"]);
       button("Back to my words", () => { showWords(); }, true, true);
       button("I have them", () => { confirmationScreen(); });
     }
@@ -607,10 +609,18 @@ export function createOnboarding(
       return true;
     }
 
+    // Is the first pairing still due? Decided by the node, never by what this page remembers: an owner who is bound but has no paired
+    // device resumes at pairing after any sign-in, including after a reload. If the node cannot say, it is treated as still due.
+    async function pairingDue(): Promise<boolean> {
+      if (newlyBound) return true;
+      if (!pairingPort?.pairedCount) return false;            // this node does not serve co-presence: there is nothing to resume
+      try { return await pairingPort.pairedCount(signal) === 0; } catch { return true; }
+    }
+
     async function continueSession(): Promise<void> {
       if (!await signinCeremony()) return;
       brand.bloom();
-      if (newlyBound) {
+      if (await pairingDue()) {
         clearFields();
         stepLifetime.abort();
         handoffDispose = mountPairing(context.host, signal, () => context.complete());

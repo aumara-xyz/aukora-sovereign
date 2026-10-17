@@ -21,10 +21,10 @@ let failed = 0;
 const check = (ok, label, detail = '') => { if (!ok || process.env.VERBOSE) console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}${detail ? `  ${detail}` : ''}`); if (!ok) failed++; };
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qr-fit-'));
-for (const name of ['qr', 'bytes']) {
+for (const name of ['qr', 'bytes', 'base45', 'frame-text']) {
   fs.writeFileSync(path.join(dir, `${name}.js`), stripTypeScriptTypes(fs.readFileSync(path.join(ROOT, 'portal', `${name}.ts`), 'utf8')));
 }
-const { qrModules, qrModulesFit, qrCapacity, qrVersionFor } = await import(pathToFileURL(path.join(dir, 'qr.js')).href);
+const { qrModules, qrModulesFit, qrCapacity, qrVersionFor, qrVersionOf, qrModulesOf } = await import(pathToFileURL(path.join(dir, 'qr.js')).href);
 const sandbox = {};
 sandbox.self = sandbox.window = sandbox.globalThis = sandbox;
 vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'portal', 'vendor', 'jsQR.min.js'), 'utf8'), sandbox);
@@ -61,6 +61,20 @@ for (let version = 1, previous = 0; version <= 40; previous = version++) {
   }
 }
 check(qrVersionFor(qrCapacity(22) + 1) === 24, 'a payload that would land on version 23 is drawn at version 24');
+// Alphanumeric mode (compact frames travel as base45 text): the standard level-L capacities, and the text reads back.
+const alnumCapacity = [25, 47, 77, 114, 154, 195, 224, 279, 335, 395];
+const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:';
+const sample = n => Array.from({ length: n }, (_, i) => ALPHABET[(i * 7 + 3) % 45]).join('');
+for (let version = 1; version <= 10; ++version) {
+  const text = sample(alnumCapacity[version - 1]), over = sample(alnumCapacity[version - 1] + 1);
+  check(qrVersionOf({ kind: 'alnum', text }) === version, `${text.length} alphanumeric characters use version ${version}`);
+  if (version < 10) check(qrVersionOf({ kind: 'alnum', text: over }) === version + 1 + (version + 1 === 23 ? 1 : 0), `${over.length} alphanumeric characters use version ${version + 1}`);
+  const modules = qrModulesOf({ kind: 'alnum', text });
+  const border = 4, scale = 6, side = (modules.length + border * 2) * scale;
+  const data = new Uint8ClampedArray(side * side * 4).fill(255);
+  for (let y = 0; y < modules.length; ++y) for (let x = 0; x < modules.length; ++x) if (modules[y][x]) for (let dy = 0; dy < scale; ++dy) for (let dx = 0; dx < scale; ++dx) { const at = (((y + border) * scale + dy) * side + (x + border) * scale + dx) * 4; data[at] = data[at + 1] = data[at + 2] = 0; }
+  check(jsQR(data, side, side, { inversionAttempts: 'dontInvert' })?.data === text, `version ${version} alphanumeric code reads back with jsQR`);
+}
 check(qrVersionFor(2954) === 0, '2954 bytes fit no version');
 
 const pin = bytes => crypto.createHash('sha256').update(JSON.stringify(qrModules(bytes))).digest('hex');

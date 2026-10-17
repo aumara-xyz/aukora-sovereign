@@ -54,6 +54,8 @@ export type PairingPort = {
   /** Called when pairing starts; the port binds the canvases to the engine's optical surface. */
   open(canvases: PairingCanvases, signal: AbortSignal): Promise<PairingServices>;
   /** An address a phone can open to be the second device, when the host offers one. */
+  /** How many devices the node has paired with this owner. Zero means the first pairing is still due, whatever this page remembers. */
+  pairedCount?(signal: AbortSignal): Promise<number>;
   readonly phoneLink?: { readonly url: string; readonly caption?: string; draw(canvas: HTMLCanvasElement): void };
 };
 

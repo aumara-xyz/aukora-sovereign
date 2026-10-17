@@ -4,6 +4,7 @@
 //! Receipt verifiers retain legacy bytes and separate device evidence from authority.
 #![forbid(unsafe_code)]
 
+pub mod compact;
 pub mod met;
 pub mod receipt_json;
 pub mod v0;
@@ -27,9 +28,7 @@ impl PublicKeyBytes {
     /// Checks the uncompressed SEC1 form and that the point is on P-256. A valid key
     /// names a device; it proves nothing about who holds it.
     pub fn validate(&self) -> Result<()> {
-        if self.0[0] != 4
-            || p256::ecdsa::VerifyingKey::from_sec1_bytes(&self.0).is_err()
-        {
+        if self.0[0] != 4 || p256::ecdsa::VerifyingKey::from_sec1_bytes(&self.0).is_err() {
             return Err(Refusal {
                 organ: "copresence",
                 reason: "public-key",

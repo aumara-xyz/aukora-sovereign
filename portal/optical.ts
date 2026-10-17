@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { OpticalSurface } from "./contracts.js";
-import { checkAbort, refuse, utf8 } from "./bytes.js";
+import { checkAbort, refuse } from "./bytes.js";
+import { frameFromQrText } from "./frame-text.js";
 import { drawQrFrame } from "./qr.js";
 import { drawRelationshipBloom, type PentoraExpansion } from "./bloom/index.js";
 
@@ -62,7 +63,7 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
         try {
           if (video.readyState >= 2) {
             for (const value of await decoder(video)) {
-              if (!stopped && value.length <= 65536) consume(utf8.encode(value));
+              if (!stopped && value.length <= 65536) consume(frameFromQrText(value));
             }
           }
         } catch { stop(); return; }

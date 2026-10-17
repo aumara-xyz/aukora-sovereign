@@ -14,7 +14,15 @@ import type { PairingExchange, PairingObservation, PairingServices } from "./pai
 
 // Both devices must use the same context text.
 const CONTEXT = "AUKORA first pairing";
-const REFUSED_TEXT = "That did not verify. Face the screens toward each other and try again.";
+// What went wrong, said plainly, with what to do about it. The pairing never falls back to the start screen on its own.
+type Failure = "timeout" | "refused" | "camera" | "hidden" | "error";
+const FAILURES: Record<Failure, readonly [string, string]> = {
+  timeout: ["Couldn’t read the other screen in time.", "Move the two screens closer, turn the brightness up on both, hold steady, and try again."],
+  refused: ["That did not verify.", "Face the screens toward each other and try again."],
+  camera: ["The camera is needed to see the other screen.", "Allow camera access for this page, then try again."],
+  hidden: ["Pairing paused while this page was in the background.", "Bring it back to the front and try again."],
+  error: ["That could not start.", "Try again."],
+};
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, text = "", className = ""): HTMLElementTagNameMap[K] {
   const result = document.createElement(tag);
   result.textContent = text;
@@ -89,11 +97,11 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     ]),
   );
   portal.body.append(
-    lead("Two screens face each other. Each one shows the other a signed code that changes every second, and each reads the other’s code with its camera. If both signatures check out inside a few seconds, the two screens shared the same moment, face to face."),
-    lead("That is all it shows, and it is evidence rather than permission: it uses no location, and it does not by itself prove a human was there."),
+    lead("Two screens face each other. Each one shows the other a signed code that changes every second, and each reads the other’s code with its camera. If both signatures check out inside a few seconds, your two devices met, here and now."),
+    lead("That is all it shows, and it is evidence rather than permission. It uses no location, it cannot tell a fast video relay from a shared room, and it does not by itself prove that a person was there."),
     label("What it is for"),
-    lead("This is how you will prove your own human network. Every time you do this with a friend or a loved one, your network of real people grows stronger. Bots and Sybil attacks, one machine pretending to be a thousand people, cannot sit in the same room with many real people at the same moment."),
-    lead("The dead internet theory is no longer a theory. This is one way back to knowing who is real."),
+    lead("The internet is filling with machines that look like people, and one machine can pretend to be a thousand (a Sybil attack). A network of devices that have really met, each meeting signed and recorded, is one ingredient in telling them apart. It is never the whole answer, and today this step only joins your own phone."),
+    lead("The dead internet theory is no longer a theory. This is a first step toward a web of people who have met."),
     math.frame,
   );
   content.append(portal.frame);
@@ -133,6 +141,14 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
   phase.setAttribute("aria-live", "polite");
   const stop = node("button", "Stop", "secondary");
   stop.type = "button";
+  // After a failure the session stays: this exchange screen shows what happened, and "Try again" carries on from here.
+  const failure = node("div", "", "pairing-fail");
+  failure.setAttribute("role", "alert");
+  const failureTitle = node("p", "", "pairing-fail-title");
+  const failureTips = node("p", "", "pairing-fail-tips");
+  const failureCode = node("p", "", "pairing-fail-code");
+  const retryButton = actionButton("Try again", "mint");
+  failure.append(failureTitle, failureTips, failureCode, retryButton.frame);
   // The four plain states and the ring that fills while the two screens hold steady; the message line stays `phase`.
   const feedback = exchangeFeedback(document, false);
   const sound = chimes();
@@ -143,7 +159,7 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
   soundToggle.addEventListener("click", () => { sound.mute(!sound.muted); paintSound(); }, { signal: live });
   const actions = node("div", "", "pairing-actions");
   actions.append(stop, soundToggle);
-  exchange.append(tile, phase, feedback.element, video, actions);
+  exchange.append(tile, phase, feedback.element, failure, video, actions);
 
   const status = node("p", "", "owner-status");
   status.setAttribute("role", "status");
@@ -203,16 +219,33 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     current.exchange?.stop();
   }
 
+  /** Only the person's own Stop takes the pairing back to its start. */
   function again(message: string): void {
     services = undefined;                   // the next start composes its engine afresh
     start.disabled = false;
     status.textContent = message;
+    panel.removeAttribute("data-failed");
     setStage("intro");
+  }
+
+  /** Stay on the exchange screen and say what happened; the session (the pairing and its camera setup) is kept for "Try again". */
+  function showFailure(kind: Failure, code = ""): void {
+    const [title, tips] = FAILURES[kind];
+    failureTitle.textContent = title;
+    failureTips.textContent = tips;
+    failureCode.textContent = code ? code.replace(/^copresence:/, "") : "";
+    panel.removeAttribute("data-waiting");
+    panel.setAttribute("data-failed", kind);
+    say(title);
+    feedback.show("searching", 0);
+    start.disabled = false;
+    setStage("exchange");
   }
 
   async function begin(): Promise<void> {
     if (session || live.aborted || !pairingPort) return;
     status.textContent = "";
+    panel.removeAttribute("data-failed");
     start.disabled = true;
     const current = { controller: new AbortController(), attempt: "", exchange: null as PairingExchange | null,
       scanStop: null as (() => void) | null, unsubscribe: null as (() => void) | null, terminal: false };
@@ -249,7 +282,8 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
           release(current);
           done();
           services?.optical.clear();
-          again(REFUSED_TEXT);
+          const reason = verdict && "code" in verdict ? String(verdict.code ?? "") : "";
+          showFailure(reason === "copresence:exchange-timeout" ? "timeout" : "refused", reason);
           return;
         }
         // The engine repeats its last observation while the other screen reads it; the bloom and the arrival happen once.
@@ -300,17 +334,17 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
       services?.optical.clear();
       if (!stopped) {
         const code = error instanceof Error ? error.message : "";
-        again(/camera|device|NotAllowed|NotFound|decoder/i.test(code) || (error instanceof DOMException)
-          ? "The camera is needed to see the other screen. Allow it and start again."
-          : "That could not start. Try again.");
+        const name = error instanceof DOMException ? error.name : "";
+        showFailure(/camera|device|NotAllowed|NotFound|decoder/i.test(code) || error instanceof DOMException ? "camera" : "error", name || code);
       }
     }
   }
 
   start.addEventListener("click", () => { sound.unlock(); void begin(); }, { signal: live });
+  retryButton.button.addEventListener("click", () => { sound.unlock(); void begin(); }, { signal: live });
   stop.addEventListener("click", () => {
     const current = session;
-    if (!current) return;
+    if (!current) { again(""); return; }      // after a failure: the person chooses to go back to the start
     release(current);
     void finish(current, "cancelled");
     session = null;
@@ -318,7 +352,14 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
     again("");                              // back to the pairing step, never a void
   }, { signal: live });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && session && stage === "exchange") stop.click();
+    // The camera should not keep running behind a hidden page. Pairing pauses, says so, and waits for "Try again".
+    const current = session;
+    if (document.visibilityState !== "hidden" || !current || stage !== "exchange" || current.terminal) return;
+    release(current);
+    void finish(current, "cancelled");
+    session = null;
+    services?.optical.clear();
+    showFailure("hidden");
   }, { signal: live });
 
   const dispose = (): void => {

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { refuse } from "./bytes.js";
+import { BASE45 } from "./base45.js";
+import { frameQrText } from "./frame-text.js";
 
-// QR Model 2, byte mode, error correction L, mask 0.
+// QR Model 2, byte or alphanumeric mode, error correction L, mask 0.
 //
 // qrModules is the fixed version 40 reference. qrModulesFit builds the smallest version (1 to 40) that holds the bytes:
 // the same payload in fewer, larger modules, which is what a phone camera can actually resolve at arm's length. The bytes
@@ -27,15 +29,29 @@ export function qrCapacity(version: number): number {
   return Math.floor((8 * dataCodewords(version) - 4 - (version < 10 ? 8 : 16)) / 8);
 }
 
-/** The smallest version that holds the bytes, or 0 when they do not fit even version 40. Version 23 is never chosen: jsQR 1.4.0,
+/** What a code carries: raw bytes, or text from the alphanumeric set (digits, capitals, space and $%*+-./:), which costs 5.5 bits a character. */
+export type QrPayload = { readonly kind: "bytes"; readonly bytes: Uint8Array } | { readonly kind: "alnum"; readonly text: string };
+
+function payloadBits(payload: QrPayload, version: number): number {
+  if (payload.kind === "bytes") return 4 + (version < 10 ? 8 : 16) + 8 * payload.bytes.length;
+  const n = payload.text.length;
+  return 4 + (version < 10 ? 9 : version < 27 ? 11 : 13) + 11 * Math.floor(n / 2) + 6 * (n % 2);
+}
+
+/** The smallest version that holds the payload, or 0 when it does not fit even version 40. Version 23 is never chosen: jsQR 1.4.0,
  *  the pinned decoder the pairing pages use (portal/vendor), cannot read it (it fails on a version 23 code from an independent
  *  encoder too), so a payload that would land there is drawn at version 24 instead. */
-export function qrVersionFor(length: number): number {
+export function qrVersionOf(payload: QrPayload): number {
   for (let version = 1; version <= 40; ++version) {
     if (version === 23) continue;
-    if (4 + (version < 10 ? 8 : 16) + 8 * length <= 8 * dataCodewords(version)) return version;
+    if (payloadBits(payload, version) <= 8 * dataCodewords(version)) return version;
   }
   return 0;
+}
+
+/** The smallest version for this many bytes in byte mode. */
+export function qrVersionFor(length: number): number {
+  return qrVersionOf({ kind: "bytes", bytes: new Uint8Array(length) });
 }
 
 function alignmentPositions(version: number): number[] {
@@ -47,7 +63,7 @@ function alignmentPositions(version: number): number[] {
   return result;
 }
 
-function build(bytes: Uint8Array, version: number): boolean[][] {
+function build(payload: QrPayload, version: number): boolean[][] {
   const size = 17 + 4 * version;
   const [ec, shortCount, shortSize, longCount] = BLOCKS[version - 1];
   const capacity = dataCodewords(version);
@@ -93,8 +109,16 @@ function build(bytes: Uint8Array, version: number): boolean[][] {
   const append = (value: number, count: number): void => {
     for (let i = count - 1; i >= 0; --i) bits.push((value >>> i) & 1);
   };
-  append(4, 4); append(bytes.length, version < 10 ? 8 : 16);
-  for (const byte of bytes) append(byte, 8);
+  if (payload.kind === "bytes") {
+    append(4, 4); append(payload.bytes.length, version < 10 ? 8 : 16);
+    for (const byte of payload.bytes) append(byte, 8);
+  } else {
+    const { text } = payload;
+    append(2, 4); append(text.length, version < 10 ? 9 : version < 27 ? 11 : 13);
+    const code = (at: number): number => { const index = BASE45.indexOf(text[at]!); if (index < 0) refuse("alphanumeric"); return index; };
+    for (let i = 0; i + 1 < text.length; i += 2) append(code(i) * 45 + code(i + 1), 11);
+    if (text.length % 2) append(code(text.length - 1), 6);
+  }
   for (let i = 0; i < Math.min(4, capacity * 8 - bits.length); ++i) bits.push(0);
   while (bits.length % 8) bits.push(0);
   const data: number[] = [];
@@ -149,14 +173,25 @@ function build(bytes: Uint8Array, version: number): boolean[][] {
 /** Version 40, the fixed reference. */
 export function qrModules(bytes: Uint8Array): boolean[][] {
   if (bytes.length > 2953) refuse("optical-frame-size");
-  return build(bytes, 40);
+  return build({ kind: "bytes", bytes }, 40);
 }
 
-/** The smallest version that holds the bytes. */
-export function qrModulesFit(bytes: Uint8Array): boolean[][] {
-  const version = qrVersionFor(bytes.length);
+/** The smallest version that holds the payload. */
+export function qrModulesOf(payload: QrPayload): boolean[][] {
+  const version = qrVersionOf(payload);
   if (version === 0) refuse("optical-frame-size");
-  return build(bytes, version);
+  return build(payload, version);
+}
+
+/** The smallest version that holds the bytes, in byte mode. */
+export function qrModulesFit(bytes: Uint8Array): boolean[][] {
+  return qrModulesOf({ kind: "bytes", bytes });
+}
+
+/** A frame's payload: compact frames as base45 in alphanumeric mode, anything else as bytes. */
+export function framePayload(bytes: Uint8Array): QrPayload {
+  const text = frameQrText(bytes);
+  return text === null ? { kind: "bytes", bytes } : { kind: "alnum", text };
 }
 
 function paintModules(canvas: HTMLCanvasElement, modules: boolean[][], scale: number, paper = "#fff", ink = "#000"): void {
@@ -184,13 +219,13 @@ export const FRAME_INK = "#0b0e18";
  *  plate. Each module is a whole number of CSS pixels (and of device pixels), as large as the canvas's parent allows, so a camera
  *  sees even, sharp modules. A reader decodes any version, so nothing else depends on the size. */
 export function drawQrFrame(canvas: HTMLCanvasElement, bytes: Uint8Array): void {
-  const modules = qrModulesFit(bytes);
+  const modules = qrModulesOf(framePayload(bytes));
   const total = modules.length + 8;
   const density = Math.max(1, Math.round(globalThis.devicePixelRatio || 1));
   const room = canvas.parentElement?.clientWidth ?? 0;
   const css = room > 0 ? Math.max(2, Math.floor(room / total)) : 4;
   paintModules(canvas, modules, css * density, FRAME_PLATE, FRAME_INK);
-  canvas.style.width = canvas.style.height = `${total * css}px`;
+  if (canvas.style) canvas.style.width = canvas.style.height = `${total * css}px`;
 }
 
 /** The phone-link code: the smallest version, dark on light, a four-module quiet zone included. Each module is a whole number of
@@ -201,5 +236,5 @@ export function drawQrLink(canvas: HTMLCanvasElement, bytes: Uint8Array): void {
   const density = Math.max(1, Math.round(globalThis.devicePixelRatio || 1));
   const css = Math.max(3, Math.floor(220 / total));
   paintModules(canvas, modules, css * density);
-  canvas.style.width = canvas.style.height = `${total * css}px`;
+  if (canvas.style) canvas.style.width = canvas.style.height = `${total * css}px`;
 }

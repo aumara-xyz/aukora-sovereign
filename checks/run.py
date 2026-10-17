@@ -887,6 +887,14 @@ for p in files:
             continue
         fail(rule, detail)
 
+# 11a. No preview-only shim in the product build either: the generated release (app/release, when it exists) is scanned for the same
+#      markers as the source (checks/walls.py PREVIEW_MARKERS). The preview serves the build unchanged and adds its shims at serve time.
+release_dir = ROOT / "app" / "release"
+if release_dir.is_dir():
+    for built in sorted(release_dir.rglob("*")):
+        if built.is_file() and re.search(walls.SCANNED, built.name.lower()) and re.search(walls.PREVIEW_MARKERS, built.read_text(errors="replace")):
+            fail("wall-preview-release", f"{built.relative_to(ROOT)} carries a preview-only shim")
+
 # 11b. The engine's reach (checks/walls.py `engine_findings`): TypeScript and JavaScript under engine/ may not use the network,
 #      run a program, read the environment or evaluate a string. Only the exact files in checks/baseline.json
 #      `engine_io_allowed` are excused, each with the reason it must keep what it keeps. Pinned files are scanned too:

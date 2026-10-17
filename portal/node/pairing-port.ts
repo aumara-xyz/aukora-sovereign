@@ -37,6 +37,8 @@ export type NodePairingPort = {
   readonly phoneLink: { readonly url: string; readonly caption: string; draw(canvas: HTMLCanvasElement): void };
   /** The current pairing, started on first use and again after it ends. */
   session(signal?: AbortSignal): Promise<PairingStart>;
+  /** How many devices the node has paired with this owner (GET /api/pairing/devices); zero means the first pairing is still due. */
+  pairedCount(signal?: AbortSignal): Promise<number>;
 };
 
 const REFRESH_BEFORE_MS = 20_000;
@@ -160,6 +162,7 @@ export function createNodePairingPort(options: NodePairingPortOptions = {}): Nod
 
   return {
     session,
+    async pairedCount(signal) { return (await client.devices(signal)).devices.length; },
     phoneLink: {
       get url() { return url(); },
       caption: "Scan with your phone to pair it. The code works once, for five minutes.",

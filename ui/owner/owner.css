@@ -219,7 +219,8 @@ body::after {
 /* The confirm page: the three names on their own line, spread out in their colours. */
 .owner-names { display: flex; justify-content: center; gap: .9em; font-weight: 500; letter-spacing: .14em; }
 .onboarding[data-scene='confirm'] .owner-text .owner-detail + .owner-detail { margin-top: 8px; }
-.onboarding[data-scene='confirm'] .owner-text .owner-detail:last-child { margin-top: 18px; }
+.onboarding[data-scene='confirm'] .owner-text .owner-detail:last-child { margin-top: 24px; }
+.owner-motto { color: var(--gold); font-size: 1.12em; font-weight: 400; letter-spacing: .08em; }
 
 /* ---------- Pairing (step 5): the Pentora, large and turning, then two screens facing ---------- */
 .pairing-portal { width: min(100%, 460px); text-align: left; }
@@ -264,6 +265,14 @@ body::after {
 .pairing-tile { position: relative; display: grid; place-items: center; width: min(94vw, 62vh, 560px); aspect-ratio: 1; }
 .pairing-tile canvas { border-radius: 16px; image-rendering: pixelated; box-shadow: 0 0 70px color-mix(in srgb, var(--blue) 20%, transparent); }
 .pairing-tile .pairing-bloom { width: 100%; height: 100%; image-rendering: auto; }
+/* A failure stays on the exchange screen: what happened, what to try, and "Try again" (the session is kept). */
+.pairing-fail { display: none; justify-items: center; gap: 10px; max-width: 26em; text-align: center; }
+.ceremony-pairing[data-failed] .pairing-fail { display: grid; }
+.ceremony-pairing[data-failed] :is(.pairing-tile, .fb, .pairing-phase) { display: none; }
+.pairing-fail-title { margin: 0; color: var(--text); font-size: clamp(20px, 2.6vw, 26px); font-weight: 300; line-height: 1.3; }
+.pairing-fail-tips { margin: 0 0 8px; color: var(--secondary); font-size: 16px; font-weight: 300; line-height: 1.6; }
+.pairing-fail-code { margin: 0; color: var(--muted); font-size: 12px; letter-spacing: .06em; }
+.pairing-fail-code:empty { display: none; }
 .pairing-actions { display: flex; align-items: center; justify-content: center; gap: 22px; }
 .pairing-sound { font-size: 13px; }
 

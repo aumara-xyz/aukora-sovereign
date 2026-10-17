@@ -19,7 +19,7 @@ export function mountCeremonyConclusion(host: HTMLElement, signal: AbortSignal, 
   const panel = node("section", "", "ceremony-conclusion owner-scene");
   const textBlock = node("div", "", "owner-text");
   textBlock.append(node("h2", "Welcome to your own space."),
-    node("p", "You just locked two devices to one point in spacetime. You’ll do this again to vouch for other humans. More later.", "owner-detail"));
+    node("p", "Your two devices met, here and now. Later you will do this with friends and family to grow your human network. More soon.", "owner-detail"));
   const controls = node("div", "", "owner-controls");
   const made = actionButton("Open AUKORA", "mint");
   made.button.classList.add("primary");

@@ -23,7 +23,7 @@
   min-width: 0;
   border: 2px solid transparent;
   background: conic-gradient(from var(--portal-angle), var(--mint), var(--blue), var(--violet), var(--mint)) border-box;
-  box-shadow: 0 0 56px color-mix(in srgb, var(--mint) 20%, transparent);
+  box-shadow: 0 0 40px color-mix(in srgb, var(--mint) 7%, transparent);
 }
 /* Behind the content: the halo, then an opaque fill over its inside, so only the edge and the glow outside carry the colour. */
 .claim-portal::after { content: ""; position: absolute; z-index: -1; inset: 0; border-radius: calc(var(--ak-portal-radius, 14px) - 2px); background: rgb(23, 27, 36); }
@@ -34,14 +34,15 @@
   inset: -3px;
   border-radius: inherit;
   background: conic-gradient(from var(--portal-angle), var(--mint), var(--blue), var(--violet), var(--mint));
-  filter: blur(20px);
-  opacity: .8;
+  filter: blur(22px);
+  opacity: .26;
 }
-.claim-portal:hover, .claim-portal[data-open="yes"] { border-color: transparent; box-shadow: 0 0 64px color-mix(in srgb, var(--violet) 18%, transparent); }
-/* Centred text, the same primitive shape: the icon stays at the left and the opener at the right. */
-.claim-portal .ak-portal__copy { align-items: center; text-align: center; }
-.claim-portal .ak-portal__head { padding-inline: 16px; }
-.claim-portal .ak-portal__end { min-width: 30px; justify-content: flex-end; }
+.claim-portal:hover, .claim-portal[data-open="yes"] { border-color: transparent; box-shadow: 0 0 44px color-mix(in srgb, var(--mint) 9%, transparent); }
+/* The same primitive shape and border, with nothing in it but the words: no icon, no opener, no subline. Big mint letters, centred. */
+.claim-portal .ak-icon-tile, .claim-portal .ak-portal__summary, .claim-portal .ak-portal__end { display: none; }
+.claim-portal .ak-portal__head { justify-content: center; padding-inline: 16px; }
+.claim-portal .ak-portal__copy { flex: none; align-items: center; text-align: center; }
+.claim-portal .ak-portal__title { overflow: visible; color: var(--mint); font-size: 23px; line-height: 30px; font-weight: 400; letter-spacing: .06em; }
 
 .claim-portal-content {
   display: grid;
@@ -69,22 +70,21 @@
 .claim-foot { align-self: end; display: flex; flex-direction: column; align-items: center; gap: 2px; padding-bottom: 26px; }
 .claim-leaving { pointer-events: none; animation: owner-leave .8s cubic-bezier(.4, 0, .2, 1) both; }
 
-@keyframes claim-halo { 0%, 100% { opacity: .6; } 50% { opacity: .95; } }
+@keyframes claim-halo { 0%, 100% { opacity: .16; } 50% { opacity: .36; } }
 @property --portal-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
 @keyframes claim-portal-turn { to { --portal-angle: 360deg; } }
 @keyframes claim-portal-glow {
-  0%, 100% { box-shadow: 0 0 46px color-mix(in srgb, var(--mint) 12%, transparent); }
-  33% { box-shadow: 0 0 52px color-mix(in srgb, var(--blue) 14%, transparent); }
-  66% { box-shadow: 0 0 52px color-mix(in srgb, var(--violet) 15%, transparent); }
+  0%, 100% { box-shadow: 0 0 36px color-mix(in srgb, var(--mint) 6%, transparent); }
+  50% { box-shadow: 0 0 44px color-mix(in srgb, var(--mint) 11%, transparent); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   /* The portal arrives last, after the trefoil and the name; its edge then travels slowly through mint, blue and violet. */
   .claim-portal { animation: owner-rise-slow 1.6s var(--owner-ease) 2.3s both; }
-  .claim-portal[data-open="no"] { animation: owner-rise-slow 1.6s var(--owner-ease) 2.3s both, claim-portal-turn 14s linear 2.3s infinite, claim-portal-glow 12s ease-in-out 3.9s infinite; }
+  .claim-portal[data-open="no"] { animation: owner-rise-slow 1.6s var(--owner-ease) 2.3s both, claim-portal-turn 14s linear 2.3s infinite, claim-portal-glow 4s ease-in-out 3.9s infinite; }
   .claim-portal[data-open="yes"] { animation: claim-portal-turn 22s linear infinite; }
   /* The halo is a pseudo-element: an unregistered-inheritance angle does not pass down, so it turns on its own clock. */
-  .claim-portal::before { animation: claim-portal-turn 14s linear 2.3s infinite, claim-halo 6s ease-in-out 2.3s infinite; }
+  .claim-portal::before { animation: claim-portal-turn 14s linear 2.3s infinite, claim-halo 4s ease-in-out 2.3s infinite; }
   .claim-foot { animation: owner-fade 1.6s ease 3.4s both; }
 }
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { AttemptStore, ContextExchange, CopresenceEngine, ExchangeMethod, PersonNostrKeys, PersonNostrKeysForReceipt, PortalExchange, PortalObservation, ReceiptVerdict } from "./contracts.js";
-import { checkAbort, digest, domain, encode, hex, integer, object, parse, refuse, sign, string, text, unhex, verify, type Json } from "./bytes.js";
+import { checkAbort, concat, digest, domain, encode, hex, integer, object, parse, refuse, sign, string, text, unhex, verify, type Json } from "./bytes.js";
 import { IndexedAttempts, ticket } from "./attempts.js";
 import { copyPersonKey, pairingDigest, type PentoraPairingDigest } from "./bloom/derive.js";
 import { receiptCode, receiptVerdict } from "./verdict.js";
-import { context, contextDigest, core, coreDigest, frameDigest, FRAME_SCHEMA, intentAckDigest, nonceCommitment, participant, RECEIPT_SCHEMA, same, transcript, validateFrame, type Channels, type Context, type Core, type Frame, type Layers, type Packet, type Participant } from "./wire.js";
+import { COMPACT_SCHEMA, compactDigest, context, contextDigest, core, coreDigest, decodeCompact, encodeCompact, frameDigest, FRAME_SCHEMA, intentAckDigest, nonceCommitment, participant, RECEIPT_SCHEMA, same, transcript, validateCompact, validateFrame, type Channels, type Context, type Core, type Frame, type FrameWire, type Layers, type Packet, type Participant } from "./wire.js";
 
 export type ChannelRequest = { readonly context: Context; readonly side: "A" | "B"; readonly nonceA: string; readonly nonceB: string };
 export interface ChannelProbe { collect(request: ChannelRequest, signal: AbortSignal): Promise<Channels> }
@@ -21,6 +21,9 @@ export type BrowserEngineOptions = {
   // A durable, non-extractable P-256 device key the node already knows (node/device-key.ts). Without it each
   // exchange makes a fresh key, as before.
   readonly deviceKey?: CryptoKeyPair;
+  // The frame wire for the whole exchange: both screens must use the same. "compact-v1" (the default) is the small binary frame
+  // that fits a QR code of version 6 to 9; "json-v1" is the original canonical-JSON frame, kept for old vectors and tests.
+  readonly frames?: FrameWire;
 };
 const cleanupSignal = (): AbortSignal => new AbortController().signal;
 const now = (): number => Math.floor(Date.now() / 1000);
@@ -125,6 +128,7 @@ class BrowserExchange implements PortalExchange {
   private ownReveal: Uint8Array | null = null;
   private input: Core | null = null;
   private receipt: Uint8Array | null = null;
+  private sigB = "";
   private bloom: Uint8Array | null = null;
   private personKeys: PersonNostrKeys | null = null;
   private phase: PortalObservation["phase"] = "FACE";
@@ -159,6 +163,7 @@ class BrowserExchange implements PortalExchange {
     this.purpose = purpose;
     this.intent = intent;
     this.options = options;
+    this.compact = (options.frames ?? "compact-v1") === "compact-v1";
     this.onContext = onContext;
     this.layers = { sound: exchange.method !== "optical", motion: exchange.method === "optical-audio-motion", intent_ack: intent !== null };
     this.outerAbort = () => this.stop();
@@ -174,13 +179,15 @@ class BrowserExchange implements PortalExchange {
         if (this.phase === "FACE") await this.makeFace();
         else {
           if (this.primary && (!this.receipt || this.side === "A")) {
-            const frame = object(object(object(parse(this.primary)).body).body);
+            const frame = this.frameOf(this.primary);
             if (frame.type === "HANDSHAKE" || frame.type === "BLOOM") {
               const { t_seconds: _time, frame_index: _index, ...fields } = frame;
               this.primary = await this.packet(fields);
             }
           }
-          const sequence = this.receipt ? [this.receipt, this.primary] : [this.primary, this.ownFace, this.ownReveal];
+          // Compact frames are small enough that the receipt is never drawn: the peer rebuilds it from the BLOOM frame.
+          const sequence = this.compact ? (this.receipt ? [this.primary] : [this.primary, this.ownFace, this.ownReveal])
+            : this.receipt ? [this.receipt, this.primary] : [this.primary, this.ownFace, this.ownReveal];
           const frames = sequence.filter((item): item is Uint8Array => item !== null);
           this.current = frames[this.displayIndex++ % frames.length] ?? this.current;
           this.emit();
@@ -273,11 +280,22 @@ class BrowserExchange implements PortalExchange {
     this.bloom = null; this.personKeys = null;
     this.verdict = { verdict: "SUSPICIOUS", code: code(error) }; this.emit(); this.stop();
   }
+  private frameOf(bytes: Uint8Array): Frame {
+    return this.compact ? decodeCompact(bytes).frame : object(object(object(parse(bytes)).body).body) as Frame;
+  }
   private async packet(fields: { [key: string]: Json }, at = now()): Promise<Uint8Array> {
     checkAbort(this.controller.signal);
     const body = { ...fields, t_seconds: at, frame_index: ++this.index } as Frame;
-    const packet: Packet = { schema: FRAME_SCHEMA, body: { body, signature: await sign(this.key, await frameDigest(body)) } };
-    const bytes = encode(packet);
+    let packet: Packet, bytes: Uint8Array;
+    if (this.compact) {
+      const raw = encodeCompact(body);
+      const signature = await sign(this.key, await compactDigest(raw));
+      packet = { schema: COMPACT_SCHEMA, body: { body, signature } };
+      bytes = concat(raw, unhex(signature, 64));
+    } else {
+      packet = { schema: FRAME_SCHEMA, body: { body, signature: await sign(this.key, await frameDigest(body)) } };
+      bytes = encode(packet);
+    }
     this.frames.set(hex(await digest(bytes)), { bytes, packet });
     return bytes;
   }
@@ -287,6 +305,7 @@ class BrowserExchange implements PortalExchange {
     this.primary = this.ownFace; this.current = this.ownFace; this.emit();
   }
   private async process(bytes: Uint8Array): Promise<void> {
+    if (this.compact) { await this.processCompact(bytes); return; }
     const value = parse(bytes);
     if (object(value).schema === RECEIPT_SCHEMA) {
       if (this.receipt && same(parse(this.receipt), value)) return;
@@ -363,9 +382,103 @@ class BrowserExchange implements PortalExchange {
       return;
     }
   }
+  // The same exchange over compact frames. A frame that names its own key (FACE) is verified on arrival; the others carry digests of
+  // things both screens already hold, so they are verified against the context bound from the two FACE frames, and one that arrives
+  // before that waits (SEENYOU) or is refused (the rest, which only make sense afterwards).
+  private async processCompact(bytes: Uint8Array): Promise<void> {
+    const { packet, key } = await validateCompact(bytes, now());
+    const frame = packet.body.body;
+    const hash = hex(await digest(bytes));
+    if (frame.type === "FACE") {
+      if (key === this.who.device_key) return;
+      this.frames.set(hash, { bytes, packet });
+      if (this.frames.size > 128) refuse("frame-budget");
+      const peer = participant(frame.participant);
+      if (frame.method !== "screen-to-screen" || !same(frame.required_layers, this.layers)) refuse("method-mismatch");
+      if (this.peer && !same(peer, this.peer)) refuse("peer-changed");
+      if (this.peerFace && frame.nonce_commitment !== this.frameOf(this.peerFace).nonce_commitment) refuse("nonce-commitment-changed");
+      this.peer = peer;
+      if (!this.bound) {
+        this.peerFace = bytes;
+        this.side = this.who.device_key < peer.device_key ? "A" : "B";
+        this.bound = { a: this.side === "A" ? this.who : peer, b: this.side === "B" ? this.who : peer, method: "screen-to-screen", required_layers: this.layers, purpose: this.purpose, intent: this.intent };
+        this.onContext(this.bound);
+        if (this.side === "A") await this.makeReveal(this.ownFaceHash, hash);
+      }
+      return;
+    }
+    if (!this.bound || !this.side) {
+      if (frame.type === "SEENYOU") {
+        if (this.pending.size >= 16) refuse("frame-budget");
+        this.pending.set(hash, bytes);
+        return;
+      }
+      refuse(frame.type === "HANDSHAKE" ? "unexpected-handshake" : "unexpected-bloom");
+    }
+    const { body, signature } = decodeCompact(bytes);
+    const signed = await compactDigest(body);
+    if (frame.type === "SEENYOU") {
+      if (frame.sender === this.side) return;
+      await verify((frame.sender === "A" ? this.bound.a : this.bound.b).device_key, signature, signed);
+      this.frames.set(hash, { bytes, packet });
+      if (this.frames.size > 128) refuse("frame-budget");
+      if (frame.context_digest !== hex(await contextDigest(this.bound))) refuse("context-mismatch");
+      const faceA = this.frames.get(string(frame.face_a)), faceB = this.frames.get(string(frame.face_b));
+      if (!faceA || !faceB) { this.pending.set(hash, bytes); return; }
+      for (const [face, who] of [[faceA, this.bound.a], [faceB, this.bound.b]] as const) {
+        if (face.packet.body.body.type !== "FACE" || !same(face.packet.body.body.participant, who)) refuse("face-mismatch");
+      }
+      const sender = frame.sender === "A" ? this.bound.a : this.bound.b;
+      const theirFace = frame.sender === "A" ? faceA : faceB;
+      if (hex(await nonceCommitment(sender, string(frame.nonce))) !== theirFace.packet.body.body.nonce_commitment) refuse("nonce-mismatch");
+      if (integer(frame.frame_index) <= integer(theirFace.packet.body.body.frame_index) || integer(frame.t_seconds) < integer(theirFace.packet.body.body.t_seconds)) refuse("frame-order");
+      if (frame.sender === "A") {
+        if (this.revealA && hex(this.revealA) !== hex(bytes)) refuse("reveal-changed");
+        this.revealA = bytes;
+        this.progress(frame);
+        this.ownFace = faceB.bytes;
+        if (!this.ownReveal) await this.makeReveal(string(frame.face_a), string(frame.face_b), Math.max(now(), integer(frame.t_seconds)));
+        await this.makeHandshake();
+      } else {
+        if (this.revealB && hex(this.revealB) !== hex(bytes)) refuse("reveal-changed");
+        this.revealB = bytes;
+        this.progress(frame);
+        void this.collect().catch(error => this.fail(error));
+      }
+      return;
+    }
+    if (frame.type === "HANDSHAKE") {
+      if (this.side !== "A") refuse("unexpected-handshake");
+      await verify(this.bound.b.device_key, signature, signed);
+      this.frames.set(hash, { bytes, packet });
+      await this.acceptHandshake(frame);
+      return;
+    }
+    // BLOOM: A's signature over the core. B already holds the core, so it rebuilds the receipt A holds instead of reading it.
+    if (this.side !== "B" || !this.input) refuse("unexpected-bloom");
+    await verify(this.bound.a.device_key, signature, signed);
+    const coreHash = await coreDigest(this.input);
+    if (frame.core_digest !== hex(coreHash)) refuse("core-mismatch");
+    await verify(this.bound.a.device_key, frame.sig_a, coreHash);
+    this.progress(frame);
+    if (this.receipt) return;
+    const boundHash = await contextDigest(this.bound);
+    let ack: Json = null;
+    if (this.intent !== null) {
+      if (typeof frame.intent_sig !== "string") refuse("intent-ack");
+      ack = { by: "A", intent: this.intent, core: hex(coreHash), context: hex(boundHash), signature: frame.intent_sig };
+    }
+    const receipt = encode({ schema: RECEIPT_SCHEMA, body: { core: this.input, sig_a: frame.sig_a, sig_b: this.sigB, intent_ack: ack } });
+    await verifyReceipt(receipt, this.bound, this.exchange.approvedText, this.controller.signal, this.options.consumeReceipt, this.input);
+    this.receipt = receipt; this.phase = "BLOOM"; this.verdict = result;
+    void this.resolveBloom(receipt);
+    this.emit();
+  }
   private async makeReveal(faceA: string, faceB: string, at = now()): Promise<void> {
     if (!this.bound || !this.side) refuse("state");
-    this.ownReveal = await this.packet({ type: "SEENYOU", context: this.bound, sender: this.side, face_a: faceA, face_b: faceB, nonce: this.nonce }, at);
+    this.ownReveal = await this.packet(this.compact
+      ? { type: "SEENYOU", context_digest: hex(await contextDigest(this.bound)), sender: this.side, face_a: faceA, face_b: faceB, nonce: this.nonce }
+      : { type: "SEENYOU", context: this.bound, sender: this.side, face_a: faceA, face_b: faceB, nonce: this.nonce }, at);
     if (this.side === "A") this.revealA = this.ownReveal; else this.revealB = this.ownReveal;
     this.phase = "SEENYOU"; this.primary = this.ownReveal; this.current = this.ownReveal; this.emit();
   }
@@ -376,7 +489,7 @@ class BrowserExchange implements PortalExchange {
   }
   private async buildCore(channels: Channels): Promise<Core> {
     if (!this.bound || !this.revealA || !this.revealB) refuse("state");
-    const a = object(object(object(parse(this.revealA)).body).body), b = object(object(object(parse(this.revealB)).body).body);
+    const a = this.frameOf(this.revealA), b = this.frameOf(this.revealB);
     if (a.face_a !== b.face_a || a.face_b !== b.face_b) refuse("face-mismatch");
     const faceA = this.frames.get(string(a.face_a)), faceB = this.frames.get(string(a.face_b));
     if (!faceA || !faceB) refuse("transcript");
@@ -386,7 +499,7 @@ class BrowserExchange implements PortalExchange {
   private async collect(): Promise<Channels> {
     if (!this.bound || !this.side || !this.revealA || !this.revealB) refuse("state");
     if (!this.layers.sound && !this.layers.motion) return { sound: null, motion: null };
-    const a = object(object(object(parse(this.revealA)).body).body), b = object(object(object(parse(this.revealB)).body).body);
+    const a = this.frameOf(this.revealA), b = this.frameOf(this.revealB);
     this.channelPromise ??= this.options.channels!.collect({ context: this.bound, side: this.side, nonceA: string(a.nonce), nonceB: string(b.nonce) }, this.controller.signal);
     return this.channelPromise;
   }
@@ -394,14 +507,15 @@ class BrowserExchange implements PortalExchange {
     if (this.side !== "B") refuse("state");
     this.input = await this.buildCore(await this.collect());
     const hash = await coreDigest(this.input);
-    this.current = await this.packet({ type: "HANDSHAKE", core: this.input, sig_b: await sign(this.key, hash) });
+    this.sigB = await sign(this.key, hash);
+    this.current = await this.packet(this.compact ? { type: "HANDSHAKE", core_digest: hex(hash), sig_b: this.sigB } : { type: "HANDSHAKE", core: this.input, sig_b: this.sigB });
     this.primary = this.current;
     this.phase = "HANDSHAKE"; this.emit();
   }
   private async acceptHandshake(frame: Frame): Promise<void> {
     if (this.side !== "A" || !this.bound) refuse("unexpected-handshake");
     if (this.receipt && this.input) {
-      if (!same(frame.core, this.input)) refuse("core-mismatch");
+      if (this.compact ? frame.core_digest !== hex(await coreDigest(this.input)) : !same(frame.core, this.input)) refuse("core-mismatch");
       this.progress(frame); return;
     }
     if (!this.revealB) {
@@ -409,9 +523,10 @@ class BrowserExchange implements PortalExchange {
       if (packet) this.pending.set(hex(await digest(packet.bytes)), packet.bytes);
       return;
     }
-    const input = core(frame.core);
     const expected = await this.buildCore(await this.collect());
-    if (!same(input, expected)) refuse("core-mismatch");
+    // A holds the core it expects; B's frame either carries it whole (json-v1) or its digest (compact-v1), and must match.
+    const input = this.compact ? expected : core(frame.core);
+    if (this.compact ? frame.core_digest !== hex(await coreDigest(expected)) : !same(input, expected)) refuse("core-mismatch");
     const hash = await coreDigest(input);
     await verify(this.bound.b.device_key, frame.sig_b, hash);
     this.progress(frame);
@@ -421,9 +536,11 @@ class BrowserExchange implements PortalExchange {
       signature: await sign(this.key, await intentAckDigest(hash, boundHash, this.intent, "A")) };
     this.receipt = encode({ schema: RECEIPT_SCHEMA, body: { core: input, sig_a: sigA, sig_b: frame.sig_b, intent_ack: ack } });
     await verifyReceipt(this.receipt, this.bound, this.exchange.approvedText, this.controller.signal, this.options.consumeReceipt);
-    this.current = await this.packet({ type: "BLOOM", context: hex(boundHash), core: hex(hash), sig_a: sigA });
+    this.current = await this.packet(this.compact
+      ? { type: "BLOOM", core_digest: hex(hash), sig_a: sigA, intent_sig: ack === null ? null : (ack as { signature: string }).signature }
+      : { type: "BLOOM", context: hex(boundHash), core: hex(hash), sig_a: sigA });
     this.primary = this.current;
-    this.current = this.receipt;
+    if (!this.compact) this.current = this.receipt;
     this.phase = "BLOOM"; this.verdict = result;
     void this.resolveBloom(this.receipt);
     this.emit();

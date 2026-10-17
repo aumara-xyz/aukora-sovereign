@@ -44,6 +44,11 @@ HTML_BAD = (r"<script(?![^>]*\bsrc\s*=)(?![^>]*\btype\s*=\s*[\"']application/jso
             r"\son[a-z]+\s*=|(href|src|action|formaction|xlink:href)\s*=\s*[\"']?\s*javascript:")
 ABI = r"\bextern\s*(\"\"\s*)?\{|\bglobal_asm\b|\basm\s*!|#!?\[\s*(link|link_name)\b|\bextern\s+crate\b|\buse\s+(::)?(std|core|alloc)\s+as\b"
 SCANNED = r"\.(rs|ts|tsx|js|jsx|mjs|cjs|html|htm|svg)$"
+# Preview-only shims (the simulated passkey, the simulated second device, the stand-in node, the /__diag event log, the camera
+# canvas) live outside the product tree. Any trace of one in product source, or in the product build, is a leak.
+PREVIEW_MARKERS = (r"__preview|/__diag\b|\bpreview-(stub|pairing|diag)\b|Simulate (passkey|second device)|PREVIEW ONLY|"
+                   r"\b__previewCam\b|\b__previewLoop\b|\b__previewSimulate\b")
+PRODUCT_PATH = r"^(app|ui|portal|crates)/"
 RAW_STRING = re.compile(r'[bc]?r(#*)"')
 CHAR = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|.)|[^\\'])'")
 
@@ -121,6 +126,8 @@ def file_findings(path, text):
     # Test folders and files are allowed (Peter, 2026-10-17); TEST_PATH stays defined for other tools.
     if not re.search(SCANNED, low):
         return found
+    if re.search(PRODUCT_PATH, low) and re.search(PREVIEW_MARKERS, text):
+        found.append(("wall-preview", path))
     if low.endswith(".rs"):
         code = strip_rs(text)
         # Peter, 2026-10-17: unit tests (#[cfg(test)] modules) are allowed; nothing gates a merge on them.

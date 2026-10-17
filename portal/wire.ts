@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { be, concat, domain, encode, hex, integer, object, optional, refuse, string, unhex, utf8, verify, type Json } from "./bytes.js";
+import { COMPACT_MAGIC } from "./frame-text.js";
+import { compressKey, decompressKey } from "./p256.js";
 
 export type Participant = { node: string; device_key: string; device_epoch: number; session_id: string; attempt_sequence: number };
 export type Layers = { sound: boolean; motion: boolean; intent_ack: boolean };
@@ -7,9 +9,13 @@ export type Context = { a: Participant; b: Participant; method: "screen-to-scree
 export type Channels = { sound: string | null; motion: string | null };
 export type Core = { context: Context; nonce_a: string; nonce_b: string; t_a_seconds: number; t_b_seconds: number; transcript: string; channels: Channels };
 export type Frame = { type: string; t_seconds: number; frame_index: number; [key: string]: Json };
-export type Packet = { schema: "aukora.copresence.frame.v1"; body: { body: Frame; signature: string } };
+export type Packet = { schema: string; body: { body: Frame; signature: string } };
 export const RECEIPT_SCHEMA = "aukora.copresence.hardened.v1";
 export const FRAME_SCHEMA = "aukora.copresence.frame.v1";
+// The compact frame wire (see COMPACT FRAMES below). The engine speaks one or the other for a whole exchange.
+export const COMPACT_SCHEMA = "aukora.copresence.compact-frame.v1";
+export const COMPACT_DOMAIN = "copresence.compact-frame.v1";
+export type FrameWire = "json-v1" | "compact-v1";
 const PARTICIPANT_KEYS = ["node", "device_key", "device_epoch", "session_id", "attempt_sequence"];
 
 export function participant(value: Json): Participant {
@@ -112,3 +118,110 @@ export function intentAckDigest(coreHash: Uint8Array, contextHash: Uint8Array, i
   return domain("copresence.intent-ack.v2", coreHash, contextHash, unhex(intent, 32), new Uint8Array([by === "A" ? 0 : 1]));
 }
 export function same(a: Json, b: Json): boolean { return hex(encode(a)) === hex(encode(b)); }
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// COMPACT FRAMES ("compact-v1"): the same four frames, the same fields and the same signatures, in binary, so a frame fits a small
+// QR code. Nothing here changes a receipt, the transcript function or what a device signs over the core: the transcript is still
+// domain("copresence.transcript.v1", ...) over the four frames' bytes, which are now these bytes, and the node never reads frames.
+//
+//   frame      = body || signature (64-byte raw r||s over compactDigest(body); WebCrypto ECDSA P-256 / SHA-256)
+//   body       = 0xC1 || type || fields...           all integers big-endian, fixed width
+//   FACE       01  node[16] key[33, SEC1 compressed] epoch u32  attempt u32  session[16]  method u8  layers u8
+//                  nonce_commitment[32]  t u32  index u16
+//   SEENYOU    02  sender u8 (0 = A, 1 = B)  context_digest[32]  face_a[32]  face_b[32]  nonce[32]  t u32  index u16
+//   HANDSHAKE  03  core_digest[32]  sig_b[64]  t u32  index u16
+//   BLOOM      04  flags u8 (bit 0 = has intent signature)  core_digest[32]  sig_a[64]  [intent_sig[64]]  t u32  index u16
+//
+// Where the JSON frames repeated the whole context (SEENYOU) and the whole core (HANDSHAKE), each device already holds both: the
+// compact frames carry their digests and the receiver compares them with the ones it computed itself. A QR code carries the frame
+// as base45 text in the alphanumeric mode (portal/frame-text.ts).
+// ---------------------------------------------------------------------------------------------------------------------------------
+const COMPACT_TYPES = ["", "FACE", "SEENYOU", "HANDSHAKE", "BLOOM"] as const;
+const METHODS = ["screen-to-screen", "remote", "relayed"] as const;
+const layerBits = (value: Layers): number => (value.sound ? 1 : 0) | (value.motion ? 2 : 0) | (value.intent_ack ? 4 : 0);
+
+function putInt(value: unknown, width: 2 | 4): Uint8Array {
+  const n = integer(value, width === 2 ? 0xffff : 0xffffffff);
+  const out = new Uint8Array(width);
+  for (let i = width - 1, rest = n; i >= 0; --i, rest = Math.floor(rest / 256)) out[i] = rest % 256;
+  return out;
+}
+const getInt = (bytes: Uint8Array, at: number, width: 2 | 4): number => bytes.subarray(at, at + width).reduce((sum, byte) => sum * 256 + byte, 0);
+
+/** The unsigned body of a compact frame. Field names are the JSON frames' (the engine reads either), except the digests that replace
+ *  the context and the core: `context_digest`, `core_digest`. */
+export function encodeCompact(frame: Frame): Uint8Array {
+  const type = COMPACT_TYPES.indexOf(frame.type as typeof COMPACT_TYPES[number]);
+  if (type < 1) refuse("frame-type");
+  const head = new Uint8Array([COMPACT_MAGIC, type]);
+  const tail = concat(putInt(frame.t_seconds, 4), putInt(frame.frame_index, 2));
+  if (frame.type === "FACE") {
+    const who = participant(frame.participant);
+    const method = METHODS.indexOf(string(frame.method) as typeof METHODS[number]);
+    if (method < 0) refuse("method");
+    return concat(head, unhex(who.node, 16), compressKey(unhex(who.device_key, 65)), putInt(who.device_epoch, 4), putInt(who.attempt_sequence, 4),
+      unhex(who.session_id, 16), new Uint8Array([method, layerBits(layers(frame.required_layers))]), unhex(frame.nonce_commitment, 32), tail);
+  }
+  if (frame.type === "SEENYOU") {
+    if (frame.sender !== "A" && frame.sender !== "B") refuse("sender");
+    return concat(head, new Uint8Array([frame.sender === "A" ? 0 : 1]), unhex(frame.context_digest, 32), unhex(frame.face_a, 32), unhex(frame.face_b, 32),
+      unhex(frame.nonce, 32), tail);
+  }
+  if (frame.type === "HANDSHAKE") return concat(head, unhex(frame.core_digest, 32), unhex(frame.sig_b, 64), tail);
+  const intent = frame.intent_sig === null || frame.intent_sig === undefined ? null : unhex(frame.intent_sig, 64);
+  return concat(head, new Uint8Array([intent ? 1 : 0]), unhex(frame.core_digest, 32), unhex(frame.sig_a, 64), intent ?? new Uint8Array(0), tail);
+}
+
+export function compactDigest(body: Uint8Array): Promise<Uint8Array> {
+  return domain(COMPACT_DOMAIN, be(body.length, 4), body);
+}
+
+/** Splits and decodes a whole compact frame; refuses any length, type or reserved value that is not exact. Verifies nothing. */
+export function decodeCompact(bytes: Uint8Array): { frame: Frame; body: Uint8Array; signature: string } {
+  if (bytes.length < 2 + 6 + 64 || bytes.length > 512 || bytes[0] !== COMPACT_MAGIC) refuse("frame-wire");
+  const body = bytes.subarray(0, bytes.length - 64);
+  const signature = hex(bytes.subarray(bytes.length - 64));
+  const type = COMPACT_TYPES[body[1]!];
+  if (!type) refuse("frame-type");
+  const tailAt = body.length - 6;
+  const times = { t_seconds: getInt(body, tailAt, 4), frame_index: getInt(body, tailAt + 4, 2) };
+  const exact = (length: number): void => { if (body.length !== length) refuse("frame-length"); };
+  let frame: Frame;
+  if (type === "FACE") {
+    exact(2 + 16 + 33 + 4 + 4 + 16 + 1 + 1 + 32 + 6);
+    const method = METHODS[body[75]!];
+    const bits = body[76]!;
+    if (!method || bits > 7) refuse("frame-fields");
+    frame = { type, participant: { node: hex(body.subarray(2, 18)), device_key: hex(decompressKey(body.subarray(18, 51))), device_epoch: getInt(body, 51, 4),
+      session_id: hex(body.subarray(59, 75)), attempt_sequence: getInt(body, 55, 4) }, method,
+      required_layers: { sound: (bits & 1) !== 0, motion: (bits & 2) !== 0, intent_ack: (bits & 4) !== 0 }, nonce_commitment: hex(body.subarray(77, 109)), ...times };
+    participant(frame.participant);
+  } else if (type === "SEENYOU") {
+    exact(2 + 1 + 32 * 4 + 6);
+    if (body[2]! > 1) refuse("sender");
+    frame = { type, sender: body[2] === 0 ? "A" : "B", context_digest: hex(body.subarray(3, 35)), face_a: hex(body.subarray(35, 67)), face_b: hex(body.subarray(67, 99)),
+      nonce: hex(body.subarray(99, 131)), ...times };
+  } else if (type === "HANDSHAKE") {
+    exact(2 + 32 + 64 + 6);
+    frame = { type, core_digest: hex(body.subarray(2, 34)), sig_b: hex(body.subarray(34, 98)), ...times };
+  } else {
+    const flags = body[2]!;
+    if (flags > 1) refuse("frame-fields");
+    exact(2 + 1 + 32 + 64 + (flags ? 64 : 0) + 6);
+    frame = { type, core_digest: hex(body.subarray(3, 35)), sig_a: hex(body.subarray(35, 99)), intent_sig: flags ? hex(body.subarray(99, 163)) : null, ...times };
+  }
+  return { frame, body: body.slice(), signature };
+}
+
+/** Decodes a compact frame and checks what can be checked without the exchange's context: its shape, its age and, for a FACE (which
+ *  names its own key), its signature. The other frames are verified against the bound context when the engine has it. */
+export async function validateCompact(bytes: Uint8Array, now: number): Promise<{ packet: Packet; key: string }> {
+  const { frame, body, signature } = decodeCompact(bytes);
+  if (frame.t_seconds > now || now - frame.t_seconds > 5) refuse("frame-stale");
+  let key = "";
+  if (frame.type === "FACE") {
+    key = participant(frame.participant).device_key;
+    await verify(key, signature, await compactDigest(body));
+  }
+  return { packet: { schema: COMPACT_SCHEMA, body: { body: frame, signature } }, key };
+}

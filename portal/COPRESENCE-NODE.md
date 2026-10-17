@@ -51,6 +51,47 @@ verified pairing proves. Bricks 47, 76, 77, 78, 118, 132 (NORTH-STAR.md).
    node decides, so frames keep rotating for the phone). The phone polls `POST /api/pairing/phone {phone}` and shows
    "Verified by your node." when the pairing is spent.
 
+## Frames: compact-v1 (the default) and json-v1
+
+The four frames can travel in two wire forms; both screens of an exchange use the same (`BrowserEngineOptions.frames`,
+default `"compact-v1"`). **The node never reads a frame.** It verifies the receipt only, and the receipt's `transcript`
+is an opaque 32-byte digest to it, so the frame wire is a matter between the two browsers and `crates/copresence`'s
+reference codec. A receipt is byte for byte the same either way; neither the receipt nor the node verifier changed.
+
+- **json-v1** is the original canonical-JSON frame. It repeats the whole context (SEENYOU) and the whole core
+  (HANDSHAKE), 0.7 to 1.5 KB, QR versions 19 to 27 (93 to 125 modules a side). It is kept for old vectors and tests.
+- **compact-v1** is the same four frames in binary, 168 to 201 bytes (233 with an intent signature), QR versions 8 to
+  10 (49 to 57 modules a side), the density portal-v0 used on the phone-tested page. Layout, big-endian, fixed width,
+  `frame = body || signature`, `body = 0xC1 || type || fields`:
+
+  | Frame | Fields after magic and type |
+  |---|---|
+  | FACE `01` | node 16, key 33 (SEC1 compressed), epoch u32, attempt u32, session 16, method u8, layers u8, nonce commitment 32, t u32, index u16 |
+  | SEENYOU `02` | sender u8 (0 A, 1 B), context digest 32, face A hash 32, face B hash 32, nonce 32, t u32, index u16 |
+  | HANDSHAKE `03` | core digest 32, `sig_b` 64, t u32, index u16 |
+  | BLOOM `04` | flags u8 (bit 0 = intent signature), core digest 32, `sig_a` 64, [intent signature 64], t u32, index u16 |
+
+  The signature is the raw 64-byte `r || s` (what WebCrypto ECDSA P-256 returns) over
+  `SHA-256("copresence.compact-frame.v1" 0x00 || be32(len(body)) || body)`. Nothing is new cryptography: the same WebCrypto
+  P-256 ECDSA signs and verifies; a key is stored compressed and expanded with standard SEC1 point decompression
+  (`portal/p256.ts`, checked against WebCrypto on 300 fresh keys and against the Rust `p256` crate through the vectors),
+  and WebCrypto's import rejects anything that is not a point on the curve.
+- Where json-v1 repeated the context and the core, compact-v1 carries their digests: each device already holds both and
+  compares the digest it computed itself, so a frame for another context or core is refused exactly as before.
+- **B rebuilds the receipt instead of reading it.** In json-v1 A also drew the whole receipt as a QR for B. In compact-v1
+  A's BLOOM frame carries `sig_a` (and the intent signature when there is one); B already holds the core and its own
+  `sig_b`, assembles the same canonical receipt, and verifies and spends it exactly as before. Both ends hold identical
+  bytes (tested).
+- A QR code carries a compact frame as **base45 text** (RFC 9285) in its alphanumeric mode, at 5.5 bits a character; a
+  reader gets text back from jsQR and `portal/frame-text.ts` tells a compact frame (decodes to bytes starting `0xC1`)
+  from a JSON one. The QR version is the smallest that holds the payload, except version 23, which jsQR 1.4.0 cannot read.
+- Tests: `tests/copresence/compact-frames.mjs` (the shared vectors, point compression, base45, QR sizes read back with
+  jsQR, and two real engines running a whole exchange on compact frames, with an intent acknowledgement, and on json-v1,
+  ending in byte-identical receipts); `cargo test -p copresence compact` (the Rust reference codec decodes, re-encodes,
+  verifies the WebCrypto signatures and recomputes the context, core and transcript digests from the same
+  `vectors/compact-frames-v1.json`, written once by `tests/copresence/make-compact-vectors.mjs`). The Rust codec is the
+  reference for the wire; it does not carry the exchange state machine, which `v1::exchange` keeps for json-v1 only.
+
 ## The pinned context (`aukora.copresence.pairing-context.v1`)
 
 C1 canonical JSON (keys sorted by UTF-16 code unit, integers as plain decimals, no spaces), at most 4,096 bytes.
@@ -183,5 +224,6 @@ export const pairingPort: PairingPort | null = createNodePairingPort();
   making a paired phone an authority device with the passkey: both on the Kira open list.
 - **Licence in the release.** `portal/vendor/LICENSE-jsQR` sits beside the script in the repository; the release
   build ships only code and data extensions, so the served release carries the script without its licence file.
-- **Frame size.** A FACE/SEENYOU frame is a version-40 QR (177 modules). The rehearsal needed about 8 px per module.
-  A real phone camera at arm's length has not been tried with this engine.
+- **Frame size.** With compact-v1 a frame is a QR of version 8 to 10 (49 to 57 modules), the size portal-v0 read on a
+  phone. It has been read by jsQR from a simulated camera (blur, rotation, noise) and by the headless twin test; a real
+  phone camera at arm's length has not been tried with this engine yet.
