@@ -34,12 +34,15 @@ pub(super) fn upgrade_chain(db: &mut Connection) -> Result<()> {
 
 /// The lineage rule this build writes: 1 = every source-less note is its own root; 2 = a source-less note repeating an
 /// earlier source-less statement (same scope, privacy, epoch) shares that note's root, whoever can read it; 3 = the same,
-/// but only a root every reader of the new note can read (`may_adopt_root`: a `local` root only by the same author, a
-/// `resume:` root only by the same slot).
-const LINEAGE_VERSION: &str = "3";
+/// but not a `local` root of another author or a `resume:` root of another slot; 4 = the slot must match exactly
+/// (`may_adopt_root`), so an unslotted note is never the root of a slotted one and two slots never fold. A store marked 2
+/// or 3 is rebuilt on open.
+const LINEAGE_VERSION: &str = "4";
 
 /// Rebuilds the derived `ancestry` table under the current lineage rule, from the events alone (it is not in the chain,
-/// so no event is rewritten). A store written under any earlier rule ends up exactly as if it had been written note by
+/// so no signed event is rewritten or deleted; the other upgrades in this file only fill side columns and re-link a
+/// legacy chain: `upgrade_capture` backfills `events.capture`, `upgrade_chain` rewrites `events.chain` of a v1 store). A
+/// store written under any earlier rule ends up exactly as if it had been written note by
 /// note by this build, and a second open finds the version marker and does nothing.
 pub(super) fn upgrade_lineage(db: &mut Connection) -> Result<()> {
     let have: Option<String> = db
@@ -59,7 +62,7 @@ pub(super) fn upgrade_lineage(db: &mut Connection) -> Result<()> {
             .map_err(sql)?;
         rows
     };
-    type Key = (Vec<u8>, String, String, i64);
+    type Key = (Vec<u8>, String, String, i64, Option<String>);
     let mut roots_of: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     // Source-less roots seen so far, per statement, in seq order: (root id, author, slot).
     let mut earlier: BTreeMap<Key, Vec<(String, String, Option<String>)>> = BTreeMap::new();
@@ -79,7 +82,7 @@ pub(super) fn upgrade_lineage(db: &mut Connection) -> Result<()> {
             }
         }
         if roots.is_empty() {
-            let key: Key = (meta.statement_hash.to_vec(), meta.scope.clone(), meta.privacy.wire().to_owned(), i64::from(meta.epoch));
+            let key: Key = (meta.statement_hash.to_vec(), meta.scope.clone(), meta.privacy.wire().to_owned(), i64::from(meta.epoch), meta.slot.clone());
             let list = earlier.entry(key).or_default();
             let adopted = list
                 .iter()

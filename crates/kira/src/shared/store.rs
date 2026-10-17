@@ -16,14 +16,16 @@ fn refuse(code: &'static str) -> Refusal {
 }
 
 /// May a source-less note adopt an earlier source-less note as its root? Only if every reader of the new note could read
-/// the earlier one: a `local` note is read by its author and the owner, so its root must be the same author's; an agent's
-/// `resume:<name>` handoff is read by that agent and the owner, so no other note adopts it. (Used by `append` and by the
-/// ancestry rebuild, so a store upgraded in place agrees with one written note by note.)
+/// the earlier one, and they are the same kind of note:
+/// - the slot is the same, exactly (no slot with no slot, `resume:a` with `resume:a`): a handoff is its author's and the
+///   owner's, an owner slot is a different place from a builders note, and one slot's text is not another's observation;
+/// - a `local` note is read by its author and the owner, so its root must be the same author's.
+///
+/// The same author repeating a statement does adopt their own earlier note: that is intentional (a repeat is one
+/// observation repeated, whoever repeats it). Used by `append` and by the ancestry rebuild, so a store upgraded in place
+/// agrees with one written note by note.
 pub(super) fn may_adopt_root(privacy: &str, author: &str, slot: Option<&str>, root_author: &str, root_slot: Option<&str>) -> bool {
-    if privacy == "local" && root_author != author {
-        return false;
-    }
-    !root_slot.is_some_and(|s| s.starts_with("resume:")) || slot == root_slot
+    slot == root_slot && (privacy != "local" || root_author == author)
 }
 
 /// The longest reason a correction may give.

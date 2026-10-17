@@ -213,13 +213,29 @@ fn a_note_adopts_only_a_root_all_its_readers_can_read() {
     let resume = s.append(sign(&a, &slotted, Review::Remembered, 4)).unwrap();
     let plain = s.append(sign(&b, &draft("grok rotates the relay on Monday", "builders"), Review::Remembered, 5)).unwrap();
     assert_eq!(plain.roots, vec![hex32(plain.event.id.as_bytes())], "not {:?}", hex32(resume.event.id.as_bytes()));
-    // ...but the same slot's next handoff may.
+    // Slots must match exactly: an unslotted note is not the root of a handoff, and two slots never fold.
+    let plain_first = s.append(sign(&owner, &draft("the ladder hangs in the garage", "builders"), Review::Remembered, 7)).unwrap();
+    let mut handoff = draft("the ladder hangs in the garage", "builders");
+    handoff.slot = Some("resume:a".into());
+    let handoff = s.append(sign(&a, &handoff, Review::Remembered, 8)).unwrap();
+    assert_eq!(handoff.roots, vec![hex32(handoff.event.id.as_bytes())], "not the unslotted {}", hex32(plain_first.event.id.as_bytes()));
+    let mut self_note = draft("we are the flagship", "builders");
+    self_note.slot = Some("aukora:self".into());
+    let one = s.append(sign(&owner, &self_note, Review::Remembered, 9)).unwrap();
+    self_note.slot = Some("aukora:resume".into());
+    let two = s.append(sign(&owner, &self_note, Review::Remembered, 10)).unwrap();
+    assert_ne!(one.roots, two.roots, "two different slots do not fold");
+    // The same slot, the same author, the same words: one root (deliberate).
+    let one_again = s.append(sign(&owner, &{ let mut d = draft("we are the flagship", "builders"); d.slot = Some("aukora:self".into()); d }, Review::Remembered, 11)).unwrap();
+    assert_eq!(one_again.roots, one.roots);
+    // ...and the same slot's next handoff may adopt.
     let next = s.append(sign(&a, &slotted, Review::Remembered, 6)).unwrap();
     assert_eq!(next.roots, vec![hex32(resume.event.id.as_bytes())]);
 }
 
 /// Grok review part 7: the in-place upgrade rebuilds the derived ancestry under the same rule as a write, rewrites no
-/// event, and a second open changes nothing.
+/// signed event (the capture side column and a legacy chain link are the only things it fills), and a second open
+/// changes nothing.
 #[test]
 fn the_ancestry_upgrade_follows_the_write_rule_rewrites_no_event_and_is_idempotent() {
     let (owner, a, b) = (key(), key(), key());
@@ -251,11 +267,24 @@ fn the_ancestry_upgrade_follows_the_write_rule_rewrites_no_event_and_is_idempote
         let mut cites = draft("so it holds", "builders");
         cites.sources = vec![hex32(one.event.id.as_bytes())];
         s.append(sign(&b, &cites, Review::Remembered, 7)).unwrap();
+        // An unslotted note and an identical handoff; two different owner slots with identical words.
+        s.append(sign(&b, &draft("the ladder hangs in the garage", "builders"), Review::Remembered, 8)).unwrap();
+        let mut ladder = draft("the ladder hangs in the garage", "builders");
+        ladder.slot = Some("resume:a".into());
+        s.append(sign(&a, &ladder, Review::Remembered, 9)).unwrap();
+        let mut flagship = draft("we are the flagship", "builders");
+        flagship.slot = Some("aukora:self".into());
+        s.append(sign(&owner, &flagship, Review::Remembered, 10)).unwrap();
+        flagship.slot = Some("aukora:resume".into());
+        s.append(sign(&owner, &flagship, Review::Remembered, 11)).unwrap();
         let expected = dump(&s);
-        // The wrong ancestry an earlier build wrote (lineage 2 folded across authors, privacy and slots), and no marker.
+        // The wrong ancestry earlier builds wrote: lineage 2 folded across authors, privacy and slots, and lineage 3 (an
+        // already-upgraded store) still folded across slots when the earlier root was not a handoff.
         s.db.execute("UPDATE ancestry SET root = (SELECT root FROM ancestry WHERE seq = 1) WHERE seq = 2", []).unwrap();
         s.db.execute("UPDATE ancestry SET root = (SELECT root FROM ancestry WHERE seq = 3) WHERE seq = 4", []).unwrap();
-        s.db.execute("UPDATE meta SET value = '2' WHERE key = 'lineage'", []).unwrap();
+        s.db.execute("UPDATE ancestry SET root = (SELECT root FROM ancestry WHERE seq = 8) WHERE seq = 9", []).unwrap();
+        s.db.execute("UPDATE ancestry SET root = (SELECT root FROM ancestry WHERE seq = 10) WHERE seq = 11", []).unwrap();
+        s.db.execute("UPDATE meta SET value = '3' WHERE key = 'lineage'", []).unwrap();
         assert_ne!(dump(&s).0, expected.0);
         (expected.0, expected.1)
     };
@@ -266,7 +295,7 @@ fn the_ancestry_upgrade_follows_the_write_rule_rewrites_no_event_and_is_idempote
     drop(s);
     let again = SharedStore::open(&path).unwrap();
     assert_eq!(dump(&again), (ancestry, events), "a second open changes nothing");
-    assert_eq!(again.verify_chain().unwrap(), 7);
+    assert_eq!(again.verify_chain().unwrap(), 11);
     for suffix in ["", "-wal", "-shm"] {
         let mut name = path.clone().into_os_string();
         name.push(suffix);
