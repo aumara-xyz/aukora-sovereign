@@ -47,10 +47,17 @@
 - id: harness-dev-context
   disabled: true
 
-# 3. No first-run sign-in form; the engine holds no model key (NODE.md, "The model").
+# 3. No first-run sign-in form; the engine holds no model key (NODE.md, "The model"). The harness's preview notice
+#    is acknowledged here: its "Continue" writes the acknowledgement to the profile's cordis.patch.yml, which is
+#    root-owned and read-only inside the wall, so it can never persist and the modal notice would cover the chat
+#    composer forever (found live, NODE.md O9). The version is the notice's copy version in 0.2.1-alpha.5
+#    (ui-settings-models onboarding-copy.ts: WELCOME_NOTICE_VERSION in the ui-settings-general section).
 - id: ui-settings-models
   config:
     credentialOnboarding: false
+- id: ui-settings-general
+  config:
+    welcomeNoticeVersion: '2026-09-28.1'
 
 # 4. The model path (NODE.md section 7). The DeepSeek adapter talks to the in-wall bridge (entry.mjs), which pipes to
 #    the model broker outside the wall; the broker holds the owner's key and the owner-approved budget. The adapter's
