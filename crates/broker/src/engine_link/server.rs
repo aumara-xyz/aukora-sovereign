@@ -473,38 +473,122 @@ async fn settle(
 }
 
 fn receipt(call: &Call, meter: &Meter, outcome: Outcome, charged: u64, unknown: bool, ended: u64) -> canon::Result<Value> {
-    let text = |s: &str| Value::text(s.to_owned());
-    let number = |n: u64| -> canon::Result<Value> {
-        Ok(Value::integer(SafeInteger::new(i64::try_from(n.min(9_007_199_254_740_991)).unwrap_or(0))?))
-    };
     let detail = match outcome {
         Outcome::Interrupted(code) => code.to_owned(),
         Outcome::ProviderRefused(status) => format!("http-{status}"),
         _ => String::new(),
     };
+    receipt_of(&Fields {
+        budget_id: &call.budget_id,
+        charged,
+        unknown,
+        detail: &detail,
+        ended,
+        key_generation: call.key_generation,
+        model: &call.model,
+        outcome: outcome.name(),
+        reported_model: meter.reported_model.as_deref().unwrap_or(""),
+        request_bytes: call.request_bytes,
+        request_id: &call.id,
+        request_sha256: &call.request_sha256.to_string(),
+        reserved: call.reserved,
+        response_bytes: meter.bytes,
+        started_at_ms: call.started_at_ms,
+        usage: &meter.usage,
+    })
+}
+
+/// The receipt of a call the process died in the middle of (spec B28/B29: OUTCOME_UNKNOWN). Only what the journal
+/// kept is known: which budget, which call, what was set aside, and it is charged in full.
+fn interrupted_receipt(interrupted: &super::spend::Interrupted, ended: u64) -> canon::Result<Value> {
+    receipt_of(&Fields {
+        budget_id: &interrupted.budget,
+        charged: interrupted.microusd,
+        unknown: true,
+        detail: "restart",
+        ended,
+        key_generation: 0,
+        model: "",
+        outcome: Outcome::Interrupted("restart").name(),
+        reported_model: "",
+        request_bytes: 0,
+        request_id: &interrupted.id,
+        request_sha256: "",
+        reserved: interrupted.microusd,
+        response_bytes: 0,
+        started_at_ms: 0,
+        usage: &super::meter::Usage::default(),
+    })
+}
+
+/// Give every call the last run left open its receipt in Aura (`broker.settle`, outcome `interrupted`, detail
+/// `restart`, charged in full), then settle it in the journal so the next start finds nothing to do. A receipt that
+/// cannot be written stops the link admitting calls, as any receipt failure does, and the call is found open again
+/// at the next start. A crash between the receipt and the settle line writes a second receipt for the same call.
+pub(super) fn record_interrupted(link: &Link) {
+    for interrupted in link.spend.take_interrupted() {
+        let ended = link.authority.now_ms();
+        let recorded = interrupted_receipt(&interrupted, ended).and_then(|value| link.authority.record(value));
+        let Ok(sequence) = recorded else {
+            link.receipts_failed.store(true, Ordering::SeqCst);
+            link.authority.log(&format!("call {} was open at start; its receipt could not be written", interrupted.id));
+            return;
+        };
+        let unwritten = if link.spend.settle_recovered(&interrupted).is_err() { " spend-line-unwritten" } else { "" };
+        link.authority.log(&format!(
+            "call {} interrupted by a restart: reserved={} charged={} (usage unknown: reservation charged) aura={sequence}{unwritten}",
+            interrupted.id, interrupted.microusd, interrupted.microusd
+        ));
+    }
+}
+
+struct Fields<'a> {
+    budget_id: &'a str,
+    charged: u64,
+    unknown: bool,
+    detail: &'a str,
+    ended: u64,
+    key_generation: u64,
+    model: &'a str,
+    outcome: &'a str,
+    reported_model: &'a str,
+    request_bytes: u64,
+    request_id: &'a str,
+    request_sha256: &'a str,
+    reserved: u64,
+    response_bytes: u64,
+    started_at_ms: u64,
+    usage: &'a super::meter::Usage,
+}
+
+fn receipt_of(fields: &Fields) -> canon::Result<Value> {
+    let text = |s: &str| Value::text(s.to_owned());
+    let number = |n: u64| -> canon::Result<Value> {
+        Ok(Value::integer(SafeInteger::new(i64::try_from(n.min(9_007_199_254_740_991)).unwrap_or(0))?))
+    };
     let usage = Value::object(vec![
-        ("cache_creation_input_tokens".into(), number(meter.usage.cache_creation_input_tokens)?),
-        ("cache_read_input_tokens".into(), number(meter.usage.cache_read_input_tokens)?),
-        ("input_tokens".into(), number(meter.usage.input_tokens)?),
-        ("output_tokens".into(), number(meter.usage.output_tokens)?),
+        ("cache_creation_input_tokens".into(), number(fields.usage.cache_creation_input_tokens)?),
+        ("cache_read_input_tokens".into(), number(fields.usage.cache_read_input_tokens)?),
+        ("input_tokens".into(), number(fields.usage.input_tokens)?),
+        ("output_tokens".into(), number(fields.usage.output_tokens)?),
     ])?;
     let body = Value::object(vec![
-        ("budget_sha256".into(), text(&call.budget_id)?),
-        ("charged_microusd".into(), number(charged)?),
-        ("cost_unknown".into(), Value::boolean(unknown)),
-        ("detail".into(), text(&detail)?),
-        ("ended_at_ms".into(), number(ended)?),
-        ("key_generation".into(), number(call.key_generation)?),
-        ("model".into(), text(&call.model)?),
-        ("outcome".into(), text(outcome.name())?),
+        ("budget_sha256".into(), text(fields.budget_id)?),
+        ("charged_microusd".into(), number(fields.charged)?),
+        ("cost_unknown".into(), Value::boolean(fields.unknown)),
+        ("detail".into(), text(fields.detail)?),
+        ("ended_at_ms".into(), number(fields.ended)?),
+        ("key_generation".into(), number(fields.key_generation)?),
+        ("model".into(), text(fields.model)?),
+        ("outcome".into(), text(fields.outcome)?),
         ("provider".into(), text(super::budget::PROVIDER)?),
-        ("reported_model".into(), text(meter.reported_model.as_deref().unwrap_or(""))?),
-        ("request_bytes".into(), number(call.request_bytes)?),
-        ("request_id".into(), text(&call.id)?),
-        ("request_sha256".into(), text(&call.request_sha256.to_string())?),
-        ("reserved_microusd".into(), number(call.reserved)?),
-        ("response_bytes".into(), number(meter.bytes)?),
-        ("started_at_ms".into(), number(call.started_at_ms)?),
+        ("reported_model".into(), text(fields.reported_model)?),
+        ("request_bytes".into(), number(fields.request_bytes)?),
+        ("request_id".into(), text(fields.request_id)?),
+        ("request_sha256".into(), text(fields.request_sha256)?),
+        ("reserved_microusd".into(), number(fields.reserved)?),
+        ("response_bytes".into(), number(fields.response_bytes)?),
+        ("started_at_ms".into(), number(fields.started_at_ms)?),
         ("usage".into(), usage),
     ])?;
     Value::object(vec![("body".into(), body), ("schema".into(), text("aukora-engine-model-receipt-v1")?)])

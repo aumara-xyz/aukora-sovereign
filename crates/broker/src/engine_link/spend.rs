@@ -47,7 +47,17 @@ struct Tally {
     requests: u64,
 }
 
+/// A reservation found open at start: the process died with the call in flight.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Interrupted {
+    pub budget: String,
+    pub id: String,
+    pub microusd: u64,
+}
+
 struct State {
+    /// Reservations found open at open, not yet given a receipt and a settle line (`take_interrupted`).
+    interrupted: Vec<Interrupted>,
     file: File,
     /// The length of the file's whole lines: every append starts here, and a failed one is cut back to it.
     length: u64,
@@ -117,17 +127,50 @@ impl SpendLog {
                 _ => return Err("spend-state"),
             }
         }
-        // Reservations that never settled were interrupted: charged in full.
+        // Reservations that never settled were interrupted: charged in full. They are also handed to the caller, who
+        // gives each its receipt before settling it on disk (`take_interrupted`, `settle_recovered`).
+        let interrupted: Vec<Interrupted> = tallies
+            .iter()
+            .flat_map(|(budget, tally)| {
+                tally.outstanding.iter().map(|(id, microusd)| Interrupted {
+                    budget: budget.clone(),
+                    id: id.clone(),
+                    microusd: *microusd,
+                })
+            })
+            .collect();
         for tally in tallies.values_mut() {
             let open: u64 = tally.outstanding.values().fold(0, |sum, v| sum.saturating_add(*v));
             tally.charged = tally.charged.saturating_add(open);
             tally.outstanding.clear();
         }
-        if whole as u64 > compact_at {
+        // The lines of an interrupted call are its only evidence until its receipt is written: not compacted away yet.
+        if whole as u64 > compact_at && interrupted.is_empty() {
             let (file, length) = compact(dir, &tallies)?;
-            return Ok(Self { state: Mutex::new(State { file, length, dirty: false, tallies }) });
+            return Ok(Self { state: Mutex::new(State { interrupted, file, length, dirty: false, tallies }) });
         }
-        Ok(Self { state: Mutex::new(State { file, length: whole as u64, dirty: false, tallies }) })
+        Ok(Self { state: Mutex::new(State { interrupted, file, length: whole as u64, dirty: false, tallies }) })
+    }
+
+    /// The reservations that were open when the journal was opened, once (already counted as charged in full).
+    pub fn take_interrupted(&self) -> Vec<Interrupted> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::take(&mut state.interrupted)
+    }
+
+    /// Write the settle line of an interrupted reservation at the amount it was already charged at open (so the
+    /// tallies do not change), after its receipt is durable: the next open then no longer finds it open.
+    pub fn settle_recovered(&self, interrupted: &Interrupted) -> Result<(), &'static str> {
+        let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        repair(&mut state)?;
+        let line = Line {
+            budget: interrupted.budget.clone(),
+            id: interrupted.id.clone(),
+            op: "settle".into(),
+            microusd: interrupted.microusd,
+            requests: None,
+        };
+        append(&mut state, &line)
     }
 
     pub fn used(&self, budget: &str) -> Used {

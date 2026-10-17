@@ -18,6 +18,8 @@ struct Fake {
     approved: Mutex<Approved>,
     receipts: Mutex<Vec<String>>,
     logs: Mutex<Vec<String>>,
+    /// Aura cannot take a receipt.
+    refuse_receipts: std::sync::atomic::AtomicBool,
 }
 
 impl Authority for Fake {
@@ -26,6 +28,9 @@ impl Authority for Fake {
         Box::pin(async move { approved })
     }
     fn record(&self, receipt: canon::json::Value) -> canon::Result<u64> {
+        if self.refuse_receipts.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(canon::codes::BROKER_STATE);
+        }
         let mut receipts = self.receipts.lock().unwrap();
         receipts.push(String::from_utf8(receipt.canonical_bytes()).unwrap());
         Ok(receipts.len() as u64 + 40)
@@ -562,6 +567,57 @@ fn a_reservation_that_never_settled_is_charged_in_full_after_a_restart() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Spec B28/B29: a call the process died in the middle of leaves a receipt in Aura, not only a charge in the journal.
+#[tokio::test]
+async fn a_call_the_last_run_died_in_gets_an_interrupted_receipt_once_and_is_charged_in_full() {
+    let dir = std::env::temp_dir().join(format!("aukora-engine-recover-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    {
+        let log = spend::SpendLog::open(&dir).unwrap();
+        log.reserve("b", "done", |_| Ok(500)).unwrap();
+        log.settle("b", "done", 120).unwrap();
+        log.reserve("b", "lost", |_| Ok(700)).unwrap();
+        log.reserve("c", "lost-too", |_| Ok(30)).unwrap();
+    }
+    let start = |fake: &Arc<Fake>| {
+        Link::new(Arc::new(KeyInbox::new()), fake.clone(), &dir, Upstream::loopback(1), vec![ENGINE_UID], Limits::default()).unwrap()
+    };
+    // Aura refuses the receipt: no call is admitted, and nothing is settled on disk.
+    let broken = Arc::new(Fake::default());
+    broken.refuse_receipts.store(true, std::sync::atomic::Ordering::SeqCst);
+    let link = start(&broken);
+    assert!(link.receipts_failed.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(broken.logs.lock().unwrap().iter().any(|l| l.contains("receipt could not be written")));
+    drop(link);
+    // The next start writes both receipts, charged in full, and journals the settles.
+    let fake = Arc::new(Fake::default());
+    let link = start(&fake);
+    assert!(!link.receipts_failed.load(std::sync::atomic::Ordering::SeqCst));
+    let receipts: Vec<serde_json::Value> =
+        fake.receipts.lock().unwrap().iter().map(|r| serde_json::from_str(r).unwrap()).collect();
+    assert_eq!(receipts.len(), 2);
+    for (receipt, (budget, id, amount)) in receipts.iter().zip([("b", "lost", 700), ("c", "lost-too", 30)]) {
+        assert_eq!(receipt["schema"], "aukora-engine-model-receipt-v1");
+        let r = &receipt["body"];
+        assert_eq!((r["budget_sha256"].as_str().unwrap(), r["request_id"].as_str().unwrap()), (budget, id));
+        assert_eq!((r["outcome"].as_str().unwrap(), r["detail"].as_str().unwrap()), ("interrupted", "restart"));
+        assert_eq!((r["cost_unknown"].clone(), r["charged_microusd"].as_u64().unwrap()), (true.into(), amount));
+        assert_eq!(r["reserved_microusd"].as_u64().unwrap(), amount);
+    }
+    assert!(fake.logs.lock().unwrap().iter().any(|l| l.contains("lost interrupted by a restart")));
+    assert_eq!(link.spend.used("b"), spend::Used { microusd: 820, requests: 2 });
+    drop(link);
+    // A third start finds nothing open: no second receipt, the same totals.
+    let again = Arc::new(Fake::default());
+    let link = start(&again);
+    assert!(again.receipts.lock().unwrap().is_empty());
+    assert_eq!(link.spend.used("b"), spend::Used { microusd: 820, requests: 2 });
+    assert_eq!(link.spend.used("c"), spend::Used { microusd: 30, requests: 1 });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn budgets_and_key_approvals_are_read_strictly() {
     let ok = budget(1_000_000, 200_000, 100);
@@ -782,7 +838,16 @@ fn a_grown_journal_is_compacted_without_losing_a_charge_or_a_call() {
         log.settle("b", "b1", 7).unwrap();
     }
     let before = std::fs::metadata(&file).unwrap().len();
+    // The call left open is the only evidence of an interrupted call until it has its receipt: no compaction yet.
     let log = spend::SpendLog::open_compacting(&dir, 1024).unwrap();
+    assert_eq!(std::fs::metadata(&file).unwrap().len(), before);
+    let open = log.take_interrupted();
+    assert_eq!(open, [spend::Interrupted { budget: "a".into(), id: "open".into(), microusd: 900 }]);
+    assert!(log.take_interrupted().is_empty(), "handed over once");
+    log.settle_recovered(&open[0]).unwrap();
+    drop(log);
+    let log = spend::SpendLog::open_compacting(&dir, 1024).unwrap();
+    assert!(log.take_interrupted().is_empty());
     assert_eq!(log.used("a"), spend::Used { microusd: 50 * 40 + 900, requests: 51 });
     assert_eq!(log.used("b"), spend::Used { microusd: 7, requests: 1 });
     let after = std::fs::read_to_string(&file).unwrap();

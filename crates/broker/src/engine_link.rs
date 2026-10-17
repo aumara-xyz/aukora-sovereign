@@ -12,7 +12,9 @@
 //! window of the key; settles the real cost; and appends one receipt to Aura (a `broker.settle` fact) before the
 //! last bytes of the reply are released. Anything missing or broken is refused with a clear error; nothing falls open.
 //!
-//! Refusals before sending cost nothing and are only journaled; every call that reached the provider has a receipt.
+//! Refusals before sending cost nothing and are only journaled; every call that reached the provider has a receipt. A
+//! call the process died in the middle of is found open in the spend journal at the next start and given an
+//! `interrupted` / `restart` receipt, charged in full, before any new call is admitted.
 
 pub mod budget;
 pub mod meter;
@@ -203,7 +205,7 @@ impl Link {
         limits: Limits,
     ) -> canon::Result<Self> {
         let spend = spend::SpendLog::open(state_dir).map_err(|_| canon::codes::BROKER_STATE)?;
-        Ok(Self {
+        let link = Self {
             keys,
             authority,
             spend,
@@ -212,7 +214,10 @@ impl Link {
             calls: Arc::new(tokio::sync::Semaphore::new(limits.max_calls.max(1))),
             limits,
             receipts_failed: AtomicBool::new(false),
-        })
+        };
+        // A call the last run died in the middle of gets its receipt before any new call is admitted.
+        server::record_interrupted(&link);
+        Ok(link)
     }
 
     fn peer_allowed(&self, peer: Peer) -> bool {
