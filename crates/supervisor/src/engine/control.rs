@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Whether the engine may run, decided outside it every few seconds, and systemd made to agree.
 //!
-//! The engine runs only when all hold: the node is bound to its owner; the installed release is the one the owner
-//! approved (the release floor); the door is configured; the owner has approved a plugin set and every authority
+//! The engine runs only when all hold: the node is bound to its owner; the running release is the one the owner's
+//! passkey approved (the release floor advanced to it: the install's starting floor is not an approval); the door
+//! is configured; the owner has approved a plugin set and every authority
 //! package in it (the door) is staged with its approved bytes. Lose any one and the engine is stopped. New or
 //! changed packages are never loaded; they become one critical proposal for `engine/plugin-set.json` that only the
 //! owner's passkey applies. Starting means: hand the approved set and an admission record to the root closure step
@@ -10,7 +11,7 @@
 
 use super::{refuse, write_atomic, Engine, UNIT};
 use crate::engine_plugins::{self, PLUGIN_SET_TARGET};
-use crate::host::Host;
+use crate::host::{Host, ReleaseStanding};
 use canon::{digest::Digest32, Result};
 use floor::plugins::{assemble, Candidate, PluginSet};
 use std::sync::Arc;
@@ -20,11 +21,17 @@ use supervisor::ingress::{BindingState, PrincipalScope};
 const TICK: Duration = Duration::from_secs(5);
 /// A refused or expired proposal for the same bytes is raised again only after this long.
 const PROPOSE_AGAIN: Duration = Duration::from_secs(600);
+/// How long a running engine is kept while the release floor cannot be read (another reader holds its lock). Nothing
+/// starts in that time, and a floor that stays unreadable longer stops it (NODE.md O11).
+const RELEASE_UNREADABLE_GRACE: Duration = Duration::from_secs(30);
+/// A floor read that fails is tried again this many times, this far apart, within one tick.
+const RELEASE_RETRIES: u32 = 4;
+const RELEASE_RETRY_GAP: Duration = Duration::from_millis(150);
 
 /// What the controller saw this tick.
 pub struct Inputs<'a> {
     pub bound: Option<PrincipalScope>,
-    pub release_approved: bool,
+    pub release: ReleaseStanding,
     pub door_configured: bool,
     pub approved: Option<&'a [u8]>,
     pub found: Result<Vec<Candidate>>,
@@ -39,10 +46,13 @@ pub struct Plan {
     pub propose: Option<Vec<u8>>,
     /// The approved set and its pin, when the engine may run from it.
     pub admitted: Option<(Vec<u8>, Digest32)>,
+    /// Nothing may start, but what runs may be kept for a short while: the release floor could not be read, which is
+    /// neither an approval nor a withdrawal.
+    pub hold: bool,
 }
 
 fn stop(reason: &'static str, propose: Option<Vec<u8>>) -> Plan {
-    Plan { run: false, reason, propose, admitted: None }
+    Plan { run: false, reason, propose, admitted: None, hold: false }
 }
 
 /// The decision, as a pure function of what was observed. The order is the order an owner meets the conditions.
@@ -50,8 +60,10 @@ pub fn plan(inputs: Inputs<'_>) -> Plan {
     if inputs.bound.is_none() {
         return stop("awaiting-owner-binding", None);
     }
-    if !inputs.release_approved {
-        return stop("awaiting-release-approval", None);
+    match inputs.release {
+        ReleaseStanding::Approved => {}
+        ReleaseStanding::NotApproved => return stop("awaiting-release-approval", None),
+        ReleaseStanding::Unknown => return Plan { hold: true, ..stop("release-unreadable", None) },
     }
     if !inputs.door_configured {
         return stop("door-not-configured", None);
@@ -77,7 +89,7 @@ pub fn plan(inputs: Inputs<'_>) -> Plan {
     if assembly.startable().is_err() {
         return stop("authority-plugin-changed", propose);
     }
-    Plan { run: true, reason: "running", propose, admitted: Some((bytes.to_vec(), pin)) }
+    Plan { run: true, reason: "running", propose, admitted: Some((bytes.to_vec(), pin)), hold: false }
 }
 
 async fn systemctl(verb: &str) -> bool {
@@ -155,10 +167,29 @@ fn record_pin(host: &Host, pin: &Digest32, gate_digest: &str) {
     }
 }
 
+/// The floor's answer, read again a few times before "cannot read it" is taken (a reader that holds the floor's lock
+/// does so for milliseconds).
+async fn release_standing(host: &Host) -> ReleaseStanding {
+    for _ in 0..RELEASE_RETRIES {
+        match host.release_standing() {
+            ReleaseStanding::Unknown => tokio::time::sleep(RELEASE_RETRY_GAP).await,
+            known => return known,
+        }
+    }
+    host.release_standing()
+}
+
+/// Whether a hold keeps the engine this tick: something was started by this run, the unit may still be up, and the
+/// floor has been unreadable for less than the grace. Never a start: a held tick changes nothing.
+fn keep_through_hold(started: bool, running: bool, unreadable_for: Duration) -> bool {
+    started && running && unreadable_for < RELEASE_UNREADABLE_GRACE
+}
+
 pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut proposed: Option<(Digest32, Instant)> = None;
     let mut started_from: Option<Vec<u8>> = None;
     let mut said_failed = false;
+    let mut unreadable_since: Option<Instant> = None;
     // Nothing from an earlier run admits anything: this run decides afresh (Grok review, part 2 #2 and part 4 #2).
     withdraw(&engine);
     if may_run(&unit_state().await) {
@@ -177,13 +208,24 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
             .unwrap_or_else(|_| Err(refuse("plugin-package")));
         let decision = plan(Inputs {
             bound,
-            release_approved: host.release_approved(),
+            release: release_standing(&host).await,
             // A door policy the door would refuse to start on is no door at all (Grok review, part 5 #3).
             door_configured: matches!(host.config.door_policy_text(), Ok(Some(text)) if crate::door::policy_parses(&text)),
             approved: approved.as_deref(),
             found,
         });
         let state = unit_state().await;
+        if decision.hold {
+            let since = *unreadable_since.get_or_insert_with(Instant::now);
+            if keep_through_hold(started_from.is_some(), may_run(&state), since.elapsed()) {
+                if since.elapsed() < TICK {
+                    eprintln!("engine: the release floor cannot be read now; the running engine is kept (at most 30 s)");
+                }
+                continue;
+            }
+        } else {
+            unreadable_since = None;
+        }
         // "running" is said (and served, proxy.rs) only once the unit is active, i.e. after the policy check passed.
         engine.set_status(match decision.reason {
             "running" if !servable(&state) => "starting",
@@ -271,7 +313,7 @@ mod tests {
     }
 
     fn inputs<'a>(approved: Option<&'a [u8]>, found: Vec<Candidate>) -> Inputs<'a> {
-        Inputs { bound: Some(scope()), release_approved: true, door_configured: true, approved, found: Ok(found) }
+        Inputs { bound: Some(scope()), release: ReleaseStanding::Approved, door_configured: true, approved, found: Ok(found) }
     }
 
     #[test]
@@ -281,7 +323,7 @@ mod tests {
         unbound.bound = None;
         assert_eq!(plan(unbound), stop("awaiting-owner-binding", None));
         let mut unreleased = inputs(None, staged.clone());
-        unreleased.release_approved = false;
+        unreleased.release = ReleaseStanding::NotApproved;
         assert_eq!(plan(unreleased), stop("awaiting-release-approval", None));
         let mut doorless = inputs(None, staged);
         doorless.door_configured = false;
@@ -312,5 +354,25 @@ mod tests {
         let mut unreadable = inputs(Some(&approved), vec![]);
         unreadable.found = Err(refuse("plugin-package"));
         assert_eq!(plan(unreadable).reason, "plugins-unreadable");
+    }
+
+    #[test]
+    fn an_unreadable_floor_starts_nothing_and_keeps_a_running_engine_only_briefly() {
+        // O11: "cannot read the floor now" is neither an approval nor a withdrawal. With an approved set ready, it
+        // still admits nothing (no admission is written, nothing starts) ...
+        let approved = set(&[(DOOR_PLUGIN, 1, true)]);
+        let mut unknown = inputs(Some(&approved), vec![found(DOOR_PLUGIN, 1)]);
+        unknown.release = ReleaseStanding::Unknown;
+        let held = plan(unknown);
+        assert!(!held.run && held.hold && held.admitted.is_none() && held.reason == "release-unreadable");
+        // ... while a withdrawn approval is a plain stop, never a hold.
+        let mut withdrawn = inputs(Some(&approved), vec![found(DOOR_PLUGIN, 1)]);
+        withdrawn.release = ReleaseStanding::NotApproved;
+        assert!(!plan(withdrawn).hold);
+        // A hold keeps only an engine this run started and that may still be up, and only within the grace.
+        assert!(keep_through_hold(true, true, Duration::from_secs(5)));
+        assert!(!keep_through_hold(true, true, RELEASE_UNREADABLE_GRACE));
+        assert!(!keep_through_hold(false, true, Duration::ZERO), "nothing this run started: nothing to keep");
+        assert!(!keep_through_hold(true, false, Duration::ZERO), "a stopped unit is not started by a hold");
     }
 }

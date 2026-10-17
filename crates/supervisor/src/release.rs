@@ -131,6 +131,19 @@ impl ReleaseFiles {
         })
     }
 
+    /// Whether the owner's passkey approved this running release: the floor names it AND the floor is one the owner
+    /// advanced, not the install's own starting floor (`is_install_genesis`), which the shell accepts before the
+    /// first card but which nobody approved. `Err` is "cannot read the floor now" (`floor:locked` while another
+    /// reader holds it, I/O, a staged transition), never "no": callers keep the two apart (NODE.md O11).
+    pub fn owner_approved(&self) -> Result<bool> {
+        let floor = floor::service::FloorService::open(&self.floor_directory)?;
+        self.ledger.transaction(|transaction| {
+            floor.probe_release_guard(transaction)?;
+            let state = floor.snapshot()?;
+            Ok(state.floor.digest == self.release_digest && !state.is_install_genesis())
+        })
+    }
+
     /// Consume a release assertion only for this verified, running release. The
     /// caller supplies the assertion, not a pointer hash or an approval receipt.
     pub fn advance_approved(

@@ -2,6 +2,7 @@
 //! Host composition for the deployed supervisor entry point.
 
 mod engine_routes;
+pub use engine_routes::ReleaseStanding;
 mod owner_gate;
 mod pairing_routes;
 

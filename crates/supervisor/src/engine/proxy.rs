@@ -15,7 +15,7 @@
 
 use super::access::{self, ENTER_PREFIX};
 use super::{refuse, Engine};
-use crate::host::Host;
+use crate::host::{Host, ReleaseStanding};
 use canon::Result;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::{Bytes, Incoming};
@@ -237,13 +237,47 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     let Some(scope) = scope else {
         return text(StatusCode::UNAUTHORIZED, "Open the engine from your node (https://<your node>/engine/open).\n");
     };
-    if !matches!(host.ledger.binding(), Ok(BindingState::Bound(bound)) if bound == scope) || !host.release_approved() {
-        if let (Some(bearer), Ok(mut access)) = (bearer.as_deref(), engine.access.lock()) {
-            access.end(bearer);
+    match still_admitted(&host, scope).await {
+        Admitted::Yes => {}
+        Admitted::Unknown => {
+            // The floor could not be read just now: refuse this request, keep the session (NODE.md O11).
+            return text(StatusCode::SERVICE_UNAVAILABLE, "Your node is busy for a moment. Try again.\n");
         }
-        return text(StatusCode::FORBIDDEN, "This engine session ended: the owner binding or the approved release changed.\n");
+        Admitted::Ended => {
+            if let (Some(bearer), Ok(mut access)) = (bearer.as_deref(), engine.access.lock()) {
+                access.end(bearer);
+            }
+            return text(StatusCode::FORBIDDEN, "This engine session ended: the owner binding or the approved release changed.\n");
+        }
     }
     relay(&engine, request, &target).await
+}
+
+/// Whether an engine session may still be served.
+#[derive(Debug, PartialEq, Eq)]
+enum Admitted {
+    Yes,
+    /// The binding changed or the owner's release approval is gone: the session ends.
+    Ended,
+    /// The release floor could not be read just now: this request is refused, the session stays.
+    Unknown,
+}
+
+/// Re-checked on every request: the owner scope is still the node's binding and the running release is the one the
+/// owner approved. A floor that cannot be read is tried again briefly and is never taken for an answer.
+async fn still_admitted(host: &Host, scope: supervisor::ingress::PrincipalScope) -> Admitted {
+    if !matches!(host.ledger.binding(), Ok(BindingState::Bound(bound)) if bound == scope) {
+        return Admitted::Ended;
+    }
+    for attempt in 0..3 {
+        match host.release_standing() {
+            ReleaseStanding::Approved => return Admitted::Yes,
+            ReleaseStanding::NotApproved => return Admitted::Ended,
+            ReleaseStanding::Unknown if attempt < 2 => tokio::time::sleep(Duration::from_millis(100)).await,
+            ReleaseStanding::Unknown => {}
+        }
+    }
+    Admitted::Unknown
 }
 
 /// A ticket is spent only by the owner's own top-level navigation: not by a fetch, a frame or a worker that some page

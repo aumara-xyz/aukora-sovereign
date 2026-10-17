@@ -10,25 +10,46 @@ use sha2::{Digest, Sha256};
 use frontdoor::ingress::AdmittedRequest;
 use supervisor::ingress::{BindingState, PrincipalScope};
 
+/// The release floor's answer for the engine. `Unknown` ("cannot read it now") is never taken for either answer:
+/// nothing starts on it and nothing is served on it, but it alone does not stop a running engine (NODE.md O11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleaseStanding {
+    /// The owner's passkey advanced the floor to the running release.
+    Approved,
+    /// The floor names another release, or only the install's starting floor.
+    NotApproved,
+    /// The floor could not be read just now (another reader holds its lock, I/O, a transition in flight).
+    Unknown,
+}
+
 impl Host {
     /// The gate, for the engine controller's plugin-set reads and proposals.
     pub fn engine_gate(&self) -> &crate::adapters::GateAdapter {
         &self.gate
     }
 
-    /// Whether the installed release is the one the owner approved (the release floor), now.
-    pub fn release_approved(&self) -> bool {
-        self.with_release(|_| Ok(())).is_ok()
+    /// What the release floor says about the running release, now, for the engine (NODE.md section 2 and O11). Only
+    /// a floor the owner's passkey advanced to this very release is `Approved`: the install's starting floor lets the
+    /// shell serve before the first card, but it is nobody's approval, so the engine waits for the release card.
+    pub fn release_standing(&self) -> ReleaseStanding {
+        let Ok(assets) = self.assets.lock() else { return ReleaseStanding::Unknown };
+        match assets.source.owner_approved() {
+            Ok(true) => ReleaseStanding::Approved,
+            Ok(false) => ReleaseStanding::NotApproved,
+            Err(_) => ReleaseStanding::Unknown,
+        }
     }
 
-    /// The active release's id (`release` in `active.json`, the SHA-256 of its release.json); `None` if unreadable,
-    /// and then no admission is written (Grok review of the node commit, part 4 #2).
+    /// The running release's id (the SHA-256 of its release.json, what the floor names), if it is also the active
+    /// release (`release` in `active.json`, which the root pre-start compares). `None` if either is unreadable or they
+    /// differ (a switch in progress): then no admission is written (Grok review of the node commit, part 4 #2; O11).
     pub fn release_digest(&self) -> Option<String> {
+        let running = self.assets.lock().ok()?.source.release_digest.to_string();
         std::fs::read(&self.config.release_state)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|value| value.get("release").and_then(serde_json::Value::as_str).map(str::to_owned))
-            .filter(|text| text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()))
+            .filter(|active| *active == running)
     }
 
     /// `GET /engine/open` on the shell origin: a bound owner (shell session) is sent to the engine origin with a fresh
@@ -36,6 +57,10 @@ impl Host {
     pub(super) fn engine_open(&self, request: &AdmittedRequest) -> Result<http::Response<Vec<u8>>> {
         let engine = self.engine.as_ref().ok_or(codes::FRONTDOOR_UNKNOWN_ROUTE)?;
         self.with_release(|_| Ok(()))?;
+        // No ticket for an engine that may not run: the owner has not approved this release yet (O11).
+        if self.release_standing() != ReleaseStanding::Approved {
+            return Err(canon::Refusal { organ: "supervisor", reason: "release-not-approved" });
+        }
         let mut sessions = self.sessions()?;
         let url = frontdoor::session::with_bound_session(
             &mut sessions,
