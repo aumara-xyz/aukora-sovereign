@@ -385,16 +385,25 @@ the owner approves the new one; nothing switches before that.
 2. On the node, as root, from the CURRENT release's tools:
    `python3 -B /opt/aukora/current/deploy/upgrade/node_release.py stage --stage /root/upgrade-stage` (prints the id),
    then `... node_release.py offer --id ID`. This only makes the link `/opt/aukora/offered`.
-3. Within a poll the running release raises the card "Upgrade this node to a new release" (`base_sha256` = the
-   running release, `release_sha256` = the new `release.json`'s SHA-256). The engine keeps running.
+3. The running release verifies the offered tree, then probes it (O20): it copies its state to
+   `/var/lib/aukora/release-probe` and runs the offered binary there (`sovereign release probe`; journal `release:
+   probing the offered release …`, then `… started on a copy of the state; its card can go up` or `… did not start …;
+   no card`, tried again after 10 minutes). Only then does it raise the card "Upgrade this node to a new release"
+   (`base_sha256` = the running release, `release_sha256` = the new `release.json`'s SHA-256). The engine keeps running.
 4. The owner approves it with the passkey. The floor advances in one Aura transaction; the supervisor logs
    `release: the owner approved release …; restarting to switch to it` and exits 75; systemd starts it again and the
    unit's root pre-start (`node_release.py follow`, which reads the floor through the installed binary as aukora with
-   `sovereign release floor`) moves `current` to the new release and `previous` to the old one, writes `active.json`
-   and drops the offer (journal: `node-release follow: switched to ID`). The engine stops only for that restart and
+   `sovereign release floor`) checks the floor against root's anchor (`/var/lib/aukora-release/anchor.json`: the
+   floor root last accepted; the new floor must extend it, later version and the same spent approvals plus more),
+   advances the anchor, moves `current` to the new release and `previous` to the old one, writes `active.json` and
+   drops the offer (journal: `node-release follow: switched to ID`). A floor behind or beside the anchor (a restored
+   snapshot of the service's state) is refused (`refused: the floor is behind the anchored floor …`) and the
+   supervisor will not serve it (`floor-behind-anchor`). Going back to an older release is an owner approval like any
+   other: `offer` the older staged release and approve its card. The engine stops only for that restart and
    starts again on the new release (a release that changed the plugins still needs its plugin-set card).
 5. Not approved: Decline (the owner's no; it stays declined until the owner asks again from Approvals), or the card
-   simply stays up (release cards do not expire). `node_release.py withdraw` takes the offer back; the running release
+   simply stays up (release cards do not expire; other cards that run out of time are held back a day unless the owner
+   asks again). `node_release.py withdraw` takes the offer back; the running release
    then withdraws the card (an expiry with reason `withdrawn`, never a decline). Either way the current release keeps
    running. Never withdraw after the owner approved: `follow` switches to the staged release the floor names even
    without the offer, but only while it is still staged.
@@ -443,9 +452,8 @@ RAN on the wall-test VM, not the node: the DNS control (the same probe resolves 
 
 Not built: the face's own owner-approval surfaces pointing at the owner origin;
 `door/standing-grants.json` as a gate target (the slider runs on the starter, no grants); an inventory sync for nodes
-installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`); a pre-swap probe of an
-offered release (ruling 18): an approved release that cannot start leaves the node without a shell until the
-operator redeploys (O20).
+installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`). The pre-swap probe (O20)
+starts the candidate on a copy of the state but does not serve HTTP or run the engine with it.
 
 ## 10. Open items
 
@@ -471,14 +479,7 @@ the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated
   proposes the new terms on a card (changed terms propose again).
 - **O16** Nebius: the tenant's public IPv4 quota is 3 (pilot, the wall-test VM and an unassigned 2026-10-09 address
   held it; the rehearsal took the wall-test VM's address). The node's VM needs one. Note only, no code.
-- **O20** (NEW, Peter's call) No pre-swap probe of an offered release (ruling 18's safety net). The node verifies the
-  offered tree (manifest, every leaf, the binary) before the card goes up, but it cannot run it first: an approved
-  release that then fails to start leaves the node without a shell (the old release refuses a floor that names the new
-  one) until the operator redeploys. Needs: a probe of the candidate on a copy of the state before the card is raised.
-- Live and Zeta Harp faces (shell, `app/faces/live`, `app/faces/zetaharp`): their CSP still says `connect-src 'none'`,
-  which blanks a face that imports `design/index.js` (the AUMLOK face's cause, O18). Not changed here (stock apps).
-
-O17, O18 and O19 are closed by the owner-lifecycle branch (node/owner-lifecycle, 2026-10-17); see the table at the
+O17, O18, O19 and O20 (the pre-swap probe, Peter's decision) are closed by the owner-lifecycle branch (node/owner-lifecycle, 2026-10-17); see the table at the
 end of this section.
 
 Closed by the blockers branch (node/blockers, 2026-10-17), each verified LIVE on the rehearsal node (`aukora-rehearsal`,
