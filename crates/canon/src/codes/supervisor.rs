@@ -23,7 +23,7 @@ organ_codes! {
             "config-address", "config-canonical",
             "config-id", "config-ip", "config-json", "config-listen", "config-node", "config-origin", "config-path", "config-permissions",
             "config-proxy", "config-shape", "config-size", "config-unreadable", "config-version", "contact-projection-unavailable",
-            "egress-config", "egress-port", "egress-version", "exit-format", "exit-inconsistent", "exit-not-empty", "exit-not-permitted",
+            "door-policy", "door-socket", "door-state", "egress-config", "egress-port", "egress-version", "exit-format", "exit-inconsistent", "exit-not-empty", "exit-not-permitted",
             "exit-revival", "face-counts-invalid", "face-message-invalid", "face-number-invalid", "face-operation-unknown",
             "face-page-invalid", "face-principal-mismatch", "face-read-deadline", "face-reply-too-large", "face-runtime-unavailable",
             "face-shape-invalid", "genesis-claim-spent", "genesis-owner-present", "genesis-session-lock", "genesis-session-state",

@@ -5,6 +5,7 @@ pub mod adapters;
 mod approvals;
 mod config;
 mod data;
+mod door;
 pub mod faces;
 mod health;
 mod host;
@@ -24,6 +25,10 @@ fn run() -> canon::Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if arguments.first().is_some_and(|command| command == "release") {
         return release::pointer::run(&arguments[1..]);
+    }
+    // The Rust door for the engine's crossings (engine/plugins/aukora-door): `door serve --socket PATH --policy FILE`.
+    if arguments.first().is_some_and(|command| command == "door") {
+        return door::run(&arguments[1..]);
     }
     // Kira 2, the shared memory service on the Mac: serve, register, token, import, mcp.
     if arguments.first().is_some_and(|command| command == "kira") {
