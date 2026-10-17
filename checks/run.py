@@ -738,8 +738,11 @@ if sorted(rows) != list(range(1, len(rows) + 1)):
 
 # 3. No clutter: no logs, no stray text files, no mutation or evidence output.
 allowed_txt = tuple(scaffold["allowed_txt_prefixes"])
+copied = tuple(baseline.get("copied_from_prime", {}))
 for p in files:
     low = p.lower()
+    if p.startswith(copied):
+        continue
     if low.endswith(".log"):
         fail("clutter", p)
     elif low.endswith(".txt") and not low.startswith(allowed_txt):
@@ -759,7 +762,7 @@ for p in files:
     if p in pins or not re.search(r"\.(rs|mjs|js|ts|py|sh|md)$", p):
         continue
     lines = (ROOT / p).read_bytes().count(b"\n")
-    if lines > 1000 and p not in baseline["oversized_files"]:
+    if lines > 1000 and p not in baseline["oversized_files"] and not p.startswith(tuple(baseline.get("copied_from_prime", {}))):
         fail("file-size", f"{p} has {lines} lines")
 
 # 5. No absolute paths and no path into another repository, in code.
@@ -862,6 +865,8 @@ for p in files:
     if p in pins:
         continue
     for rule, detail in walls.file_findings(p, (ROOT / p).read_text(errors="replace")):
+        if rule == "wall-browser" and p.startswith(tuple(baseline.get("copied_from_prime", {}))):
+            continue
         if (rule == "no-test-suites" and p in RELEASE_POINTER_PINS
                 and hashlib.sha256((ROOT / p).read_bytes()).hexdigest() == RELEASE_POINTER_PINS[p]):
             continue

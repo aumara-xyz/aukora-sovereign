@@ -2,5 +2,8 @@
   "oversized_files": {
     "NORTH-STAR.md": "Peter, 2026-10-17: the one plan (Part 1 plan + Part 2 row register) stays one file"
   },
-  "foreign_paths": []
+  "foreign_paths": [],
+  "copied_from_prime": {
+    "engine/plugins/aukora-face/": "Peter, 2026-10-17: the Spatial app and its stock apps are copied from Prime 3673b98 byte for byte where possible (PORT-NOTES.md lists every change). Browser, file-size and clutter rules do not apply to copied code; the OpenShell wall and the door govern it at run time."
+  }
 }
