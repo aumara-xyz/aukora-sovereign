@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; background: #07131e; color: #edf8f6; font: 17px/1.5 system-ui, -apple-system, sans-serif; }
+.pair { display: grid; gap: 1rem; max-width: 30rem; margin-inline: auto; padding: max(1.25rem, env(safe-area-inset-top)) 1.25rem max(1.25rem, env(safe-area-inset-bottom)); text-align: center; }
+.pair h1 { font-size: 1.5rem; font-weight: 500; margin: .5rem 0 0; }
+.pair-lead, .pair-note { margin: 0; overflow-wrap: anywhere; }
+.pair-note { font-size: .8rem; opacity: .7; }
+.pair-stage { display: grid; gap: .75rem; justify-items: center; }
+.pair-frame { width: min(100%, 26rem); height: auto; image-rendering: pixelated; background: #fff; border-radius: .5rem; }
+.pair-camera { width: 6rem; height: auto; border-radius: .5rem; transform: scaleX(-1); opacity: .8; }
+.pair-phase { min-height: 1.5em; font-size: 1.1rem; }
+.pair-start { justify-self: center; min-width: 10rem; padding: .8rem 1.4rem; font: inherit; color: inherit; background: #0b7a5c; border: 1px solid #3fb08f; border-radius: .6rem; }
+.pair-start:disabled { opacity: .45; }
+.pair[data-stage="joining"] .pair-stage, .pair[data-stage="ready"] .pair-frame, .pair[data-stage="done"] .pair-stage { display: none; }
+.pair[data-stage="done"] .pair-phase { color: #7fe0bf; }
+.pair[data-stage="failed"] .pair-phase { color: #f2b8a2; }

@@ -69,7 +69,8 @@ export class OwnerFrame {
     frame.className = 'owner-frame';
     frame.title = COPY.ownerFrame as string;
     frame.referrerPolicy = 'origin';
-    frame.allow = `publickey-credentials-get ${this.#origin}; publickey-credentials-create ${this.#origin}`;
+    // The camera reaches the owner frame only, for co-presence pairing (COPRESENCE-NODE.md).
+    frame.allow = `publickey-credentials-get ${this.#origin}; publickey-credentials-create ${this.#origin}; camera ${this.#origin}`;
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
     // The public reference selects a rendezvous; only HttpOnly cookies and the verified passkey can complete it.
     const url = new URL(reference ? `/handoff-v1-${reference}` : '/', `${this.#origin}/`);

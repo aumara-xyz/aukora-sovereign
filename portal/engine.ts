@@ -18,6 +18,9 @@ export type BrowserEngineOptions = {
   readonly personNostrKeys?: PersonNostrKeysForReceipt;
   readonly pentora?: PentoraPairingDigest;
   readonly legacyVerifier: (receipt: Uint8Array, approved: Uint8Array | null, signal: AbortSignal) => Promise<ReceiptVerdict>;
+  // A durable, non-extractable P-256 device key the node already knows (node/device-key.ts). Without it each
+  // exchange makes a fresh key, as before.
+  readonly deviceKey?: CryptoKeyPair;
 };
 const cleanupSignal = (): AbortSignal => new AbortController().signal;
 const now = (): number => Math.floor(Date.now() / 1000);
@@ -43,7 +46,7 @@ export class BrowserCopresenceEngine implements CopresenceEngine {
     if (exchange.method !== "optical" && !this.options.channels) refuse("channels-unavailable");
     const reserved = ticket(exchange.attemptId);
     const intent = exchange.approvedText === null ? null : hex(await domain("copresence.intent.v1", exchange.approvedText));
-    const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+    const keys = this.options.deviceKey ?? await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
     checkAbort(signal);
     const who: Participant = { node: this.options.node, device_key: hex(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey))), device_epoch: this.options.deviceEpoch, session_id: reserved.session, attempt_sequence: reserved.sequence };
     checkAbort(signal);

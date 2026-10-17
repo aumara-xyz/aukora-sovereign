@@ -16,10 +16,11 @@ const app = dirname(fileURLToPath(import.meta.url));
 const repository = dirname(app);
 const staging = join(app, '.release-build');
 const destination = join(app, 'release');
-// portal is read for syntax and left out of the release: the frontdoor refuses every portal path.
+// portal ships for the owner origin only (co-presence pairing, COPRESENCE-NODE.md): the frontdoor serves portal/
+// paths on the owner surface and the phone page at /pair, never on the shell, a face or the engine.
 const sourceTrees = [
   ['app/core', true], ['app/shell', true], ['app/design', true], ['app/faces', true], ['app/store', true],
-  ['app/theme', true], ['ui/owner', true], ['portal', false],
+  ['app/theme', true], ['ui/owner', true], ['portal', true],
 ];
 const extension = /\.(ts|js|mjs|html|css|json|svg|png|webp|jpg|jpeg|woff2?)$/;
 const dataFile = /\.(json|svg|png|webp|jpg|jpeg|woff2?|css)$/;
