@@ -7,9 +7,12 @@ The browser release build (`node app/build.mjs`) requires Node with built-in Typ
 `wasm32-unknown-unknown` target installed beforehand. Its Cargo compilation uses `--offline --locked`.
 Coherence loads the bundled canon and pentora modules. The frontdoor accepts only shell and owner release entries.
 
-Release assembly refuses a catalog mismatch or incomplete design captures. Pilot build `3673b98` screenshots
-must cover every face/state and all ten shell compositions in `app/design/captures.json`, with matching SHA-256
-digests and status `complete`. Syntax checks alone do not establish that those reference images are available.
+Release assembly refuses a catalog mismatch, and refuses design captures whose declared status disagrees with the
+files on disk (a listed file missing or changed, an unlisted file present, a wrong `status` label). Missing captures
+are not a refusal: status `unavailable` with no captures builds and is reported in the release manifest as `pending`
+(`app/build.mjs`, row 108). Pilot build `3673b98` screenshots must cover every face/state and all ten shell compositions
+in `app/design/captures.json`, with matching SHA-256 digests, before the status can be `complete`. Syntax checks alone
+do not establish that those reference images are available.
 
 The committed capture set is still unavailable. When the authentic pilot images are supplied, place them in
 `app/design/captures/` as `<face>-<state>.png` (or `.webp`) for each required face/state, and
