@@ -409,6 +409,9 @@ struct RecallParams {
     scopes: Vec<String>,
     author: Option<String>,
     budget_chars: Option<usize>,
+    /// Also search `web-derived` notes (left out by default).
+    #[serde(default)]
+    include_web: bool,
 }
 
 #[derive(Deserialize)]
@@ -748,6 +751,7 @@ fn recall_gather(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Resu
             author,
             budget_chars: p.budget_chars.unwrap_or(DEFAULT_BUDGET).min(MAX_BUDGET),
             include_local: caller.owner,
+            include_web: p.include_web,
             now: now(),
         };
         (query, s.embedder.clone(), s.reranker.clone())

@@ -31,6 +31,9 @@ pub struct RecallQuery {
     /// Whether `local` notes may be read. The service sets it for the owner only; when false, local notes are dropped
     /// before ranking, dedupe and the found decision.
     pub include_local: bool,
+    /// Whether `web-derived` notes may take part. Automatic recall leaves them out (spec v0.3 §2: tainted material is
+    /// excluded unless the caller asks for it); a caller that asks gets them, labelled by their capture.
+    pub include_web: bool,
     /// The time notes are judged against for `valid_from` / `valid_to` (unix seconds). 0 means the system clock.
     pub now: u64,
 }

@@ -110,7 +110,7 @@ fn query_digest(q: &RecallQuery, epoch: u32, budget: usize) -> Result<String> {
     let mut scopes: Vec<&str> = q.scopes.iter().map(String::as_str).collect();
     scopes.sort_unstable();
     scopes.dedup();
-    let fields = [
+    let mut fields = vec![
         ("author", serde_json::to_string(&q.author)),
         ("budget_chars", serde_json::to_string(&budget)),
         ("caller", serde_json::to_string(&q.caller)),
@@ -119,6 +119,10 @@ fn query_digest(q: &RecallQuery, epoch: u32, budget: usize) -> Result<String> {
         ("scopes", serde_json::to_string(&scopes)),
         ("text", serde_json::to_string(&q.text)),
     ];
+    // Only a query that asks for web material names it, so the digest of every other query is unchanged.
+    if q.include_web {
+        fields.insert(5, ("include_web", serde_json::to_string(&true)));
+    }
     let mut canonical = String::from("{");
     for (i, (key, value)) in fields.into_iter().enumerate() {
         if i > 0 {
@@ -211,6 +215,7 @@ struct Loader<'a> {
     scopes: BTreeSet<&'a str>,
     author: Option<&'a str>,
     include_local: bool,
+    include_web: bool,
     cache: BTreeMap<i64, Option<StoredNote>>,
     integrity: bool,
 }
@@ -237,6 +242,7 @@ impl Loader<'_> {
     /// join a dedupe group or make the answer `found`.
     fn passes(&self, note: &StoredNote) -> bool {
         (self.include_local || note.meta.privacy != Privacy::Local)
+            && (self.include_web || note.meta.capture != Capture::WebDerived)
             && (self.scopes.is_empty() || self.scopes.contains(note.meta.scope.as_str()))
             && self.author.is_none_or(|a| a == note.author_name || a.eq_ignore_ascii_case(&hex(note.event.pubkey.as_bytes())))
     }
@@ -463,6 +469,7 @@ impl SharedStore {
             scopes,
             author: q.author.as_deref(),
             include_local: q.include_local,
+            include_web: q.include_web,
             cache: BTreeMap::new(),
             integrity: false,
         };

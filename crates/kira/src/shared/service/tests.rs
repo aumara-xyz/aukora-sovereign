@@ -296,6 +296,39 @@ fn agent_captures_never_rise_and_commitments_are_the_owners() {
     assert_eq!(call(&f.state, &owner, "whoami", json!({}))["result"]["owner"], true);
 }
 
+/// Bench F5 / spec v0.3 §2: web-derived notes (and everything derived from them) are excluded from automatic recall.
+#[test]
+fn web_derived_notes_are_left_out_of_recall_unless_asked_for() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let mut web = note("The relay moved to relay-new.example, says the web page", "builders");
+    web["capture"] = json!("web-derived");
+    let web = call(&f.state, &claude, "remember", web)["result"]["id"].as_str().unwrap().to_owned();
+    let mut derived = note("So the relay is at relay-new.example now", "builders");
+    derived["sources"] = json!([web]);
+    let derived = call(&f.state, &grok, "remember", derived);
+    assert_eq!(derived["result"]["capture"], "web-derived", "taint is inherited");
+    let derived = derived["result"]["id"].as_str().unwrap().to_owned();
+    let honest = call(&f.state, &owner, "remember", note("The relay has run on relay-old.example since spring", "builders"))["result"]["id"].as_str().unwrap().to_owned();
+    for token in [&claude, &grok, &owner] {
+        let r = call(&f.state, token, "recall", json!({"query": "where is the relay"}));
+        let ids: Vec<&str> = r["result"]["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, [honest.as_str()], "web-derived notes must not be in automatic recall: {r}");
+        assert_eq!(r["result"]["total"], 3, "they are still counted: the caller may read them");
+        let asked = call(&f.state, token, "recall", json!({"query": "where is the relay", "include_web": true}));
+        let ids: Vec<&str> = asked["result"]["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&web.as_str()) && ids.contains(&derived.as_str()) && ids.contains(&honest.as_str()), "{asked}");
+    }
+    // Only web material matches: not found, until asked for.
+    let mut lone = note("The vendor page promises a nine hour battery", "builders");
+    lone["capture"] = json!("web-derived");
+    call(&f.state, &claude, "remember", lone);
+    assert_eq!(call(&f.state, &grok, "recall", json!({"query": "vendor battery promise"}))["result"]["status"], "empty");
+    assert_ne!(call(&f.state, &grok, "recall", json!({"query": "vendor battery promise", "include_web": true}))["result"]["status"], "empty");
+    // Reading by id is not recall: the note is still there.
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": web}))["result"]["capture"], "web-derived");
+}
+
 #[test]
 fn quarantined_notes_are_stubs_everywhere() {
     let f = fixture();

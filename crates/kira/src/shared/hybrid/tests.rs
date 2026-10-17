@@ -118,6 +118,7 @@ fn query(text: &str, caller: &str) -> RecallQuery {
         author: None,
         budget_chars: 0,
         include_local: false,
+        include_web: false,
         now: 0,
     }
 }
