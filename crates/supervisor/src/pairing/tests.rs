@@ -18,6 +18,8 @@ struct Facts {
     crash: std::cell::Cell<bool>,
     others: std::cell::Cell<u64>,
     since: RefCell<Vec<u64>>,
+    /// The next append commits but reports a sequence the store cannot hold.
+    unstorable: std::cell::Cell<bool>,
 }
 
 impl Facts {
@@ -28,6 +30,7 @@ impl Facts {
             crash: std::cell::Cell::new(false),
             others: std::cell::Cell::new(100),
             since: RefCell::new(Vec::new()),
+            unstorable: std::cell::Cell::new(false),
         }
     }
 }
@@ -57,6 +60,12 @@ impl FactRecorder for Facts {
             }
         }
         rows.push((*subject, body.clone()));
+        if self.unstorable.replace(false) {
+            return Ok(Recorded {
+                sequence: u64::MAX,
+                entry: Digest32::sha256(&body.canonical_bytes()),
+            });
+        }
         if self.crash.replace(false) {
             return Err(refuse("crashed-after-commit"));
         }
@@ -479,5 +488,24 @@ fn the_boot_sweep_records_what_a_crash_left_pending() {
     let reopened = Pairing::open(&world._dir.0.join("pairing.sqlite3"), world.node, "https://owner.example.org").unwrap();
     assert_eq!(reopened.settle_pending(&world.facts).unwrap(), (1, 0));
     assert_eq!(reopened.settle_pending(&world.facts).unwrap(), (0, 0));
+    assert_eq!(world.facts.rows.borrow().len(), 1);
+}
+
+#[test]
+fn once_the_receipt_is_spent_a_store_failure_still_answers_with_the_verdict() {
+    let world = world();
+    let (owner, phone) = (Device::new(1), Device::new(2));
+    let (id, bearer, context) = joined(&world, &owner, &phone);
+    let now = T0 + 20_000;
+    let bytes = receipt(world.node, &context, &owner, &phone, now / 1000 - 1, now / 1000);
+    // The fact commits, then the store refuses its acknowledgement (an out-of-range sequence).
+    world.facts.unstorable.set(true);
+    let verdict = world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
+    assert_eq!(text_of(&verdict, "verdict"), "UNDETERMINED");
+    assert!(matches!(field(&verdict, "recorded").view(), ValueView::Null));
+    assert_eq!(text_of(&world.pairing.phone_status(&bearer, now).unwrap(), "state"), "spent");
+    assert_eq!(world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap_err().reason, "receipt-spent");
+    // The sweep finds the committed fact and records it; still one fact.
+    assert_eq!(world.pairing.settle_pending(&world.facts).unwrap(), (1, 0));
     assert_eq!(world.facts.rows.borrow().len(), 1);
 }

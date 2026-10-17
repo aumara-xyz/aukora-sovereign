@@ -197,7 +197,7 @@ impl Pairing {
         let mut recorded = 0;
         for id in store.pending_facts(64)? {
             if let Some(row) = store.by_id(&id)? {
-                if self.settle(&store, row, recorder)?.aura_sequence.is_some() {
+                if self.settle(&store, row, recorder).aura_sequence.is_some() {
                     recorded += 1;
                 }
             }
@@ -299,7 +299,7 @@ impl Pairing {
         let store = self.lock()?;
         let row = store.by_id(pairing)?.ok_or(refuse("pairing-unknown"))?;
         owns(&row, owner)?;
-        let row = self.settle(&store, row, recorder)?;
+        let row = self.settle(&store, row, recorder);
         self.status_value(&row, now_ms)
     }
 
@@ -355,37 +355,56 @@ impl Pairing {
         Value::object(members)
     }
 
-    /// Appends the pending Aura fact for a spent pairing; a failure stays pending
-    /// and the next status read tries again. The receipt itself is already spent.
-    fn settle(&self, store: &Store, row: Row, recorder: &dyn FactRecorder) -> Result<Row> {
+    /// Appends the pending Aura fact for a spent pairing. Never fails: the receipt is
+    /// already spent, so any error here is logged, the fact stays pending and the next
+    /// sweep (boot, start, device list, status) records it, idempotently.
+    fn settle(&self, store: &Store, row: Row, recorder: &dyn FactRecorder) -> Row {
         if row.state != "spent" || row.aura_sequence.is_some() {
-            return Ok(row);
+            return row;
         }
-        let Some(fact) = &row.fact else {
-            return Ok(row);
+        let pending = |refusal: Refusal| {
+            eprintln!("copresence: pairing fact pending: {}:{}", refusal.organ, refusal.reason);
         };
-        let body = canon::json::parse_strict(fact.as_bytes())?;
-        let subject = SubjectId::parse(&row.subject)?;
+        let Some(fact) = &row.fact else {
+            return row;
+        };
+        let (body, subject) = match (canon::json::parse_strict(fact.as_bytes()), SubjectId::parse(&row.subject)) {
+            (Ok(body), Ok(subject)) => (body, subject),
+            (Err(refusal), _) | (_, Err(refusal)) => {
+                pending(refusal);
+                return row;
+            }
+        };
         let since = match row.aura_floor {
             Some(floor) => floor,
-            None => match recorder.frontier() {
-                // Durable before any append, so a retry searches from the same point.
-                Ok(floor) => store.set_floor(&row.id, floor)?,
+            // Durable before any append, so a retry searches from the same point.
+            None => match recorder.frontier().and_then(|floor| store.set_floor(&row.id, floor)) {
+                Ok(floor) => floor,
                 Err(refusal) => {
-                    eprintln!("copresence: pairing fact pending: {}:{}", refusal.organ, refusal.reason);
-                    return Ok(row);
+                    pending(refusal);
+                    return row;
                 }
             },
         };
-        match recorder.record(&subject, &body, since) {
-            Ok(recorded) => {
-                store.recorded(&row.id, recorded.sequence, &recorded.entry.to_string())?;
-                store.by_id(&row.id)?.ok_or(refuse("store"))
-            }
+        let recorded = match recorder.record(&subject, &body, since) {
+            Ok(recorded) => recorded,
             Err(refusal) => {
-                eprintln!("copresence: pairing fact pending: {}:{}", refusal.organ, refusal.reason);
-                Ok(row)
+                pending(refusal);
+                return row;
             }
+        };
+        if let Err(refusal) = store.recorded(&row.id, recorded.sequence, &recorded.entry.to_string()) {
+            // The fact is in Aura; the next sweep finds it and records the acknowledgement.
+            pending(refusal);
+            return row;
+        }
+        match store.by_id(&row.id) {
+            Ok(Some(row)) => row,
+            _ => Row {
+                aura_sequence: Some(recorded.sequence),
+                aura_entry: Some(recorded.entry.to_string()),
+                ..row
+            },
         }
     }
 
@@ -512,9 +531,21 @@ impl Pairing {
             ],
             now_ms,
         )?;
-        let row = store.by_id(pairing)?.ok_or(refuse("store"))?;
-        let row = self.settle(&store, row, recorder)?;
-        self.verdict_value(&row)
+        // The receipt is spent. From here the answer is the verdict, whatever the fact does:
+        // a post-spend failure is logged and left to the sweep, never shown as a refusal.
+        let pending = || -> Result<Value> {
+            let canon::json::ValueView::Object(members) = verdict.view() else {
+                return Err(refuse("store"));
+            };
+            let mut members = members.to_vec();
+            members.push(("recorded".into(), Value::null()));
+            Value::object(members)
+        };
+        let row = match store.by_id(pairing) {
+            Ok(Some(row)) => self.settle(&store, row, recorder),
+            _ => return pending(),
+        };
+        self.verdict_value(&row).or_else(|_| pending())
     }
 
     /// Every device this owner has paired, for the Sovereignty app's device list.
