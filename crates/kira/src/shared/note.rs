@@ -90,6 +90,16 @@ pub fn readable_slot(slot: &str) -> bool {
     slot == SELF_SLOT || slot == RESUME_SLOT || slot.strip_prefix("resume:").is_some_and(valid_agent_name)
 }
 
+/// Whether the caller may read a note kept in `slot`: an agent's `resume:<name>` handoff is read by that agent and the
+/// owner only (the slot names its author: `may_write_slot` holds the writer to it); every other note, and the owner's
+/// `aukora:self` and `aukora:resume` that the engine reads at session start, is not restricted by its slot.
+pub fn slot_readable_by(slot: Option<&str>, author_is_caller: bool, caller_is_owner: bool) -> bool {
+    match slot {
+        Some(slot) if slot.starts_with("resume:") => author_is_caller || caller_is_owner,
+        _ => true,
+    }
+}
+
 /// Who may write a slot: the owner any slot; any other author only its own `resume:<name>`. A slot is read back as
 /// one note that a session puts in its system prompt, so an agent that could write `aukora:self` could rewrite
 /// Auma's self file.

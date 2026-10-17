@@ -6,7 +6,7 @@
 //! Similarity alone never answers: every item carries its score and the status decides. A recall that cannot see
 //! its whole index, loses a model, or meets a note that fails verification says `undetermined`, never `empty`.
 
-use super::note::{Capture, Lane, NoteMeta, Privacy, Review};
+use super::note::{slot_readable_by, Capture, Lane, NoteMeta, Privacy, Review};
 use super::recall::{Embedder, RecallItem, RecallOutcome, RecallQuery, RecallStatus, Reranker};
 use super::store::{EpochNote, SharedStore, StoredNote};
 use canon::{Refusal, Result};
@@ -247,7 +247,9 @@ impl Loader<'_> {
     /// Privacy first: a `local` note never reaches a caller who may not read it, so it cannot claim a pool place,
     /// join a dedupe group or make the answer `found`.
     fn passes(&self, note: &StoredNote) -> bool {
-        (self.include_local || note.meta.privacy != Privacy::Local)
+        let own = hex(note.event.pubkey.as_bytes()) == self.caller;
+        (self.include_local || own || note.meta.privacy != Privacy::Local)
+            && slot_readable_by(note.meta.slot.as_deref(), own, self.include_local)
             && (self.include_web || note.meta.capture != Capture::WebDerived)
             && (self.scopes.is_empty() || self.scopes.contains(note.meta.scope.as_str()))
             && self.author.is_none_or(|a| a == note.author_name || a.eq_ignore_ascii_case(&hex(note.event.pubkey.as_bytes())))
@@ -521,7 +523,12 @@ impl SharedStore {
         let in_epoch: BTreeMap<i64, Who> = self
             .note_authors_in_epoch(epoch)?
             .into_iter()
-            .filter(|n| (q.include_local || n.privacy != Privacy::Local.wire()) && (scopes.is_empty() || scopes.contains(n.scope.as_str())))
+            .filter(|n| {
+                let own = n.pubkey == caller;
+                (q.include_local || own || n.privacy != Privacy::Local.wire())
+                    && slot_readable_by((!n.slot.is_empty()).then_some(n.slot.as_str()), own, q.include_local)
+                    && (scopes.is_empty() || scopes.contains(n.scope.as_str()))
+            })
             .map(|n: EpochNote| {
                 let experience = n.lane == Lane::Experience.wire();
                 (n.seq, Who { pubkey: n.pubkey, owner: n.owner, experience })

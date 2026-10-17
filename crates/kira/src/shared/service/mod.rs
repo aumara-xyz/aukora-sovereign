@@ -17,7 +17,7 @@
 use super::hybrid::query_vector;
 use super::llama::{HttpEmbedder, HttpReranker};
 use super::note::{
-    readable_slot, valid_agent_name, Capture, Form, Lane, NoteDraft, Privacy, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND,
+    readable_slot, slot_readable_by, valid_agent_name, Capture, Form, Lane, NoteDraft, Privacy, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND,
     SUPERSEDE_KIND,
 };
 use super::hybrid::Prepared;
@@ -463,8 +463,14 @@ fn validity(meta: &super::note::NoteMeta, at: u64) -> &'static str {
     super::hybrid::validity(meta, at)
 }
 
+/// May `caller` read `note`? The owner reads everything. Anyone else reads the scopes it is registered for, but not a
+/// `local` note (unless it wrote it itself: an agent is not locked out of its own note) and not another agent's
+/// `resume:<name>` handoff.
 fn visible(caller: &Caller, note: &StoredNote) -> bool {
-    (caller.owner || note.meta.privacy != Privacy::Local) && caller.reads_scope(&note.meta.scope)
+    let own = hex(note.event.pubkey.as_bytes()) == caller.pubkey;
+    (caller.owner || own || note.meta.privacy != Privacy::Local)
+        && slot_readable_by(note.meta.slot.as_deref(), own, caller.owner)
+        && caller.reads_scope(&note.meta.scope)
 }
 
 /// The note that stands where a superseded `note` once did, when this caller may read it (an id the caller cannot read
@@ -654,6 +660,7 @@ impl State {
         // Taint inheritance (spec v0.3 §2): citing a web-derived note makes this one web-derived, for every caller, the
         // owner included (provenance is a fact, not a trust level). Citations only ever lower a claim, never raise it;
         // so a commitment lane, which takes only the owner's own words, refuses a note that cites the web.
+        self.sources_readable(caller, &p.sources)?;
         let capture = if self.cites_web(&p.sources)? { Capture::WebDerived } else { claimed };
         self.check_head(&p)?;
         let previous_head = p.slot.as_deref().and_then(|slot| self.store.slot(slot).ok().flatten()).map(|n| hex(n.event.id.as_bytes()));
@@ -700,6 +707,17 @@ impl State {
             }
         }
         Ok(false)
+    }
+
+    /// Every cited note must be one this caller may read. One it may not read is refused exactly as a note that does not
+    /// exist (`note-source-unknown`), so a citation reveals neither the note (its root, its capture) nor that it exists.
+    fn sources_readable(&self, caller: &Caller, sources: &[String]) -> Result<()> {
+        for source in sources.iter().filter(|s| is_hex64(s)) {
+            if !self.store.get(source)?.is_some_and(|n| visible(caller, &n)) {
+                return Err(refuse("note-source-unknown"));
+            }
+        }
+        Ok(())
     }
 
     /// A guarded slot write (`expected_head`) against the slot's live head, under the same lock the append runs under.
@@ -782,6 +800,16 @@ impl State {
     fn supersede(&mut self, caller: &Caller, p: SupersedeParams) -> Result<Value> {
         if !is_hex64(&p.target) || p.replacement.as_deref().is_some_and(|r| !is_hex64(r)) {
             return Err(refuse("id-invalid"));
+        }
+        // A note the caller may not read is refused as one that does not exist: neither the target nor the
+        // replacement can be probed for existence through the refusal code.
+        if !self.store.get(&p.target)?.is_some_and(|n| visible(caller, &n)) {
+            return Err(refuse("supersede-target-unknown"));
+        }
+        if let Some(replacement) = &p.replacement {
+            if !self.store.get(replacement)?.is_some_and(|n| visible(caller, &n)) {
+                return Err(refuse("supersede-replacement-unknown"));
+            }
         }
         self.rate(caller)?;
         let mut tags = vec![vec!["supersedes".to_owned(), p.target.clone()]];

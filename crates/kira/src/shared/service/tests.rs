@@ -205,9 +205,16 @@ fn local_notes_are_withheld_from_non_owners() {
     let recalled = call(&f.state, &grok, "recall", json!({"query": "door code drawer"}));
     assert_eq!(recalled["result"]["items"], json!([]), "{recalled}");
     assert_ne!(recalled["result"]["status"], "found");
+    // An agent is not locked out of its own local note; nobody else but the owner reads it (RT-4).
     let own = call(&f.state, &claude, "remember", note("my own local observation", "local"));
-    assert_eq!(own["result"]["withheld"], true);
-    assert!(own["result"].get("text").is_none());
+    assert_eq!(own["result"]["text"], "my own local observation", "{own}");
+    let own_id = own["result"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(call(&f.state, &claude, "get", json!({"id": own_id}))["result"]["text"], "my own local observation");
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": own_id}))["error"], "kira:not-found");
+    let mine = call(&f.state, &claude, "recall", json!({"query": "own local observation"}));
+    assert!(mine["result"]["items"].as_array().unwrap().iter().any(|i| i["id"] == own_id.as_str()), "{mine}");
+    let theirs = call(&f.state, &grok, "recall", json!({"query": "own local observation"}));
+    assert!(theirs["result"]["items"].as_array().unwrap().is_empty() && theirs["result"]["total"] == 0, "{theirs}");
     assert_eq!(call(&f.state, &owner, "list_recent", json!({}))["result"]["notes"].as_array().unwrap().len(), 2);
     // Scopes: an agent reads only the scopes it is registered for, whatever it asks for.
     let mut owner_scope = note("the figurine insurance is in the owner folder", "builders");
@@ -500,7 +507,8 @@ fn a_reviewer_proposes_a_correction_and_it_takes_effect_when_the_author_accepts(
     private["capture"] = json!("owner-typed");
     let private = call(&f.state, &owner, "remember", private)["result"]["id"].as_str().unwrap().to_owned();
     let mine = remember_id(&f, &grok, "Finding K2-11 is nothing");
-    assert_eq!(call(&f.state, &grok, "supersede", json!({"target": private, "replacement": mine}))["error"], "kira:supersede-not-author");
+    assert_eq!(call(&f.state, &grok, "supersede", json!({"target": private, "replacement": mine}))["error"], "kira:supersede-target-unknown");
+    assert_eq!(call(&f.state, &grok, "supersede", json!({"target": "ab".repeat(32), "replacement": mine}))["error"], "kira:supersede-target-unknown", "same refusal as for a note that does not exist");
 }
 
 /// Bench A6/A6b: a note corrected twice stood corrected by the FIRST replacement; the later correction was ignored.
@@ -544,9 +552,10 @@ fn a_stale_resume_is_refused_when_it_names_the_head_it_read() {
         call(&f.state, &claude, "remember", n)
     };
     let head = |token: &str| call(&f.state, token, "get", json!({"id": "resume:claude"}))["result"]["id"].as_str().map(str::to_owned);
+    let _ = &grok;
     // An empty slot is "none"; anything else is stale.
     assert_eq!(resume("v1 step 5", Some("none"))["ok"], true);
-    let v1 = head(&grok).unwrap();
+    let v1 = head(&claude).unwrap();
     assert_eq!(resume("v0 again", Some("none"))["error"], "kira:resume-stale");
     // Two sessions read v1. The first writes v2 against it; the second, still holding v1, is refused and v2 stays.
     let v2 = resume("v2 step 9", Some(&v1));
@@ -554,7 +563,7 @@ fn a_stale_resume_is_refused_when_it_names_the_head_it_read() {
     assert_eq!(v2["result"]["previous_head"], v1.as_str());
     let v2 = v2["result"]["id"].as_str().unwrap().to_owned();
     assert_eq!(resume("v1b step 6", Some(&v1))["error"], "kira:resume-stale");
-    assert_eq!(head(&grok).as_deref(), Some(v2.as_str()), "the newer handoff must stay the head");
+    assert_eq!(head(&claude).as_deref(), Some(v2.as_str()), "the newer handoff must stay the head");
     // Reading again and writing against the new head works; a malformed head or one without a slot is refused.
     assert_eq!(resume("v3 step 10", Some(&v2))["ok"], true);
     assert_eq!(resume("bad", Some("not-an-id"))["error"], "kira:id-invalid");
@@ -571,6 +580,41 @@ fn a_stale_resume_is_refused_when_it_names_the_head_it_read() {
     own["expected_head"] = json!("none");
     assert_eq!(call(&f.state, &owner, "remember", own.clone())["ok"], true);
     assert_eq!(call(&f.state, &owner, "remember", own)["error"], "kira:resume-stale");
+}
+
+/// Argon RT-4 (b, c, d): a hidden note could be probed through citations, replacements and the list cursor.
+#[test]
+fn hidden_notes_cannot_be_probed_through_sources_replacements_or_the_list_cursor() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let mut web = note("Owner clipped a web page about relays", "local");
+    web["capture"] = json!("web-derived");
+    let hidden = call(&f.state, &owner, "remember", web)["result"]["id"].as_str().unwrap().to_owned();
+    let nowhere = "cd".repeat(32);
+    // (b) citing a note the caller cannot read is refused exactly as citing one that does not exist: no root, no
+    // inherited capture.
+    let mut cite = |id: &str| {
+        let mut n = note("a claim that cites a source", "builders");
+        n["sources"] = json!([id]);
+        call(&f.state, &claude, "remember", n)
+    };
+    let (via_hidden, via_missing) = (cite(&hidden), cite(&nowhere));
+    assert_eq!(via_hidden, via_missing, "the refusals must be indistinguishable");
+    assert_eq!(via_hidden["error"], "kira:note-source-unknown");
+    // (c) a hidden replacement or target is "unknown", like a missing one.
+    let mine = call(&f.state, &claude, "remember", note("my own private note", "local"))["result"]["id"].as_str().unwrap().to_owned();
+    let hidden_rep = call(&f.state, &claude, "supersede", json!({"target": mine, "replacement": hidden}));
+    let missing_rep = call(&f.state, &claude, "supersede", json!({"target": mine, "replacement": nowhere}));
+    assert_eq!(hidden_rep, missing_rep);
+    assert_eq!(hidden_rep["error"], "kira:supersede-replacement-unknown");
+    // (d) a page of nothing but hidden notes has no cursor into them.
+    let page = call(&f.state, &grok, "list_recent", json!({"limit": 1}));
+    assert_eq!(page["result"]["notes"], json!([]));
+    assert!(page["result"]["next_before"].is_null(), "{page}");
+    // The owner, who may read it, can cite it and the citation is web-derived.
+    let mut cite_owner = note("the owner restates the clipped page", "builders");
+    cite_owner["sources"] = json!([hidden]);
+    assert_eq!(call(&f.state, &owner, "remember", cite_owner)["result"]["capture"], "web-derived");
 }
 
 fn state_of(f: &Fixture, token: &str, id: &str) -> String {
@@ -704,7 +748,14 @@ fn get_reads_a_slot_by_name_with_the_same_read_checks() {
     let head = call(&f.state, &owner, "remember", own)["result"]["id"].clone();
     let got = call(&f.state, &grok, "get", json!({"id": "aukora:self"}));
     assert_eq!((got["result"]["id"].clone(), got["result"]["text"].clone()), (head, json!("I am Auma, flagship agent of AUKORA.")));
-    assert_eq!(call(&f.state, &grok, "get", json!({"id": "resume:claude"}))["result"]["text"], "claude resumes at the slot patch");
+    // A handoff is its author's and the owner's: another builder is refused as for a note that is not there (RT-4).
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": "resume:claude"}))["error"], "kira:not-found");
+    assert_eq!(call(&f.state, &claude, "get", json!({"id": "resume:claude"}))["result"]["text"], "claude resumes at the slot patch");
+    assert_eq!(call(&f.state, &owner, "get", json!({"id": "resume:claude"}))["result"]["text"], "claude resumes at the slot patch");
+    let hidden = call(&f.state, &grok, "list_recent", json!({}));
+    assert!(hidden["result"]["notes"].as_array().unwrap().iter().all(|n| n["slot"] != "resume:claude"), "{hidden}");
+    let recalled = call(&f.state, &grok, "recall", json!({"query": "claude resumes at the slot patch"}));
+    assert!(recalled["result"]["items"].as_array().unwrap().is_empty(), "{recalled}");
     // Read checks are the same as by id: a local resume is the owner's to read only.
     let mut private = slotted("the owner's private resume", "aukora:resume", "local");
     private["lane"] = json!("resume");
