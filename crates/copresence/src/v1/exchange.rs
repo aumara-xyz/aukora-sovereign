@@ -272,7 +272,7 @@ fn apply(exchange: &mut Exchange, bytes: &[u8], now: u64) -> Result<Stage> {
                 return Err(crypto::refusal("transcript-mismatch"));
             }
             let core = crypto::core(&handshake.core)?;
-            crypto::fresh(handshake.core.t_b_seconds, now, MAX_WINDOW_SECONDS)?;
+            crypto::fresh(handshake.core.t_b_seconds, now, RECEIPT_FRESH_SECONDS)?;
             crypto::fresh(handshake.t_seconds, now, FRAME_FRESHNESS_SECONDS)?;
             let participant = &handshake.core.context.b;
             crypto::verify(participant.device_key, core, handshake.sig_b)?;
@@ -292,7 +292,7 @@ fn apply(exchange: &mut Exchange, bytes: &[u8], now: u64) -> Result<Stage> {
                 .as_ref()
                 .ok_or(crypto::refusal("frame-order"))?;
             let core = crypto::core(&handshake.core)?;
-            crypto::fresh(handshake.core.t_b_seconds, now, MAX_WINDOW_SECONDS)?;
+            crypto::fresh(handshake.core.t_b_seconds, now, RECEIPT_FRESH_SECONDS)?;
             if bloom.core != core || bloom.context != crypto::context(&handshake.core.context)? {
                 return Err(crypto::refusal("core-mismatch"));
             }

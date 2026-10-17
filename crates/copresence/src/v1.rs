@@ -21,7 +21,11 @@ pub const TRANSCRIPT_DOMAIN: &str = "copresence.transcript.v1";
 pub const INTENT_ACK_DOMAIN: &str = "copresence.intent-ack.v2";
 pub const FRAME_ROTATION_MS: u64 = 1_000;
 pub const FRAME_FRESHNESS_SECONDS: u64 = 5;
+/// How far apart the two reveals (t_a, t_b) may be.
 pub const MAX_WINDOW_SECONDS: u64 = 10;
+/// How old a receipt may be, measured from its second timestamp t_b, when it is verified. Twenty seconds: a slow reader can need more
+/// than ten between B's reveal and the receipt (decided with the coordinator, 2026-10-17; it was ten).
+pub const RECEIPT_FRESH_SECONDS: u64 = 20;
 
 /// The local selection fixes the method before the first signed frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

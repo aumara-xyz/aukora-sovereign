@@ -185,7 +185,7 @@ pub(crate) fn validate_ticket(ticket: &AttemptTicket, session: [u8; 16]) -> Resu
 
 pub(crate) fn verify_body(body: &ReceiptBody, now: u64) -> Result<Digest32> {
     let digest = core(&body.core)?;
-    fresh(body.core.t_b_seconds, now, MAX_WINDOW_SECONDS)?;
+    fresh(body.core.t_b_seconds, now, RECEIPT_FRESH_SECONDS)?;
     verify(body.core.context.b.device_key, digest, body.sig_b)?;
     verify(body.core.context.a.device_key, digest, body.sig_a)?;
     match &body.intent_ack {

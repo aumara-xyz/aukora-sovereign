@@ -130,6 +130,30 @@ async function exchange(label, frames, approved) {
   exchanges.forEach(ex => ex.stop());
   return sizes;
 }
+// --- receipt freshness: 20 s from the second timestamp (it was 10) ---
+async function receiptAge() {
+  const { BrowserCopresenceEngine } = await portal.load('engine.js');
+  const store = () => ({ attempts: { reserve: async () => `1.${hex(crypto.getRandomValues(new Uint8Array(16)))}`, finish: async () => {} }, consumeReceipt: async () => {} });
+  const make = () => { const s = store(); return new BrowserCopresenceEngine({ node: '11'.repeat(16), deviceEpoch: 1, attempts: s.attempts, consumeReceipt: s.consumeReceipt,
+    contextFormatPinned: () => true, legacyVerifier: async () => { throw new Error('legacy'); } }); };
+  const engines = [make(), make()], controller = new AbortController(), exchanges = [], seen = [null, null];
+  for (let i = 0; i < 2; ++i) exchanges.push(await engines[i].begin({ domain: 'copresence.v1', attemptId: `${i + 1}.${hex(crypto.getRandomValues(new Uint8Array(16)))}`, method: 'optical',
+    contextBytes: new TextEncoder().encode('receipt age'), approvedText: null }, controller.signal));
+  exchanges.forEach((ex, i) => ex.subscribe(o => { if (o.receiptBytes) seen[i] = o.receiptBytes; if (o.frameBytes) void exchanges[1 - i].receive(o.frameBytes).catch(() => {}); }));
+  for (let wait = 0; wait < 100 && !(seen[0] && seen[1]); ++wait) await new Promise(r => setTimeout(r, 100));
+  const receipt = seen[0];
+  if (!receipt) { check(false, 'a receipt to age'); return; }
+  const tB = JSON.parse(new TextDecoder().decode(receipt)).body.core.t_b_seconds;
+  const realNow = Date.now;
+  const verdictAt = async seconds => { Date.now = () => (tB + seconds) * 1000; try { return (await engines[0].verifyContextReceipt(receipt, null, controller.signal)); } finally { Date.now = realNow; } };
+  const at15 = await verdictAt(15), at20 = await verdictAt(20), at21 = await verdictAt(21);
+  check(at15.verdict === 'UNDETERMINED' && at15.code === null, 'a receipt 15 s after its second timestamp is accepted', JSON.stringify(at15));
+  check(at20.verdict === 'UNDETERMINED' && at20.code === null, 'a receipt 20 s after its second timestamp is still accepted');
+  check(at21.verdict === 'SUSPICIOUS' && at21.code === 'copresence:receipt-stale', 'a receipt 21 s after its second timestamp is refused', JSON.stringify(at21));
+  check(wire.RECEIPT_FRESH_SECONDS === 20, 'the engine and the node both say 20 seconds');
+  exchanges.forEach(ex => ex.stop());
+}
+await receiptAge();
 if (!quick) {
   const compact = await exchange('compact frames', 'compact-v1', null);
   check(Math.max(...compact) <= 201, 'every frame an engine drew was within 201 bytes', [...compact].sort((a, b) => a - b).join(', '));

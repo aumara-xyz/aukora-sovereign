@@ -81,13 +81,13 @@ export function mountPairing(host: HTMLElement, signal: AbortSignal, complete: (
       ["Bits drawn", "110 × log₂3 = 110 × 1.58496 = 174.35 bits (3¹¹⁰ ≈ 2¹⁷⁴·³⁵, under the 2²⁵⁶ it is cut from)"],
     ]),
     label("The exchange"),
-    statTiles([{ name: "Nonces", value: "2 × 256 bits", tone: "mint" }, { name: "Frames", value: "4 + receipt", tone: "mint" }, { name: "Window", value: "10 s", tone: "mint" }]),
+    statTiles([{ name: "Nonces", value: "2 × 256 bits", tone: "mint" }, { name: "Frames", value: "4 + receipt", tone: "mint" }, { name: "Receipt window", value: "20 s", tone: "mint" }]),
     ...fieldTable([
       ["Order", "A face, B face, A seen-you, B seen-you; then both sign one receipt"],
       ["Nonces", "2 × 32 bytes = 512 bits, each sealed first by a SHA-256 commitment (256 bits) and revealed only after the other's is shown"],
       ["Device keys", "ECDSA P-256, made in this browser and never exportable: public key 65 bytes, signature 64 bytes"],
       ["Signed core", "context 32 + nonces 2 × 32 + times 2 × 8 + transcript 32 = 144 bytes, under “copresence.v1”"],
-      ["Frame", "a QR code in the smallest version that holds it: about 0.7 to 1.4 KB, versions 19 to 27, changing every 1 s; the receipt must land within 10 s"],
+      ["Frame", "a QR code in the smallest version that holds it: about 0.7 to 1.4 KB, versions 19 to 27, changing every 1 s; the receipt must land within 20 s"],
     ]),
     label("Your AUMLOK, for comparison"),
     ...fieldTable([

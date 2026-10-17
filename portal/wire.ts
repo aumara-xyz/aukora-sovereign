@@ -18,8 +18,11 @@ export const COMPACT_DOMAIN = "copresence.compact-frame.v1";
 export type FrameWire = "json-v1" | "compact-v1";
 // How old a compact frame may be when it is read. A screen redraws its first frames (the face, the reveal) all through the exchange, and
 // they cannot be re-signed (the transcript hashes their exact bytes), so a peer that reads one late must still accept it. 30 s, within
-// the exchange. (json-v1 keeps its original 5 s.) The receipt's own 10 s freshness is the node's and is unchanged.
+// the exchange. (json-v1 keeps its original 5 s.)
 export const COMPACT_FRESH_SECONDS = 30;
+// How old a receipt may be, from its second timestamp (t_b), when it is verified: the node's rule and this engine's, 20 seconds (it was 10:
+// a slow reader can need more than ten between B's reveal and the receipt). The two reveals must still be at most 10 s apart.
+export const RECEIPT_FRESH_SECONDS = 20;
 const PARTICIPANT_KEYS = ["node", "device_key", "device_epoch", "session_id", "attempt_sequence"];
 
 export function participant(value: Json): Participant {

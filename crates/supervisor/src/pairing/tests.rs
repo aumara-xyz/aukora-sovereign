@@ -537,3 +537,24 @@ fn both_receipt_times_must_lie_in_the_pairing_window() {
     let bytes = receipt(world.node, &context, &owner, &phone, created, now / 1000);
     world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
 }
+
+/// A receipt is fresh for twenty seconds from its second timestamp as the node measures it (its clock plus the three-second allowance):
+/// fifteen seconds old is accepted, twenty-one refused as stale.
+#[test]
+fn a_receipt_is_fresh_for_twenty_seconds() {
+    let now = T0 + 20_000;
+    let checked = now / 1000 + CLOCK_AHEAD_SECONDS;
+    for (age, accepted) in [(15u64, true), (20, true), (21, false)] {
+        let world = world();
+        let (owner, phone) = (Device::new(1), Device::new(2));
+        let (id, _, context) = joined(&world, &owner, &phone);
+        let t_b = checked - age;
+        let bytes = receipt(world.node, &context, &owner, &phone, t_b - 1, t_b);
+        let outcome = world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts);
+        if accepted {
+            outcome.unwrap_or_else(|reason| panic!("a receipt {age} s old: {reason:?}"));
+        } else {
+            assert_eq!(outcome.unwrap_err().reason, "stale-frame", "a receipt {age} s old");
+        }
+    }
+}

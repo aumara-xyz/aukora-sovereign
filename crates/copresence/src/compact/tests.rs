@@ -276,3 +276,13 @@ fn a_frame_stays_readable_for_thirty_seconds() {
     assert!(fresh(t, u64::from(t) - 2).is_ok());
     assert!(fresh(t, u64::from(t) - 3).is_err());
 }
+
+#[test]
+fn the_receipt_is_fresh_for_twenty_seconds() {
+    use crate::v1::{crypto, RECEIPT_FRESH_SECONDS};
+    assert_eq!(RECEIPT_FRESH_SECONDS, 20);
+    let t = 1_800_000_000_u64;
+    assert!(crypto::fresh(t, t + 15, RECEIPT_FRESH_SECONDS).is_ok());
+    assert!(crypto::fresh(t, t + 20, RECEIPT_FRESH_SECONDS).is_ok());
+    assert!(crypto::fresh(t, t + 21, RECEIPT_FRESH_SECONDS).is_err());
+}

@@ -4,7 +4,7 @@ import { checkAbort, concat, digest, domain, encode, hex, integer, object, parse
 import { IndexedAttempts, ticket } from "./attempts.js";
 import { copyPersonKey, pairingDigest, type PentoraPairingDigest } from "./bloom/derive.js";
 import { receiptCode, receiptVerdict } from "./verdict.js";
-import { COMPACT_SCHEMA, compactDigest, context, contextDigest, core, coreDigest, decodeCompact, encodeCompact, frameDigest, FRAME_SCHEMA, intentAckDigest, nonceCommitment, participant, RECEIPT_SCHEMA, same, transcript, validateCompact, validateFrame, type Channels, type Context, type Core, type Frame, type FrameWire, type Layers, type Packet, type Participant } from "./wire.js";
+import { RECEIPT_FRESH_SECONDS, COMPACT_SCHEMA, compactDigest, context, contextDigest, core, coreDigest, decodeCompact, encodeCompact, frameDigest, FRAME_SCHEMA, intentAckDigest, nonceCommitment, participant, RECEIPT_SCHEMA, same, transcript, validateCompact, validateFrame, type Channels, type Context, type Core, type Frame, type FrameWire, type Layers, type Packet, type Participant } from "./wire.js";
 
 export type ChannelRequest = { readonly context: Context; readonly side: "A" | "B"; readonly nonceA: string; readonly nonceB: string };
 export interface ChannelProbe { collect(request: ChannelRequest, signal: AbortSignal): Promise<Channels> }
@@ -95,7 +95,7 @@ async function verifyReceipt(bytes: Uint8Array, expected: Context, approved: Uin
   const input = core(body.core);
   if (expectedCore && !same(input, expectedCore)) refuse("core-mismatch");
   if (!same(input.context, expected)) refuse("context-mismatch");
-  if (input.t_b_seconds > now() || now() - input.t_b_seconds > 10) refuse("receipt-stale");
+  if (input.t_b_seconds > now() || now() - input.t_b_seconds > RECEIPT_FRESH_SECONDS) refuse("receipt-stale");
   const hash = await coreDigest(input);
   await verify(input.context.a.device_key, body.sig_a, hash);
   await verify(input.context.b.device_key, body.sig_b, hash);
@@ -184,7 +184,7 @@ class BrowserExchange implements PortalExchange {
       this.queue = this.queue.then(async () => {
         if (this.stopped) return;
         // A frame stays on screen for `dwell` ticks: the face, the re-signed handshake or bloom, and the cycle all move on together.
-        // After B has made its reveal and handshake, the clock for the receipt is running (it must be verified within ten seconds of that reveal),
+        // After B has made its reveal and handshake, the clock for the receipt is running (it must be verified within twenty seconds of that reveal),
         // so B's two frames each stay one tick: A needs both, and nothing else, from B.
         const dwell = this.compact && this.side === "B" && this.phase === "HANDSHAKE" && !this.receipt ? 1 : this.dwell;
         if (this.ticks++ % dwell !== 0) { this.emit(); return; }
