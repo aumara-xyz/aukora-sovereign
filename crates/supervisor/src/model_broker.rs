@@ -91,7 +91,9 @@ impl BrokerConfig {
             || config.peer_uids.is_empty()
             || config.peer_uids.iter().any(|uid| *uid == 0 || *uid == own_uid)
             || config.max_request_bytes.is_some_and(|n| !(64 * 1024..=32 << 20).contains(&n))
-            || !(1..=31).contains(&config.budget.valid_days)
+            // One day is never "current": a budget is renewed a day before it ends (`keep_budget`), so it would be
+            // proposed again every tick.
+            || !(2..=31).contains(&config.budget.valid_days)
             || config.budget.terms(1).check().is_err()
         {
             return Err(refuse("model-broker-config"));
@@ -294,6 +296,11 @@ mod tests {
         assert!(BrokerConfig::parse(&text("").replace("[1001]", "[]"), 999).is_err());
         assert!(BrokerConfig::parse(&text(",\"extra\":1"), 999).is_err());
         assert!(BrokerConfig::parse(&text("").replace("\"valid_days\":30", "\"valid_days\":90"), 999).is_err());
+        assert!(
+            BrokerConfig::parse(&text("").replace("\"valid_days\":30", "\"valid_days\":1"), 999).is_err(),
+            "a one-day budget is never current, so its renewal would be proposed every tick"
+        );
+        assert!(BrokerConfig::parse(&text("").replace("\"valid_days\":30", "\"valid_days\":2"), 999).is_ok());
         assert!(BrokerConfig::parse(&text("").replace("/run/aukora-broker/broker.sock", "broker.sock"), 999).is_err());
         assert!(BrokerConfig::parse(&text(",\"max_request_bytes\":100"), 999).is_err());
         assert!(BrokerConfig::parse(&text(",\"max_request_bytes\":8388608"), 999).is_ok());
