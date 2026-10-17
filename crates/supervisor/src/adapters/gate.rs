@@ -150,6 +150,13 @@ impl GateAdapter {
         note: String,
         bytes: Vec<u8>,
     ) -> ServiceFuture<'_, ProposalId> {
+        // Only a door target, and only a record the gate itself can read back (shape and call digest).
+        if !target.starts_with(gate::door::TARGET_PREFIX) {
+            return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
+        }
+        if let Err(refusal) = gate::door::read(&bytes) {
+            return Box::pin(async move { Err(refusal) });
+        }
         self.propose_reserved(scope, target, note, bytes)
     }
 

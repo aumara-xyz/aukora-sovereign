@@ -5,7 +5,7 @@
 // what src/ exports.
 
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -16,7 +16,7 @@ import * as source from '../src/index.ts'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 function snapshot(dir: string): Record<string, string> {
-  return Object.fromEntries(readdirSync(dir).sort().map(name => [name, readFileSync(join(dir, name), 'utf8')]))
+  return Object.fromEntries(readdirSync(dir).filter(name => name.endsWith('.js')).sort().map(name => [name, readFileSync(join(dir, name), 'utf8')]))
 }
 
 test('rebuilding gives identical bytes, and every src file has an output', () => {
@@ -77,4 +77,31 @@ test('package.json points at the build output and declares the DSH bundle patch'
   assert.deepEqual(pkg.dsh, { bundle: { patch: './cordis.patch.yml' } })
   assert.ok(readFileSync(join(root, 'cordis.patch.yml'), 'utf8').includes("name: '@aukora/door'"))
   assert.equal(readFileSync(join(root, '.gitignore'), 'utf8').split('\n').includes('/lib/'), true)
+})
+
+test('a build removes only its own stale outputs and refuses to touch any other .js file', () => {
+  const project = mkdtempSync(join(tmpdir(), 'door-build-own-'))
+  const out = join(project, 'lib')
+  try {
+    mkdirSync(join(project, 'src'))
+    writeFileSync(join(project, 'src', 'x.ts'), 'export const x: number = 1\n')
+    assert.deepEqual(build(project, out), ['x.js'])
+    // x.ts is renamed y.ts: the old output is ours and goes.
+    rmSync(join(project, 'src', 'x.ts'))
+    writeFileSync(join(project, 'src', 'y.ts'), 'export const y: number = 2\n')
+    assert.deepEqual(build(project, out), ['y.js'])
+    assert.equal(existsSync(join(out, 'x.js')), false)
+    // A .js file nobody here wrote stops the build and survives it.
+    writeFileSync(join(out, 'precious.js'), 'keep me\n')
+    assert.throws(() => build(project, out), /precious\.js/)
+    assert.equal(readFileSync(join(out, 'precious.js'), 'utf8'), 'keep me\n')
+    // Neither a first build into a directory that already holds somebody's .js file.
+    const elsewhere = join(project, 'elsewhere')
+    mkdirSync(elsewhere)
+    writeFileSync(join(elsewhere, 'mine.js'), 'not yours\n')
+    assert.throws(() => build(project, elsewhere), /mine\.js/)
+    assert.equal(readFileSync(join(elsewhere, 'mine.js'), 'utf8'), 'not yours\n')
+  } finally {
+    rmSync(project, { recursive: true, force: true })
+  }
 })

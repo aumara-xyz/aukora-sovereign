@@ -69,6 +69,7 @@ pub trait Approver: Send + Sync {
 pub struct ApprovalLog {
     inner: Mutex<Inner>,
     max_bytes: u64,
+    max_open: usize,
 }
 
 struct Inner {
@@ -84,6 +85,10 @@ impl ApprovalLog {
     }
 
     pub(super) fn open_with(path: &Path, max_bytes: u64) -> Result<Self> {
+        Self::open_with_limits(path, max_bytes, MAX_OPEN)
+    }
+
+    pub(super) fn open_with_limits(path: &Path, max_bytes: u64, max_open: usize) -> Result<Self> {
         let mut file = open_append(path)?;
         let mut text = String::new();
         file.read_to_string(&mut text).map_err(|_| refuse("door-state"))?;
@@ -109,7 +114,7 @@ impl ApprovalLog {
                 _ => {}
             }
         }
-        Ok(Self { inner: Mutex::new(Inner { file, bytes, open }), max_bytes })
+        Ok(Self { inner: Mutex::new(Inner { file, bytes, open }), max_bytes, max_open })
     }
 
     /// The open request for this call digest, if any: its handle and when it was raised.
@@ -117,12 +122,39 @@ impl ApprovalLog {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner).open.get(digest).cloned()
     }
 
+    /// Make room for one more open ask before one is raised: when the table is full, asks older than the approval time
+    /// limit are ended (`gone`, durably) since nothing can spend them any more. `Err` if it is still full, so the
+    /// caller refuses before it puts a card in front of the owner that could never be honoured.
+    pub fn reserve(&self, digest: &str, now: u64) -> std::result::Result<(), &'static str> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        self.make_room(&mut inner, digest, now)
+    }
+
+    fn make_room(&self, inner: &mut Inner, digest: &str, now: u64) -> std::result::Result<(), &'static str> {
+        if inner.open.len() < self.max_open || inner.open.contains_key(digest) {
+            return Ok(());
+        }
+        let stale: Vec<(String, String)> = inner
+            .open
+            .iter()
+            .filter(|(_, (_, raised))| now.saturating_sub(*raised) > APPROVAL_TTL_SECS)
+            .map(|(digest, (handle, _))| (digest.clone(), handle.clone()))
+            .collect();
+        for (old_digest, old_handle) in stale {
+            self.append(inner, "gone", &old_digest, &old_handle, 0)?;
+            inner.open.remove(&old_digest);
+        }
+        if inner.open.len() < self.max_open {
+            Ok(())
+        } else {
+            Err("approvals-full")
+        }
+    }
+
     /// Remember a newly raised request for this call digest (replacing a lost one), raised at `at` (unix seconds).
     pub fn begin(&self, digest: &str, handle: &str, at: u64) -> std::result::Result<(), &'static str> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if inner.open.len() >= MAX_OPEN && !inner.open.contains_key(digest) {
-            return Err("approvals-full");
-        }
+        self.make_room(&mut inner, digest, at)?;
         self.append(&mut inner, "open", digest, handle, at)?;
         inner.open.insert(digest.to_owned(), (handle.to_owned(), at));
         Ok(())
@@ -362,6 +394,33 @@ mod tests {
         assert_eq!(log.get("d2"), None);
         log.begin("d5", "h5", 5).unwrap();
         assert!(std::fs::read_to_string(&path).unwrap().ends_with("\"handle\":\"h5\"}\n"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_full_table_ends_the_asks_nothing_can_spend_any_more_and_keeps_the_rest() {
+        let dir = temp("prune");
+        let path = dir.join("approvals.jsonl");
+        let log = ApprovalLog::open_with_limits(&path, APPROVALS_MAX_BYTES, 3).unwrap();
+        log.begin("d1", "h1", 100).unwrap();
+        log.begin("d2", "h2", 200).unwrap();
+        log.begin("d3", "h3", 100 + APPROVAL_TTL_SECS + 50).unwrap();
+        // Full, and nothing is old enough to end yet.
+        assert_eq!(log.reserve("d4", 100 + APPROVAL_TTL_SECS), Err("approvals-full"));
+        assert_eq!(log.begin("d4", "h4", 100 + APPROVAL_TTL_SECS), Err("approvals-full"));
+        // A digest that is already open never needs room.
+        assert_eq!(log.reserve("d2", 100 + APPROVAL_TTL_SECS), Ok(()));
+        // Later, d1 and d2 are older than the time limit: they go, d3 stays.
+        let now = 200 + APPROVAL_TTL_SECS + 1;
+        assert_eq!(log.reserve("d4", now), Ok(()));
+        assert_eq!((log.get("d1"), log.get("d2")), (None, None));
+        assert_eq!(log.get("d3"), Some(("h3".to_owned(), 100 + APPROVAL_TTL_SECS + 50)));
+        log.begin("d4", "h4", now).unwrap();
+        drop(log);
+        // What was ended stays ended after a restart.
+        let log = ApprovalLog::open_with_limits(&path, APPROVALS_MAX_BYTES, 3).unwrap();
+        assert_eq!((log.get("d1"), log.get("d2")), (None, None));
+        assert_eq!(log.open_count(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }
 

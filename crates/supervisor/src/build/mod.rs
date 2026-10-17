@@ -75,15 +75,26 @@ fn read_output(dir: &Path, name: &str, max: u64) -> Result<Vec<u8>, &'static str
 }
 
 /// Run one approved build and return the frozen, verified artifact. `manifest_bytes` are the bytes the owner's passkey
-/// covered (read from the gate's applied target). Nothing here installs or releases anything.
+/// covered (read from the gate's applied target). `node` is this node's name and `installed_release` the digest of the
+/// release it runs now (`None` before its first): an approval is for one replacement on one node, so a manifest for
+/// another node, or one that was approved against a release that is no longer the installed one, is refused before the
+/// builder starts. Nothing here installs or releases anything.
 pub fn build_approved(
     builder: &dyn Builder,
     manifest_bytes: &[u8],
     source_dir: &Path,
     out_dir: &Path,
     records: &BuildRecords,
+    node: &str,
+    installed_release: Option<&str>,
 ) -> Result<Frozen, &'static str> {
     let manifest = Manifest::parse(manifest_bytes).map_err(|_| "manifest")?;
+    if manifest.node != node {
+        return Err("node-differs");
+    }
+    if manifest.base_release_sha256.as_deref() != installed_release {
+        return Err("base-differs");
+    }
     let manifest_sha256 = sha256_hex(manifest_bytes);
     // The source the builder will read is the source the owner approved, down to the recipe and the lockfiles.
     if closure::closure(source_dir)?.sha256 != manifest.source.export_sha256 {
@@ -124,8 +135,8 @@ pub fn build_approved(
     if names != ["release.json", "release.tar"] {
         return Err("output-extra");
     }
-    let release_json = read_output(out_dir, "release.json", 4 << 20)?;
-    let release_tar = read_output(out_dir, "release.tar", 1 << 30)?;
+    let release_json = read_output(out_dir, "release.json", verify::MAX_JSON_BYTES)?;
+    let release_tar = read_output(out_dir, "release.tar", verify::MAX_TAR_BYTES)?;
     let frozen = verify::verify(&manifest, release_json, release_tar)?;
     records.record(&manifest_sha256, &frozen.release_sha256)?;
     Ok(frozen)
@@ -216,7 +227,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("out")).unwrap();
         let records = BuildRecords::open(&dir.join("builds.jsonl")).unwrap();
         let fake = Fake { mischief, ..Fake::default() };
-        let result = build_approved(&fake, &bytes, &source, &dir.join("out"), &records);
+        let result = build_approved(&fake, &bytes, &source, &dir.join("out"), &records, "t1", None);
         (result, fake, records, manifest)
     }
 
@@ -248,12 +259,12 @@ mod tests {
         std::fs::create_dir_all(dir.join("out")).unwrap();
         let records = BuildRecords::open(&dir.join("builds.jsonl")).unwrap();
         let fake = Fake::default();
-        assert_eq!(build_approved(&fake, &manifest.to_bytes().unwrap(), &source, &dir.join("out"), &records).unwrap_err(), "lock-differs");
+        assert_eq!(build_approved(&fake, &manifest.to_bytes().unwrap(), &source, &dir.join("out"), &records, "t1", None).unwrap_err(), "lock-differs");
         let (source, mut manifest) = approved(&temp("script"));
         manifest.recipe.script_sha256 = "9".repeat(64);
         let dir = source.parent().unwrap().to_path_buf();
         std::fs::create_dir_all(dir.join("out")).unwrap();
-        assert_eq!(build_approved(&fake, &manifest.to_bytes().unwrap(), &source, &dir.join("out"), &records).unwrap_err(), "script-differs");
+        assert_eq!(build_approved(&fake, &manifest.to_bytes().unwrap(), &source, &dir.join("out"), &records, "t1", None).unwrap_err(), "script-differs");
         assert!(fake.seen.borrow().is_empty());
     }
 
@@ -279,7 +290,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("out")).unwrap();
         let records = BuildRecords::open(&dir.join("builds.jsonl")).unwrap();
         let fake = Fake::default();
-        assert_eq!(build_approved(&fake, b"{}", &source, &dir.join("out"), &records).unwrap_err(), "manifest");
+        assert_eq!(build_approved(&fake, b"{}", &source, &dir.join("out"), &records, "t1", None).unwrap_err(), "manifest");
         assert!(fake.seen.borrow().is_empty());
     }
 
@@ -291,7 +302,31 @@ mod tests {
         std::fs::write(dir.join("out/release.json"), "stale").unwrap();
         let records = BuildRecords::open(&dir.join("builds.jsonl")).unwrap();
         let fake = Fake::default();
-        assert_eq!(build_approved(&fake, &manifest.to_bytes().unwrap(), &source, &dir.join("out"), &records).unwrap_err(), "output-folder");
+        assert_eq!(build_approved(&fake, &manifest.to_bytes().unwrap(), &source, &dir.join("out"), &records, "t1", None).unwrap_err(), "output-folder");
         assert!(fake.seen.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_approval_is_for_one_node_and_one_replacement() {
+        let dir = temp("scope");
+        let (source, mut manifest) = approved(&dir);
+        std::fs::create_dir_all(dir.join("out")).unwrap();
+        let records = BuildRecords::open(&dir.join("builds.jsonl")).unwrap();
+        let fake = Fake::default();
+        let old = "a".repeat(64);
+        let installed_now = "b".repeat(64);
+        // Approved for a node that is not this one.
+        let bytes = manifest.to_bytes().unwrap();
+        assert_eq!(build_approved(&fake, &bytes, &source, &dir.join("out"), &records, "t2", None).unwrap_err(), "node-differs");
+        // Approved as a first release, but the node already runs one.
+        assert_eq!(build_approved(&fake, &bytes, &source, &dir.join("out"), &records, "t1", Some(&installed_now)).unwrap_err(), "base-differs");
+        // Approved to replace one release, but the node runs another now (an old approval, reused).
+        manifest.base_release_sha256 = Some(old.clone());
+        let bytes = manifest.to_bytes().unwrap();
+        assert_eq!(build_approved(&fake, &bytes, &source, &dir.join("out"), &records, "t1", Some(&installed_now)).unwrap_err(), "base-differs");
+        assert_eq!(build_approved(&fake, &bytes, &source, &dir.join("out"), &records, "t1", None).unwrap_err(), "base-differs");
+        assert!(fake.seen.borrow().is_empty());
+        // The release it was approved against is the one installed: the build goes ahead.
+        assert!(build_approved(&fake, &bytes, &source, &dir.join("out"), &records, "t1", Some(&old)).is_ok());
     }
 }

@@ -52,7 +52,14 @@ fn public_v6(ip: Ipv6Addr) -> bool {
         || (segments[0] == 0x2001 && segments[1] == 0x0db8)
         || (segments[0] == 0x0064 && segments[1] == 0xff9b)
         || segments[0] == 0x2002
-        || (segments[0] == 0x2001 && segments[1] == 0))
+        // ::/96 (IPv4-compatible, `::a.b.c.d`), fec0::/10 (site-local), 100::/64 (discard-only), 2001::/23 (IETF
+        // protocol assignments: Teredo, benchmarking, ORCHID), 3fff::/20 (documentation), 5f00::/16 (SRv6).
+        || segments[..6].iter().all(|segment| *segment == 0)
+        || (segments[0] & 0xffc0) == 0xfec0
+        || (segments[0] == 0x0100 && segments[1..4].iter().all(|segment| *segment == 0))
+        || (segments[0] == 0x2001 && segments[1] < 0x0200)
+        || (segments[0] == 0x3fff && segments[1] < 0x1000)
+        || segments[0] == 0x5f00)
 }
 
 /// What the URL check decided: the host name, the port and the parsed URL to request.
@@ -212,10 +219,10 @@ mod tests {
         for bad in ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "255.255.255.255", "198.18.0.1", "240.0.0.1"] {
             assert!(!public_ip(bad.parse().unwrap()), "{bad}");
         }
-        for bad in ["::1", "::", "fe80::1", "fc00::1", "fd12:3456::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "2001:db8::1", "64:ff9b::1", "2002::1"] {
+        for bad in ["::1", "::", "fe80::1", "fc00::1", "fd12:3456::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "2001:db8::1", "64:ff9b::1", "2002::1", "::10.0.0.1", "::8.8.8.8", "fec0::1", "100::1", "2001:2::1", "3fff::1", "5f00::1", "64:ff9b:1::1"] {
             assert!(!public_ip(bad.parse().unwrap()), "{bad}");
         }
-        for good in ["1.1.1.1", "8.8.8.8", "93.184.216.34", "2606:4700:4700::1111", "::ffff:8.8.8.8"] {
+        for good in ["1.1.1.1", "8.8.8.8", "93.184.216.34", "2606:4700:4700::1111", "::ffff:8.8.8.8", "2001:4860:4860::8888", "2a00:1450:4001::1"] {
             assert!(public_ip(good.parse().unwrap()), "{good}");
         }
     }

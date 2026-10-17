@@ -5,8 +5,9 @@
 here, one request line per connection; the door decides and, only when the policy says allow, executes the crossing
 itself. The engine never holds the credentials a crossing needs.
 
-Source: `src/door/` (`wire`, `classify`, `policy`, `ledger`, `files`, `peer`, `fetch`, `memory`, `mod`). 58 unit tests run
-with `cargo test -p supervisor door`.
+Source: `src/door/` (`wire`, `classify`, `policy`, `ledger`, `files`, `peer`, `fetch`, `memory`, `approver`, `standing`, `mod`, `tests`).
+The unit tests run with `cargo test -p supervisor door` (the count changes with every edit: ask the command, not this
+file).
 
 ## What it does with a request
 
@@ -26,7 +27,9 @@ with `cargo test -p supervisor door`.
    The plugin's claim must equal it, except that a tool the plugin calls `unknown` is served under the door's class.
    A call the door considers workspace-local, or a class it does not know, is refused.
 5. **Policy, then consume once.** One action per class: `allow`, `ask` or `deny`; anything not listed is deny, and a
-   deny burns no id. For allow and ask the call id is appended to the ledger and `fsync`ed before anything runs; a
+   policy deny burns no id. (Once the policy says allow or ask the id is spent, so a refusal after that point does burn
+   it: the door's own checks before an ask or an allow, such as the host allowlist, bad arguments, the memory ceilings
+   or an unavailable service.) For allow and ask the call id is appended to the ledger and `fsync`ed before anything runs; a
    repeat is `replay`. The ledger is segmented (`consumed.<n>.log`, 250,000 ids or 48 MiB each); the newest two are
    kept, so memory and disk stay bounded and the door never refuses everything because a counter filled. Replay
    protection therefore covers the last 250,000 to 500,000 ids. `door.lock` is `flock`ed, so two doors cannot share a
@@ -48,7 +51,10 @@ with `cargo test -p supervisor door`.
      `approvals.jsonl` (fsync) and only then executes. One approval lets exactly one call through; a crash between the
      two loses the run and never repeats it. A refused, retired or expired proposal is raised afresh.
    - `approvals.jsonl` is the door's memory of open asks (16 MiB cap, 4,096 open); a torn or unreadable line can only
-     lose an ask. A sweep every 60 s settles expired proposals (the gate expires a pending proposal only in `recover`,
+     lose an ask. When the table is full, asks older than the approval time limit are ended first (`gone`, durably), and
+     room is made BEFORE the owner request is raised, so no card goes up for an ask that could not be remembered. Ended
+     asks stay in the file as lines until the 16 MiB cap (about 140,000 events; at most eight asks per five minutes can
+     be open, so that is weeks of a hostile engine); past it the door answers `approvals-full` until the file is rotated. A sweep every 60 s settles expired proposals (the gate expires a pending proposal only in `recover`,
      which otherwise runs at start-up, and a target holds one open proposal, so unanswered asks would hold their slots
      until a restart).
    - Refusals the engine can see: `approvals-unbound` (node not claimed), `approvals-not-installed` (no `door/` targets

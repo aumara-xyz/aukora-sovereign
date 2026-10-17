@@ -35,17 +35,37 @@ export function compile(source, file) {
   return code
 }
 
-/** Build every src/*.ts under `root` into `outDir`; returns the file names written. */
+/** The names the last build wrote, kept next to its output so a later build can tell its own stale files from anyone else's. */
+const RECORD = '.built-by-build.json'
+
+function previousOutputs(outDir) {
+  try {
+    const names = JSON.parse(readFileSync(join(outDir, RECORD), 'utf8'))
+    return Array.isArray(names) ? names.filter(name => typeof name === 'string' && /^[A-Za-z0-9_-]+\.js$/.test(name)) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Build every src/*.ts under `root` into `outDir`; returns the file names written. It removes only a .js file that an
+ * earlier build of this directory wrote and that no source produces now. Any other .js file in `outDir` is not ours:
+ * the build refuses instead of deleting it, so a mistyped outDir cannot cost anyone a file.
+ */
 export function build(root = here, outDir = join(root, 'lib')) {
   const srcDir = join(root, 'src')
   const names = readdirSync(srcDir).filter(name => name.endsWith('.ts')).sort()
+  const outputs = names.map(name => name.replace(/\.ts$/, '.js'))
   mkdirSync(outDir, { recursive: true })
-  // Only stale .js files go (never the directory), so a mistyped outDir cannot delete anything else.
-  for (const stale of readdirSync(outDir)) if (stale.endsWith('.js')) rmSync(join(outDir, stale))
+  const mine = new Set([...outputs, ...previousOutputs(outDir)])
+  const foreign = readdirSync(outDir).filter(name => name.endsWith('.js') && !mine.has(name))
+  if (foreign.length > 0) throw new Error(`build: ${outDir} holds .js files this build did not write: ${foreign.join(' ')}; remove them or build elsewhere`)
+  for (const stale of previousOutputs(outDir)) if (!outputs.includes(stale)) rmSync(join(outDir, stale), { force: true })
   for (const name of names) {
     writeFileSync(join(outDir, name.replace(/\.ts$/, '.js')), compile(readFileSync(join(srcDir, name), 'utf8'), name))
   }
-  return names.map(name => name.replace(/\.ts$/, '.js'))
+  writeFileSync(join(outDir, RECORD), `${JSON.stringify(outputs)}\n`)
+  return outputs
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

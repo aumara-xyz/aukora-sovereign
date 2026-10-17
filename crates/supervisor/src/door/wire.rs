@@ -8,10 +8,9 @@
 use base64::Engine as _;
 use canon::json::{self, Value, ValueView};
 use serde_json::{json, Map, Value as Json};
-use sha2::{Digest, Sha256};
 
 /// Domain tag of the call digest; one NUL follows it, then `u32be(len(tool))`, the tool name, the canonical arguments.
-pub const DIGEST_DOMAIN: &str = "aukora:door-call:v1";
+pub const DIGEST_DOMAIN: &str = gate::door::DIGEST_DOMAIN;
 const MAX_ID: usize = 128;
 const MAX_TOOL: usize = 256;
 
@@ -33,17 +32,10 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The call digest the plugin computes and the door recomputes.
+/// The call digest the plugin computes and the door recomputes. One definition, in `gate::door`, which also checks it on
+/// every owner card record.
 pub fn call_digest(tool: &str, args_bytes: &[u8]) -> String {
-    let name = tool.as_bytes();
-    let mut hash = Sha256::new();
-    hash.update(DIGEST_DOMAIN.as_bytes());
-    hash.update([0u8]);
-    hash.update((name.len() as u32).to_be_bytes());
-    hash.update(name);
-    hash.update(args_bytes);
-    let out: [u8; 32] = hash.finalize().into();
-    hex(&out)
+    gate::door::call_digest(tool, args_bytes)
 }
 
 /// Equality that does not stop at the first difference.

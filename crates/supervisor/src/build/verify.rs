@@ -13,9 +13,13 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 const SCHEMA: &str = "aukora-release-v1";
-const MAX_RELEASE_JSON: usize = 4 << 20;
+/// The most `release.json` may hold.
+pub const MAX_JSON_BYTES: u64 = 4 << 20;
 const MAX_RELEASE_BYTES: u64 = 512 << 20;
 const MAX_FILES: usize = 20_000;
+/// The most `release.tar` may hold: the file contents, up to 2 KiB of header, long-name entry and padding per file, and
+/// the end marker with its record padding. The builder's output is read up to exactly this and checked against it.
+pub const MAX_TAR_BYTES: u64 = MAX_RELEASE_BYTES + MAX_FILES as u64 * 2048 + 20_480;
 /// Files without which the node cannot start a release (what `ReleaseFiles::open` reads first).
 const REQUIRED: [&str; 2] = ["bin/sovereign", "www/release-manifest.json"];
 
@@ -147,7 +151,7 @@ fn tar_files(tar: &[u8]) -> Result<Vec<(String, u32, &[u8])>, &'static str> {
 
 /// Check one builder output against the manifest the owner approved; `Err` is a refusal token.
 pub fn verify(manifest: &Manifest, release_json: Vec<u8>, release_tar: Vec<u8>) -> Result<Frozen, &'static str> {
-    if release_json.len() > MAX_RELEASE_JSON || release_tar.len() as u64 > MAX_RELEASE_BYTES + (MAX_FILES as u64) * 1024 + 20_480 {
+    if release_json.len() as u64 > MAX_JSON_BYTES || release_tar.len() as u64 > MAX_TAR_BYTES {
         return Err("release-too-large");
     }
     let release = parse_strict(&release_json).map_err(|_| "release-json")?;
@@ -344,14 +348,38 @@ pub mod tests {
         assert_eq!(toolchain_text(&manifest()), "rustc 1.91.0 (abcdef012 2026-08-01); node v24.11.1");
     }
 
-    /// Realism check against the real writer: set `AUKORA_REPRODUCE_FIXTURE` to a folder holding the `release.json` and
-    /// `release.tar` that `scripts/reproduce.sh`'s own `manifest_for` and `write_tar` wrote for commit `0123..` and
-    /// toolchain "rustc 1.91.0 (abcdef012 2026-08-01); node v24.11.1" (the sample manifest). Skipped when unset.
+    /// Realism check against the real writer. `scripts/reproduce.sh` holds `manifest_for` and `write_tar` inside a Python
+    /// heredoc; this runs those two functions (the text before `def pristine`, nothing else) on a few files, including a
+    /// name over 100 bytes, and verifies what they wrote. It needs `python3` (the repository's checks do too) and fails,
+    /// rather than skips, when it is missing.
     #[test]
     fn what_reproduce_sh_writes_verifies() {
-        let Ok(dir) = std::env::var("AUKORA_REPRODUCE_FIXTURE") else { return };
-        let dir = std::path::Path::new(&dir);
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/reproduce.sh");
+        let dir = std::env::temp_dir().join(format!("aukora-build-reproduce-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = r#"
+import sys
+source = open(sys.argv[1]).read()
+head = source.split("<<'PY'\n", 1)[1].split("def pristine", 1)[0]
+scope = {"__name__": "reproduce"}
+exec(head, scope)
+long_name = "www/app/" + "a-very-long-directory-name-" * 4 + "/file-with-a-long-name.js"
+built = {
+    "bin/sovereign": (b"binary-sovereign", "0755"),
+    "bin/auma": (b"auma", "0755"),
+    "www/release-manifest.json": (b"{}", "0644"),
+    long_name: (b"js", "0644"),
+    "deploy/units/aukora-sovereign.service": (b"[Unit]\n", "0644"),
+}
+document = scope["manifest_for"]("0123456789abcdef0123456789abcdef01234567", built, "rustc 1.91.0 (abcdef012 2026-08-01); node v24.11.1")
+open(sys.argv[2] + "/release.json", "wb").write(document)
+scope["write_tar"](sys.argv[2] + "/release.tar", built, 1760000000)
+"#;
+        let status = std::process::Command::new("python3").arg("-B").arg("-c").arg(program).arg(&script).arg(&dir).status().expect("python3 is needed to run this test");
+        assert!(status.success(), "reproduce.sh's own writer failed");
         let frozen = verify(&manifest(), std::fs::read(dir.join("release.json")).unwrap(), std::fs::read(dir.join("release.tar")).unwrap()).unwrap();
         assert_eq!(frozen.files, 5);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

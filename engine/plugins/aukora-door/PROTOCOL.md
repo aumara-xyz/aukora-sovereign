@@ -119,7 +119,7 @@ Implemented by `sovereign door serve` in `crates/supervisor/src/door` (see `crat
 3. Recompute the digest from `tool` and the decoded bytes and compare in constant time. A mismatch is deny
    `digest-mismatch`. **Execute only the bytes it just verified,** never a value from elsewhere.
 4. Re-derive the class from its own tool table and use the stricter of the two.
-5. Consume `call_id` once, durably (surviving a restart), when the policy would allow or ask about the call; a repeat is deny `replay`. Refused calls burn no id. Replay protection covers the ledger's kept window, not forever.
+5. Consume `call_id` once, durably (surviving a restart), when the policy would allow or ask about the call; a repeat is deny `replay`. A call the policy denies burns no id; one refused after the policy said allow or ask (the door's own checks, an unavailable service) has spent it. Replay protection covers the ledger's kept window, not forever.
 6. Check the caller first, before reading anything: `SO_PEERCRED` against its allowlist; an unknown peer is deny `peer`. Rate-limit (`rate-limited`) before reading too.
 7. Apply policy, the owner's passkey where required, and write the Aura receipt naming the digest, the class, the
    decision and the capsule or rules hash.

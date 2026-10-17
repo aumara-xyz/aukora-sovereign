@@ -54,14 +54,17 @@ exporter (trusted host code, never the engine)
 gate proposal on build/manifest.json -> owner origin card (every input, the exact bytes) -> passkey -> applied
         |                                   (guest `propose` refuses `build/` and `door/`; only the host proposes)
         v  GateAdapter::approved_manifest        (the bytes the target holds: only an applied proposal changes them)
-build_approved(builder, manifest, source_dir, out_dir, records)
-  1 Manifest::parse; recompute the closure of source_dir, every lock, the script: any difference -> refuse, builder never starts
+build_approved(builder, manifest, source_dir, out_dir, records, node, installed_release)
+  0 Manifest::parse; the manifest is for THIS node (node-differs) and was approved against the release installed NOW
+    (base-differs): an old approval cannot be reused after the node moved on
+  1 recompute the closure of source_dir, every lock, the script: any difference -> refuse, builder never starts
   2 out_dir must be empty
   3 builder.run(Request{argv, env, source_dir, out_dir})  -- argv and env come from the manifest and nothing else
   4 recompute the closure again: a build that touched its input is refused
   5 out_dir must hold exactly release.json and release.tar; each read ONCE, plain files, size-capped
-  6 verify on those bytes: canonical release.json; commit, target, toolchain equal the manifest's; the tar holds exactly the
-    listed files with the listed size, mode and SHA-256 (GNU tar reader: plain files only, long names allowed)
+  6 verify on those bytes: canonical release.json; its commit, target and toolchain line equal the manifest's (consistency,
+    see below); the tar holds exactly the listed files with the listed size, mode and SHA-256 (GNU tar reader: plain files
+    only, long names allowed); both files are read up to the same caps verify enforces (4 MiB, ~550 MiB)
   7 records.record(manifest_sha256, release_sha256), fsync; return Frozen { release_json, release_tar, release_sha256 }
         |
         v  (not built) release proposal for Frozen.release_sha256, only if records.is_output_of(release, manifest)
@@ -80,10 +83,10 @@ manifest that produced it (and its card says so).
 | builder mutates its own input | closure recomputed after it (4); the builder also mounts the source read-only |
 | lockfile or script differs from what the card showed | per-file digests (1), also inside the closure |
 | builder swaps or adds output after it "finished" | exactly two plain files, each read once into memory (5); nothing re-reads the folder |
-| output not built from this manifest | commit, target, toolchain equality (6); records are written only after (6) |
+| output inconsistent with this manifest | commit, target and the `rustc` + node line of `release.json` equal the manifest's (6). This is consistency only: every one of those strings is written by the builder, so a hostile builder passes it. Provenance rests on the sandbox and on a second, independent builder; `cargo -V` and rustc's host/LLVM lines are not in `release.json` and are not compared. Records are written only after (6) |
 | the verified bytes differ from what is installed | the caller installs `Frozen`'s bytes, never the folder; `ReleaseFiles::open` rechecks the running binary |
 | a release nobody built from an approved manifest is offered | `is_output_of` (a torn or edited record line can lose a record, never make one) |
-| an old approval reused for a later build | the manifest is a gate proposal bound to node, base release and one live proposal per target; a repeat is a new proposal |
+| an old approval reused for a later build | `build_approved` refuses a manifest for another node (`node-differs`) or one approved against a release that is no longer the installed one (`base-differs`). The gate alone does not: `approved_manifest()` returns the last applied bytes forever. The release hook in section 7 checks the same two things |
 
 Not closed by this module: the builder reading something it should not (that is the sandbox), a reproducibility gap
 (`--twice` rebuilds in two folders and compares; an independent second builder on another machine would give
@@ -136,7 +139,8 @@ one line per input, unique labels); the review branch that renders them and the 
 2. The orchestrator: who exports, builds the manifest and calls `propose_build`, and who calls `build_approved` once
    `approved_manifest()` changes (an owner action in the face, or a host command).
 3. The hook in the release path: a release proposal for a built artifact is raised only when
-   `records.is_output_of(release, manifest)`, and its card names the manifest. `ensure_release_proposal` and the pointer
+   `records.is_output_of(release, manifest)` and the manifest is for this node and was approved against the release
+   installed now (the same two checks as `build_approved`), and its card names the manifest. `ensure_release_proposal` and the pointer
    flow are critical code and today's deploy path installs releases that were never built here, so this must be a node
    setting that is off until the first built release. Needs Peter's yes.
 4. `reproduce.sh` export mode (section 5).
