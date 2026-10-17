@@ -106,6 +106,11 @@ impl Engine {
         Ok(format!("https://{}{}{ticket}", self.config.host, access::ENTER_PREFIX))
     }
 
+    /// Whether the controller's last decision is "running" (the unit active, its policy check passed).
+    fn is_running(&self) -> bool {
+        self.status.lock().is_ok_and(|status| *status == "running")
+    }
+
     /// Log why the engine is or is not running, once per change.
     fn set_status(&self, reason: &'static str) {
         if let Ok(mut status) = self.status.lock() {

@@ -91,10 +91,8 @@ async fn systemctl(verb: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Whether the unit is anywhere but stopped: `is-active` prints its ActiveState, and `activating` (the root
-/// pre-start running) or `reloading` count as running, so a lost condition stops a start that is still under way
-/// (Grok review of the node commit, part 2 #1). An unreadable state counts as running: stopping is always safe.
-async fn active() -> bool {
+/// The unit's ActiveState (`systemctl is-active`), or "unknown" if it cannot be read.
+async fn unit_state() -> String {
     let output = tokio::process::Command::new("/usr/bin/systemctl")
         .args(["is-active", UNIT])
         .stdin(std::process::Stdio::null())
@@ -102,9 +100,25 @@ async fn active() -> bool {
         .output()
         .await;
     match output {
-        Ok(output) => !matches!(String::from_utf8_lossy(&output.stdout).trim(), "inactive" | "failed"),
-        Err(_) => true,
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        Err(_) => "unknown".to_owned(),
     }
+}
+
+/// Whether the unit may have a sandbox up: anything but cleanly `inactive`. `activating` (the root pre-start or the
+/// policy check running) and `reloading` count, so a lost condition stops a start that is still under way (Grok
+/// review of the node commit, part 2 #1); `failed` counts too, because a failed stop (engine-run.sh delete could not
+/// remove the sandbox) leaves the unit failed with the sandbox possibly up (SCOUT's sweep, M10); an unreadable state
+/// counts as well. Stopping is always safe.
+fn may_run(state: &str) -> bool {
+    state != "inactive"
+}
+
+/// Whether the engine may be served: the unit is `active`, which for this Type=exec unit is reached only after its
+/// ExecStartPost (engine-run.sh verify: the effective policy is exactly ours) succeeded. Until then the engine
+/// origin answers 503 (SCOUT's sweep: the check ran after the sandbox was up, the proxy did not wait for it).
+fn servable(state: &str) -> bool {
+    state == "active"
 }
 
 /// Withdraw the admission and the handed-over set: the root closure step then refuses any start this supervisor did
@@ -144,9 +158,10 @@ fn record_pin(host: &Host, pin: &Digest32, gate_digest: &str) {
 pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut proposed: Option<(Digest32, Instant)> = None;
     let mut started_from: Option<Vec<u8>> = None;
+    let mut said_failed = false;
     // Nothing from an earlier run admits anything: this run decides afresh (Grok review, part 2 #2 and part 4 #2).
     withdraw(&engine);
-    if active().await {
+    if may_run(&unit_state().await) {
         let _ = systemctl("stop").await;
     }
     loop {
@@ -168,7 +183,12 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
             approved: approved.as_deref(),
             found,
         });
-        engine.set_status(decision.reason);
+        let state = unit_state().await;
+        // "running" is said (and served, proxy.rs) only once the unit is active, i.e. after the policy check passed.
+        engine.set_status(match decision.reason {
+            "running" if !servable(&state) => "starting",
+            reason => reason,
+        });
         if let (Some(set), Some(scope)) = (decision.propose.as_ref(), bound) {
             let digest = Digest32::sha256(set);
             let due = proposed.is_none_or(|(last, at)| last != digest || at.elapsed() >= PROPOSE_AGAIN);
@@ -180,7 +200,7 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
                 }
             }
         }
-        let running = active().await;
+        let running = may_run(&state);
         match decision.admitted {
             Some((set, pin)) => {
                 let changed = started_from.as_deref() != Some(set.as_slice());
@@ -211,6 +231,12 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
                 // Withdraw the admission first: a start that systemd propagates on its own (a supervisor restart)
                 // then fails in the root closure step instead of running without this decision.
                 withdraw(&engine);
+                if state == "failed" && !said_failed {
+                    // A stop that could not remove the sandbox leaves the unit failed: say so, once; the engine
+                    // origin refuses meanwhile (the status is not "running").
+                    eprintln!("engine: the engine unit failed; its sandbox may still be up (engine-run.sh delete)");
+                }
+                said_failed = state == "failed";
                 if running {
                     let _ = systemctl("stop").await;
                 }

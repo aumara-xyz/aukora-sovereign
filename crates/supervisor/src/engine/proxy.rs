@@ -262,6 +262,9 @@ async fn relay<B>(engine: &Engine, request: Request<B>, target: &str) -> Respons
 where
     B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Sync + 'static,
 {
+    if !engine.is_running() {
+        return text(StatusCode::SERVICE_UNAVAILABLE, "The engine is starting or stopped. Try again in a moment.\n");
+    }
     let harness = match harness_session(engine).await {
         Ok(cookie) => cookie,
         Err(_) => return text(StatusCode::SERVICE_UNAVAILABLE, "The engine is starting or stopped. Try again in a moment.\n"),
@@ -362,7 +365,7 @@ mod tests {
             },
             access: std::sync::Mutex::new(access::Access::default()),
             dsh_cookie: std::sync::Mutex::new(None),
-            status: std::sync::Mutex::new("test"),
+            status: std::sync::Mutex::new("running"),
         }
     }
 
