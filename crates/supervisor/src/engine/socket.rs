@@ -4,7 +4,8 @@
 //! Admission is the request's (proxy.rs: the engine session cookie bound to its ticket and shell session, the binding,
 //! the approved release, the path and query checks) plus the upgrade's own: only `GET` to an allowlisted path, a
 //! WebSocket version 13 handshake with a well-formed key, and an `Origin` that is exactly the engine origin (a page
-//! on any other origin, the shell's included, cannot open it). No extension and no subprotocol is negotiated.
+//! on any other origin, the shell's included, cannot open it). No extension and no subprotocol is negotiated: the
+//! browser's offers (Chrome always offers permessage-deflate) are not forwarded, so the harness never accepts one.
 //!
 //! Then the two upgraded streams are relayed frame by frame, each frame's header read and checked before its bytes
 //! pass: RSV bits clear (nothing was negotiated), a known opcode, control frames whole and at most 125 bytes, frames
@@ -92,9 +93,7 @@ pub fn admit_upgrade(method: &Method, headers: &HeaderMap, target: &str, engine_
         && one(headers, "sec-websocket-version") == Some("13")
         && one(headers, "sec-websocket-key").is_some_and(|key| {
             key.len() == 24 && key.ends_with("==") && key[..22].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
-        })
-        && !headers.contains_key("sec-websocket-extensions")
-        && !headers.contains_key("sec-websocket-protocol");
+        });
     if !websocket {
         return Err(Refused::NotWebSocket);
     }
@@ -393,6 +392,10 @@ mod tests {
         let get = Method::GET;
         assert_eq!(admit_upgrade(&get, &upgrade(&[]), "/api/remote.mux", HOST), Ok(()));
         assert_eq!(admit_upgrade(&get, &upgrade(&[]), "/api/remote.mux?x=1", HOST), Ok(()));
+        // Found live: Chrome offers permessage-deflate on every socket. An offer is admitted and never forwarded
+        // (proxy.rs forwards only the key and the version), so nothing is negotiated.
+        let offer = upgrade(&[("sec-websocket-extensions", "permessage-deflate; client_max_window_bits")]);
+        assert_eq!(admit_upgrade(&get, &offer, "/api/remote.mux", HOST), Ok(()));
         for origin in ["https://n1.sslip.io", "https://owner.n1.sslip.io", "http://engine.n1.sslip.io", "null", "https://engine.n1.sslip.io:443"] {
             assert_eq!(admit_upgrade(&get, &upgrade(&[("origin", origin)]), "/api/remote.mux", HOST), Err(Refused::Origin), "{origin}");
         }
@@ -409,8 +412,6 @@ mod tests {
             upgrade(&[("upgrade", "h2c")]),
             upgrade(&[("sec-websocket-version", "8")]),
             upgrade(&[("sec-websocket-key", "short")]),
-            upgrade(&[("sec-websocket-extensions", "permessage-deflate")]),
-            upgrade(&[("sec-websocket-protocol", "chat")]),
             upgrade(&[("connection", "keep-alive")]),
         ] {
             assert_eq!(admit_upgrade(&get, &bad, "/api/remote.mux", HOST), Err(Refused::NotWebSocket));
