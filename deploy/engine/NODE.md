@@ -42,8 +42,12 @@ owner session.
    `engine/plugin-set.json` holding every staged package by name and fingerprint, the door marked `authority`. One card.
 5. `authority-plugin-changed`: the door package on disk is not the approved bytes. The engine stops, and the changed
    door is still proposed (it keeps `authority: true`), so the owner sees it instead of a silent outage.
-6. `running`: the controller writes the approved set and `admission.json` to `/run/aukora-engine-ctl` and runs
-   `systemctl start aukora-engine.service`. A newly approved set restarts it. Losing any condition stops it.
+6. `running`: the controller writes the approved set and `admission.json` to `/run/aukora-engine-ctl` (0750
+   aukora:root, tmpfiles; files 0600 aukora, written with that mode whatever the umask; never mounted into the
+   sandbox) and runs `systemctl start aukora-engine.service`. The root side does not assume that ownership, it
+   enforces it (Mistral review): `engine-prestart.sh` and `sovereign engine closure` refuse unless the folder is a
+   real directory owned by root or aukora with no group/other write, and each file is a regular file opened without
+   following links, owned by aukora, mode 0600 or 0640, one link. The engine's uid is neither root nor aukora. A newly approved set restarts it. Losing any condition stops it.
 
 New or changed non-authority packages never load (the closure copies only approved bytes); they become one proposal
 (the approved set plus all of them). A refused proposal is raised again only after 10 minutes or when the bytes change.

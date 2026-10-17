@@ -227,5 +227,56 @@ class HomePatch(unittest.TestCase):
             shutil.rmtree(scratch)
 
 
+def admission_block():
+    with open(os.path.join(ROOT, "deploy", "engine", "engine-prestart.sh"), encoding="utf-8") as handle:
+        text = handle.read()
+    start = text.index("# >>> admission")
+    return text[start:text.index("# <<< admission", start)]
+
+
+@unittest.skipUnless(GNU, "needs GNU coreutils (stat -c); runs on the node or any Linux")
+class AdmissionFile(unittest.TestCase):
+    """The root pre-start trusts the supervisor's admission only from a folder and file the engine cannot have made:
+    owner, mode, links and no symbolic link are checked, not assumed (Mistral review)."""
+
+    def run_block(self, ctl, supervisor):
+        prelude = 'set -eu\nfail() { echo "engine-prestart: $1" >&2; exit 1; }\nCTL=%s\nSUPERVISOR=%d\n' % (ctl, supervisor)
+        return subprocess.run(["sh", "-c", prelude + admission_block()], capture_output=True)
+
+    def test_only_the_supervisors_own_file_in_its_own_folder_passes(self):
+        scratch = tempfile.mkdtemp(prefix="admission-")
+        try:
+            me = os.geteuid()
+            ctl = os.path.join(scratch, "ctl")
+            os.mkdir(ctl, 0o750)
+            os.chmod(ctl, 0o750)
+            admission = os.path.join(ctl, "admission.json")
+            with open(admission, "w") as handle:
+                handle.write('{"release":"%s"}' % ("a" * 64))
+            os.chmod(admission, 0o600)
+            self.assertEqual(self.run_block(ctl, me).returncode, 0)
+            self.assertNotEqual(self.run_block(ctl, me + 1).returncode, 0, "another owner")
+            for bits in (0o644, 0o660, 0o666):
+                os.chmod(admission, bits)
+                self.assertNotEqual(self.run_block(ctl, me).returncode, 0, oct(bits))
+            os.chmod(admission, 0o640)
+            self.assertEqual(self.run_block(ctl, me).returncode, 0)
+            os.chmod(ctl, 0o770)
+            self.assertNotEqual(self.run_block(ctl, me).returncode, 0, "group-writable folder")
+            os.chmod(ctl, 0o750)
+            forged = os.path.join(scratch, "forged.json")
+            os.rename(admission, forged)
+            os.symlink(forged, admission)
+            self.assertNotEqual(self.run_block(ctl, me).returncode, 0, "a link")
+            os.unlink(admission)
+            os.link(forged, admission)
+            self.assertNotEqual(self.run_block(ctl, me).returncode, 0, "two links")
+            linked = os.path.join(scratch, "linked")
+            os.symlink(ctl, linked)
+            self.assertNotEqual(self.run_block(linked, me).returncode, 0, "a linked folder")
+        finally:
+            shutil.rmtree(scratch)
+
+
 if __name__ == "__main__":
     unittest.main()

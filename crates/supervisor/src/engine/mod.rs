@@ -160,11 +160,14 @@ pub fn cli(arguments: &[std::ffi::OsString]) -> Result<()> {
 
 fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let temporary = dir.join(format!(".{name}.new"));
     let _ = std::fs::remove_file(&temporary);
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
+        // The root closure step accepts only 0600/0640 files of the supervisor's (closure.rs), whatever the umask.
+        .mode(0o600)
         .open(&temporary)
         .map_err(|_| refuse("engine-control"))?;
     file.write_all(bytes).and_then(|()| file.sync_all()).map_err(|_| refuse("engine-control"))?;

@@ -6,23 +6,56 @@
 //! closure beside `--to` (hashing while copying, `engine_plugins::copy_closure`), refuses unless every authority package
 //! (the door) made it, then swaps the new closure in for the old one. Run as root, the closure is root-owned and
 //! read-only; only it is mounted into the engine as the profile's `node_modules`.
+//!
+//! The control folder is trusted only as far as it is enforced (Mistral review): the folder must be a real directory
+//! owned by root or the supervisor's user (`aukora`), with no group or other write; each file must be a regular file
+//! (opened without following links), owned by the supervisor's user, mode 0600 or 0640, one link. The engine's uid is
+//! neither root nor `aukora` (the installer refuses that), so nothing it owns or can write passes. NODE.md section 2.
 
 use super::refuse;
 use canon::{digest::Digest32, Result};
 use floor::plugins::PluginSet;
 use std::ffi::OsString;
 use std::io::Read;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-fn read_small(path: &Path, limit: u64) -> Result<Vec<u8>> {
+/// The supervisor's user (`aukora`) from `/etc/passwd`, the one the control files must belong to.
+pub fn supervisor_uid() -> Result<u32> {
+    let passwd = std::fs::read_to_string("/etc/passwd").map_err(|_| refuse("engine-control"))?;
+    passwd
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split(':');
+            (fields.next() == Some("aukora")).then(|| fields.nth(1)?.parse::<u32>().ok()).flatten()
+        })
+        .filter(|uid| *uid != 0)
+        .ok_or_else(|| refuse("engine-control"))
+}
+
+/// The control folder itself: a real directory (not a link), owned by root or the supervisor, writable by its owner
+/// only.
+pub fn check_control(control: &Path, supervisor: u32) -> Result<()> {
+    let meta = std::fs::symlink_metadata(control).map_err(|_| refuse("engine-control"))?;
+    if !meta.is_dir() || ![0, supervisor].contains(&meta.uid()) || meta.mode() & 0o022 != 0 {
+        return Err(refuse("engine-control"));
+    }
+    Ok(())
+}
+
+fn read_small(path: &Path, limit: u64, supervisor: u32) -> Result<Vec<u8>> {
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32 | rustix::fs::OFlags::NONBLOCK.bits() as i32)
         .open(path)
         .map_err(|_| refuse("engine-control"))?;
     let meta = file.metadata().map_err(|_| refuse("engine-control"))?;
-    if !meta.is_file() || meta.len() > limit || meta.permissions().mode() & 0o022 != 0 {
+    if !meta.is_file()
+        || meta.len() > limit
+        || meta.uid() != supervisor
+        || !matches!(meta.mode() & 0o7777, 0o600 | 0o640)
+        || meta.nlink() != 1
+    {
         return Err(refuse("engine-control"));
     }
     let mut bytes = Vec::new();
@@ -31,10 +64,11 @@ fn read_small(path: &Path, limit: u64) -> Result<Vec<u8>> {
 }
 
 /// The set and its pin, from the control folder, cross-checked.
-pub fn admitted(control: &Path) -> Result<(PluginSet, Digest32)> {
-    let set_bytes = read_small(&control.join("plugin-set.json"), floor::plugins::SET_MAX_BYTES as u64)?;
-    let record: serde_json::Value =
-        serde_json::from_slice(&read_small(&control.join("admission.json"), 4096)?).map_err(|_| refuse("engine-admission"))?;
+pub fn admitted(control: &Path, supervisor: u32) -> Result<(PluginSet, Digest32)> {
+    check_control(control, supervisor)?;
+    let set_bytes = read_small(&control.join("plugin-set.json"), floor::plugins::SET_MAX_BYTES as u64, supervisor)?;
+    let record: serde_json::Value = serde_json::from_slice(&read_small(&control.join("admission.json"), 4096, supervisor)?)
+        .map_err(|_| refuse("engine-admission"))?;
     let set = PluginSet::parse(&set_bytes)?;
     let pin = set.set_hash()?;
     // The release check against the active release is the pre-start's (engine-prestart.sh); here an admission
@@ -72,8 +106,8 @@ fn remove_tree(dir: &Path) {
 }
 
 /// Build the closure for `to` and swap it in. Returns the closure manifest (`Assembly::manifest_bytes`).
-pub fn build(control: &Path, from: &Path, to: &Path) -> Result<Vec<u8>> {
-    let (set, pin) = admitted(control)?;
+pub fn build(control: &Path, from: &Path, to: &Path, supervisor: u32) -> Result<Vec<u8>> {
+    let (set, pin) = admitted(control, supervisor)?;
     let name = to.file_name().and_then(|name| name.to_str()).ok_or_else(|| refuse("engine-closure"))?;
     let fresh: PathBuf = to.with_file_name(format!(".{name}.new"));
     let old: PathBuf = to.with_file_name(format!(".{name}.old"));
@@ -124,7 +158,7 @@ pub fn run(arguments: &[OsString]) -> Result<()> {
     if command != "closure" || control_flag != "--control" || from_flag != "--from" || to_flag != "--to" {
         return Err(refuse("usage"));
     }
-    let manifest = build(Path::new(control), Path::new(from), Path::new(to))?;
+    let manifest = build(Path::new(control), Path::new(from), Path::new(to), supervisor_uid()?)?;
     println!("{}", String::from_utf8_lossy(&manifest));
     Ok(())
 }
@@ -152,9 +186,14 @@ mod tests {
         std::fs::create_dir_all(control).unwrap();
         std::fs::write(control.join("plugin-set.json"), set.canonical_bytes().unwrap()).unwrap();
         std::fs::write(control.join("admission.json"), format!("{{\"v\":1,\"set_hash\":\"{pin_text}\",\"release\":\"{}\"}}", "a".repeat(64))).unwrap();
+        std::fs::set_permissions(control, std::fs::Permissions::from_mode(0o750)).unwrap();
         for name in ["plugin-set.json", "admission.json"] {
-            std::fs::set_permissions(control.join(name), std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::fs::set_permissions(control.join(name), std::fs::Permissions::from_mode(0o600)).unwrap();
         }
+    }
+
+    fn me() -> u32 {
+        rustix::process::geteuid().as_raw()
     }
 
     #[test]
@@ -167,17 +206,59 @@ mod tests {
         let entries = found.iter().map(|c| PluginEntry { name: c.name.clone(), digest: c.digest, authority: c.name == DOOR_PLUGIN }).collect();
         let set = PluginSet::new(entries).unwrap();
         hand_over(&control, &set, &set.set_hash().unwrap().to_string());
-        let manifest = String::from_utf8(build(&control, &from, &to).unwrap()).unwrap();
+        let manifest = String::from_utf8(build(&control, &from, &to, me()).unwrap()).unwrap();
         assert!(manifest.contains("\"hmr\":false") && manifest.contains("@aukora/face-layout"));
         assert!(to.join("@aukora/door/lib/index.js").is_file());
         // A rebuild replaces the old closure; a changed door leaves the last good closure in place and refuses.
-        build(&control, &from, &to).unwrap();
+        build(&control, &from, &to, me()).unwrap();
         std::fs::write(from.join("door/lib/index.js"), "door v2").unwrap();
-        assert_eq!(build(&control, &from, &to).unwrap_err().reason, "plugin-authority");
+        assert_eq!(build(&control, &from, &to, me()).unwrap_err().reason, "plugin-authority");
         assert!(!to.with_file_name(".node_modules.new").exists());
         // An admission record for another set refuses before anything is copied.
         hand_over(&control, &set, &Digest32::sha256(b"other").to_string());
-        assert_eq!(build(&control, &from, &to).unwrap_err().reason, "engine-admission");
+        assert_eq!(build(&control, &from, &to, me()).unwrap_err().reason, "engine-admission");
+        remove_tree(&root);
+    }
+
+    #[test]
+    fn a_control_folder_or_file_the_engine_could_have_written_is_never_trusted() {
+        let root = temp("control");
+        let (from, control) = (root.join("staged"), root.join("control"));
+        package(&from, "door", DOOR_PLUGIN, "door v1");
+        let found = crate::engine_plugins::discover(&from).unwrap();
+        let entries = found.iter().map(|c| PluginEntry { name: c.name.clone(), digest: c.digest, authority: true }).collect();
+        let set = PluginSet::new(entries).unwrap();
+        let pin = set.set_hash().unwrap().to_string();
+        hand_over(&control, &set, &pin);
+        assert!(admitted(&control, me()).is_ok());
+        let mode = |path: &Path, bits| std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits)).unwrap();
+        // Files owned by anyone but the supervisor: here, the supervisor is someone else.
+        assert_eq!(admitted(&control, me() + 1).unwrap_err().reason, "engine-control");
+        // A group- or world-writable folder, or a file with any mode but 0600/0640.
+        for bits in [0o770, 0o757, 0o777] {
+            mode(&control, bits);
+            assert_eq!(admitted(&control, me()).unwrap_err().reason, "engine-control", "folder {bits:o}");
+        }
+        mode(&control, 0o750);
+        for bits in [0o644, 0o660, 0o666, 0o400, 0o4600] {
+            mode(&control.join("admission.json"), bits);
+            assert_eq!(admitted(&control, me()).unwrap_err().reason, "engine-control", "file {bits:o}");
+        }
+        mode(&control.join("admission.json"), 0o640);
+        assert!(admitted(&control, me()).is_ok());
+        // A link in place of the file, a second hard link to it, and a link in place of the folder.
+        let real = root.join("forged.json");
+        std::fs::rename(control.join("admission.json"), &real).unwrap();
+        std::os::unix::fs::symlink(&real, control.join("admission.json")).unwrap();
+        assert_eq!(admitted(&control, me()).unwrap_err().reason, "engine-control");
+        std::fs::remove_file(control.join("admission.json")).unwrap();
+        std::fs::hard_link(&real, control.join("admission.json")).unwrap();
+        assert_eq!(admitted(&control, me()).unwrap_err().reason, "engine-control");
+        std::fs::remove_file(&real).unwrap();
+        assert!(admitted(&control, me()).is_ok());
+        let linked = root.join("linked-control");
+        std::os::unix::fs::symlink(&control, &linked).unwrap();
+        assert_eq!(admitted(&linked, me()).unwrap_err().reason, "engine-control");
         remove_tree(&root);
     }
 }

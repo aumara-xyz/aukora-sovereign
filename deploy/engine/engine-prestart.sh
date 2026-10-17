@@ -18,8 +18,22 @@ fail() { echo "engine-prestart: $1" >&2; exit 1; }
 [ -f /etc/aukora/engine-v1.json ] || fail "no engine configuration"
 # The supervisor's admission must be for the release that is active now: after an upgrade the engine waits for the
 # owner's approval of the new release, even if systemd restarts this unit on its own.
+# The admission is trusted only as far as it is enforced (Mistral review; closure.rs checks the same): the control folder
+# is a real directory owned by root or the supervisor (aukora), writable by its owner only; the file is a regular file,
+# not a link, owned by aukora, mode 0600 or 0640, one link. The engine's uid is neither (the installer refuses that).
+CTL=/run/aukora-engine-ctl
+SUPERVISOR=$(id -u aukora) || fail "no supervisor user"
+# >>> admission (tests/deploy/test_engine_install.py runs this block)
+[ -d "$CTL" ] && [ ! -L "$CTL" ] || fail "the control folder is not a directory"
+set -- $(stat -c '%u %a' "$CTL")
+{ [ "$1" = 0 ] || [ "$1" = "$SUPERVISOR" ]; } && [ $((0$2 & 022)) = 0 ] || fail "the control folder is not the supervisor's"
+[ -f "$CTL/admission.json" ] && [ ! -L "$CTL/admission.json" ] || fail "no admission from the supervisor"
+set -- $(stat -c '%u %a %h' "$CTL/admission.json")
+[ "$1" = "$SUPERVISOR" ] && { [ "$2" = 600 ] || [ "$2" = 640 ]; } && [ "$3" = 1 ] ||
+    fail "the admission is not the supervisor's (owner, mode or links)"
+# <<< admission
 active=$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["release"])' /var/lib/aukora-release/active.json)
-admitted=$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["release"])' /run/aukora-engine-ctl/admission.json) ||
+admitted=$(python3 -I -c 'import json,os,sys;print(json.load(os.fdopen(os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW)))["release"])' "$CTL/admission.json") ||
     fail "no admission from the supervisor"
 [ -n "$active" ] && [ "$active" = "$admitted" ] || fail "the admission is not for the active release"
 # 0. The wall's own files come from the ACTIVE release on every start (SCOUT's sweep, M9: copied once at install, an
