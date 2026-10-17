@@ -31,7 +31,9 @@ SuccessExitStatus=143
 Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=180s
-TimeoutStopSec=30s
+# The stop bounds ExecStopPost too: OpenShell's asynchronous delete, engine-run.sh's 10 s wait and its docker rm -f
+# fallback must all fit, or a hung sandbox outlives the stop (Sonnet sweep C3).
+TimeoutStopSec=90s
 NoNewPrivileges=yes
 ProtectHome=yes
 PrivateTmp=yes

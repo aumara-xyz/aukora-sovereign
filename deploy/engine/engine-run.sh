@@ -100,7 +100,8 @@ for never in ("docker.sock", "/etc/aukora", "/var/lib/aukora", "/run/aukora-kira
 containers() { /usr/bin/docker ps -aq --filter "name=^/openshell-default--$NAME-" 2>/dev/null || echo docker-unreachable; }
 delete() {
     /usr/local/bin/openshell sandbox delete "$NAME" >/dev/null 2>&1 || true
-    for _ in $(seq 1 30); do
+    # 10 s for OpenShell's own cleanup, then docker; all of it inside the unit's TimeoutStopSec (90 s, Sonnet sweep C3).
+    for _ in $(seq 1 10); do
         [ -z "$(containers)" ] && return 0
         sleep 1
     done
