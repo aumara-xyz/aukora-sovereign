@@ -60,7 +60,7 @@ class NodeExchange implements PortalExchange {
   stop(): void { this.#inner.stop(); }
   subscribe(listener: (observation: PortalObservation) => void): () => void {
     return this.#inner.subscribe(observation => {
-      if (this.#final) { listener({ ...this.#final, frameBytes: observation.frameBytes }); return; }
+      if (this.#final) { listener(this.#final.phase === "BLOOM" ? { ...this.#final, frameBytes: observation.frameBytes } : this.#final); return; }
       if (observation.phase !== "BLOOM" || observation.receiptBytes === null) { listener(observation); return; }
       // Keep the frames moving (the other screen may still be reading the receipt) while the node decides.
       listener({ ...observation, phase: "HANDSHAKE", verdict: null, receiptBytes: null, bloomDigest: null, personNostrKeys: null });

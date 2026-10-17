@@ -3,6 +3,10 @@ The co-presence Point-and-Bloom page: two screens face each other; each shows a 
 
 **Bricks:** 76, 78, 118, 132 (NORTH-STAR.md).
 
+The node serves this folder on the owner origin only. `node/` is the node-backed pairing port for the owner's pairing
+scene (durable device keys, the node's pinned context, the node's verdict) and `phone/` is the phone's page at
+`/pair`. The node side, the context format, the endpoints and what a pairing proves: `COPRESENCE-NODE.md`.
+
 `contracts.ts` and `contract.json` freeze the page-to-engine boundary for worker 18.
 They provide no camera, signing, receipt parser, network, or authorization engine.
 Receipt input stays opaque bytes so the co-presence reader can retain its decimal
