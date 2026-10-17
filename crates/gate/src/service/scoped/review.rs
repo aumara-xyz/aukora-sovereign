@@ -92,6 +92,10 @@ impl<S: TargetStore> ScopedGate<S> {
             && proposal.request.target.as_str().starts_with(crate::door::TARGET_PREFIX)
         {
             door_facts(&proposal)?
+        } else if action == OwnerOperation::Apply
+            && proposal.request.target.as_str().starts_with(crate::build::TARGET_PREFIX)
+        {
+            build_facts(&proposal)?
         } else {
             content_facts(&proposal, action, &before)?
         };
@@ -206,6 +210,28 @@ fn content_facts(
         facts.from_to.push(("after".into(), text(value)?));
     }
     Ok(facts)
+}
+
+/// The card for a build manifest: every input of the build, each as its own line, then the exact bytes.
+fn build_facts(proposal: &Proposal) -> Result<ReviewFacts> {
+    let manifest = crate::build::Manifest::parse(&proposal.request.new_bytes)?;
+    let mut facts = vec![("target".into(), text(proposal.request.target.as_str())?)];
+    for (label, line) in manifest.card_lines() {
+        facts.push((label, text(&line)?));
+    }
+    facts.push(("new_sha256".into(), text(proposal.new_digest)?));
+    let mut from_to = vec![
+        ("base_sha256".into(), base_value(proposal.request.base)?),
+        ("new_bytes_b64".into(), text(encode_bytes(&proposal.request.new_bytes))?),
+    ];
+    if let Ok(after) = std::str::from_utf8(&proposal.request.new_bytes) {
+        from_to.push(("after".into(), text(after)?));
+    }
+    Ok(ReviewFacts {
+        says: "Build exactly this source with exactly this recipe in a throwaway builder, then offer the result for release. Nothing is installed by this approval.".into(),
+        facts,
+        from_to,
+    })
 }
 
 /// The card for a door ask. Every fact is read back from the bytes the owner's passkey covers.

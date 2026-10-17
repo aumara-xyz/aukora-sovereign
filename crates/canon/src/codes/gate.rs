@@ -112,7 +112,7 @@ named_codes! {
 organ_codes! {
     pub(super) SUPPLEMENTAL_CODES => {
         "gate" => [
-            "batch-review-required", "card-too-large", "configuration", "consumed-reconcile-required", "consumption-record",
+            "batch-review-required", "build-manifest", "build-manifest-too-large", "card-too-large", "configuration", "consumed-reconcile-required", "consumption-record",
             "coverage-duplicate-operation", "coverage-operation-missing", "crash-injected", "decline-record", "declined-unchanged", "denied",
             "door-record", "door-record-too-large", "duplicate-authority-route", "effect-without-terminal", "evidence-mismatch", "evidence-source", "evidence-unchanged",
             "install-authority", "install-card-risk", "install-configuration", "install-consumption", "install-grant", "install-grant-order",

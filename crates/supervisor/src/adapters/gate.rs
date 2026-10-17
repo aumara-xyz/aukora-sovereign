@@ -150,6 +150,43 @@ impl GateAdapter {
         note: String,
         bytes: Vec<u8>,
     ) -> ServiceFuture<'_, ProposalId> {
+        self.propose_reserved(scope, target, note, bytes)
+    }
+
+    /// Open the owner's review of one build manifest (`gate::build`, target `build/manifest.json`). A manifest that is
+    /// not exactly what `Manifest::to_bytes` writes never becomes a proposal. The guest cannot reach this either.
+    pub fn propose_build(
+        &self,
+        scope: PrincipalScope,
+        note: String,
+        manifest: Vec<u8>,
+    ) -> ServiceFuture<'_, ProposalId> {
+        if let Err(refusal) = gate::build::Manifest::parse(&manifest) {
+            return Box::pin(async move { Err(refusal) });
+        }
+        self.propose_reserved(scope, gate::build::TARGET.to_owned(), note, manifest)
+    }
+
+    /// The manifest the owner last approved: the bytes the gate's `build/manifest.json` target holds, which only an
+    /// applied proposal can change. `None` before the first approval.
+    pub fn approved_manifest(&self) -> ServiceFuture<'_, Option<Vec<u8>>> {
+        self.submit(|gate, _| {
+            let observed = gate.target_store().observe(&TargetId::new(gate::build::TARGET.to_owned())?)?;
+            match (observed.digest, observed.bytes) {
+                (BaseDigest::Absent, _) | (_, None) => Ok(None),
+                (BaseDigest::Present(digest), Some(bytes)) if canon::digest::Digest32::sha256(&bytes) == digest => Ok(Some(bytes)),
+                _ => Err(canon::Refusal { organ: "gate", reason: "observation-digest" }),
+            }
+        })
+    }
+
+    fn propose_reserved(
+        &self,
+        scope: PrincipalScope,
+        target: String,
+        note: String,
+        bytes: Vec<u8>,
+    ) -> ServiceFuture<'_, ProposalId> {
         self.submit(move |gate, host| {
             let target = TargetId::new(target)?;
             let base = gate.target_store().observe(&target)?.digest;
@@ -230,7 +267,7 @@ impl GateService for GateAdapter {
         _: &'a FrameId,
         request: Propose,
     ) -> ServiceFuture<'a, Accepted> {
-        if request.target.starts_with("door/") {
+        if request.target.starts_with(gate::door::TARGET_PREFIX) || request.target.starts_with(gate::build::TARGET_PREFIX) {
             return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
         }
         self.submit(move |gate, host| {

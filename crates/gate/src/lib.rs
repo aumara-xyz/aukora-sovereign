@@ -2,6 +2,7 @@
 //! Exact owner approvals, proposal lifecycles and guarded target effects.
 #![forbid(unsafe_code)]
 
+pub mod build;
 pub mod card;
 pub mod coverage;
 pub mod decision;

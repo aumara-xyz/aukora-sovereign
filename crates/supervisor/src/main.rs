@@ -3,6 +3,7 @@
 
 pub mod adapters;
 mod approvals;
+mod build;
 mod config;
 mod data;
 mod door;
