@@ -55,6 +55,8 @@ const RATE_WINDOW: u64 = 60;
 const DEFAULT_BUDGET: usize = 4_800;
 const MAX_BUDGET: usize = 48_000;
 const DEFAULT_LIMIT: usize = 20;
+/// The most notes one `list_recent` reads while looking for `limit` the caller may see.
+const MAX_LIST_SCAN: usize = 5_000;
 const MAX_REQUEST: usize = 1 << 20;
 const MAX_REPLY: usize = 64 << 20;
 const PROTOCOLS: [&str; 4] = ["2025-06-18", "2025-11-25", "2025-03-26", "2024-11-05"];
@@ -632,11 +634,31 @@ impl State {
         }
     }
 
+    /// Newest first, only notes this caller may see, so neither the page contents nor `next_before` reveal how many
+    /// it cannot (a page used to be cut from all notes and then filtered; the cursor was the last unfiltered seq).
     fn list_recent(&mut self, caller: &Caller, p: ListParams) -> Result<Value> {
         let limit = p.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 500);
-        let notes = self.store.list_recent(limit, p.before, Some(p.epoch.unwrap_or(2)))?;
-        let next_before = if notes.len() == limit { notes.last().map(|n| n.seq) } else { None };
-        let shown: Vec<Value> = notes.iter().filter(|n| visible(caller, n)).map(|n| view(caller, n)).collect();
+        let epoch = Some(p.epoch.unwrap_or(2));
+        let (mut shown, mut cursor, mut scanned) = (Vec::new(), p.before, 0usize);
+        'pages: loop {
+            let page = self.store.list_recent(limit, cursor, epoch)?;
+            let more = page.len() == limit;
+            for note in &page {
+                scanned += 1;
+                cursor = Some(note.seq);
+                if visible(caller, note) {
+                    shown.push(view(caller, note));
+                    if shown.len() == limit {
+                        break 'pages;
+                    }
+                }
+            }
+            if !more || scanned >= MAX_LIST_SCAN {
+                cursor = None;
+                break;
+            }
+        }
+        let next_before = if shown.len() == limit { cursor } else { None };
         Ok(json!({"notes": shown, "next_before": next_before}))
     }
 

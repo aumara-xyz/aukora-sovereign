@@ -219,6 +219,38 @@ fn local_notes_are_withheld_from_non_owners() {
     assert_eq!(call(&f.state, &owner, "recall", json!({"query": "figurine insurance"}))["result"]["status"], "found");
 }
 
+/// Bench D1b: a builder's `total` and the pages of `list_recent` must not reveal notes it cannot read.
+#[test]
+fn a_builder_cannot_count_the_owners_hidden_notes() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    call(&f.state, &claude, "remember", note("The figurine is on the left shelf", "builders"));
+    let counts = |token: &str| {
+        let r = call(&f.state, token, "recall", json!({"query": "figurine shelf"}));
+        (r["result"]["indexed"].clone(), r["result"]["total"].clone())
+    };
+    let before = counts(&grok);
+    call(&f.state, &owner, "remember", note("Peter keeps the figurine receipt in the drawer", "local"));
+    let mut owner_scope = note("the figurine insurance is in the owner folder", "builders");
+    owner_scope["scope"] = json!("owner");
+    call(&f.state, &owner, "remember", owner_scope);
+    assert_eq!(counts(&grok), before, "the builder's counts moved when the owner wrote hidden notes");
+    assert_eq!(counts(&owner).1, json!(3));
+    // list_recent: one page of the builder's own notes, however many hidden notes sit between them.
+    call(&f.state, &claude, "remember", note("The kettle is descaled", "builders"));
+    call(&f.state, &owner, "remember", note("Peter keeps the kettle manual in the drawer", "local"));
+    call(&f.state, &claude, "remember", note("The lamp is by the window", "builders"));
+    let page = call(&f.state, &grok, "list_recent", json!({"limit": 2}));
+    let texts: Vec<&str> = page["result"]["notes"].as_array().unwrap().iter().map(|n| n["text"].as_str().unwrap()).collect();
+    assert_eq!(texts, ["The lamp is by the window", "The kettle is descaled"], "a page holds `limit` visible notes");
+    let cursor = page["result"]["next_before"].as_i64().unwrap();
+    let last = call(&f.state, &grok, "list_recent", json!({"limit": 2, "before": cursor}));
+    assert_eq!(last["result"]["notes"].as_array().unwrap().len(), 1);
+    assert!(last["result"]["next_before"].is_null(), "no cursor into a page that has nothing more to show: {last}");
+    let all = call(&f.state, &grok, "list_recent", json!({"limit": 20}));
+    assert!(all["result"]["next_before"].is_null(), "{all}");
+}
+
 #[test]
 fn agent_captures_never_rise_and_commitments_are_the_owners() {
     let f = fixture();

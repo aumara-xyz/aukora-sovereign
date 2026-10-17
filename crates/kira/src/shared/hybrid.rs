@@ -407,9 +407,13 @@ impl SharedStore {
         let budget = if q.budget_chars == 0 { DEFAULT_BUDGET } else { q.budget_chars };
         let query_digest = query_digest(q, epoch, budget)?;
         let caller = q.caller.to_ascii_lowercase();
+        // Only notes this caller may read take part in anything below, the counts included: `total` and `indexed` must
+        // not reveal that a note it cannot see exists (a local note, or one in a scope it is not registered for).
+        let scopes: BTreeSet<&str> = q.scopes.iter().map(String::as_str).collect();
         let in_epoch: BTreeMap<i64, Who> = self
             .note_authors_in_epoch(epoch)?
             .into_iter()
+            .filter(|n| (q.include_local || n.privacy != Privacy::Local.wire()) && (scopes.is_empty() || scopes.contains(n.scope.as_str())))
             .map(|n: EpochNote| {
                 let experience = n.lane == Lane::Experience.wire();
                 (n.seq, Who { pubkey: n.pubkey, owner: n.owner, experience })
@@ -420,7 +424,7 @@ impl SharedStore {
             epoch,
             in_epoch,
             caller: &caller,
-            scopes: q.scopes.iter().map(String::as_str).collect(),
+            scopes,
             author: q.author.as_deref(),
             include_local: q.include_local,
             cache: BTreeMap::new(),
@@ -439,7 +443,9 @@ impl SharedStore {
         let has_dense = dense.is_some();
         let embed_model = dense.as_ref().map(|(model, _)| (*model).to_owned());
         if let Some((model, query_vector)) = dense {
-            (indexed, total) = self.coverage(model, epoch)?;
+            let embedded = self.embedded_seqs(model)?;
+            total = loader.in_epoch.len() as u64;
+            indexed = loader.in_epoch.keys().filter(|seq| embedded.contains(seq)).count() as u64;
             match query_vector {
                 None => embedder_down = true,
                 Some(qv) => {

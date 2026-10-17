@@ -245,6 +245,55 @@ fn dedupe_keeps_the_highest_trust_note_and_never_mixes_privacy() {
     assert!(owner.items.iter().any(|i| i.id == local && i.also_by_ids.is_empty()));
 }
 
+/// A note in a chosen scope and privacy (the helpers above all use the builders scope).
+fn put_scoped(s: &mut SharedStore, k: &SecretKey, text: &str, scope: &str, privacy: Privacy, at: u64) -> String {
+    let d = NoteDraft {
+        text: text.into(),
+        subject: "test".into(),
+        scope: scope.into(),
+        lane: Lane::Evidence,
+        form: Form::Fact,
+        privacy,
+        capture: Capture::OwnerTyped,
+        sources: vec![],
+        slot: None,
+        valid_from: None,
+        valid_to: None,
+        epoch: 2,
+    };
+    let note = s.append(Event::sign(k, at, NOTE_KIND, d.tags(Review::Remembered).unwrap(), d.text.clone()).unwrap()).unwrap();
+    hex(note.event.id.as_bytes())
+}
+
+/// Bench D1b (Grok, 2026-10-17): `total` seen by a builder rose from 31 to 33 when the owner wrote one local note and
+/// one owner-scope note. Counts, and the coverage check that can turn an answer into `undetermined`, cover only the
+/// notes the caller may read.
+#[test]
+fn counts_and_coverage_cover_only_what_the_caller_may_see() {
+    let (peter, a) = (key(), key());
+    let mut s = store_with(&[("peter", &peter, true), ("claude", &a, false)]);
+    put_scoped(&mut s, &peter, "The figurine is on the left shelf.", "builders", Privacy::Builders, 10);
+    s.index_missing(&Words, 8).unwrap();
+    let mut builder = query("figurine shelf", "x");
+    builder.scopes = vec!["builders".into()];
+    let before = s.recall(&builder, Some(&Words), None).unwrap();
+    assert_eq!((before.status.clone(), before.indexed, before.total), (RecallStatus::Found, 1, 1));
+    // The owner writes a local note and an owner-scope note. Neither is indexed yet.
+    put_scoped(&mut s, &peter, "The safe code is in the blue binder.", "builders", Privacy::Local, 11);
+    put_scoped(&mut s, &peter, "The insurance papers are in the owner folder.", "owner", Privacy::Builders, 12);
+    let after = s.recall(&builder, Some(&Words), None).unwrap();
+    assert_eq!((after.indexed, after.total), (1, 1), "a builder's counts must not move when hidden notes appear");
+    assert_eq!(after.status, RecallStatus::Found, "a hidden note that is not indexed yet must not make the answer undetermined");
+    // Keyword-only recall (no embedder) leaks the same way through `total`.
+    let keyword = s.recall(&builder, None, None).unwrap();
+    assert_eq!((keyword.indexed, keyword.total), (1, 1));
+    // The owner sees all three.
+    let mut owner = query("figurine shelf", "x");
+    owner.include_local = true;
+    let all = s.recall(&owner, Some(&Words), None).unwrap();
+    assert_eq!((all.indexed, all.total, all.status), (1, 3, RecallStatus::Undetermined("index-incomplete")));
+}
+
 #[test]
 fn local_notes_never_make_a_non_owner_recall_found() {
     let peter = key();

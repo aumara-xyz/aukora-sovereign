@@ -72,6 +72,8 @@ pub(crate) struct EpochNote {
     pub pubkey: String,
     pub lane: String,
     pub owner: bool,
+    pub scope: String,
+    pub privacy: String,
 }
 
 pub struct SharedStore {
@@ -643,7 +645,7 @@ impl SharedStore {
         let mut stmt = self
             .db
             .prepare(
-                "SELECT e.seq, e.pubkey, e.lane, COALESCE(a.owner, 0) FROM events e LEFT JOIN agents a ON a.pubkey = e.pubkey
+                "SELECT e.seq, e.pubkey, e.lane, COALESCE(a.owner, 0), e.scope, e.privacy FROM events e LEFT JOIN agents a ON a.pubkey = e.pubkey
                  WHERE e.kind = ?1 AND e.epoch = ?2 ORDER BY e.seq",
             )
             .map_err(sql)?;
@@ -654,6 +656,8 @@ impl SharedStore {
                     pubkey: r.get(1)?,
                     lane: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
                     owner: r.get::<_, i64>(3)? != 0,
+                    scope: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    privacy: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
                 })
             })
             .map_err(sql)?
@@ -662,7 +666,19 @@ impl SharedStore {
         Ok(rows)
     }
 
-    /// (notes with a vector under `model`, all notes) in one epoch, for coverage.
+    /// The seqs that have a vector under `model`.
+    pub fn embedded_seqs(&self, model: &str) -> Result<BTreeSet<i64>> {
+        let mut stmt = self.db.prepare("SELECT seq FROM embeddings WHERE model = ?1").map_err(sql)?;
+        let rows = stmt
+            .query_map(params![model], |r| r.get::<_, i64>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<BTreeSet<_>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
+    /// (notes with a vector under `model`, all notes) in one epoch, for coverage of the WHOLE store. Recall does not
+    /// use it: it counts only what its caller may see (an owner's local note must not move a builder's counts).
     pub fn coverage(&self, model: &str, epoch: u32) -> Result<(u64, u64)> {
         let total: i64 = self
             .db
