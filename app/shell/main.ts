@@ -22,6 +22,8 @@ export interface ShellOptions {
   servicesPendingText?: string;
   phraseRoute?: () => '/phrase' | '/phrase/refresh';
   openApprovals?: () => void;
+  /** Ends the shell session on the node; resolves once it is gone. */
+  endSession?: () => Promise<void>;
 }
 export interface ShellController {
   readonly organism: Organism;
@@ -30,6 +32,10 @@ export interface ShellController {
   openOwner(route: OwnerRoute, claim?: string): Promise<void>;
   readonly ownerBusy: boolean;
   setApprovalsPending(count: number): void;
+  /** Declined proposals the owner may ask for again, oldest first (at most 16). */
+  setApprovalsDeclined(ids: readonly string[]): void;
+  /** `null` while the node has not yet said; the menu's base shows Sign in or Sign out. */
+  setSignedIn(signedIn: boolean | null): void;
   provideService(name: string, service: RpcService): Dispose;
   removeFace(id: string): Promise<void>;
   dispose(): Promise<void>;
@@ -230,21 +236,83 @@ export function mountShell(options: ShellOptions): ShellController {
     if (statusNow) refresh(statusNow);
   }
 
-  const approvals = menuCard('Approvals', 'Waiting for approval status', () => options.openApprovals?.(), life.signal);
+  let waiting: number | null = null;
+  let declined: readonly string[] = [];
+  const approvals = menuCard('Approvals', 'Waiting for approval status', () => {
+    // Nothing waiting but something declined: open the newest declined card, where the owner may ask again.
+    if (waiting === 0 && declined.length) void openOwner(`/approval/${declined[0]}`).catch(() => {});
+    else options.openApprovals?.();
+  }, life.signal);
   approvals.button.classList.add('approvals-entry');
   approvals.button.disabled = true;
   menu.system.append(approvals.button);
-  const setApprovalsPending = (count: number) => {
-    if (!Number.isSafeInteger(count) || count < 0 || count > 10_000) throw new Error('shell:approval-response-invalid');
-    approvals.subtitle.textContent = count === 1 ? '1 waiting for you' : `${count} waiting for you`;
-    approvals.button.disabled = !owner || !options.openApprovals || count === 0;
+  const renderApprovals = () => {
+    if (waiting === null) return;
+    const count = waiting;
+    approvals.subtitle.textContent = declined.length === 0
+      ? (count === 1 ? '1 waiting for you' : `${count} waiting for you`)
+      : count === 0 ? `${declined.length} declined · ask again` : `${count} waiting · ${declined.length} declined`;
+    approvals.button.disabled = !owner || (count === 0 ? declined.length === 0 : !options.openApprovals);
     approvals.button.dataset.pending = String(count > 0);
   };
+  const setApprovalsPending = (count: number) => {
+    if (!Number.isSafeInteger(count) || count < 0 || count > 10_000) throw new Error('shell:approval-response-invalid');
+    waiting = count;
+    renderApprovals();
+  };
+  const setApprovalsDeclined = (ids: readonly string[]) => {
+    if (ids.length > 16 || ids.some(id => !/^[0-9a-f]{32}$/.test(id))) throw new Error('shell:approval-response-invalid');
+    declined = Object.freeze([...ids]);
+    renderApprovals();
+  };
+
+  // Sign in / Sign out: one launcher pinned at the base of the menu, whichever tab is open.
+  let signedIn: boolean | null = null;
+  let ending = false;
+  const session = menuCard('', '', () => {
+    if (signedIn === false) void openOwner('/passkey').catch(() => {});
+    else if (signedIn === true && options.endSession && !ending) void endSession(options.endSession);
+  }, life.signal);
+  session.button.classList.add('blue');
+  session.button.dataset.session = '';
+  const sessionNote = element('p', 'menuFootNote');
+  sessionNote.setAttribute('role', 'status');
+  menu.session.append(sessionNote, session.button);
+  const renderSession = () => {
+    session.button.hidden = signedIn === null || (signedIn ? !options.endSession : !owner);
+    session.button.disabled = ending;
+    session.button.dataset.session = signedIn ? 'signed-in' : 'signed-out';
+    session.title.textContent = signedIn ? 'Sign out' : 'Sign in with your passkey';
+    sessionNote.hidden = !sessionNote.textContent;
+  };
+  const setSignedIn = (value: boolean | null) => {
+    if (disposed || value === signedIn) return;
+    signedIn = value;
+    sessionNote.textContent = '';
+    renderSession();
+  };
+  const endSession = async (end: () => Promise<void>) => {
+    ending = true;
+    sessionNote.textContent = '';
+    renderSession();
+    try {
+      await end();
+      ending = false;
+      setSignedIn(false);
+    } catch {
+      ending = false;
+      if (!disposed) sessionNote.textContent = 'Sign out did not finish. Try again.';
+    }
+    renderSession();
+  };
+  renderSession();
   openFace('sidebar');
   return {
     organism, layout, openFace, openOwner,
     get ownerBusy() { return owner?.busy ?? false; },
     setApprovalsPending,
+    setApprovalsDeclined,
+    setSignedIn,
     provideService(name, service) { return organism.provide(name, service); },
     async removeFace(id) {
       if (!slots.has(id)) throw new Error('shell:unknown-face');

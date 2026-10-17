@@ -22,6 +22,11 @@ button:disabled { cursor: default; }
 .threadLayer > [data-slot], .threadConversationBody > [data-slot] { position: relative; }
 .menuEntries { width: 100%; }
 .approvals-entry[data-pending='true'] { color: var(--dsw-static-spatial-mint); }
+/* Sign in / Sign out sits under the scrolling panel, pinned across the base of the menu lane in every tab. */
+.rightLayer { display: flex; flex-direction: column; }
+.rightLayer > .menuPanel { flex: 1 1 auto; height: auto; }
+.rightLayer > .menuFoot { flex: none; overflow: visible; padding-top: 0; }
+.menuFootNote { margin: 0 10px; color: var(--dsw-alias-label-tertiary); font-size: var(--dsh-spatial-menu-description-size); line-height: var(--dsh-spatial-menu-description-line-height); text-align: right; }
 
 .laneShell, .laneCenter .laneShell { background: var(--spatial-lane-surface); }
 .cornerControl[data-corner='left'], .cornerControl[data-corner='conversation-close'] { --spatial-accent: var(--spatial-mint); }

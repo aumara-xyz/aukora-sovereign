@@ -4,7 +4,7 @@ import { ShellTransport } from '../core/transport.js';
 import { createServices } from '../core/services.js';
 import type { Dispose } from '../core/organism.js';
 import { exactKeys, objectData } from '../core/data.js';
-import { ApprovalWatch } from './approvals.js';
+import { ApprovalWatch, SESSION_REFUSALS } from './approvals.js';
 
 // The installer always serves the owner pages at `owner.` plus the shell's host (deploy/spawn/node_install.py).
 function ownerOrigin(): string {
@@ -45,8 +45,13 @@ if (root) {
       notice.hidden = false;
       notice.dataset.source = 'connection';
     };
+    // Without a session the menu's base offers Sign in; that is a calm state, not a notice.
     const showSessionError = (error: unknown) => {
-      if (error instanceof Error && error.message === 'frontdoor:session-required') return;
+      if (error instanceof Error && SESSION_REFUSALS.has(error.message)) {
+        if (notice.dataset.source === 'connection') notice.hidden = true;
+        shell.setSignedIn(false);
+        return;
+      }
       show(error);
     };
     const exchange = async (step: 'prepare' | 'complete') => {
@@ -68,14 +73,31 @@ if (root) {
         if (lifetime.signal.aborted) return;
         provideServices();
         notice.hidden = true;
+        shell.setSignedIn(true);
       }).finally(() => { connecting = null; });
       return connecting;
+    };
+    // POST /api/session/end clears the bound shell session; an already missing session counts as ended.
+    const endSession = async () => {
+      try {
+        const reply = objectData(await handoff.request('/api/session/end', {}, lifetime.signal));
+        exactKeys(reply, ['ended']);
+        if (reply.ended !== true) throw new Error('shell:session-end-refused');
+      } catch (error) {
+        if (!(error instanceof Error && SESSION_REFUSALS.has(error.message))) throw error;
+      }
+      bound = false;
+      // Remount every face without the session, so nothing read while signed in stays on screen.
+      await Promise.all(services.splice(0).map(dispose => dispose()));
+      if (!lifetime.signal.aborted) provideServices();
+      approvals?.refresh();
     };
     const shell = mountShell({
       root, ownerOrigin: ownerOrigin(), servicesPendingText: 'Sign in',
       prepareOwner: () => exchange('prepare'),
       phraseRoute: () => bound ? '/phrase/refresh' : '/phrase',
       openApprovals: () => approvals?.reopen(),
+      endSession,
       onOwnerNotice: notice => {
         delete document.body.dataset.claiming;
         if (notice.kind === 'closed' && notice.route?.startsWith('/approval/')) {
@@ -107,8 +129,10 @@ if (root) {
       ownerBusy: () => shell.ownerBusy,
       openOwner: route => shell.openOwner(route),
       pending: count => shell.setApprovalsPending(count),
+      declined: ids => shell.setApprovalsDeclined(ids),
       session: signedIn => {
         bound = signedIn;
+        shell.setSignedIn(signedIn);
         if (signedIn && notice.dataset.source === 'approvals') notice.hidden = true;
       },
       refusal: error => { show(error); notice.dataset.source = 'approvals'; },

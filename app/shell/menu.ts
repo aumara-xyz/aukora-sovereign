@@ -35,12 +35,13 @@ export function menuCard(title: string, description: string, select: () => void,
   const button = element('button', 'menuItem');
   button.type = 'button';
   const copy = element('span', 'menuCopy');
+  const heading = element('strong', '', title);
   const subtitle = element('span', '', description);
-  copy.append(element('strong', '', title));
+  copy.append(heading);
   if (description) copy.append(subtitle);
   button.append(copy);
   button.addEventListener('click', select, { signal });
-  return { button, subtitle };
+  return { button, title: heading, subtitle };
 }
 
 export function createMenu(signal: AbortSignal) {
@@ -99,12 +100,18 @@ export function createMenu(signal: AbortSignal) {
   }
   groups.get('yours')!.append(element('p', 'menuEmpty', data.yoursEmpty));
   header.append(heading, tabs);
-  layer.append(header, panel);
+  // Pinned under every tab: the menu's own launcher frame, outside the scrolling panel.
+  const foot = element('div', 'menuPanel menuFoot');
+  const session = element('div', 'menuEntries');
+  session.dataset.slot = 'shell.menu.session';
+  foot.append(session);
+  layer.append(header, panel, foot);
   stack.append(layer);
   choose('system');
   return {
     element: stack,
     system: groups.get('system')!,
+    session,
     add(manifest: FaceManifest, open: () => void): HTMLButtonElement {
       const tab = manifest.menu.section === 'system' ? 'system'
         : manifest.menu.section === 'aukora_apps' ? 'apps' : null;

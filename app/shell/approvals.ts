@@ -7,18 +7,22 @@ interface Options {
   ownerBusy(): boolean;
   openOwner(route: Route): Promise<void>;
   pending(count: number): void;
+  /** Proposals the owner explicitly declined and may ask for again; never opened automatically. */
+  declined(ids: readonly string[]): void;
   session(bound: boolean): void;
   refusal(error: unknown): void;
 }
 
 const INTERVAL_MS = 1_200;
 const MAX_NOTIFICATIONS = 10_000;
-const SESSION_REFUSALS = new Set([
+const MAX_DECLINED = 16;
+/** The node has no bound shell session for this browser: the owner signs in, nothing is wrong. */
+export const SESSION_REFUSALS: ReadonlySet<string> = new Set([
   'frontdoor:session-required', 'frontdoor:session-expired', 'frontdoor:session-revoked',
   'frontdoor:cookie-host-refused', 'aumlok:binding-required',
 ]);
 
-async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: string[] }> {
+async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: string[]; declined: string[] }> {
   const response = await fetch('/api/approvals', {
     method: 'GET', credentials: 'same-origin', mode: 'same-origin', redirect: 'error', cache: 'no-store',
     headers: { accept: 'application/json' }, signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
@@ -44,7 +48,7 @@ async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: st
       ? data.error : 'shell:approval-unavailable';
     throw new Error(code);
   }
-  exactKeys(data, ['sequence', 'proposals']);
+  exactKeys(data, ['sequence', 'proposals', 'declined']);
   if (typeof data.sequence !== 'number' || !Number.isSafeInteger(data.sequence) || data.sequence < 0
     || !Array.isArray(data.proposals) || data.proposals.length > MAX_NOTIFICATIONS) {
     throw new Error('shell:approval-response-invalid');
@@ -59,7 +63,13 @@ async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: st
     }
     ids.add(row.proposal);
   }
-  return { sequence: data.sequence, ids: [...ids] };
+  if (!Array.isArray(data.declined) || data.declined.length > MAX_DECLINED) throw new Error('shell:approval-response-invalid');
+  const declined = new Set<string>();
+  for (const id of data.declined) {
+    if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id) || declined.has(id)) throw new Error('shell:approval-response-invalid');
+    declined.add(id);
+  }
+  return { sequence: data.sequence, ids: [...ids], declined: [...declined] };
 }
 
 /** Server-filtered notifications select a pane; they carry no approval material. */
@@ -108,6 +118,7 @@ export class ApprovalWatch {
       this.#options.session(true);
       this.#sequence = next.sequence;
       this.#options.pending(next.ids.length);
+      this.#options.declined(next.declined);
       const present = new Set(next.ids);
       for (const id of this.#shown) if (!present.has(id)) this.#shown.delete(id);
       if (!this.#options.ownerBusy()) {
@@ -124,6 +135,7 @@ export class ApprovalWatch {
         this.#shown.clear();
         this.#sequence = null;
         this.#options.pending(0);
+        this.#options.declined([]);
         this.#options.session(false);
       } else if (!(error instanceof Error) || error.message !== 'supervisor:approval-poll-not-due') {
         this.#options.refusal(error);
