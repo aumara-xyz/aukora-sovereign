@@ -7,7 +7,7 @@
 //! /v1/models serves that id, so a swapped model file refuses instead of filing vectors under the wrong name.
 
 use super::recall::{Embedder, Reranker};
-use crate::embed::{loopback_http, parse_local_json, LocalHttpError};
+use crate::embed::{loopback_http, LocalHttpError};
 use canon::{Refusal, Result};
 use serde_json::{json, Value};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -85,7 +85,7 @@ impl Server {
     fn check_served(&self) -> Result<()> {
         let reply = loopback_http(self.port, "GET", "/v1/models", &[], None, Instant::now() + TIMEOUT, MAX_MODELS_RESPONSE)
             .map_err(http)?;
-        let value = parse_local_json(&reply).map_err(|_| refuse("llama-response"))?;
+        let value = serde_json::from_slice::<Value>(&reply).map_err(|_| refuse("llama-response"))?;
         let served = value.get("data").and_then(Value::as_array).is_some_and(|models| {
             models.iter().any(|m| m.get("id").and_then(Value::as_str) == Some(self.model_id.as_str()))
         });
@@ -100,7 +100,12 @@ impl Server {
         let bytes = serde_json::to_vec(body).map_err(|_| refuse("llama-request"))?;
         let reply = loopback_http(self.port, "POST", path, &[], Some(&bytes), Instant::now() + TIMEOUT, MAX_RESPONSE)
             .map_err(http)?;
-        parse_local_json(&reply).map_err(|_| refuse("llama-response"))
+        // serde_json's own Value parser (recursion limit 128): the crate's strict seed misreads floats when another
+        // workspace crate turns on serde_json's arbitrary_precision feature, as the broker does in the supervisor build.
+        if reply.starts_with(&[0xef, 0xbb, 0xbf]) {
+            return Err(refuse("llama-response"));
+        }
+        serde_json::from_slice::<Value>(&reply).map_err(|_| refuse("llama-response"))
     }
 }
 
@@ -294,3 +299,5 @@ mod tests {
         assert!(nobody.score("q", &["p"]).is_err());
     }
 }
+
+

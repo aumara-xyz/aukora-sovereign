@@ -360,6 +360,8 @@ impl SharedStore {
             }
         }
         let found = groups.iter().any(|g| g.relevant);
+        // Only notes that clear the relevance test are returned; below-threshold notes never ride along as context.
+        groups.retain(|g| g.relevant);
 
         // Reserved lanes. Only relevant notes claim a reserved lane; everything else competes by score.
         let caller = q.caller.to_ascii_lowercase();

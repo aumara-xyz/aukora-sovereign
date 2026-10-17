@@ -384,7 +384,9 @@ impl State {
     /// Embeds notes that have no vector yet. Best effort: a model that is down leaves recall to report coverage.
     fn index_new(&self) {
         if let Some(embedder) = &self.embedder {
-            let _ = self.store.index_missing(embedder.as_ref(), INDEX_BATCH);
+            if let Err(r) = self.store.index_missing(embedder.as_ref(), INDEX_BATCH) {
+                eprintln!("kira: indexing paused: {}:{}", r.organ, r.reason);
+            }
         }
     }
 
