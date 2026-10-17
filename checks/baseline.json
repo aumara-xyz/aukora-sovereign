@@ -1,6 +1,7 @@
 {
   "oversized_files": {
-    "NORTH-STAR.md": "Peter, 2026-10-17: the one plan (Part 1 plan + Part 2 row register) stays one file"
+    "NORTH-STAR.md": "Peter, 2026-10-17: the one plan (Part 1 plan + Part 2 row register) stays one file",
+    "spec/COMPOSABLE-RUNTIME-SPEC-v0.2.md": "Peter, 2026-10-17: the 2026-09-29 composable runtime technical spec v0.2 (sha256 c4199726…), kept verbatim as frozen historical requirements; never edited, never a plan of its own (NORTH-STAR section H mapping)"
   },
   "foreign_paths": [],
   "copied_from_prime": {

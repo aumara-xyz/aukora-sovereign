@@ -185,6 +185,27 @@ charters and the plan need chunking.
 >   bare metal.
 **KEEP** "every report starts with the product tests".
 
+**ADD (2026-10-17): the 2026-09-29 composable runtime spec v0.2** (`spec/COMPOSABLE-RUNTIME-SPEC-v0.2.md`, frozen,
+historical requirements, never a plan of its own) has 92 conformance cases: B01–B52 + O01–O40 (52 + 40; spec lines
+20, 1840). Its §14.4 is a conservation constraint (phrase-only recovery needs other retained state, a party or a
+higher-entropy secret), not a requirement; recovery and hardware cases (B51, O39, §14, §20.20) stay out of scope.
+Mapping onto this plan (SRC source, ISO isolated/assembly test, DEP deployed on a node, OPEN, SUP superseded):
+
+| Spec cases | Here | Status |
+|---|---|---|
+| B01/B02, O01–O05 | T1/T2, the rehearsal node | ISO (T2: 20/20 builds, 0 escapes) + DEP partial; **deployed B01/B02 pair OPEN — the gate before T1 is claimed** |
+| B06–B08, O35/O36 | build contract (`crates/supervisor/BUILD.md` §7) | SRC + ISO; builder, orchestrator, release hook OPEN |
+| B09/B10, B28/B29, O21, O25 | door call-id ledger, broker spend journal | SRC + ISO; broker OUTCOME_UNKNOWN (B29) OPEN |
+| B24–B27 | gate card, stranger's verifier | SRC; verifier `display_sha256` check OPEN (row 52) |
+| O08–O09, O26–O30, O34 | OpenShell gateway (mTLS, root-only port), `engine-run.sh verify` | SRC + DEP at start; uid 65534 reach and runtime policy drift OPEN |
+| O15/O16/O19 | the broker (key outside the wall, approval by digest) | SRC + ISO + DEP (fake-key 401) |
+| B38–B40 | Kira 2 | SRC; structured corrections, source lineage, "no recorded overlap" OPEN (K2-18) |
+| O10–O12, O17/O18 | crossings go through the door, not OpenShell middleware | SUP (test them as door cases) |
+| B20–B23 | Laya is a deterministic slider + standing grants, not a semantic assessor | SUP in that form |
+
+**KEEP** T2 as defined (hostile plugin, postinstall and injected page; 20 real builds in the wall ≤1.5× bare metal; a
+negative control that fails with the wall off) and re-run it for every engine or OpenShell change.
+
 ### I. "How it is built" (CHANGE — the three reversals land here)
 **CHANGE** the "Fresh, every line… Nothing is copied" bullet to:
 > **Copy what works; rebuild the rest properly.** The archive and Prime are the source; a worker may **copy working
