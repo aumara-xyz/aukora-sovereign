@@ -121,10 +121,19 @@ struct Counts {
     last_ms: i64,
 }
 
+/// Where the grants come from on the node: the bytes the owner's passkey applied to `door/standing-grants.json`.
+pub type GrantSource = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
+
+/// How long the gate's grants are trusted before the gate is asked again (a revoke or a new card lands within it).
+const SOURCE_FRESH: std::time::Duration = std::time::Duration::from_secs(2);
+
 pub struct Standing {
     files: StandingFiles,
     loaded: Mutex<Option<Loaded>>,
     counts: Mutex<Counts>,
+    /// When set, the grants are the gate target's applied bytes, not `files.grants`.
+    source: Option<GrantSource>,
+    from_source: Mutex<Option<(std::time::Instant, GrantSet)>>,
 }
 
 /// The slider's answer for one call, after the door's own checks.
@@ -234,7 +243,7 @@ impl Standing {
         sync_dir(state_dir)?;
         let void_through = (ambiguous || void_today).then_some(today.max(slider::day_of(last_ms)));
         let counts = Counts { usage, log: Log::new(log), bytes: kept.len() as u64, log_day: slider::day_of(last_ms), dirty: false, void_through, last_ms };
-        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(counts) })
+        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(counts), source: None, from_source: Mutex::new(None) })
     }
 
     fn load(&self, policy_stamp: Stamp, grants_stamp: Stamp) -> Loaded {
@@ -247,6 +256,23 @@ impl Standing {
         Loaded { policy_stamp, grants_stamp, policy, grants }
     }
 
+    /// Take the grants from the gate (the in-node door): only owner-applied bytes; anything unreadable is no grants.
+    pub fn grants_from(&mut self, source: GrantSource) {
+        self.source = Some(source);
+    }
+
+    fn source_grants(&self, source: &GrantSource) -> GrantSet {
+        let mut cached = self.from_source.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at, grants)) = cached.as_ref() {
+            if at.elapsed() < SOURCE_FRESH {
+                return grants.clone();
+            }
+        }
+        let grants = source().and_then(|bytes| GrantSet::parse(&bytes).ok()).unwrap_or_default();
+        *cached = Some((std::time::Instant::now(), grants.clone()));
+        grants
+    }
+
     /// Read the slider policy and the grants again when either file changed. Anything unreadable or invalid fails
     /// closed: no policy file means the starter, a bad one means "ask for everything", a bad grants file means none.
     fn current(&self) -> (SliderPolicy, GrantSet) {
@@ -256,7 +282,15 @@ impl Standing {
         if (loaded.policy_stamp, loaded.grants_stamp) != stamps {
             *loaded = self.load(stamps.0, stamps.1);
         }
-        (loaded.policy.clone(), loaded.grants.clone())
+        let policy = loaded.policy.clone();
+        let grants = match &self.source {
+            Some(source) => {
+                drop(guard);
+                self.source_grants(source)
+            }
+            None => loaded.grants.clone(),
+        };
+        (policy, grants)
     }
 
     /// Cut the log back to its last acknowledged length. Only when that is done and checked is it trusted again.
@@ -399,6 +433,7 @@ mod tests {
     use super::*;
     use laya::grant::{DoorGrant, DAY_MS as GRANT_DAY};
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("aukora-door-standing-{}-{name}", std::process::id()));
@@ -605,6 +640,29 @@ mod tests {
         let log = std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap();
         assert_eq!(log.lines().count(), 1, "{log}");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn on_the_node_the_grants_are_the_gate_targets_applied_bytes_and_nothing_else() {
+        let dir = temp("source");
+        // A grants file is ignored once the gate is the source: only owner-applied bytes count.
+        let (file, _) = grant_file(&dir, CrossingClass::Memory, &["read"], 5);
+        let mut standing = open_standing(&dir, Some(file), None);
+        let applied: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+        let source = applied.clone();
+        standing.grants_from(Box::new(move || source.lock().unwrap().clone()));
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask), "nothing applied yet");
+        let other = temp("source-bytes");
+        let (bytes, _) = grant_file(&other, CrossingClass::Memory, &["read"], 5);
+        *applied.lock().unwrap() = Some(std::fs::read(bytes).unwrap());
+        *standing.from_source.lock().unwrap() = None;
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Clear));
+        // Bytes that are not a grant set are no grants.
+        *applied.lock().unwrap() = Some(b"{}".to_vec());
+        *standing.from_source.lock().unwrap() = None;
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(other);
     }
 
     #[test]

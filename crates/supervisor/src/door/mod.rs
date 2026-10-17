@@ -18,6 +18,7 @@ mod memory;
 mod peer;
 mod policy;
 mod standing;
+mod starter;
 mod taint;
 mod wire;
 
@@ -451,7 +452,12 @@ fn bind(socket: &Path, world_connectable: bool) -> Result<UnixListener> {
 }
 
 /// Check the policy against this platform and user, open the state, bind the socket.
-fn start(policy: Policy, socket: &Path, approver: Option<Arc<dyn Approver>>) -> Result<(Arc<Door>, UnixListener)> {
+fn start(
+    policy: Policy,
+    socket: &Path,
+    approver: Option<Arc<dyn Approver>>,
+    grants: Option<standing::GrantSource>,
+) -> Result<(Arc<Door>, UnixListener)> {
     let by_uid = matches!(policy.peers, PeerRule::Uids(_));
     if by_uid && !peer::peercred_supported() {
         // Without kernel peer credentials a uid allowlist would silently allow everyone.
@@ -459,7 +465,11 @@ fn start(policy: Policy, socket: &Path, approver: Option<Arc<dyn Approver>>) -> 
     }
     policy.check_peer_uids(files::euid())?;
     files::parent_not_writable_by_others(socket, "door-socket")?;
-    let door = Arc::new(Door::open_with(policy, approver)?);
+    let mut door = Door::open_with(policy, approver)?;
+    if let (Some(grants), Some(standing)) = (grants, door.standing.as_mut()) {
+        standing.grants_from(grants);
+    }
+    let door = Arc::new(door);
     // A door whose Kira token is the owner's would hand the engine owner powers: it does not start. A service that is
     // not up yet is not a reason to stay down; the first memory call checks again.
     if let Some(memory) = &door.policy.memory {
@@ -514,7 +524,7 @@ fn accept_loop(door: &Arc<Door>, listener: &UnixListener) {
 
 /// Serve until killed.
 pub fn serve(policy: Policy, socket: &Path) -> Result<()> {
-    let (door, listener) = start(policy, socket, None)?;
+    let (door, listener) = start(policy, socket, None, None)?;
     eprintln!("door: serving on {}", socket.display());
     accept_loop(&door, &listener);
     Ok(())
@@ -534,11 +544,25 @@ pub fn start_in_node(config: &crate::config::NodeConfig, ledger: Arc<crate::adap
     let spawned = std::thread::Builder::new().name("door".into()).spawn(move || {
         let started = Policy::parse(&text).and_then(|policy| {
             let socket = policy.socket.clone().ok_or_else(|| refuse("door-policy"))?;
-            let approver: Arc<dyn Approver> = Arc::new(GateApprover::new(gate, ledger));
-            start(policy, &socket, Some(approver)).map(|(door, listener)| (door, listener, socket))
+            let approver: Arc<dyn Approver> = Arc::new(GateApprover::new(gate.clone(), ledger.clone()));
+            // In the node the slider's grants are the owner-applied `door/standing-grants.json`, nothing else.
+            let source_gate = gate.clone();
+            let grants: standing::GrantSource =
+                Box::new(move || approver::block_on(source_gate.approved_target(laya::grant::GRANT_TARGET)).ok().flatten());
+            let terms = policy.starter.clone();
+            start(policy, &socket, Some(approver), Some(grants)).map(|(door, listener)| (door, listener, socket, terms))
         });
         match started {
-            Ok((door, listener, socket)) => {
+            Ok((door, listener, socket, terms)) => {
+                // The starter card is raised only for a door that is actually serving.
+                if let Some(terms) = terms {
+                    let spawned = std::thread::Builder::new()
+                        .name("door-starter".into())
+                        .spawn(move || starter::keep(gate, ledger, terms));
+                    if spawned.is_err() {
+                        eprintln!("door: the starter grants keeper did not start; nothing clears without grants");
+                    }
+                }
                 eprintln!("door: serving on {} (owner approvals through the gate)", socket.display());
                 accept_loop(&door, &listener);
             }

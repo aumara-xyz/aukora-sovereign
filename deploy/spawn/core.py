@@ -174,7 +174,9 @@ def atomic_write(path, data, mode, owner=None):
 EGRESS_VERSION = 1
 MAX_RELAYS = 16
 MAX_ADDRESSES = 16
-MAX_PROVIDERS = 4
+# The model provider plus the door's web_fetch hosts (deploy/engine/door-policy-v1.json.in); the supervisor's
+# config.rs holds the same bound.
+MAX_PROVIDERS = 16
 MAX_URL_BYTES = 2048
 
 

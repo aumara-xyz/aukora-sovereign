@@ -96,6 +96,9 @@ pub struct Policy {
     pub socket: Option<PathBuf>,
     /// The slider and standing grants; without it a class acts exactly as the policy says.
     pub standing: Option<StandingFiles>,
+    /// The starter grants (`standing.starter`), proposed for the owner's passkey by the node; never in force by
+    /// themselves.
+    pub starter: Option<super::starter::StarterTerms>,
 }
 
 #[derive(Deserialize)]
@@ -103,6 +106,23 @@ pub struct Policy {
 struct RawStanding {
     policy_file: Option<String>,
     grants_file: Option<String>,
+    /// The starter grants the node proposes for the owner's one card (`starter.rs`).
+    starter: Option<RawStarter>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStarter {
+    window_days: u32,
+    grants: Vec<RawStarterGrant>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStarterGrant {
+    class: String,
+    scope: Vec<String>,
+    per_day: u32,
 }
 
 #[derive(Deserialize)]
@@ -250,8 +270,19 @@ impl Policy {
             Some(_) => return Err(refuse()),
             None => None,
         };
+        let mut starter = None;
         let standing = match raw.standing {
-            Some(RawStanding { policy_file, grants_file }) => {
+            Some(RawStanding { policy_file, grants_file, starter: raw_starter }) => {
+                if let Some(raw_starter) = raw_starter {
+                    let mut grants = Vec::new();
+                    for grant in raw_starter.grants {
+                        let class = laya::CrossingClass::from_wire(&grant.class).ok_or_else(refuse)?;
+                        grants.push(super::starter::StarterGrant { class, scope: grant.scope, per_day: grant.per_day });
+                    }
+                    let terms = super::starter::StarterTerms { window_days: raw_starter.window_days, grants };
+                    terms.check(net.as_ref().map_or(&[][..], |net: &NetPolicy| &net.hosts[..]))?;
+                    starter = Some(terms);
+                }
                 let path = |file: Option<String>| match file {
                     Some(file) if absolute(&file) => Ok(Some(PathBuf::from(file))),
                     Some(_) => Err(refuse()),
@@ -273,6 +304,7 @@ impl Policy {
             rate_burst,
             socket,
             standing,
+            starter,
         })
     }
 

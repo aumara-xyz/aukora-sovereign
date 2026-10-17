@@ -101,12 +101,12 @@ LAUNCHER_PINS = {
 }
 DEPLOY_PINS = {
     "deploy/spawn/caddy.py": "65a9f8a77cab67aee3b727dbe5cd318b12fbcf3de26b39997ec298841deebb53",
-    "deploy/spawn/core.py": "d27821f7d24b221363f1a9fd5c5d22fd77ba8fe91f3ceada3abc80db28c13dbc",
+    "deploy/spawn/core.py": "0fa5d0f312352b51b9414319594f56d44ed0fe96645efb9fb6d01aa9e7d14f24",
     "deploy/spawn/egress.py": "c38fde70705167d8e94fd0cc6ca9aba1fd648ea22f0f3db6c891311d694a21f3",
     "deploy/spawn/guard.py": "ca7eb41a9e0ebf9006319ff9644316e9662052f7d509fe4207fc5b2a511a5915",
     "deploy/spawn/host.py": "f7dc95e52b5ceb8d2873fc186e9f8c42db7df95b28f85bd04e07c4c0b8ea9b46",
     "deploy/spawn/lxd.py": "e7a85a22f6f4b0ddd7d97dd4f5b69f63995e85ec4998f0c04462a70f1b362be2",
-    "deploy/spawn/node_install.py": "f762f50f4a6ad2c70ce3732930bf19db03d6e4beb6ed71cb57a854039c9dc6fc",
+    "deploy/spawn/node_install.py": "87d483600dac8e9efac35b4ecd214d2921d057ef9db7870706939c5940427e30",
     "deploy/spawn/release.py": "c59b7b74f77b4a743ace8082bb3ca3151930b992a8cceb43cfc99c8cda915537",
     "deploy/spawn/spawn.py": "2a14406c4ffd28d415ff769ac195f47f63db2f45cb5866610584a6a0e8ff4c6c",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",

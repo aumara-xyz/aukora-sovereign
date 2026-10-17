@@ -218,7 +218,9 @@ impl NodeConfig {
             ValidatedRelay::from_policy(&policy, &rule.url)?;
         }
         let rows = array(member(&value, "providers")?)?;
-        if rows.len() > 4 {
+        // The model provider plus the door's allowlisted web_fetch hosts (NODE.md O10, section 12 P3): at most 16, as
+        // deploy/spawn/core.py's MAX_PROVIDERS.
+        if rows.len() > 16 {
             return Err(refused("egress-config"));
         }
         let mut providers: Vec<ProviderPin> = Vec::with_capacity(rows.len());

@@ -204,7 +204,7 @@ fn note(ask: &AskRecord<'_>) -> String {
 }
 
 /// Run a future to completion on this thread (the door's own threads are plain threads, so no runtime is entered).
-fn block_on<T>(future: impl Future<Output = T>) -> T {
+pub(super) fn block_on<T>(future: impl Future<Output = T>) -> T {
     struct Unpark(std::thread::Thread);
     impl Wake for Unpark {
         fn wake(self: Arc<Self>) {

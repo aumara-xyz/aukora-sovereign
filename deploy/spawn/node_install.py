@@ -520,8 +520,9 @@ def install_node(stage, mode, node, policy, restricted):
     # (engine/plugin-set.json, deploy/engine/NODE.md), and the engine's model key digest and model budget
     # (engine/model-key.json, engine/model-budget.json, NODE.md section 7): critical content targets that only the
     # host can propose to. The gate refuses every other change until a later, passkey-approved release adds targets.
-    ids = ["build/manifest.json", "engine/plugin-set.json", "engine/model-key.json", "engine/model-budget.json"] + \
-        ["door/ask-%02d.json" % n for n in range(8)]
+    ids = ["build/manifest.json", "engine/plugin-set.json", "engine/model-key.json", "engine/model-budget.json",
+           # The door's standing grants: the starter set the node proposes for one card (crates/supervisor/DOOR.md).
+           "door/standing-grants.json"] + ["door/ask-%02d.json" % n for n in range(8)]
     slots = [{"class": "content", "id": name, "max_bytes": 16384, "risk": "critical"} for name in ids]
     core.atomic_write(os.path.join(release.CONFIG, "gate-targets-v1.json"),
                       core.canonical({"kind": "aukora-gate-targets-v1", "node": node["name"], "targets": slots, "v": 1}),

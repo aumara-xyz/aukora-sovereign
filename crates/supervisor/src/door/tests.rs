@@ -541,7 +541,7 @@ fn a_door_whose_kira_token_is_the_owners_does_not_start() {
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
     let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", dir.join("kira.sock").display(), token.display());
     let text = policy_text(&dir.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
-    let started = start(Policy::parse(&text).unwrap(), &dir.join("door.sock"), None);
+    let started = start(Policy::parse(&text).unwrap(), &dir.join("door.sock"), None, None);
     assert!(started.is_err(), "an owner token must stop the door from starting");
     assert!(stub.join().unwrap()[0].contains("\"whoami\""));
     assert!(!dir.join("door.sock").exists(), "nothing was bound");
@@ -557,7 +557,7 @@ fn a_door_starts_without_the_service_and_asks_again_before_its_first_memory_call
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
     let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", dir.join("kira.sock").display(), token.display());
     let text = policy_text(&dir.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
-    let (door, _listener) = start(Policy::parse(&text).unwrap(), &dir.join("door.sock"), None).expect("a missing service is not a reason to stay down");
+    let (door, _listener) = start(Policy::parse(&text).unwrap(), &dir.join("door.sock"), None, None).expect("a missing service is not a reason to stay down");
     assert_eq!(denied(&call(&door, "w-1", "kira_recall", RECALL, "memory")), "kira-unavailable");
     // It comes up as an agent token: the next call checks, then goes through.
     let stub = kira_stub(&dir, vec![agent(), found()]);
@@ -707,7 +707,7 @@ fn inside_the_window_the_door_does_not_ask_the_service_again_and_a_started_door_
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
     let extra = format!(",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}}", started.join("kira.sock").display(), token.display());
     let text = policy_text(&started.join("state"), "{\"mode\":\"socket-permissions\"}", "\"memory\":\"allow\"", &extra);
-    let (door, _listener) = start(Policy::parse(&text).unwrap(), &started.join("door.sock"), None).unwrap();
+    let (door, _listener) = start(Policy::parse(&text).unwrap(), &started.join("door.sock"), None, None).unwrap();
     assert!(matches!(call(&door, "w-3", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
     let lines = stub.join().unwrap();
     assert_eq!(lines.len(), 2);

@@ -293,6 +293,9 @@ impl GateAdapter {
     }
 }
 
+// `door/standing-grants.json`, proposed by the door's starter keeper (gate/standing.rs).
+mod standing;
+
 impl GateService for GateAdapter {
     fn propose_site<'a>(
         &'a self,

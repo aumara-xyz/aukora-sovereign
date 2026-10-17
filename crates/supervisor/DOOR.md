@@ -178,7 +178,18 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
   is replaced by a `void` line and nothing clears for the rest of that UTC day; the state folder is synced after the log is
   created or compacted, before any call is judged. The slider's clock never goes backwards: an instant earlier than one already seen is read as
   the later one, so a clock step back cannot revive an expired grant or move today's counts to yesterday.
-- Not done: the node does not yet read the grants from the applied gate target; the installer writes the two files.
+- **On the node** (2026-10-18) the grants are the critical gate target `door/standing-grants.json` (in the inventory
+  `node_install.py` writes), never a file: the slider reads only the bytes the owner's passkey applied, digest-checked
+  (`GateAdapter::approved_target`, re-read at most every 2 s), and anything unreadable is no grants. `grants_file` is
+  ignored there. The node proposes the **starter** set itself (`src/door/starter.rs`, terms in the door policy's
+  `standing.starter`): one card at the ceremony, again a day before its seven-day window ends or when the terms change;
+  a refused card waits a day, an expired one ten minutes. The shipped terms (`deploy/engine/door-policy-v1.json.in`):
+  `net` to docs.rs, crates.io, static.crates.io, registry.npmjs.org, github.com (150 a day; `web_fetch` is GET only);
+  memory `read` (100 a day); memory `write:finding|evidence|experience` (30 a day). Only `net` and `memory` may be
+  starter classes, and a starter `net` host must be on the door's own allowlist. Still asking under the starter:
+  any other host (refused outright if off the allowlist), `plugin`, `persist`, `delegate`, `mcp`, `shell-interactive`,
+  `unknown`, every `web-derived` write, every `net` call and memory write once the engine is tainted, and any change
+  to the slider or the grants. No slider policy file is shipped: the slider is the pinned starter, "only risky things".
 
 ## Deployment requirements (the code cannot check these)
 

@@ -537,3 +537,17 @@ had 293/228). `wall-check.sh`: `wall ok`.
 engine's next `net` calls and memory writes ask, whatever the slider and grants say, until the owner clears it at
 `https://<shell>/engine/door`; a `web-derived` write always asks. Per session, not per turn (Argon RT-1..RT-3), and
 since the door cannot tell sessions apart without trusting the engine, per engine: crates/supervisor/DOOR.md, "Taint".
+
+**P3. Starter standing grants (R5, card fatigue).** Before: `"standing": {}` and no grants, so every `net` and
+memory call (bar the two own-slot reads) was a card. Now the node proposes one critical card at the ceremony,
+`door/standing-grants.json` (new in the inventory), holding the starter set from the door policy: `net` to docs.rs,
+crates.io, static.crates.io, registry.npmjs.org, github.com (150 a day; the door's allowlist gains those hosts, so
+`engine.py install` pins them in the egress like example.com, O10; the egress policy's provider rows, model provider
+plus door hosts, may now number 16, not 4, in `core.py` and `config.rs` alike; a CDN that rotates its addresses past
+the pinned ones ends `resolve-failed` until `engine.py egress` is run again); memory `read` (100 a day); memory writes to Auma's
+own lanes `finding`, `evidence`, `experience` (30 a day). Seven days, renewed a day before the end: one card a week.
+The door reads its grants only from the bytes that card applied. Cards on a building day: none for memory reads
+and Auma's own model-generated notes, none for the first page; after the first page, one per further page and per
+note until the owner clears the taint on `/engine/door` (P4); one for any other host, plugin, schedule, terminal or
+web-derived note. A node installed before this branch lacks the target in its inventory: the proposal is refused
+(`door: starter grants not proposed`) and everything asks, as before.
