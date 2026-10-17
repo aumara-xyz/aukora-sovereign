@@ -1,5 +1,291 @@
 # AUKORA Sovereign: North Star
 
+**This file is the one plan.** Part 1 is the current direction, approved by Peter on 2026-10-17: Plan v1 merged,
+with Kira 2 as phase 1. Part 2 is the row register the checks read; where Part 2 disagrees with Part 1, Part 1 wins.
+Peter's reversals (2026-10-16): the DeepSeek Harness is the engine (not our own harness), Auma executes commands and
+opens sockets, and working code is copied, not rewritten.
+
+# Part 1: the plan (2026-10-17)
+
+## 0. What changed, in one place (Peter's decisions 2026-10-16, from PLAN-v1)
+PLAN-v1 reverses main's "our own harness replaces the DeepSeek harness" and "Auma never executes". The spine of the
+plan is unchanged: one human-held identity, the Golden Boundary, receipts a stranger can check, evidence ≠ authority,
+the Pentora shape, the milestones M1–M8. What changes is **how the engine is built and walled**.
+
+**[REVERSAL 1]** The engine is now the **LATEST DeepSeek Harness**, pinned and patched (≤3), with our UI/apps as DSH
+plugins — NOT a fresh ~5–10k-line Rust harness. (Reverses NORTH-STAR "Our own harness replaces the DeepSeek harness".)
+**[REVERSAL 2]** **Auma runs commands, opens sockets and builds.** (Reverses "She never executes a command or opens a
+socket. Seccomp denies execve/execveat".)
+**[REVERSAL 3]** **"Nothing is copied" is relaxed to "copy what works, rebuild the rest properly".** (Reverses "Fresh,
+every line… Nothing is copied".) Code may be copied where it works; the rest is rebuilt.
+The security model is unchanged and in fact strengthened: the engine is treated as one hostile process, walled by the
+OS; Rust outside the wall holds the keys and re-verifies exact bytes. Capability goes up (a real IDE agent), security
+stays (the wall + the door + the passkey).
+
+---
+
+## SECTION REWRITES
+
+### A. "The Spatial app is the organism" → harness + Auma-executes (REWRITE)
+**DELETE** the subsection "**Our own harness replaces the DeepSeek harness**" and its bullets ("about 380,000 lines…",
+"Ours is Auma's agent loop inside the cage", "She never executes a command or opens a socket. Seccomp denies execve
+and execveat", "It is one static Rust binary… 5,000 to 10,000 fresh lines"). *Why:* [REVERSAL 1,2] — superseded.
+**CHANGE** to:
+> **The engine is the DeepSeek Harness, walled.** Auma is a full IDE agent on the latest DSH (pinned by release tag,
+> ≤3 patches in a ledger, a rehearsed weekly re-pin), with Cordis as its plugin kernel. Our Spatial app, faces and
+> apps are DSH plugins. **Auma really executes**: files, shell, subprocess, sockets, git, compilers, tests and a
+> persistent browser — all **inside the cage** (OpenShell enforce), where there are no keys, no identity and no live
+> node. The whole DSH process tree is treated as one hostile process.
+> **Two modes stay:** Chat (she talks) and Build (she may propose changes to herself, sites or apps). The difference
+> from before: Build work *runs* in the workspace; only **crossings** (landing on the live node, spending beyond a
+> grant, outbound beyond the allowlist, sending as the owner, identity/plugin changes, shared-memory writes) need the
+> door and the passkey.
+> **The Laya slider** stays in the right lane: ask for everything / only for risky things / within today's limits.
+> Ship the starter at "only risky things".
+Keep the tri-pane subsection unchanged (**KEEP**). Keep "The walls stay walls inside the organism" (one link / owner
+origin / site, three hosts) unchanged (**KEEP**) — but see the FD4/FD3 change in section C.
+
+### B. Rings and the door (REWRITE of "How it fits" + the launcher parts)
+**CHANGE** the architecture to three rings + one door (PLAN-v1 Architecture):
+> - **Ring 1 — the whole DSH process tree** (engine + Cordis + plugins) inside **OpenShell enforce** (a verified
+>   effective policy, Landlock hard_requirement, a Linux provider), plus the launcher's netns/userns/pidns, a seccomp
+>   allow-list and `close_range` to only {0,1,2, door socket}. Treated as hostile. No keys, no identity, no live node.
+> - **Ring 3 — Rust**, separate processes outside the cage: supervisor, gate, AUMLOK, Aura, broker, Kira store,
+>   verifier, frontdoor. The only holder of keys; the only thing that changes the live node, spends, or speaks as the
+>   owner. Frontdoor stays the outer TLS proxy; the owner card stays on the owner origin.
+> - **The door** — an **outermost DSH `tools/execute` wrapper** that re-digests the exact bytes and sends them to Rust
+>   over a **SO_PEERCRED-checked unix socket**; Rust returns the authored result. **Rust hashes what IT executes,
+>   never a digest from Ring 1.** The in-process wrapper is a classifier/UX hook, **not** a wall — SCOUT counted 11+
+>   in-process bypasses and Auma found a judge-then-swap window, so the boundary is the OS wall + the Rust re-check,
+>   never the guard.
+> - **WASM** is a deterministic policy capsule (its hash in every receipt) and WASI plugins for small extensions; it is
+>   **not a wall**.
+**NEW rule (from the toy):** bulk payloads cross as a **sealed memfd** handle, fixing the 64 KiB FD3 frame cliff
+(`crates/canon/src/frame.rs:19` MAX_FRAME_BYTES=65_536, RAN). Control frames stay ≤64 KiB.
+**CHANGE** the "One trusted supervisor / FD3 / FD4" bullets: FD3 still carries proposals, model calls and memory, and
+the supervisor is still its only reader — **but Auma also executes**, so the cage gets a second **engine profile**
+that allows `execve`/`execveat` for a **pinned toolchain** (digest allow-list; idea from aukora-kernel's exec
+chokepoint) and a restricted socket set (door + broker). *Why:* [REVERSAL 2].
+**RAN:** `profiles.rs` has only `Auma`/`UserApp`/`Disposable` — **no engine profile exists**, so this is net-new.
+The clean-room builder primitive **does** exist (`cage.rs:232 run_disposable`) but is **disabled by default** (`:239`)
+and runs one inert preselected command with no shell (`:199`) — T1 widens/configures it, it is not a build container yet.
+**Argon's 5 seam bugs** (frame cliff, judge-then-swap, FD3 envelope, reverse-proxy routing, UI clickjack) are tracked
+in OVERNIGHT-2 §Argon-seams and must be closed as part of the door/adapter work.
+**DELETE** "`bridge/` is retired" only if it conflicts (KEEP otherwise). **KEEP** "FD 4 carries data only".
+
+### C. Plugin admission (NEW subsection — closes the SCOUT/HMR hole)
+> **Plugins load only after the owner's passkey approves their fingerprint.** Rust assembles the plugin set (the set
+> hash is pinned in the floor), and **HMR / Creator-mode / cordis.patch.yml are off for authority contexts**. A new or
+> unmatched plugin path fail-closes to "pause for owner classification" (idea: aukora-kernel policy-rings). *Why:*
+> PLAN-v1 decision 5; the toy's B12/B14 show plugin_manager install and cordis.patch.yml HMR are live bypass routes.
+
+### D. Laya (REWRITE of rows 36–38 + the "Laya as a judge" caution)
+**CHANGE** Laya to **escalate-only risk router**:
+> Rust computes the floor; **Laya can only raise it, never lower it, never approve** (monotonic, like DSH's deny-only
+> ToolGuard). v1 is **deterministic rules**; a local classifier is added only if it **beats the rules** on a labelled
+> crossing corpus. The rules see only the crossing descriptor (effect class, target, declared capability, diff size,
+> digest, whether bytes match an approved set, memory provenance). **Never-see:** raw secrets/keys, passkey material,
+> secret-path file contents, private memory bodies (hashes/labels only), the never-touch list.
+> **Bug to fix:** the triage ASCII-only gate (`crates/laya/src/triage.rs:56`, `!text.is_ascii()` escalates) wrongly
+> forces a card on any emoji/accented/CJK text — accept valid UTF-8 (NFC), keep the control-char and injection-phrase
+> checks. (RAN; PLAN-v1 decision 6.)
+> **Bug 2 (RAN):** the risk **slider collapses** — `AskRisky` and `WithinTodayLimits` behave identically;
+> `candidate()`/remaining-count only special-case `AskEverything` (`crates/laya/src/standing.rs:287`). Two of four
+> slider positions are a no-op. Give each mode a distinct floor before shipping the slider.
+> **Bug 3 (RAN):** standing grants only accept `kinds == ["put"]` (`standing.rs:164`); there is **no grant shape for
+> read/exec/socket crossings** — the 6 crossing classes the router needs do not exist yet.
+> **Do not conflate** with "Laya the navigator" (the memory experiment's retrieval approach, which LOST to plain hybrid
+> retrieval + a cross-encoder). Laya here is the *risk* router only.
+**KEEP** "Laya as a judge" in the "Never claim" list (it is still never a judge).
+
+### E. Nostr (REWRITE of the Network section + rows 69, 87, 123)
+**CHANGE** to PLAN-v1 decision 7:
+> **Nostr is the fabric for messages and provenance, never authority** (the passkey signs approvals; a Nostr signature
+> proves authorship, not authority). **Each device gets its own secp256k1 key under an owner-signed certificate**
+> (reuse Aura's MembershipSet), held in a signer **outside the agents**; passkey-signed delegation records (pubkey,
+> scope, expiry, nonce) and passkey-signed revocation are the control plane. **First slice:** node↔phone pairing + one
+> approval. **Marmot/MLS** (NIP-EE is superseded by Marmot, adopted 2026-07-03, but experimental/unaudited — SOURCE)
+> for device/group channels **later** — pin MDK, expect breaking changes. [REVERSAL: none; this refines rows 69/87/123.]
+**KEEP** rows 123 (Marmot), 132–134 (bitchat) as LATER.
+
+### F. Kira 2: one shared memory for every agent (REWRITE of rows 57–61, the Kira section, decision 8) — v3
+> Full design: `review/KIRA2-SPEC-v0.3.md`. This section only says what it does to the plan.
+
+**CHANGE [REVERSAL 4, refined]:** the shared brain is **Kira 2**, not OpenViking. Every agent (Claude, Codex, Grok,
+Argon, Mistral, Dot, then Auma through the door) reads and writes **one signed, append-only memory** through one
+service; Auma has **read and write in her own attributed scope** (`remember` is own-scope only) — not read-only.
+**OpenViking is archived, not deleted** (do not upgrade 0.4.21 for this purpose; AGPLv3, no provenance, no read-only key,
+an LLM that rewrites memory on session commit — SOURCE: review/MEMORY-BRAIN-RESEARCH.md, SCOUT round 2 §8).
+> **What it is.** A SQLite file with FTS5 + dense embeddings + a cross-encoder, notes as Nostr events signed per agent,
+> six tools (`remember`, `recall`, `get`, `list_recent`, `supersede`, `quarantine_source`), six permissions with the
+> exact wire names (`store`, `disclose-to-context`, `dataset`, `export`, `train`, `activate`), all default-deny, a
+> closed `capture_source` set (owner-typed | owner-signed | tool-observed | web-derived | model-generated) clamped by
+> caller class and inherited by descendants, ancestry roots computed by the store, verify-on-read with a hash chain,
+> fixed `self`/`resume` slots by d-tag, honest `found | empty | undetermined`, and an Aura-anchored head.
+> **Two phases, one surface.** Phase M (Mac, now): standalone `kirad` service, local-root key, no Aura, owner entries
+> are `channel`-attested and flagged. Phase N (node): the same events, tools and tests on the Sovereign node, backend =
+> the Aura-anchored sealed store (`crates/kira/src/anchor.rs`), AUMLOK certification, the signer inside the supervisor.
+> "Unchanged later" holds for the event format, tools and tests, **not for storage**.
+> **Rules that stay:** memory is context, never authority (`Source::Memory`); an author signature proves who wrote it,
+> not that it is true; never edit, never delete — supersede, expire, quarantine by source. A shared-memory write is a
+> crossing when it is not in the caller's own scratch scope (the door sees it; tainted lineage escalates).
+> **Rules that change (need Peter):** a new owner-only **erase** (physical purge / crypto-shred) against the
+> 2026-10-14 "forget = demote, never delete" doctrine (SPEC-v0.2.md:259, NORTH-STAR.md:769); see decision list.
+**CHANGE** the old F bullets: "Index + dedupe first" is now Kira 2 step K1/K2 (the 626 notes become epoch-1,
+`model-generated`, import-attested; no imported note may sit in the commitments lane until an owner-signed manifest
+promotes it); "hash-linked summary" survives only as a derived record with source hashes, never a search layer
+(summaries lowered recall: 0.874 vs 0.911); "forgetting = demote + tombstone that refuses re-ingest" stays.
+**CHANGE** "Kira: encrypted memory, cited recall, forgetting demotes, nothing silently deleted": **KEEP in Phase N**
+(per-note wrapped keys, derived indexes only at unlock); Phase M is plaintext inside the disk boundary by design.
+**DELETE** the old fix row "TLS/unix-socket + auth for OpenViking" (OpenViking leaves the path); **KEEP** "raise or
+parameterize the 4096 caps (`notes.rs:22`, `recall.rs:23`)" — the largest imported field is 2,448 bytes today, so
+charters and the plan need chunking.
+
+### G. Order of work (REWRITE — adopt PLAN-v1's 0–6 over the old waves, keep the acceptance discipline)
+**CHANGE** the "What Peter watches" / wave plan to PLAN-v1's order, with the toy as the decision gate:
+> **0. Toy boundary** (/workspace/toy-boundary) on a Nebius test node: hostile plugin first (SCOUT's 13 + judge-then-
+>   swap + hostile postinstall + B12–B14), 20 real builds, a **negative control** that must FAIL with the wall off.
+>   This is the decision gate for the whole engine choice. (Ready now; RAN on the box.) **Runs in parallel with step 1;
+>   neither blocks the other** (Kira 2 does not depend on the engine).
+> **1. PHASE 1 — KIRA 2: memory first, every agent on one memory** (rows K2-01..K2-17, section J; spec
+>   `review/KIRA2-SPEC-v0.3.md`). Order: K1 inventory/snapshot/manifest (Peter approves) → K2 append/verify/tools/owner
+>   channel + the **figurine test early, FTS-only** → K3 permissions + quarantine + fail-closed egress guard → K4 hybrid
+>   + rerank recall, locked threshold, Test 4 (paired non-inferiority, ≥300 questions) → K5 `self`/`resume` slots + the
+>   DSH client plugin + door forwarder → K6 wire every agent through the stdio bridge, atomic cutover, Pentora health +
+>   `stop` gating → K7 erase (only if Peter says yes) → K8 Phase N (Aura-anchored backend, AUMLOK re-certification).
+>   This absorbs PLAN-v1's old "Auma's self, early" step (memory indexing/dedupe, evidence-vs-experience split, signed
+>   self file, resume brief, reserved lanes, figurine test).
+> **2. Engine in walls on a node + the door + Rust rebuild + the plugin-fingerprint gate → T1, T2.** (Auma uses Kira 2
+>   through the door from here on: the engine never holds the Kira token and cannot reach `kirad` directly.)
+> **3. Fix the Rust blockers** (item 4: GuestPlan, engine cage profile, FD3 memfd, multi-stream, Laya triage; the Kira
+>   caps now belong to step 1) + **add real tests (main has exactly 1 `#[test]`, in supervisor; 19 crates have 0 — RAN).**
+>   Note (v3): the in-tree wall checks **forbid test targets** (`checks/walls.py:35,122-127`, `run.py:804`); the one
+>   `#[test]` exists only because `run.py:865` exempts the release-pointer pins. "Add real tests" therefore needs a
+>   conductor ruling on the exemption, or the tests live as `tests/e2e` scripts (Kira 2 chooses the scripts).
+> **4. The Spatial app as DSH plugins (keep what's ported), onboarding v2, Nostr devices, phone → T4, T7.**
+> **5. Selective-disclosure receipts (salted commitments) before formats freeze → T5; other harnesses → T3; website → T6.**
+> **6. Later:** Auma fine-tunes her own model on receipted, attributed data (GPUs + Peter's OK; held-out anti-poison tests).
+**KEEP** the acceptance discipline (section "Acceptance follows the whole chain"), the hostile twin per milestone, and
+"code goes to main, then main is tested". **KEEP** M1–M8 as the product-facing milestones; they map onto steps 2–6.
+
+### H. Product tests (CHANGE — adopt PLAN-v1's crisper T1–T7 + the budget)
+**CHANGE** the test definitions to PLAN-v1:
+> T1 Build: Auma builds through a passkey on the **source change + build recipe**; **Rust rebuilds it in a throwaway
+>   builder (two hosts, digests compared)**. T2 Wall: hostile engine + plugin + build input + injected page → zero
+>   canary leaks, zero unapproved crossings, every crossing receipted; **a negative control must FAIL with the wall
+>   off**. T3 any harness. T4 one mind (attributed memory, rollback by source, honest "I don't know"). T5 stranger
+>   verifies offline **with selective disclosure**. T6 website→working Auma unaided. T7 phone approves.
+> **Interruption budget (NEW):** ≤5 owner cards/day, ≤2/hour, **0 for workspace work**; build within the wall ≤1.5×
+>   bare metal.
+**KEEP** "every report starts with the product tests".
+
+### I. "How it is built" (CHANGE — the three reversals land here)
+**CHANGE** the "Fresh, every line… Nothing is copied" bullet to:
+> **Copy what works; rebuild the rest properly.** The archive and Prime are the source; a worker may **copy working
+>   product code** (e.g. the Spatial app faces as DSH plugins) and rebuilds the rest fresh against the frozen
+>   contracts. A rewrite still needs Peter's yes. [REVERSAL 3]
+**CHANGE** "Only data comes over as it is" → keep the pinned-data list, but it is no longer the *only* thing that
+crosses (product code may be copied). **KEEP** "Code goes to main, and main is tested after it lands" and the deploy
+guard rules unchanged.
+
+### J. Phase 1 rows: Kira 2, memory first (NEW section, v3)
+Provisional ids `K2-NN`; real row numbers (140+) and issue numbers are assigned when the issues are opened (row number =
+issue number). Milestone column is the step in section G. Every row's acceptance is a `tests/e2e/kira2-*.sh` script on the
+installed service (spec §13); none is a Rust `#[test]`. Status BUILD unless stated.
+
+| Row | What | Depends on | Acceptance (spec §13) | Notes |
+|---|---|---|---|---|
+| K2-01 | **`kirad`**: standalone service, SQLite+FTS5 backend, unix socket (0600) + per-agent token + `SO_PEERCRED`, six tools, MCP/HTTP surface; new crate (scaffold, walls ALLOW net, clippy, deps pins) | K2-02 | 1, 2, 10 | `crates/kira` stays a pure library (`Store`/`Signer` traits); `embed.rs` TCP/rustix modules move behind traits or are the documented exception |
+| K2-02 | **Event format + closed tag sets + vectors**: kinds 30401-30407, `capture_source`/`lane`/`privacy`/`form`/`review_state` closed sets, lane×capture rules, ancestry roots computed by the store, taint inheritance; pinned data files | — | 11, 12 | New data pinned in `checks/pins.json`; imports map to `model-generated` + `import_attestation` |
+| K2-03 | **Chain, verify-on-read, signed heads** (Phase M local-root checkpoint; Phase N Aura `kira.head`) | K2-01 | 1, 16 | New Aura kind needs an issue, `schema.rs` CHECK, `coverage.rs`, re-pin (C8); batched, never one Aura row per query |
+| K2-04 | **Caller identity + signing oracle limits**: per-agent keys, local-root certificates (Phase M), AUMLOK re-certification via migration manifest (Phase N), `nostr.bind` v2 (list body) + gate inventory targets | K2-01 | 10 | AUMLOK certification is not approvable today (`keys.rs:198`, `identity.rs:35,41`, empty inventory); Phase N moves the signer into the supervisor (NORTH-STAR.md:290) |
+| K2-05 | **Permissions**: six exact wire names, default deny, owner-signed grant manifest (Phase M), new canon principal + v2 permission body (Phase N) | K2-02 | 7 | Dataset/Train/Activate have no call sites on main today; Kira 2 enforces all six from day one |
+| K2-06 | **Recall**: FTS5 + dense + cross-encoder, reserved lanes (commitments, owner words, own experience, relevance, superseded/quarantined stubs), tie-break by id, locked calibrated no-answer threshold, embedding model hash pin + rebuild | K2-01 | 3, 4, 9, 15 | Laya NOT in the path (measured: lower recall) |
+| K2-07 | **Model servers out of process** (embedder + cross-encoder as units), pinned flags, startup and RSS measured, **FTS-only degraded mode** | K2-06 | 5, 8 | No process spawn from the crate (walls.py:12) |
+| K2-08 | **`self` / `resume` slots by d-tag**; deterministic resume generator in Ring 3; DSH injection as a system-prompt section (`interpolate:false`) + idempotent `agent/pre-step` re-injection | K2-01 | 17, 18 | Sizes: self 4 KB, resume 2 KB, outside the 4,800-char recall budget |
+| K2-09 | **DSH Cordis client plugin + door forwarder**: native plugin over the door socket, no token in the engine, capture clamp + web-derived by tool allowlist and turn taint, `undetermined` on door outage, read-only `DSH_HOME`, session-search off | K2-01, K2-08, step 2 door | 18 | Stock MCP cannot reach a unix socket (`transport.ts:31-45`); new versioned memory frame in Phase N (`fd3_payloads.rs:365-372`) |
+| K2-10 | **`kira-mcp-bridge`** (stdio↔unix socket) and onboarding of every agent: Claude Code, Codex, Grok, Argon, Mistral, Dot; atomic cutover from the old stores | K2-01 | 2, 19 | Neither Claude Code nor Codex offers a unix-socket MCP transport |
+| K2-11 | **Epoch 2**: snapshot every store with hashes, archive epoch 1 (searchable, `epoch=1`), Epoch 2 manifest by rule (Peter approves), owner-signed promotion into the commitments lane, secret scan | — | 3 | 626 notes, all `AUKORA-BUILD`, no ids/signatures [RAN]; old North Star rows (139) and chatter stay in the archive |
+| K2-12 | **Test 4 protocol**: ≥300 stratified questions incl. unanswerable and superseded/quarantined, pinned models and rubric, paired baseline on the same import, non-inferiority margin 3 points one-sided 95% | K2-06, K2-11 | 4 | 59 questions cannot show "within 3 points at 95%" (Grok's own CI −6.8..+1.1) |
+| K2-13 | **Quarantine + supersede + source revocation** (`quarantine_source` is an owner/door action) | K2-01 | 6 | Withheld from the agent tool scope with `ctx.tools.restrict` |
+| K2-14 | **Fail-closed egress guard** (`egress_check -> Exportable`) shipped before any sync code; sync = signed one-way bundle pull, later | K2-01 | 13 | `local` and unknown privacy never exported |
+| K2-15 | **Memory health on Pentora + `stop` gating**: reuse INDEX_PIN / AURA_ANCHOR / RECORD_FORMATS (no free cell) or version the registry; the door consults `kira.health` before crossings that rely on memory | K2-01, step 2 door | 20 | Row 115 "freezes all 110 check ids"; cells ≠ Pentora trits |
+| K2-16 | **Erase** (owner-only; Phase N crypto-shred, Phase M purge + redaction record) | Peter's decision | 14 | Contradicts "demote, never delete"; archives and exports escape; new Aura kind |
+| K2-17 | **Phase N migration**: Aura-anchored sealed backend behind `Store`, derived indexes only at unlock, rows 57-61 re-issued, Laya memory-write crossing (escalate-only) once standing grants exceed `put` | K2-03, K2-04, K2-05 | all 20 re-run | Storage is NOT unchanged across phases |
+
+**Existing rows touched by Kira 2** (mapping done against main `b79695e`, SOURCE = SCOUT integration check):
+57 Kira notes/recall — CHANGE (Phase N backend; Phase M `kirad`); 58 OpenViking recall by meaning — **DELETE** (OpenViking
+archived; recall is hybrid in Kira 2); 59 memory permissions — CHANGE (per-agent principal, exact wire names, manifest);
+60 encrypted memory backup on relays — CHANGE (export gated by the egress guard); 61 member exit export — CHANGE
+(re-check if erase lands); 7 the Memory app — KEEP; 128 supervisor is the only reader of FD 3 — KEEP via proxy
+(versioned memory frame); 130 sessions/compaction — KEEP (DSH sessions stay separate from Kira); 69 Nostr identities —
+CHANGE (per-agent keys under a certificate; Phase M local-root); 115 Level 1 organ map — CHANGE (memory-health cells);
+116-117 health view — KEEP; 15, 98 — KEEP.
+
+---
+
+## ROW-BY-ROW DISPOSITION (deltas only; unlisted rows = KEEP as in main)
+| Row(s) | Disposition | Note |
+|---|---|---|
+| 1–13 (Spatial app + faces) | **KEEP** | Now shipped as DSH plugins (section A), not under our own harness. |
+| 15, 98 (plugin/package accounting) | **CHANGE** | Re-map: the plugins that "replaced DSH" (our-harness era) are reframed — DSH stays; our crates are the **authority ring**, not a harness replacement. |
+| 25, 29, 30 "The harness: transport, agent loop, dispatch, sessions, compaction" | **DELETE** | *Why:* [REVERSAL 1] — we don't build our own harness; these become "DSH plugin adapters + the door wrapper" instead. Re-issue as door/adapters rows. |
+| 22 "the cage and its profiles" | **CHANGE** | Add the **engine profile** (execve-allowed, pinned toolchain) beside the no-exec profile. [REVERSAL 2] |
+| 26/39 sub-cage for running code | **KEEP** | Still owner-gated (decision 9); now the *engine* runs by default, the *user-app* sub-cage stays off until Peter says. |
+| 32–34, 40, 41, 112 (canon, gate state machine) | **KEEP** | Add the crash-window durability test (item 3 #3). |
+| 36–38 (Laya) | **CHANGE** | Escalate-only risk router; fix the ASCII bug (section D). |
+| 33/door | **NEW** | Add the **door**: tools/execute wrapper + SO_PEERCRED unix socket + Rust re-digest + memfd bulk path. |
+| — | **NEW** | **Plugin-fingerprint admission** row (passkey-approved set hash in the floor; HMR off). Section C. |
+| 57, 59 (Kira notes/recall/permissions) | **CHANGE (v3)** | Phase 1 = Kira 2 (section J, K2-01..K2-17): raise/chunk the 4096 caps; hybrid+cross-encoder recall; per-agent principal, exact wire names, default deny; attributed Auma write lane in her own scope. |
+| 58 (OpenViking recall) | **DELETE (v3)** | OpenViking is archived, not deleted; recall is Kira 2's FTS5 + dense + cross-encoder. The v2 "TLS/unix-socket + auth for OpenViking" fix row is dropped with it. |
+| 60, 61 (backup on relays, member exit) | **CHANGE (v3)** | Export only through the fail-closed egress guard (K2-14); re-check member exit if erase (K2-16) is approved. |
+| K2-01..K2-17 | **NEW (v3)** | Phase 1 rows, section J. |
+| 62, 63, 129 (broker, model streams) | **KEEP** | Add: the broker is an allowed-egress exfil channel → data-class labels later. |
+| 69 (Nostr identities) | **CHANGE** | Per-device key under owner cert; delegation/revocation records (section E). |
+| 87 (phone approval NIP-46, buzz) | **CHANGE** | First slice = node↔phone pairing + one approval; promote from LATER into step 4. |
+| 123 (Marmot) | **KEEP (LATER)** | Device/group channels later; experimental. |
+| 128 (supervisor FD3 router) | **CHANGE** | Add memfd bulk + multi-stream (item 4 #3,#4). |
+| 130 (sessions/context/compaction) | **CHANGE** | Now provided by DSH, not our harness; row becomes "configure DSH sessions + our continuity (signed self file, resume brief)". |
+| 138 (model intake) | **KEEP** | Immune attacks the cage with the new model driving before grants. |
+| 139 (crypto agility) | **KEEP** | Add ML-DSA sandbox signer idea (item 3 #8). |
+| "Decisions only Peter makes" | **KEEP + NEW** | Add: whether the phone may approve node changes and at which risk levels (already flagged in main); the DSH pin cadence. |
+| "Never claim" list | **KEEP** | Still: no Laya-as-judge, no Pentora-as-security, no unique-humans, etc. |
+
+## Open conflicts for Peter/Claude to resolve
+1. ~~**Row-number mismatch**~~ **RESOLVED (v2):** Claude confirms 187/192 are **LINE numbers** in NORTH-STAR.md
+   (the harness subsection, lines ~186–195), not rows. Reversals 1–2 target exactly those lines. No action needed.
+2. **"One plan, no other plan-like file" construction check** (main rule 1) will go red while PLAN-v1 exists — delete
+   PLAN-v1 as planned once this draft is committed.
+3. **AGPL:** OpenViking is AGPLv3 and a hosted multi-tenant node touches §13 — a licensing decision before Light/hosted.
+4. **DSH is MIT, our crates AGPL** — "copy what works" must respect DSH's MIT (fine) and not import AGPL into MIT-only
+   surfaces; counsel row 99 already open.
+5. **(v3) Erase vs "demote, never delete".** Kira 2 fix 6 asks for an owner-signed crypto-shred. It contradicts Peter's
+   2026-10-14 doctrine (SPEC-v0.2.md:259, NORTH-STAR.md:769) and cannot be done in the plaintext Phase-M design; it needs
+   Peter's explicit yes, a new Aura kind and a decision on backups/archives (spec §10, row K2-16). Until then no erase.
+6. **(v3) A new `kirad` crate, or a bin in `crates/kira`?** A crate costs scaffold, `walls.py` ALLOW net, clippy and dep-pin
+   edits; "pure" is not defined by any wall (spec §1). Also: the wall checks forbid test targets, so Kira 2 acceptance
+   is `tests/e2e` scripts unless the conductor widens `run.py:865`.
+7. **(v3) Phase-M owner assurance.** Until the node passkey path exists, owner entries in the commitments lane are
+   `channel`-attested (a token only Peter's user can read), flagged, then promoted by an owner-signed manifest in Phase N.
+   AUMLOK cannot certify N agent keys today (nostr.bind v1 binds one node key and one agent key; the gate inventory is
+   empty; `bind_key` is called from no route).
+8. **(v3) Test 4 as written is unattainable.** "Within 3 points at 95% confidence" cannot be shown on 59 questions
+   (Grok's paired CI there is −6.8..+1.1). The spec restates it as paired non-inferiority on ≥300 pinned questions (K2-12).
+
+### Acceptance gaps to close (Dot's review, 2026-10-17)
+1. Capability acceptance: the full edit-build-test-debug loop (generated executables, browser) runs under the installed
+   OpenShell policy with ZERO workspace approval cards. Otherwise we repeat the "can't build" mistake.
+2. One written OpenShell policy (filesystem, network, execution, child processes, skipped paths). Resolve "allowlisted
+   egress" vs "door/broker sockets only" before T1.
+3. Approve the whole build contract: an immutable input manifest (tree hash, lockfiles, toolchains, command, env); bind
+   promotion to the resulting artifact digest. Two matching builds are evidence, not authorization.
+4. `owner_signed` only through a passkey over the exact bytes (done in b986e7a); owner-typed until then.
+5. Trust model: Phase M is same-uid trust among Mac builders; hostile-engine use needs authenticated provenance (the door).
+6. Keep "Mac memory works" (true) separate from "DSH memory integration passes" (not yet).
+
+# Part 2: the row register
+
+
 **This is the only plan.** There is no other plan file in this repository, and `checks/` makes main red if one
 appears. Every row below is one GitHub issue with the same number: row 12 is issue #12. The issues are the work
 tracker. A row leaves this plan only when Peter says so, and his words are written on its issue.
@@ -184,12 +470,12 @@ The five organs, and where each lives:
   Documents.
 - **SYSTEM:** AUMLOK and Identity (on AUMLOK), Aura Coherence (the health map and the fingerprint), General, Models
   (on the broker), Plugins (the app store), Agent presets, Archived sessions.
-- **Our own harness replaces the DeepSeek harness**, the way the cage replaced OpenShell.
+- ~~**Our own harness replaces the DeepSeek harness**, the way the cage replaced OpenShell.~~ REVERSED by Peter 2026-10-16: the DeepSeek Harness is the engine (Part 1).
   - The DeepSeek harness is about 380,000 lines of its own TypeScript, without tests, in 316 packages. It includes
     shell, file, subprocess and terminal tools: exactly what the cage takes away.
   - Ours is Auma's agent loop inside the cage. Her only operations are chat, threads, sessions, streaming replies,
     presets, compaction, proposals and memory.
-  - She never executes a command or opens a socket. Seccomp denies `execve` and `execveat`, and model calls leave only
+  - ~~She never executes a command or opens a socket.~~ REVERSED by Peter 2026-10-16: she executes and builds inside OpenShell walls (Part 1). Seccomp denies `execve` and `execveat`, and model calls leave only
     through FD 3 to the broker.
   - **Two modes.** In Chat she talks. In Build she may also propose changes, to herself, to sites or to apps.
     Neither mode runs anything.

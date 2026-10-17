@@ -1,4 +1,6 @@
 {
- "oversized_files": {},
- "foreign_paths": []
+  "oversized_files": {
+    "NORTH-STAR.md": "Peter, 2026-10-17: the one plan (Part 1 plan + Part 2 row register) stays one file"
+  },
+  "foreign_paths": []
 }
