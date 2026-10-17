@@ -164,7 +164,9 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         if (target === undefined) delete d.surfaceTarget
         else d.surfaceTarget = target
         d.detailsOpen = false
-        d.panePreset = 'center-right-wide'
+        // PETER'S RULE 3 (2026-10-17): picking an app changes only the centre lane; the lane widths stay the owner's.
+        // Only a centre the owner has hidden entirely is brought back, as one third of a balanced frame.
+        if (PANE_WEIGHTS[d.panePreset][1] === 0) d.panePreset = 'balanced'
       },
       closeSurface: (d) => {
         delete d.activeSurface

@@ -88,9 +88,9 @@ export function SovereigntySurface({ activeSurface, surfaceTarget, closeSurface 
   const active = activeSurface === SOVEREIGNTY_SURFACE
   // ONE READ, THEN ONLY RENDERING. The stub today; a node-backed reader of the same shape later.
   const s = useMemo(() => readSovereigntyStub(), [])
-  // THE OPEN PORTAL IS THIS SURFACE'S OWN STATE, NOT THE SHELL'S. Opening a portal must never move a lane: the shell's
-  // `openSurface` always sets the pane preset (selectSurface -> center-right-wide, two-thirds), so a portal opened
-  // through it snapped a one-third lane to two-thirds. The shell's target is read once as a deep link (a menu or
+  // THE OPEN PORTAL IS THIS SURFACE'S OWN STATE, NOT THE SHELL'S. Opening a portal must never move a lane, and a
+  // portal is not a navigation: it never goes through the shell's `openSurface` (which, until the rule-3 fix, set
+  // the pane preset and snapped a one-third lane to two-thirds). The shell's target is read once as a deep link (a menu or
   // another app may open `sovereignty/<id>`), and from then on the portal opens and closes inside the current lane.
   const [open, setOpen] = useState<CategoryId | null>(isCategory(surfaceTarget) ? surfaceTarget : null)
   useEffect(() => { if (isCategory(surfaceTarget)) setOpen(surfaceTarget) }, [surfaceTarget])
