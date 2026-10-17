@@ -17,10 +17,12 @@ fn usage() -> Refusal {
 /// (`under_test`). `--rotate` replaces every earlier token of the agent; `revoke` marks the agent revoked and removes all
 /// its tokens. Both take effect on the running service's next request.
 ///
-/// `register` and `token` mint credentials, so once the store has an owner they require `--owner-token-file PATH`: a
+/// `register`, `token`, `revoke` and `import` change who may act or what the store holds, so once the store has an
+/// owner they require `--owner-token-file PATH`: a
 /// file (mode 0600) holding the owner's token. Without it they refuse with `kira:owner-token-required`; a token that
 /// is not the live owner's is refused with `kira:owner-token-refused`. Only a store with no owner yet (the first
-/// `register NAME --owner`) needs no file. This is a procedural gate, not isolation: a process of the same user that
+/// `register NAME --owner`) needs no file. (`revoke` and `import` were open until the 2026-10-17 bench: any process
+/// of the same user could revoke the owner or plant notes signed `epoch1-import`.) This is a procedural gate, not isolation: a process of the same user that
 /// can read the owner's token file can still mint (same-uid trust; separate uids are Phase N).
 pub fn cli(arguments: &[OsString]) -> Result<()> {
     let (mut words, mut state, mut socket, mut token_file, mut scopes, mut owner) = (vec![], None, None, None, None, false);
@@ -58,6 +60,8 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
         _ if admission.configured() || group_socket => Err(usage()),
         ["mcp"] => mcp(&socket, &token_file.ok_or_else(usage)?),
         ["import"] | ["import", _] => {
+            // Import files notes under the archive author, so it is a credential-class act like minting a token.
+            require_owner(&dir, owner_token_file.as_deref())?;
             let file = words.get(1).map_or_else(default_epoch1, |f| Ok(PathBuf::from(f)))?;
             let report = import_epoch1(&dir, &file)?;
             println!(
@@ -74,6 +78,7 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
             Ok(())
         }
         ["revoke", name] => {
+            require_owner(&dir, owner_token_file.as_deref())?;
             revoke(&dir, name)?;
             println!("kira: {name} is revoked; its tokens are removed and the running service refuses them now");
             Ok(())

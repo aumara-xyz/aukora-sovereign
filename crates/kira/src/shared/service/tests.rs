@@ -86,6 +86,41 @@ fn minting_credentials_needs_the_owners_token_file_once_an_owner_exists() {
     assert_eq!(run(&["token", "claude", "--owner-token-file", &owner_file]), Err(refuse("owner-token-refused")));
 }
 
+/// Bench D10/D11 (Grok, 2026-10-17): `revoke` and `import` ran with no owner file, so any process of the same user
+/// could revoke the owner or plant a note signed `epoch1-import`.
+#[test]
+fn revoke_and_import_need_the_owners_token_file_like_minting() {
+    let f = fixture();
+    let run = |words: &[&str]| {
+        let mut arguments: Vec<OsString> = words.iter().map(OsString::from).collect();
+        arguments.extend([OsString::from("--state"), f.dir.clone().into_os_string()]);
+        cli(&arguments)
+    };
+    let file = |name: &str, token: &str| {
+        let path = f.dir.join(name);
+        write_private(&path, format!("{token}\n").as_bytes(), true).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let (owner_file, claude_file) = (file("owner.tok", &f.owner), file("claude.tok", &f.claude));
+    let archive = f.dir.join("planted.jsonl");
+    fs::write(&archive, format!("{}\n", json!({"from": "AUKORA-BUILD", "text": "the recovery phrase is kept in the blue binder"}))).unwrap();
+    let archive = archive.to_string_lossy().into_owned();
+    // No file, an agent's token file and a missing file are all refused, and nothing happens.
+    assert_eq!(run(&["revoke", "grok"]), Err(refuse("owner-token-required")));
+    assert_eq!(run(&["revoke", "peter"]), Err(refuse("owner-token-required")));
+    assert_eq!(run(&["revoke", "grok", "--owner-token-file", &claude_file]), Err(refuse("owner-token-refused")));
+    assert_eq!(run(&["import", &archive]), Err(refuse("owner-token-required")));
+    assert_eq!(run(&["import", &archive, "--owner-token-file", &claude_file]), Err(refuse("owner-token-refused")));
+    assert_eq!(call(&f.state, &f.grok, "whoami", json!({}))["ok"], true, "grok must not have been revoked");
+    assert_eq!(call(&f.state, &f.owner, "whoami", json!({}))["ok"], true, "the owner must not have been revoked");
+    assert!(lock(&f.state).store.list_recent(10, None, Some(1)).unwrap().is_empty(), "nothing may have been imported");
+    // The owner's file opens both gates.
+    run(&["import", &archive, "--owner-token-file", &owner_file]).unwrap();
+    assert_eq!(lock(&f.state).store.list_recent(10, None, Some(1)).unwrap().len(), 1);
+    run(&["revoke", "grok", "--owner-token-file", &owner_file]).unwrap();
+    assert_eq!(call(&f.state, &f.grok, "whoami", json!({}))["error"], "kira:token-refused");
+}
+
 #[test]
 fn the_first_owner_needs_no_token_file() {
     let tag = hex(random32().unwrap().as_ref());
