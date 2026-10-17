@@ -504,7 +504,11 @@ What was true: the engine origin could run a WebAuthn ceremony of its own (`feat
 passkey" panel. Fixed: every engine-origin reply carries one `Permissions-Policy` (ours replaces the harness's)
 denying `publickey-credentials-get`, `publickey-credentials-create`, `identity-credentials-get`, `otp-credentials` and
 `payment`; and `engine-v1.json` is refused (`engine-config-relying-party`) when the engine host equals the owner host
-or lies under it. Migration: none. The RP id did not change, so enrolled passkeys keep working.
+or lies under it. Migration: none. The RP id did not change, so enrolled passkeys keep working. NODE after the fix
+(release 791de25…-6dfa9e66, re-run genesis): every engine-origin reply carries the header; in an engine-origin page
+`featurePolicy` allows neither, and `get` (owner RP and parent RP) and `create` all end `NotAllowedError` ("the
+'publickey-credentials-…' feature is not enabled in this document"); the owner's own sign-in on the owner origin
+works as before.
 
 **P2. Resource caps on the sandbox (R3).** Before: the sandbox container had no memory or CPU limit (`docker inspect`:
 `Memory=0 NanoCpus=0`), `/tmp` lived in the container's layer on the host disk and `/work`/`/engine-home` on the host
@@ -540,6 +544,13 @@ had 293/228). `wall-check.sh`: `wall ok`.
 engine's next `net` calls and memory writes ask, whatever the slider and grants say, until the owner clears it at
 `https://<shell>/engine/door`; a `web-derived` write always asks. Per session, not per turn (Argon RT-1..RT-3), and
 since the door cannot tell sessions apart without trusting the engine, per engine: crates/supervisor/DOOR.md, "Taint".
+NODE (from inside the wall with the approved door client, starter grants approved): a `web-derived` note asked
+(`ask-memory`); the first page (docs.rs) ran and wrote `taint.json` (`cause: net`); the next page (crates.io) asked
+(`ask-net`), a model-generated note asked, a memory read still ran, wikipedia.org was refused `host-not-allowed`
+without a card. On `/engine/door` the owner saw "Tainted … (net)" and pressed the button ("Done. Clean: your grants
+apply."; journal `door: the owner cleared the engine's taint`); a note and a page (github.com) then ran without a
+card, and the page after that asked again. A cross-origin POST to the clear route from an engine-origin page changed
+nothing.
 
 **P3. Starter standing grants (R5, card fatigue).** Before: `"standing": {}` and no grants, so every `net` and
 memory call (bar the two own-slot reads) was a card. Now the node proposes one critical card at the ceremony,
@@ -553,7 +564,14 @@ The door reads its grants only from the bytes that card applied. Cards on a buil
 and Auma's own model-generated notes, none for the first page; after the first page, one per further page and per
 note until the owner clears the taint on `/engine/door` (P4); one for any other host, plugin, schedule, terminal or
 web-derived note. A node installed before this branch lacks the target in its inventory: the proposal is refused
-(`door: starter grants not proposed`) and everything asks, as before.
+(`door: starter grants not proposed`) and everything asks, as before. NODE (re-run genesis on the branch's release,
+`door/standing-grants.json` added to the kept inventory by hand, the door policy re-rendered from the new template,
+egress epoch 4 with the five hosts): `door: starter grants proposed` right after the bind; the card came up beside
+the release, budget and plugin-set cards ("For 7 days, no card for: pages from 5 hosts (150/day), memory reads
+(100/day), her own notes (30/day)." and the exact grant bytes); after the passkey, a memory read, a model-generated
+note and the first docs.rs page ran with no card (`autoclear.jsonl` counted them). `engine.py egress` from the Mac
+hung in `nebius compute instance list` (the CLI's own call, before anything was sent): the same epoch was built with
+`egress.build` and installed with the node's `node_release.py egress`.
 
 **P5. Contradictions.** `fs-outside` is always denied, and now in code as well as words: the door refuses a policy
 that says `ask` or `allow` for it, and DOOR.md no longer lists it among what `trusted` can clear (Peter's call to
@@ -565,7 +583,9 @@ for the owner-lifecycle branch, which edits that paragraph).
 **P6. `web_search` is not mounted.** It had no executor at the door, so it sat in Auma's catalog and failed every
 call (`no-executor`). `build_plugins.py` now writes `search: false` into dsh-tool-web's row in every preset that
 mounts it (standard, ptc, cordis; minimal mounts none) and stops on any other shape; `web_fetch` stays. NODE: the
-bundle rebuilt from the node's pinned harness differs from the staged one by exactly those three lines.
+bundle rebuilt from the node's pinned harness differs from the staged one by exactly those three lines; approved as
+the new plugin set, the composition inside the wall (`dsh --profile aukora --patch authority.patch.yml --dump-config`)
+shows `search: false` in all three presets' tool-web rows, `fetch: true` kept.
 
 **O21 (open, the next big item; design note only, no code): the model call as a named crossing (Auma R1).**
 Everything the engine can read (the workspace, recalled memory, every fetched page) can leave in the next prompt to
@@ -586,3 +606,23 @@ by cost. Proposed shape, smallest first:
    this one (Auma's review section 4).
 Not decided: whether the delta is measured by the broker (it would have to keep the previous request per session,
 which the engine names) or the cheaper per-call total only; and what the health line says when the cost is unknown.
+
+**P2, found live after it landed.** Two holes in the disk bound, both closed in the P2 commit:
+- `/sandbox`: OpenShell refuses a mount there, the engine can write it (uid 994, Landlock allows the workdir), and it
+  is the container's layer on the host disk. Closed by a host-disk floor (15% of the root filesystem, at least
+  8 GiB): `engine-run.sh create` refuses to start below it, and `aukora-engine-diskguard.service` (`engine-run.sh
+  watch`, one quiet loop, a check every 5 s) stops a running engine; the stop removes the sandbox and its layer. NODE: a
+  `dd` into `/sandbox` from inside the wall (about 43 MB/s on this disk) took the host from 31 to 11 GB free; at the
+  floor the guard said `the host disk is below its floor; stopping the engine`, the stop took 56 s (docker removing a
+  20 GB layer), the disk was back at 31 GB free, and the supervisor's controller started the engine again
+  (`engine: running` 4 s after the unit came up). (That run's probe log was lost with its SSH session; an earlier
+  run of the same filler, stopped at 18 GB free, had the shell's worst answer at 17 ms.)
+- The image was not reserved: `mkfs.ext4` discards a device by default, which on a loop file punches holes, so the
+  30 GiB image held 250 MB and the host's free space was overstated by 30 GB. `mkfs.ext4 -E nodiscard`, a second
+  `fallocate` after it, and the installer refuses an image whose blocks are not all held (`engine-disk-not-reserved`).
+  On the node the image was re-allocated in place (`fallocate`, data kept): `du` 31G.
+
+**Tests.** Mac: `scripts/check.sh` CONSTRUCTION GREEN (once, at 791de25's code). Linux, on the rehearsal node,
+umask 002, at 791de25: `cargo test -p supervisor -p frontdoor -p laya -p broker -p gate -p floor` (sovereign 187 + 1
+ignored, frontdoor 5, laya 44, broker 13, gate 17, floor 7) and `tests/deploy` (11): all pass. The two later changes
+(the guard, nodiscard) are shell and installer only: `sh -n`, the deploy unit tests, and the live run above.
