@@ -58,11 +58,17 @@ function carriesWebDerived(value: unknown): boolean {
   if (typeof record.target === 'object' && record.target !== null && (record.target as Record<string, unknown>).capture === 'web-derived') {
     return true
   }
+  // A recall group carries its worst capture, and names the capture of each copy folded into it (Argon RT-5).
+  const web = (note: unknown): boolean => {
+    if (typeof note !== 'object' || note === null) return false
+    const rec = note as Record<string, unknown>
+    return rec.capture === 'web-derived' || rec.kept_capture === 'web-derived' ||
+      (Array.isArray(rec.also_by_captures) && rec.also_by_captures.includes('web-derived'))
+  }
+  if (web(record)) return true
   for (const key of ['items', 'notes']) {
     const list = record[key]
-    if (Array.isArray(list) && list.some(note => typeof note === 'object' && note !== null && (note as Record<string, unknown>).capture === 'web-derived')) {
-      return true
-    }
+    if (Array.isArray(list) && list.some(web)) return true
   }
   return false
 }
@@ -99,12 +105,25 @@ export type ToolExecutor = (name: string, args: Record<string, unknown>) => Prom
 
 export interface KiraController {
   readonly config: ResolvedKiraConfig
-  /** Whether the given agent scope (or global fallback) is currently tainted by external input in this turn. */
+  /**
+   * Whether this SESSION has taken in external input (web, MCP, a delegation result, session history, a web-derived note
+   * read back from Kira) and not provably shed it. One state per controller (one session): every agent of the session,
+   * a child created later and a call with no agent at all read and write the same flag. The `agent` argument is
+   * accepted for compatibility and ignored.
+   */
   isTurnTainted(agent?: object): boolean
-  /** Mark the current turn as tainted by external input (`web_fetch`, `web_search`, `mcp__*`). */
+  /** Taint the session. */
   markTurnTainted(agent?: object): void
-  /** Clear external-input taint at the start of a new agent turn. */
+  /**
+   * Deprecated no-op, kept so callers compile. A new turn, a new step and a new agent do NOT clear taint: the session
+   * history still holds what was read (Argon RT-1/RT-2). Only `clearTaintAfterCompaction` clears it.
+   */
   clearTurnTaint(agent?: object): void
+  /**
+   * Clear the session taint because the host has PROVEN the tainted content left the model's context (a compaction that
+   * dropped it). Call it only from such a signal; DSH 0.2.1-alpha.5 emits none, so nothing calls it today.
+   */
+  clearTaintAfterCompaction(): void
   /**
    * `tools/pre-execute` hook: enforces turn-taint (`capture: "web-derived"`) and engine ceilings on `kira_remember`,
    * and marks the turn tainted when an external tool is dispatched. Never mutates `exec.arguments`.
@@ -145,8 +164,10 @@ function denyDecision(code: string, reason: string): PreDecisionLike {
 
 export function createKiraController(rawConfig: KiraPluginConfig, executeTool: ToolExecutor): KiraController {
   const config = resolveKiraConfig(rawConfig)
-  const taintedAgents = new WeakSet<object>()
-  let globalTainted = false
+  // One state for the whole session: a child created later, a delegation that reports back asynchronously and a call
+  // with no agent all see the same flag. It is never cleared by a new turn or step (the web content is still in the
+  // session history the model reads), only by `clearTaintAfterCompaction`.
+  let sessionTainted = false
 
   let cachedSelfText = ''
   let cachedResumeText = ''
@@ -154,24 +175,14 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
   const heads = new Map<string, string>()
   let inflightLoad: Promise<{ selfText: string; resumeText: string; loaded: boolean }> | null = null
 
-  const isTurnTainted = (agent?: object): boolean => {
-    return agent !== undefined ? taintedAgents.has(agent) : globalTainted
+  const isTurnTainted = (_agent?: object): boolean => sessionTainted
+
+  const markTurnTainted = (_agent?: object): void => {
+    sessionTainted = true
   }
 
-  const markTurnTainted = (agent?: object): void => {
-    if (agent !== undefined) {
-      taintedAgents.add(agent)
-    } else {
-      globalTainted = true
-    }
-  }
-
-  const clearTurnTaint = (agent?: object): void => {
-    if (agent !== undefined) {
-      taintedAgents.delete(agent)
-    } else {
-      globalTainted = false
-    }
+  const clearTurnTaint = (_agent?: object): void => {
+    // Deliberately empty: see the interface doc. A turn boundary proves nothing about the context.
   }
 
   /**
@@ -235,6 +246,9 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     isTurnTainted,
     markTurnTainted,
     clearTurnTaint,
+    clearTaintAfterCompaction: () => {
+      sessionTainted = false
+    },
 
     async preExecute(exec, next) {
       if (isTaintingTool(exec.name)) {

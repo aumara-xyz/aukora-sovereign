@@ -11,10 +11,12 @@ import {
   KiraDoorRequiredError,
   RESUME_SECTION_ORDER,
   SELF_SECTION_ORDER,
+  apply,
   buildRememberArgs,
   createKiraController,
   createKiraTools,
   isLiveVerifiedNote,
+  isTaintingTool,
   resolveKiraConfig,
   truncateUtf8,
 } from '../src/index.ts'
@@ -111,7 +113,7 @@ test('isLiveVerifiedNote refuses superseded, quarantined, withheld, unverified a
   assert.equal(isLiveVerifiedNote(sampleNote({ content: '' })), false)
 })
 
-test('turn taint forces capture: "web-derived" on kira_remember across steps until the next turn', async () => {
+test('session taint forces capture: "web-derived" on kira_remember in every later turn, step and agent of the session', async () => {
   const controller = createKiraController({}, async () => ({ isError: false, value: { notes: [] }, content: [] }))
   const agent = {}
 
@@ -136,11 +138,79 @@ test('turn taint forces capture: "web-derived" on kira_remember across steps unt
   const webDerivedDecision = await controller.preExecute(makeExec('kira_remember', webDerivedArgs, agent), async () => ({ kind: 'allow' }))
   assert.equal(webDerivedDecision.kind, 'allow')
 
-  // Clearing taint at the start of the next turn restores model-generated.
+  // A new turn does NOT restore model-generated: the session history still holds what was fetched (Argon RT-2).
   controller.clearTurnTaint(agent)
-  assert.equal(controller.isTurnTainted(agent), false)
+  assert.equal(controller.isTurnTainted(agent), true)
   const nextTurnDecision = await controller.preExecute(makeExec('kira_remember', cleanArgs, agent), async () => ({ kind: 'allow' }))
-  assert.equal(nextTurnDecision.kind, 'allow')
+  assert.equal(nextTurnDecision.kind, 'deny')
+  // Only a host that has proof the content left the context (a compaction that dropped it) clears the session.
+  controller.clearTaintAfterCompaction()
+  assert.equal(controller.isTurnTainted(agent), false)
+  assert.equal((await controller.preExecute(makeExec('kira_remember', cleanArgs, agent), async () => ({ kind: 'allow' }))).kind, 'allow')
+})
+
+test('one session state: a child agent, a call with no agent and the parent after an async delivery all share it (RT-1, RT-3)', async () => {
+  const controller = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+  const parent = {}
+  const child = {}
+  const clean = buildRememberArgs({ text: 'from a child', subject: 'test' })
+  await controller.preExecute(makeExec('web_fetch', { url: 'https://example.org/' }, parent), allow)
+  // The child is a fresh agent object created after the parent was tainted: it inherits, it does not start clean.
+  assert.equal(controller.isTurnTainted(child), true)
+  assert.equal((await controller.preExecute(makeExec('kira_remember', clean, child), allow)).kind, 'deny', 'RT-1A: parent -> child laundering')
+  // An agentless call (ctx.tools.execute without exec.agent) reads the same state (RT-3).
+  assert.equal((await controller.preExecute(makeExec('kira_remember', clean), allow)).kind, 'deny', 'RT-3: agentless write')
+  // The other direction: a child that reads the web taints the parent that is woken with its output later (RT-1B).
+  const fresh = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+  await fresh.preExecute(makeExec('web_fetch', { url: 'https://example.org/' }, child), allow)
+  assert.equal(fresh.isTurnTainted(parent), true, 'RT-1B: the parent shares the child\'s taint when its output is delivered')
+  assert.equal((await fresh.preExecute(makeExec('kira_remember', clean, parent), allow)).kind, 'deny')
+  // An agentless taint (e.g. a slot read) is seen by every agent, which the old split state ignored.
+  const slot = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+  slot.markTurnTainted()
+  assert.equal(slot.isTurnTainted(parent), true)
+})
+
+test('session history tools taint: they can surface a web_fetch result from an earlier turn (RT-6)', async () => {
+  for (const name of ['session_search', 'session_event_search', 'session_trace', 'session_event_trace', 'session_event_read']) {
+    assert.equal(isTaintingTool(name), true, name)
+    const controller = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+    const agent = {}
+    await controller.preExecute(makeExec(name, { query: 'earlier' }, agent), allow)
+    assert.equal(controller.isTurnTainted(agent), true, name)
+    assert.equal((await controller.preExecute(makeExec('kira_remember', buildRememberArgs({ text: 'x', subject: 'y' }), agent), allow)).kind, 'deny', name)
+  }
+})
+
+test('a recall group whose folded copy is web-derived taints, even when the shown note is model-generated (RT-5)', () => {
+  const controller = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+  const agent = {}
+  const ok = (value: unknown) => ({ isError: false as const, value, content: [] })
+  controller.onToolResult(makeExec('kira_recall', { query: 'x' }, agent), ok({ items: [{ capture: 'model-generated', kept_capture: 'model-generated', also_by_captures: ['model-generated'] }] }))
+  assert.equal(controller.isTurnTainted(agent), false)
+  controller.onToolResult(makeExec('kira_recall', { query: 'x' }, agent), ok({ items: [{ capture: 'model-generated', also_by_captures: ['web-derived'] }] }))
+  assert.equal(controller.isTurnTainted(agent), true)
+})
+
+test('the plugin hooks neither clear taint at a new turn nor when an agent is created (RT-1, RT-2)', async () => {
+  const handlers = new Map<string, Array<(...args: never[]) => unknown>>()
+  const ctx = {
+    tools: { register() {}, async execute() { return { isError: true, error: { message: 'down', info: { code: 'x' } }, content: [] } } },
+    systemPrompt: { section() {} },
+    on(event: string, handler: (...args: never[]) => unknown) {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler])
+    },
+  }
+  const controller = apply(ctx as never)
+  const agent = {}
+  const child = {}
+  controller.markTurnTainted(agent)
+  for (const step of [1, 2, 1]) {
+    for (const handler of handlers.get('agent/pre-step') ?? []) await (handler as (p: unknown, n: () => Promise<void>) => Promise<unknown>)({ agent, step }, async () => {})
+  }
+  for (const handler of handlers.get('agent/created') ?? []) await (handler as (p: unknown) => Promise<unknown>)({ agent: child })
+  assert.equal(controller.isTurnTainted(agent), true, 'turn 2, step 1 must not clear it')
+  assert.equal(controller.isTurnTainted(child), true, 'a child created afterwards inherits it')
 })
 
 const allow = async () => ({ kind: 'allow' as const })

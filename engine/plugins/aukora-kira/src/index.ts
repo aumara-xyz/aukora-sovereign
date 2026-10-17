@@ -9,10 +9,12 @@
 //     door's 0600 token and enforces engine ceilings (`capture-ceiling`, `owner-only`, `lane-closed`).
 //  2. Fail-closed local body: if @aukora/door is absent or bypassed and a `kira_*` tool body runs locally,
 //     it immediately throws `KiraDoorRequiredError` (`code: 'door-required'`).
-//  3. Turn-level provenance taint: once a turn calls `web_fetch`, `web_search`, or `mcp__*`, reads a `web-derived`
-//     note back from Kira, or receives a delegated agent's result while anything was tainted, any subsequent
-//     `kira_remember` or `memory_remember` in that turn (across all steps of the turn) must declare
-//     `capture: "web-derived"`.
+//  3. Session-sticky provenance taint: once the session calls `web_fetch`, `web_search` or `mcp__*`, delegates, reads
+//     session history (`session_search`, `session_trace`, ...) or reads a `web-derived` note back from Kira, every
+//     later `kira_remember` or `memory_remember` in that session, by any agent of it (a child included), must declare
+//     `capture: "web-derived"`. A new turn or step does not clear it (the history still holds what was read); only
+//     `clearTaintAfterCompaction()`, called by a host that has proof the content left the context, does. The check
+//     refuses rather than rewriting the capture, because @aukora/door has already bound the exact arguments.
 //  4. Session-start slot injection: `aukora:self` (up to 4,096 UTF-8 bytes) and `aukora:resume` (up to 2,048
 //     UTF-8 bytes) are fetched once at session start via `kira_get` by slot name through the door and injected as
 //     `systemPrompt` sections with `interpolate: false`, outside the 4,800-char `kira_recall` budget.
@@ -146,9 +148,7 @@ export function apply(ctx: Context, rawConfig: KiraPluginConfig = {}): KiraContr
   ctx.on(
     'agent/pre-step',
     (async (payload: { agent?: object; step?: number }, next: () => Promise<unknown>) => {
-      if (payload.step === 1) {
-        controller.clearTurnTaint(payload.agent)
-      }
+      // No taint clearing here: step 1 is the start of a turn, not proof that the web content left the context.
       await controller.ensureSlotsLoaded()
       return next()
     }) as never,
@@ -156,8 +156,8 @@ export function apply(ctx: Context, rawConfig: KiraPluginConfig = {}): KiraContr
   )
   ctx.on(
     'agent/created',
-    (async (payload: { agent?: object }) => {
-      controller.clearTurnTaint(payload.agent)
+    (async () => {
+      // A new agent (a child, a fork) inherits the session's taint by sharing it; creating one clears nothing.
       await controller.ensureSlotsLoaded()
     }) as never,
     globalOnly,

@@ -45,8 +45,16 @@ export const PRIVACY_CLASSES = ['builders', 'public', 'local'] as const
  * DELEGATION_TOOL_NAMES).
  */
 export function isTaintingTool(name: string): boolean {
-  return name === 'web_fetch' || name === 'web_search' || name.startsWith('mcp__') || isDelegationTool(name)
+  return name === 'web_fetch' || name === 'web_search' || name.startsWith('mcp__') || isDelegationTool(name) || SESSION_HISTORY_TOOL_NAMES.includes(name)
 }
+
+/**
+ * Tools that read the session's own history. A turn that never fetched anything can still surface a `web_fetch` result
+ * from an earlier turn through them, so they taint like the tool that produced it (Argon RT-6).
+ */
+export const SESSION_HISTORY_TOOL_NAMES: readonly string[] = [
+  'session_search', 'session_event_search', 'session_trace', 'session_event_trace', 'session_event_read',
+]
 
 /**
  * The remember tool, and `memory_remember`: the Rust door no longer forwards `memory_*` (DSH 0.2.1-alpha.5 registers
