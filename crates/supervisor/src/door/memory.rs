@@ -139,6 +139,16 @@ mod tests {
     }
 
     #[test]
+    fn the_closed_lanes_are_the_same_in_the_door_laya_and_the_engines_kira_plugin() {
+        let mut door: Vec<String> = CLOSED_LANES.iter().map(|lane| (*lane).to_owned()).collect();
+        door.sort();
+        let mut laya: Vec<String> = laya::crossing::CLOSED_LANES.iter().map(|lane| (*lane).to_owned()).collect();
+        laya.sort();
+        assert_eq!(door, laya);
+        assert_eq!(door, super::super::classify::ts_strings("engine/plugins/aukora-kira/src/kira.ts", "CLOSED_LANES"));
+    }
+
+    #[test]
     fn only_the_engines_five_methods_exist() {
         // Every tool engine/plugins/aukora-kira registers is forwarded (KIRA_TOOL_NAMES in its src/tools.ts).
         for (tool, forwarded) in [("kira_recall", "recall"), ("kira_remember", "remember"), ("kira_get", "get"),

@@ -232,6 +232,22 @@ pub fn settle(claimed: &str, derived: Derived) -> Result<Class, &'static str> {
     }
 }
 
+/// The quoted strings of one `const NAME = [..]` / `new Set([..])` list in a TypeScript file of this repository,
+/// sorted (line comments dropped first). For the tests that keep the Rust and TypeScript tables in step.
+#[cfg(test)]
+pub(super) fn ts_strings(repo_path: &str, name: &str) -> Vec<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(repo_path);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("{repo_path} is not readable"));
+    let start = text.find(&format!("const {name} =")).unwrap_or_else(|| panic!("{name} not found in {repo_path}"));
+    let code: String = text[start..].lines().map(|line| line.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+    let open = code.find('[').expect("a list") + 1;
+    let list = &code[open..open + code[open..].find(']').expect("a closed list")];
+    let mut found: Vec<String> = list.split('\'').skip(1).step_by(2).map(str::to_owned).collect();
+    found.sort();
+    assert!(!found.is_empty(), "{name} is empty");
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +258,22 @@ mod tests {
     }
     fn roots() -> Vec<String> {
         vec!["/sandbox".to_owned()]
+    }
+
+    #[test]
+    fn the_typescript_tables_name_exactly_the_tools_and_path_keys_this_table_does() {
+        // A tool the plugin calls local that this table calls a crossing never reaches the door at all, so the lists
+        // must not drift apart in either direction (the prefix rules are tested on each side).
+        let ts = |name: &str| ts_strings("engine/plugins/aukora-door/src/classify.ts", name);
+        let sorted = |items: &[&str]| {
+            let mut items: Vec<String> = items.iter().map(|item| (*item).to_owned()).collect();
+            items.sort();
+            items
+        };
+        assert_eq!(ts("FILE_TOOLS"), sorted(&FILE_TOOLS));
+        assert_eq!(ts("EXEC_TOOLS"), sorted(&EXEC_TOOLS));
+        assert_eq!(ts("SESSION_TOOLS"), sorted(&SESSION_TOOLS));
+        assert_eq!(ts("PATH_KEYS"), sorted(&PATH_KEYS));
     }
 
     #[test]
