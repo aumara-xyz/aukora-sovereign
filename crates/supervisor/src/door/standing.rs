@@ -12,6 +12,12 @@
 //! call. A missing slider policy file means the shipped starter ("only risky things"); a missing grants file means no
 //! grants (so nothing clears); an unreadable one fails closed to the same. Counts are durable: a clear is written to
 //! `autoclear.jsonl` and synced before the call runs, so a crash can lose a run and never gives back a count.
+//!
+//! The log fails closed. A failed append or sync that cannot be taken back (the log cut back to the last acknowledged
+//! length and synced) stops every auto-clear until a later call manages that; a line at open that does not parse is
+//! never skipped: it is replaced by a durable "void" line, and nothing auto-clears for the rest of that UTC day (the
+//! allowance is treated as spent), because a lost count could otherwise let more clear than the owner allowed. The
+//! state folder is synced after the log is created and after a compaction renames it into place, before any crossing.
 //! A policy without a `standing` section behaves exactly as before.
 
 use super::classify::Class;
@@ -23,8 +29,9 @@ use super::{memory, refuse, Door};
 use canon::json::{Value, ValueView};
 use canon::Result;
 use laya::{slider, Crossing, CrossingClass, Floor, GrantSet, SliderPolicy, SliderSetting, Usage};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,6 +40,8 @@ const MAX_FILE: u64 = 128 << 10;
 /// The counts log stops clearing past this size (calls ask instead) until a restart compacts it to today's lines.
 const LOG_MAX: u64 = 4 << 20;
 const DAY_MS: i64 = 86_400_000;
+/// The `void` member of a log line that says the log was unreadable on its day: that day's allowance is spent.
+const VOID: &str = "unreadable-log";
 
 /// What a file looked like when it was read: a change in any of it means read it again.
 type Stamp = Option<(u64, i64, i64, u64)>;
@@ -50,10 +59,63 @@ struct Loaded {
     grants: GrantSet,
 }
 
+/// The counts log file. In tests it can be made to tear an append or refuse to be cut back, as a failing disk would.
+struct Log {
+    file: File,
+    #[cfg(test)]
+    fault: Fault,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+struct Fault {
+    /// The next append writes half its bytes and fails.
+    tear_append: bool,
+    /// Cutting the log back fails.
+    refuse_cut: bool,
+}
+
+impl Log {
+    fn new(file: File) -> Self {
+        Self {
+            file,
+            #[cfg(test)]
+            fault: Fault::default(),
+        }
+    }
+
+    /// Append one line and sync it.
+    fn append(&mut self, line: &[u8]) -> std::io::Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fault.tear_append) {
+            self.file.write_all(&line[..line.len() / 2])?;
+            return Err(std::io::Error::other("torn append"));
+        }
+        self.file.write_all(line).and_then(|()| self.file.sync_data())
+    }
+
+    /// Cut the log back to `length` bytes, sync it and check it is that long: the one way a failed append is undone.
+    fn cut_to(&mut self, length: u64) -> bool {
+        #[cfg(test)]
+        if self.fault.refuse_cut {
+            return false;
+        }
+        self.file.set_len(length).and_then(|()| self.file.sync_all()).is_ok() && self.file.metadata().is_ok_and(|meta| meta.len() == length)
+    }
+}
+
 struct Counts {
     usage: Usage,
-    log: File,
+    log: Log,
     bytes: u64,
+    /// The UTC day of the newest line in the log (0 when empty): a later day starts the log afresh.
+    log_day: i64,
+    /// An append or sync failed and the log could not be cut back to `bytes` (the last acknowledged length) and synced,
+    /// so it may end in a torn line. Nothing auto-clears until a later call manages the cut.
+    dirty: bool,
+    /// The log held something that could not be read on this UTC day (or a day ahead of the clock): the allowance is
+    /// treated as spent through that day.
+    void_through: Option<i64>,
     /// The latest instant the slider has seen, so a clock that steps back (or a call that sampled the time before it
     /// waited for the lock) cannot revive an expired grant or move today's counts back a day.
     last_ms: i64,
@@ -79,6 +141,30 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
+/// One line of the counts log.
+enum Event {
+    /// A clear, spent against a grant.
+    Count { at: i64, class: CrossingClass, grant: canon::digest::Digest32 },
+    /// The log was unreadable on this line's day.
+    Void { at: i64 },
+}
+
+fn parse_event(line: &str) -> Option<Event> {
+    let event: serde_json::Value = serde_json::from_str(line).ok()?;
+    let at = event["at_ms"].as_i64()?;
+    if !event["void"].is_null() {
+        return (event["void"].as_str() == Some(VOID)).then_some(Event::Void { at });
+    }
+    let class = CrossingClass::from_wire(event["class"].as_str()?)?;
+    let grant = canon::digest::Digest32::from_hex(event["grant"].as_str()?).ok()?;
+    Some(Event::Count { at, class, grant })
+}
+
+/// Make a directory's entries durable (a created or renamed file survives a crash).
+fn sync_dir(dir: &Path) -> Result<()> {
+    File::open(dir).and_then(|handle| handle.sync_all()).map_err(|_| refuse("door-state"))
+}
+
 fn read_text(path: &Path) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     files::open_trusted(path, MAX_FILE, 0o022, "door-standing").ok()?.read_to_end(&mut bytes).ok()?;
@@ -89,34 +175,66 @@ impl Standing {
     pub fn open(files: &StandingFiles, state_dir: &Path) -> Result<Self> {
         let path = state_dir.join("autoclear.jsonl");
         let mut log = open_append(&path)?;
-        let mut text = String::new();
-        log.read_to_string(&mut text).map_err(|_| refuse("door-state"))?;
-        let today = slider::day_of(now_ms());
+        let mut raw = Vec::new();
+        log.read_to_end(&mut raw).map_err(|_| refuse("door-state"))?;
+        // Bytes that are not text cannot parse as a line either, so they end up in the "unreadable" branch below.
+        let text = String::from_utf8_lossy(&raw);
+        let now = now_ms();
+        let today = slider::day_of(now);
         let mut usage = Usage::default();
         let mut last_ms = 0;
         let mut kept = String::new();
+        // A line that does not parse (a torn write, a glued one, an edit) may have been an executed count, so it is
+        // never skipped: it makes today's allowance spent, and is replaced by a durable void line.
+        let mut ambiguous = false;
+        let mut void_today = false;
         for line in text.lines() {
-            // A line that does not parse is dropped: it can only lose a count, which makes the door ask less often at
-            // worst by the lines of a torn write, never grant anything.
-            let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-            let (Some(at), Some(class), Some(grant)) = (event["at_ms"].as_i64(), event["class"].as_str(), event["grant"].as_str()) else { continue };
-            let (Some(class), Ok(grant)) = (CrossingClass::from_wire(class), canon::digest::Digest32::from_hex(grant)) else { continue };
-            if slider::day_of(at) == today {
-                last_ms = last_ms.max(at);
-                usage.record(class, grant, at);
-                kept.push_str(line);
-                kept.push('\n');
+            match parse_event(line) {
+                None => ambiguous = true,
+                Some(Event::Count { at, class, grant }) => {
+                    let day = slider::day_of(at);
+                    if day == today {
+                        last_ms = last_ms.max(at);
+                        usage.record(class, grant, at);
+                    } else if day > today {
+                        // Ahead of the clock: keep the line, and do not trust today.
+                        ambiguous = true;
+                    }
+                    if day >= today {
+                        kept.push_str(line);
+                        kept.push('\n');
+                    }
+                }
+                Some(Event::Void { at }) => {
+                    let day = slider::day_of(at);
+                    void_today |= day == today;
+                    ambiguous |= day > today;
+                    if day >= today {
+                        last_ms = last_ms.max(at);
+                        kept.push_str(line);
+                        kept.push('\n');
+                    }
+                }
             }
+        }
+        if ambiguous && !void_today {
+            let at = now.max(last_ms);
+            last_ms = at;
+            kept.push_str(&format!("{}\n", serde_json::json!({"at_ms": at, "void": VOID})));
         }
         // Compact to today's lines (atomically) so the log stays small and a restart gives back nothing.
         if kept.len() != text.len() {
             let tmp = state_dir.join("autoclear.jsonl.tmp");
-            let mut file = File::create(&tmp).map_err(|_| refuse("door-state"))?;
+            let mut file = OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).map_err(|_| refuse("door-state"))?;
             file.write_all(kept.as_bytes()).and_then(|()| file.sync_all()).map_err(|_| refuse("door-state"))?;
             std::fs::rename(&tmp, &path).map_err(|_| refuse("door-state"))?;
             log = open_append(&path)?;
         }
-        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(Counts { usage, log, bytes: kept.len() as u64, last_ms }) })
+        // The log's directory entry (new, or just renamed over the old one) is durable before any crossing is accepted.
+        sync_dir(state_dir)?;
+        let void_through = (ambiguous || void_today).then_some(today.max(slider::day_of(last_ms)));
+        let counts = Counts { usage, log: Log::new(log), bytes: kept.len() as u64, log_day: slider::day_of(last_ms), dirty: false, void_through, last_ms };
+        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(counts) })
     }
 
     fn load(&self, policy_stamp: Stamp, grants_stamp: Stamp) -> Loaded {
@@ -141,6 +259,13 @@ impl Standing {
         (loaded.policy.clone(), loaded.grants.clone())
     }
 
+    /// Cut the log back to its last acknowledged length. Only when that is done and checked is it trusted again.
+    fn recover(counts: &mut Counts) -> bool {
+        let length = counts.bytes;
+        counts.dirty = !counts.log.cut_to(length);
+        !counts.dirty
+    }
+
     /// Decide one crossing. On a clear the count is appended and synced before this returns; `preflight` (the door's
     /// own checks) runs first so a call the door would refuse spends nothing.
     pub fn settle(&self, crossing: &Crossing, now: i64, preflight: impl FnOnce() -> std::result::Result<(), String>) -> Settled {
@@ -150,22 +275,32 @@ impl Standing {
         counts.last_ms = now;
         // A new day starts the log afresh: yesterday's lines are not needed and, under `trusted` (no count to run out),
         // would only grow toward the size at which nothing clears any more.
-        if slider::day_of(now) > counts.usage.day() && counts.log.set_len(0).is_ok() {
+        if slider::day_of(now) > counts.log_day && counts.log.file.set_len(0).is_ok() {
             counts.bytes = 0;
+            counts.log_day = slider::day_of(now);
         }
         let decision = slider::judge(&policy, &grants, &counts.usage, crossing, now);
         let (Floor::AutoClear, Some(grant)) = (decision.floor, decision.grant) else { return Settled::Ask };
         if let Err(code) = preflight() {
             return Settled::Refuse(code);
         }
+        // Everything asks while the log cannot be trusted: it held a line nobody could read today, or an append left it
+        // possibly torn and it has not been cut back yet.
+        if counts.void_through.is_some_and(|day| slider::day_of(now) <= day) {
+            return Settled::Ask;
+        }
+        if counts.dirty && !Self::recover(&mut counts) {
+            return Settled::Ask;
+        }
         let line = format!("{}\n", serde_json::json!({"at_ms": now, "class": crossing.class.wire_name(), "grant": grant.to_string()}));
         if counts.bytes + line.len() as u64 > LOG_MAX {
             return Settled::Ask;
         }
-        if counts.log.write_all(line.as_bytes()).and_then(|()| counts.log.sync_data()).is_err() {
-            // Take back a torn line so the next one does not glue onto it (and a restart does not read it as a count).
-            let length = counts.bytes;
-            let _ = counts.log.set_len(length);
+        if counts.log.append(line.as_bytes()).is_err() {
+            // The line may be on disk in part or whole. Whatever it is, this call asks; and until the log is cut back to
+            // the last acknowledged length the next line would glue onto the torn one and a restart could not read it.
+            counts.dirty = true;
+            Self::recover(&mut counts);
             return Settled::Ask;
         }
         counts.bytes += line.len() as u64;
@@ -490,16 +625,149 @@ mod tests {
         let _ = std::fs::remove_dir_all(broken);
     }
 
+    fn count_line(at: i64, grant: &canon::digest::Digest32) -> String {
+        format!("{}\n", serde_json::json!({"at_ms": at, "class": "memory", "grant": grant.to_string()}))
+    }
+
     #[test]
     fn old_days_are_dropped_when_the_log_is_opened() {
         let dir = temp("compact");
         let id = canon::digest::Digest32::sha256(b"g");
         let old = now_ms() - 3 * DAY_MS;
         let today = now_ms();
-        let line = |at: i64| format!("{}\n", serde_json::json!({"at_ms": at, "class": "memory", "grant": id.to_string()}));
-        write_private(&dir.join("autoclear.jsonl"), format!("{}{}torn", line(old), line(today)).as_bytes());
+        write_private(&dir.join("autoclear.jsonl"), format!("{}{}", count_line(old, &id), count_line(today, &id)).as_bytes());
         let _standing = open_standing(&dir, None, None);
-        assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap(), line(today));
+        assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap(), count_line(today, &id));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_line_that_cannot_be_read_is_never_skipped_it_spends_the_day() {
+        // The review's scenario: a torn append, then a good one glued onto it. The glued line parses as nothing, and the
+        // count it carried was an executed clear. Opening must not shrug it off: nothing auto-clears for the rest of the
+        // day, however many the grant still allows, and a second restart does not forget.
+        let dir = temp("unreadable");
+        let (grants, id) = grant_file(&dir, CrossingClass::Memory, &["read"], 5);
+        let now = now_ms();
+        let glued = format!("{{\"at_ms\":{now},\"class\":\"mem{}", count_line(now, &id));
+        write_private(&dir.join("autoclear.jsonl"), format!("{}{glued}", count_line(now, &id)).as_bytes());
+        let standing = open_standing(&dir, Some(grants.clone()), None);
+        assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+        // The unreadable line is gone from the file, replaced by a line that says so, and the readable count stays.
+        let log = std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap();
+        assert_eq!(log.lines().count(), 2, "{log}");
+        assert_eq!(log.lines().next().unwrap(), count_line(now, &id).trim_end());
+        assert!(log.lines().nth(1).unwrap().contains("\"void\""), "{log}");
+        drop(standing);
+        let again = open_standing(&dir, Some(grants.clone()), None);
+        assert!(matches!(again.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+        assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap(), log, "a second restart rewrites nothing");
+        // A torn last line (a crash mid-append) is the same: it may have been a count.
+        let torn = temp("unreadable-torn");
+        let (grants, id) = grant_file(&torn, CrossingClass::Memory, &["read"], 5);
+        write_private(&torn.join("autoclear.jsonl"), format!("{}{{\"at_ms\":", count_line(now, &id)).as_bytes());
+        let after_crash = open_standing(&torn, Some(grants), None);
+        assert!(matches!(after_crash.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+        let log = std::fs::read_to_string(torn.join("autoclear.jsonl")).unwrap();
+        assert!(log.lines().all(|line| parse_event(line).is_some()), "{log}");
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(torn);
+    }
+
+    #[test]
+    fn a_void_day_ends_with_the_day() {
+        let dir = temp("void-day");
+        let day = |n: i64| n * DAY_MS + 1_000;
+        let grant = DoorGrant {
+            class: CrossingClass::Memory,
+            scope: vec!["read".to_owned()],
+            per_day: 5,
+            not_before: day(40) - 1_000,
+            expires_at: day(40) + 3 * DAY_MS,
+            nonce: canon::ids::ProposalId::from_bytes([9; 16]),
+        };
+        let path = dir.join("grants.json");
+        write_private(&path, &GrantSet::default().with_grant(grant).unwrap().canonical_bytes().unwrap());
+        let standing = open_standing(&dir, Some(path), None);
+        // Force a void through "day 40" as an unreadable log would have.
+        {
+            let mut counts = standing.counts.lock().unwrap();
+            counts.void_through = Some(40);
+        }
+        assert!(matches!(standing.settle(&read_crossing(), day(40), || Ok(())), Settled::Ask));
+        assert!(matches!(standing.settle(&read_crossing(), day(41), || Ok(())), Settled::Clear));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn fault(standing: &Standing, set: impl FnOnce(&mut Fault)) {
+        set(&mut standing.counts.lock().unwrap().log.fault);
+    }
+
+    #[test]
+    fn a_failed_append_that_cannot_be_cut_back_stops_every_clear_until_it_can() {
+        // The review's scenario: an append writes part of a line and fails (disk full), and cutting the log back fails
+        // too. The old code carried on, so the next good line glued onto the torn one and a restart lost its count.
+        let dir = temp("torn");
+        let (grants, id) = grant_file(&dir, CrossingClass::Memory, &["read"], 2);
+        let standing = open_standing(&dir, Some(grants.clone()), None);
+        let now = now_ms();
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Clear));
+        fault(&standing, |f| *f = Fault { tear_append: true, refuse_cut: true });
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        let torn = std::fs::read(dir.join("autoclear.jsonl")).unwrap();
+        assert!(!torn.ends_with(b"\n"), "the disk holds a torn line");
+        // Space is back (nothing tears any more) but the log still cannot be cut back: everything asks, nothing is written.
+        fault(&standing, |f| f.tear_append = false);
+        for _ in 0..3 {
+            assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        }
+        assert_eq!(std::fs::read(dir.join("autoclear.jsonl")).unwrap(), torn);
+        // The cut works again: the torn line goes, the log is clean, and the one count left clears.
+        fault(&standing, |f| f.refuse_cut = false);
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Clear));
+        let log = std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap();
+        assert_eq!(log, format!("{0}{0}", count_line(now, &id)));
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        // Both executed clears are counted after a restart: the allowance of two is spent, not given back.
+        drop(standing);
+        let again = open_standing(&dir, Some(grants), None);
+        assert!(matches!(again.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_torn_line_left_on_disk_by_a_failed_cut_makes_the_next_start_ask_for_the_day() {
+        let dir = temp("torn-restart");
+        let (grants, _) = grant_file(&dir, CrossingClass::Memory, &["read"], 5);
+        let standing = open_standing(&dir, Some(grants.clone()), None);
+        let now = now_ms();
+        fault(&standing, |f| *f = Fault { tear_append: true, refuse_cut: true });
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        drop(standing);
+        let again = open_standing(&dir, Some(grants), None);
+        assert!(matches!(again.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_append_that_is_cut_back_at_once_costs_one_ask_and_nothing_else() {
+        let dir = temp("torn-cut");
+        let (grants, id) = grant_file(&dir, CrossingClass::Memory, &["read"], 5);
+        let standing = open_standing(&dir, Some(grants), None);
+        let now = now_ms();
+        fault(&standing, |f| f.tear_append = true);
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Ask));
+        assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap(), "");
+        assert!(matches!(standing.settle(&read_crossing(), now, || Ok(())), Settled::Clear));
+        assert_eq!(std::fs::read_to_string(dir.join("autoclear.jsonl")).unwrap(), count_line(now, &id));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_state_folder_is_synced_and_a_folder_that_cannot_be_is_refused() {
+        let dir = temp("sync");
+        assert!(sync_dir(&dir).is_ok());
+        assert!(sync_dir(&dir.join("missing")).is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 

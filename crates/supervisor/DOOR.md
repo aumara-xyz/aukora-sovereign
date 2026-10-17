@@ -141,7 +141,10 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
   the shipped starter (`crates/laya/data/starter-slider-v1.json`, "only risky things", pinned by sha256); a bad policy
   file means "ask for everything"; a missing or bad grants file means no grants. Counts are appended to
   `autoclear.jsonl` (synced before the call runs; compacted to today's lines at start and emptied when the UTC day turns;
-  past 4 MiB nothing clears). The slider's clock never goes backwards: an instant earlier than one already seen is read as
+  past 4 MiB nothing clears). The log fails closed: if an append fails and the log cannot be cut back to its last
+  acknowledged length (and synced), nothing clears until it can; a line at start that does not parse is never skipped, it
+  is replaced by a `void` line and nothing clears for the rest of that UTC day; the state folder is synced after the log is
+  created or compacted, before any call is judged. The slider's clock never goes backwards: an instant earlier than one already seen is read as
   the later one, so a clock step back cannot revive an expired grant or move today's counts to yesterday.
 - Not done: the node does not yet read the grants from the applied gate target; the installer writes the two files.
 
