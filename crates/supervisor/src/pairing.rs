@@ -188,8 +188,32 @@ impl Pairing {
         self.store.lock().map_err(|_| refuse("store"))
     }
 
+    /// Records the Aura facts of spent pairings that are still pending, at most 64 per call.
+    /// Returns how many this call recorded and how many are still pending. Run at boot, on
+    /// every start and every device-list read, so a fact that failed once is recorded
+    /// without anyone polling its pairing id again.
+    pub fn settle_pending(&self, recorder: &dyn FactRecorder) -> Result<(usize, usize)> {
+        let store = self.lock()?;
+        let mut recorded = 0;
+        for id in store.pending_facts(64)? {
+            if let Some(row) = store.by_id(&id)? {
+                if self.settle(&store, row, recorder)?.aura_sequence.is_some() {
+                    recorded += 1;
+                }
+            }
+        }
+        Ok((recorded, store.pending_count()?))
+    }
+
+    fn sweep(&self, recorder: &dyn FactRecorder) {
+        if let Err(refusal) = self.settle_pending(recorder) {
+            eprintln!("copresence: pending facts not swept: {}:{}", refusal.organ, refusal.reason);
+        }
+    }
+
     /// A bound owner session starts a pairing for the device it runs on.
-    pub fn start(&self, owner: &Owner, initiator_key: &str, now_ms: u64) -> Result<Value> {
+    pub fn start(&self, owner: &Owner, initiator_key: &str, now_ms: u64, recorder: &dyn FactRecorder) -> Result<Value> {
+        self.sweep(recorder);
         let key = device_key(initiator_key)?;
         let id = hex::encode(random::<16>()?);
         let (join, join_digest) = new_token(JOIN_DOMAIN)?;
@@ -494,7 +518,8 @@ impl Pairing {
     }
 
     /// Every device this owner has paired, for the Sovereignty app's device list.
-    pub fn devices(&self, owner: &SubjectId) -> Result<Value> {
+    pub fn devices(&self, owner: &SubjectId, recorder: &dyn FactRecorder) -> Result<Value> {
+        self.sweep(recorder);
         let rows = self.lock()?.devices(&owner.to_string())?;
         let mut devices = Vec::new();
         for row in rows {

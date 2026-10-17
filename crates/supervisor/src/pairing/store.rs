@@ -395,6 +395,33 @@ impl Store {
         transaction.commit().map_err(sql)
     }
 
+    /// Spent pairings whose Aura fact is not yet recorded, oldest first.
+    pub fn pending_facts(&self, limit: usize) -> Result<Vec<String>> {
+        let mut statement = self
+            .db
+            .prepare(
+                "SELECT id FROM pairings WHERE state='spent' AND aura_sequence IS NULL AND fact IS NOT NULL
+                 ORDER BY created_ms,id LIMIT ?1",
+            )
+            .map_err(sql)?;
+        let rows = statement
+            .query_map([i64::try_from(limit).map_err(|_| refuse("store-integer"))?], |row| row.get(0))
+            .map_err(sql)?;
+        rows.collect::<rusqlite::Result<Vec<String>>>().map_err(sql)
+    }
+
+    pub fn pending_count(&self) -> Result<usize> {
+        let count: i64 = self
+            .db
+            .query_row(
+                "SELECT count(*) FROM pairings WHERE state='spent' AND aura_sequence IS NULL AND fact IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sql)?;
+        usize::try_from(count).map_err(|_| refuse("store-integer"))
+    }
+
     /// Persists the Aura sequence the fact search starts after; the first value stays.
     pub fn set_floor(&self, id: &str, floor: u64) -> Result<u64> {
         self.db

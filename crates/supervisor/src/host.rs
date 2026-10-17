@@ -265,6 +265,9 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     .map_err(|refusal| eprintln!("copresence: pairing unavailable: {}:{}", refusal.organ, refusal.reason))
     .ok()
     .map(Arc::new);
+    if let Some(pairing) = &pairing {
+        pairing_routes::sweep_at_boot(pairing, &ledger);
+    }
     let host = Arc::new(Host {
         pairing,
         identity,

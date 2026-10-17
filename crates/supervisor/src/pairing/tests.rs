@@ -183,7 +183,7 @@ fn receipt(node: NodeId, purpose: &str, a: &Device, b: &Device, t_a: u64, t_b: u
 
 /// Start, join and read the pinned context back: (pairing id, phone bearer, context).
 fn joined(world: &World, owner: &Device, phone: &Device) -> (String, String, String) {
-    let started = world.pairing.start(&world.owner, &owner.hex(), T0).unwrap();
+    let started = world.pairing.start(&world.owner, &owner.hex(), T0, &world.facts).unwrap();
     let id = text_of(&started, "pairing");
     let join = text_of(&started, "join");
     assert_eq!(text_of(&started, "joinPath"), format!("/pair#j={join}"));
@@ -248,13 +248,13 @@ fn verified_receipt_spends_once_records_devices_and_one_fact() {
     assert_eq!(text_of(&phone_view, "state"), "spent");
     assert_eq!(text_of(field(&phone_view, "verdict"), "receipt"), text_of(&verdict, "receipt"));
     // The device list holds both keys for the owner and nothing for anyone else.
-    let devices = world.pairing.devices(&world.owner.subject).unwrap();
+    let devices = world.pairing.devices(&world.owner.subject, &world.facts).unwrap();
     let ValueView::Array(list) = field(&devices, "devices").view() else { panic!() };
     assert_eq!(list.len(), 2);
     let roles: Vec<String> = list.iter().map(|row| text_of(row, "role")).collect();
     assert_eq!(roles, ["initiator", "joiner"]);
     let stranger = SubjectId::from_digest(Digest32::from_bytes([1; 32]));
-    let none = world.pairing.devices(&stranger).unwrap();
+    let none = world.pairing.devices(&stranger, &world.facts).unwrap();
     assert!(matches!(field(&none, "devices").view(), ValueView::Array(rows) if rows.is_empty()));
 }
 
@@ -268,7 +268,7 @@ fn a_second_pairing_of_the_same_phone_updates_the_device_row() {
         let bytes = receipt(world.node, &context, &owner, &phone, now / 1000 - 1, now / 1000);
         world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
     }
-    let devices = world.pairing.devices(&world.owner.subject).unwrap();
+    let devices = world.pairing.devices(&world.owner.subject, &world.facts).unwrap();
     let ValueView::Array(list) = field(&devices, "devices").view() else { panic!() };
     assert_eq!(list.len(), 2);
     assert!(matches!(field(&list[1], "pairings").view(), ValueView::Integer(n) if n.get() == 2));
@@ -328,12 +328,12 @@ fn attempts_are_bounded_per_pairing_but_a_new_start_always_works() {
 fn join_tokens_are_single_use_and_expire() {
     let world = world();
     let (owner, phone, other) = (Device::new(1), Device::new(2), Device::new(3));
-    let started = world.pairing.start(&world.owner, &owner.hex(), T0).unwrap();
+    let started = world.pairing.start(&world.owner, &owner.hex(), T0, &world.facts).unwrap();
     let join = text_of(&started, "join");
     assert_eq!(world.pairing.join(&join, &owner.hex(), T0).unwrap_err().reason, "same-device");
     world.pairing.join(&join, &phone.hex(), T0).unwrap();
     assert_eq!(world.pairing.join(&join, &other.hex(), T0).unwrap_err().reason, "join-used");
-    let started = world.pairing.start(&world.owner, &owner.hex(), T0).unwrap();
+    let started = world.pairing.start(&world.owner, &owner.hex(), T0, &world.facts).unwrap();
     let late = world.pairing.join(&text_of(&started, "join"), &phone.hex(), T0 + PAIRING_LIFETIME_MS);
     assert_eq!(late.unwrap_err().reason, "pairing-expired");
     assert_eq!(world.pairing.join("x", &phone.hex(), T0).unwrap_err().reason, "token-invalid");
@@ -441,4 +441,43 @@ fn the_search_floor_is_stored_before_any_append_and_kept() {
     world.facts.others.set(100);
     world.pairing.owner_status(&world.owner, &id, now, &world.facts).unwrap();
     assert_eq!(*world.facts.since.borrow(), vec![100, 100]);
+}
+
+#[test]
+fn a_pending_fact_is_recorded_by_the_next_start_device_list_or_boot_without_its_id() {
+    let world = world();
+    let (owner, phone) = (Device::new(1), Device::new(2));
+    let now = T0 + 20_000;
+    // Three pairings spent while Aura refuses; nobody polls their ids again.
+    for _ in 0..3 {
+        let (id, _, context) = joined(&world, &owner, &phone);
+        let bytes = receipt(world.node, &context, &owner, &phone, now / 1000 - 1, now / 1000);
+        world.facts.fail.set(true);
+        world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
+        world.facts.fail.set(false);
+    }
+    // joined() starts pairings, so two of the three were already swept by the next start.
+    assert_eq!(world.facts.rows.borrow().len(), 2);
+    // A device-list read records the last one.
+    world.facts.fail.set(false);
+    world.pairing.devices(&world.owner.subject, &world.facts).unwrap();
+    assert_eq!(world.facts.rows.borrow().len(), 3);
+    assert_eq!(world.pairing.settle_pending(&world.facts).unwrap(), (0, 0));
+}
+
+#[test]
+fn the_boot_sweep_records_what_a_crash_left_pending() {
+    let world = world();
+    let (owner, phone) = (Device::new(1), Device::new(2));
+    let (id, _, context) = joined(&world, &owner, &phone);
+    let now = T0 + 20_000;
+    let bytes = receipt(world.node, &context, &owner, &phone, now / 1000 - 1, now / 1000);
+    world.facts.fail.set(true);
+    world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
+    assert_eq!(world.pairing.settle_pending(&world.facts).unwrap(), (0, 1));
+    world.facts.fail.set(false);
+    let reopened = Pairing::open(&world._dir.0.join("pairing.sqlite3"), world.node, "https://owner.example.org").unwrap();
+    assert_eq!(reopened.settle_pending(&world.facts).unwrap(), (1, 0));
+    assert_eq!(reopened.settle_pending(&world.facts).unwrap(), (0, 0));
+    assert_eq!(world.facts.rows.borrow().len(), 1);
 }

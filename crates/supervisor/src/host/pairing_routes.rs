@@ -23,31 +23,23 @@ use supervisor::ingress::{BindingState, PrincipalScope};
 /// `copresence` and whose body schema is `aukora:copresence-pairing:v1`.
 pub(super) struct AuraFacts<'a>(pub &'a HostLedger);
 
-/// Bound on records searched for an earlier copy of a fact; a longer gap stays pending.
-const MAX_FACT_SCAN: u64 = 65_536;
-
 /// Inside one Aura transaction: the copresence fact for `body.receipt` committed after
 /// `since`, or a new one appended now. The lookup and the append share the writer lock,
-/// so a retry after a crash finds the earlier commit instead of appending twice.
+/// so a retry after a crash finds the earlier commit instead of appending twice. The
+/// lookup reads only copresence fact rows (an index read, one row per pairing), so it
+/// has no record-count cap and a pending fact can always be recorded later.
 pub(super) fn append_once(txn: &mut aura::LedgerTxn<'_>, body: &Value, since: u64) -> Result<Recorded> {
     let receipt = body.get("receipt").ok_or(codes::FRONTDOOR_BODY_INVALID)?;
-    let next = txn.current_version()?.sequence;
-    if next.saturating_sub(since) > MAX_FACT_SCAN {
-        return Err(canon::Refusal {
-            organ: "copresence",
-            reason: "fact-scan",
-        });
-    }
-    for sequence in since.saturating_add(1)..next {
-        let Some(record) = txn.floor_record_at_sequence(sequence)? else {
-            continue;
-        };
+    for sequence in txn.fact_sequences_after("boot.facts", "copresence", since)? {
+        let record = txn
+            .floor_record_at_sequence(sequence)?
+            .ok_or(codes::AURA_UNVERIFIED)?;
         if record.kind != Kind::BootFacts
             || record.phase != Phase::Fact
             || record.operation.is_some()
             || record.actor != "copresence"
         {
-            continue;
+            return Err(codes::AURA_UNVERIFIED);
         }
         let payload = aura::record::AuthorityBodyV1::parse(&record.body)?.payload;
         if matches!(payload.get("schema").map(Value::view), Some(ValueView::Text(FACT_SCHEMA)))
@@ -81,13 +73,30 @@ impl FactRecorder for AuraFacts<'_> {
             .transaction(|txn| Ok(txn.current_version()?.sequence.saturating_sub(1)))
     }
 
-    fn record(&self, subject: &SubjectId, body: &Value, since: u64) -> Result<Recorded> {
-        self.0.transaction(|txn| {
-            if txn.gate_owner_subject()? != *subject {
-                return Err(codes::AUMLOK_BINDING_REQUIRED);
+    // The fact names its owner and epoch; it was verified under that bound owner's session.
+    // A later rebinding must not leave it unrecordable, so there is no current-owner check.
+    fn record(&self, _subject: &SubjectId, body: &Value, since: u64) -> Result<Recorded> {
+        self.0.transaction(|txn| append_once(txn, body, since))
+    }
+}
+
+/// Pairing facts left pending by a crash or an Aura refusal are recorded at boot, 64 at a
+/// time, until none are left or a pass makes no progress.
+pub(super) fn sweep_at_boot(pairing: &crate::pairing::Pairing, ledger: &HostLedger) {
+    let facts = AuraFacts(ledger);
+    loop {
+        match pairing.settle_pending(&facts) {
+            Ok((_, 0)) => return,
+            Ok((recorded, _)) if recorded > 0 => {}
+            Ok((_, left)) => {
+                eprintln!("copresence: {left} pairing facts still pending");
+                return;
             }
-            append_once(txn, body, since)
-        })
+            Err(refusal) => {
+                eprintln!("copresence: pending facts not swept: {}:{}", refusal.organ, refusal.reason);
+                return;
+            }
+        }
     }
 }
 
@@ -164,7 +173,7 @@ impl Host {
         match route {
             OwnerRoute::PairingStart => {
                 let fields = exact(body, &["deviceKey"])?;
-                pairing.start(&owner, fields[0], at)
+                pairing.start(&owner, fields[0], at, &facts)
             }
             OwnerRoute::PairingStatus => {
                 let fields = exact(body, &["pairing"])?;
@@ -182,7 +191,7 @@ impl Host {
             }
             OwnerRoute::PairingDevices => {
                 exact(body, &[])?;
-                pairing.devices(&subject)
+                pairing.devices(&subject, &facts)
             }
             _ => Err(codes::FRONTDOOR_UNKNOWN_ROUTE),
         }
@@ -237,7 +246,24 @@ mod tests {
         .unwrap();
         let floor = ledger.transaction(|txn| Ok(txn.current_version()?.sequence - 1)).unwrap();
         let first = ledger.transaction(|txn| append_once(txn, &fact("aa"), floor)).unwrap();
-        // Unrelated records arrive, including another receipt's fact.
+        // Unrelated records arrive: another actor's fact (never read by the lookup) and
+        // another receipt's fact.
+        ledger
+            .transaction(|txn| {
+                let context = txn.observation_context()?;
+                txn.append_fact(FactRecord {
+                    v: 1,
+                    algorithm: AlgorithmId::Sha256,
+                    authority: context.authority,
+                    at: context.at,
+                    kind: FactKind::BootFacts,
+                    actor: "supervisor".into(),
+                    body: fact("aa"),
+                })
+            })
+            .unwrap();
+        let only_ours = ledger.transaction(|txn| txn.fact_sequences_after("boot.facts", "copresence", floor)).unwrap();
+        assert_eq!(only_ours, vec![first.sequence]);
         let other = ledger.transaction(|txn| append_once(txn, &fact("bb"), floor)).unwrap();
         assert_ne!(other.sequence, first.sequence);
         for _ in 0..2 {

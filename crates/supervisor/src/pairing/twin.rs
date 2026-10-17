@@ -135,7 +135,7 @@ impl Node {
         };
         let at = now();
         match (request.method.as_str(), request.path.as_str()) {
-            ("POST", "/api/pairing/start") => self.pairing.start(&self.owner, &field(&body, "deviceKey")?, at),
+            ("POST", "/api/pairing/start") => self.pairing.start(&self.owner, &field(&body, "deviceKey")?, at, &self.facts),
             ("POST", "/api/pairing/status") => {
                 self.pairing.owner_status(&self.owner, &field(&body, "pairing")?, at, &self.facts)
             }
@@ -146,7 +146,7 @@ impl Node {
                     .map_err(|_| canon::codes::FRONTDOOR_BODY_INVALID)?;
                 self.pairing.submit(&self.owner, &field(&body, "pairing")?, &receipt, at, &self.facts)
             }
-            ("GET", "/api/pairing/devices") => self.pairing.devices(&self.owner.subject),
+            ("GET", "/api/pairing/devices") => self.pairing.devices(&self.owner.subject, &self.facts),
             ("POST", "/api/pairing/join") => {
                 self.pairing.join(&field(&body, "join")?, &field(&body, "deviceKey")?, at)
             }

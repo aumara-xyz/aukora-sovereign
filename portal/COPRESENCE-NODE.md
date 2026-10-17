@@ -90,7 +90,7 @@ All POSTs pass the frontdoor's same-origin, `sec-fetch-site: same-origin` and JS
 
 The verdict: `{schema, pairing, verdict: "UNDETERMINED", code: null, receipt, devices: {initiator, joiner},
 personNostrKeys: null, recorded: {sequence, entry} | null, evidence}`. `recorded` is null while the Aura fact is
-pending; the next status read retries it.
+pending; the node records it later by itself (below).
 
 ## Serving and walls
 
@@ -120,7 +120,11 @@ One nonauthorizing `boot.facts` row per spent receipt, actor `copresence` (the s
 `aukora:copresence-pairing:v1`: `evidenceOnly`, `pairing`, `node`, `owner`, `ownerEpoch`, `context` (SHA-256 of the
 context bytes), `receipt` (verified core digest), `receiptBytes` (SHA-256), `method`, `tA`, `tB`, `devices`.
 The spend commits first, so a receipt can never be accepted twice; a crash between the spend and the fact leaves the
-fact pending and the next status read appends it. The append is idempotent: before the first attempt the store
+fact pending. Pending facts are swept, 64 at a time, at boot, on every pairing start and on every device-list read
+(and on a status read of that pairing), so nothing waits for anyone to poll the old pairing id. The lookup reads only
+copresence fact rows through an index (`aura::LedgerTxn::fact_sequences_after`), one per pairing, so there is no
+record-count cap that could make a pending fact unrecordable as the ledger grows, and no current-owner check: the
+fact names the owner it was verified under. The append is idempotent: before the first attempt the store
 persists the Aura frontier (`aura_floor`), and each attempt, inside one Aura transaction, first looks for a
 copresence fact with the same `receipt` after that sequence and returns it. A crash after the Aura commit and before
 the store's acknowledgement therefore never yields a second fact (tests: `a_crash_after_the_aura_commit_never_appends_

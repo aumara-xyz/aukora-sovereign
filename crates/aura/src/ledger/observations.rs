@@ -250,3 +250,23 @@ fn number(value: u64) -> Result<Value> {
     let value = i64::try_from(value).map_err(|_| refusal("observation-overflow"))?;
     Ok(Value::integer(SafeInteger::new(value)?))
 }
+
+impl LedgerTxn<'_> {
+    /// Sequences of committed fact rows of `kind` by `actor` after `after`, in order. A plain
+    /// index read: callers authenticate each row they use (`floor_record_at_sequence`).
+    pub fn fact_sequences_after(&self, kind: &str, actor: &str, after: u64) -> Result<Vec<u64>> {
+        self.active()?;
+        let after = i64::try_from(after).map_err(|_| refusal("observation-key"))?;
+        let mut statement = self
+            .transaction
+            .prepare("SELECT seq FROM aura WHERE seq>?1 AND kind=?2 AND actor=?3 AND phase='fact' AND op='' ORDER BY seq")
+            .map_err(sql)?;
+        let rows = statement
+            .query_map(rusqlite::params![after, kind, actor], |row| row.get::<_, i64>(0))
+            .map_err(sql)?;
+        rows.map(|sequence| {
+            u64::try_from(sequence.map_err(sql)?).map_err(|_| refusal("observation-context"))
+        })
+        .collect()
+    }
+}
