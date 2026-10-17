@@ -27,6 +27,13 @@ const RELEASE_UNREADABLE_GRACE: Duration = Duration::from_secs(30);
 /// A floor read that fails is tried again this many times, this far apart, within one tick.
 const RELEASE_RETRIES: u32 = 4;
 const RELEASE_RETRY_GAP: Duration = Duration::from_millis(150);
+/// A failed engine unit is acted on (reset and started again, or cleaned up) no sooner than this after the last try,
+/// doubling each time up to `FAILED_BACKOFF_MAX`: never a tight loop, never given up on (Sonnet sweep C2).
+const FAILED_BACKOFF_MIN: Duration = Duration::from_secs(30);
+const FAILED_BACKOFF_MAX: Duration = Duration::from_secs(600);
+/// The root oneshot that runs `engine-run.sh delete` (removes a sandbox a failed stop left up) and then resets the
+/// engine unit's failed state.
+const CLEANUP_UNIT: &str = "aukora-engine-cleanup.service";
 
 /// What the controller saw this tick.
 pub struct Inputs<'a> {
@@ -93,8 +100,14 @@ pub fn plan(inputs: Inputs<'_>) -> Plan {
 }
 
 async fn systemctl(verb: &str) -> bool {
+    systemctl_unit(verb, UNIT).await
+}
+
+/// `systemctl --no-block VERB UNIT` for the engine unit or its root cleanup unit (the polkit rule allows exactly
+/// start/stop/restart/reset-failed of the engine unit and start of the cleanup unit to this user).
+async fn systemctl_unit(verb: &str, unit: &str) -> bool {
     tokio::process::Command::new("/usr/bin/systemctl")
-        .args(["--no-block", verb, UNIT])
+        .args(["--no-block", verb, unit])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -138,6 +151,16 @@ fn servable(state: &str) -> bool {
 fn withdraw(engine: &Engine) {
     let _ = std::fs::remove_file(engine.config.control_dir.join("admission.json"));
     let _ = std::fs::remove_file(engine.config.control_dir.join("plugin-set.json"));
+}
+
+/// The wait before the next try at a failed unit, after `previous`.
+fn next_backoff(previous: Option<Duration>) -> Duration {
+    previous.map_or(FAILED_BACKOFF_MIN, |wait| (wait * 2).min(FAILED_BACKOFF_MAX))
+}
+
+/// Whether a failed unit is due another try: the first time at once, then after the current wait.
+fn due(last: Option<(Instant, Duration)>) -> bool {
+    last.is_none_or(|(at, wait)| at.elapsed() >= wait)
 }
 
 fn hex(digest: &[u8]) -> String {
@@ -190,6 +213,8 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut started_from: Option<Vec<u8>> = None;
     let mut said_failed = false;
     let mut unreadable_since: Option<Instant> = None;
+    // The last try at a failed unit and the wait before the next (reset + start when admitted, cleanup when not).
+    let mut failed_try: Option<(Instant, Duration)> = None;
     // Nothing from an earlier run admits anything: this run decides afresh (Grok review, part 2 #2 and part 4 #2).
     withdraw(&engine);
     if may_run(&unit_state().await) {
@@ -242,7 +267,23 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
                 }
             }
         }
-        let running = may_run(&state);
+        let mut running = may_run(&state);
+        if state != "failed" {
+            failed_try = None;
+        }
+        if decision.admitted.is_some() && state == "failed" {
+            // Admitted, but the unit failed (a crash loop that hit StartLimitBurst stays failed and refuses a plain
+            // start): reset it, then start it below as if it were stopped, with backoff between tries.
+            if !due(failed_try) {
+                continue;
+            }
+            let wait = next_backoff(failed_try.map(|(_, wait)| wait));
+            failed_try = Some((Instant::now(), wait));
+            eprintln!("engine: the engine unit failed; resetting and starting it again (next try in {} s)", wait.as_secs());
+            let _ = systemctl("reset-failed").await;
+            running = false;
+            started_from = None;
+        }
         match decision.admitted {
             Some((set, pin)) => {
                 let changed = started_from.as_deref() != Some(set.as_slice());
@@ -279,7 +320,15 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
                     eprintln!("engine: the engine unit failed; its sandbox may still be up (engine-run.sh delete)");
                 }
                 said_failed = state == "failed";
-                if running {
+                if state == "failed" {
+                    // Not admitted and failed: the stop's own cleanup may not have removed the sandbox. The root
+                    // cleanup unit runs engine-run.sh delete again and, once the sandbox is gone, resets the unit.
+                    if due(failed_try) {
+                        let wait = next_backoff(failed_try.map(|(_, wait)| wait));
+                        failed_try = Some((Instant::now(), wait));
+                        let _ = systemctl_unit("start", CLEANUP_UNIT).await;
+                    }
+                } else if running {
                     let _ = systemctl("stop").await;
                 }
                 started_from = None;
@@ -374,5 +423,19 @@ mod tests {
         assert!(!keep_through_hold(true, true, RELEASE_UNREADABLE_GRACE));
         assert!(!keep_through_hold(false, true, Duration::ZERO), "nothing this run started: nothing to keep");
         assert!(!keep_through_hold(true, false, Duration::ZERO), "a stopped unit is not started by a hold");
+    }
+
+    #[test]
+    fn a_failed_unit_is_tried_again_with_backoff_never_in_a_tight_loop() {
+        assert!(due(None));
+        assert_eq!(next_backoff(None), FAILED_BACKOFF_MIN);
+        let mut wait = None;
+        for _ in 0..10 {
+            wait = Some(next_backoff(wait));
+        }
+        assert_eq!(wait, Some(FAILED_BACKOFF_MAX));
+        assert!(!due(Some((Instant::now(), FAILED_BACKOFF_MIN))));
+        assert!(due(Some((Instant::now(), Duration::ZERO))));
+        assert!(FAILED_BACKOFF_MIN >= TICK * 6, "a try is at least six ticks apart");
     }
 }

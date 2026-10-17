@@ -69,8 +69,10 @@ RestrictNamespaces=yes MemoryDenyWriteExecute=yes PrivateNetwork=yes CapabilityB
         systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
     done
     # A unit with no install section is "static" (and `is-enabled --quiet` succeeds for it): only "static" is right.
-    state=$(systemctl is-enabled aukora-engine.service 2>/dev/null) || true
-    [ "$state" = static ] || fail aukora-engine.service "is-enabled says '$state': only the supervisor may start it"
+    for unit in aukora-engine.service aukora-engine-cleanup.service; do
+        state=$(systemctl is-enabled "$unit" 2>/dev/null) || true
+        [ "$state" = static ] || fail "$unit" "is-enabled says '$state': only the supervisor may start it"
+    done
 fi
 
 [ "$failed" = 0 ] && echo 'units ok'

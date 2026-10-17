@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Remove a sandbox that a failed engine stop left up, then clear the engine unit's failed state (Sonnet sweep C2).
+# Started only by the supervisor (polkit: this unit, verb start), when the engine is NOT admitted and its unit is
+# failed. No install section: it never runs by itself. It conflicts with the engine unit, so it can never run beside
+# a starting engine.
+[Unit]
+Description=AUKORA engine cleanup: remove a leftover sandbox after a failed stop
+After=aukora-engine.service docker.service aukora-openshell-gateway.service
+Conflicts=aukora-engine.service
+AssertPathExists=/etc/aukora/engine.env
+
+[Service]
+Type=oneshot
+ExecStart=/opt/aukora/current/deploy/engine/engine-run.sh delete
+ExecStartPost=/usr/bin/systemctl reset-failed aukora-engine.service
+TimeoutStartSec=90s
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
