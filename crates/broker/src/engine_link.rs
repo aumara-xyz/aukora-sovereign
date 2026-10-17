@@ -199,6 +199,7 @@ pub struct Link {
     calls: Arc<tokio::sync::Semaphore>,
     /// Set when a receipt could not be written: no further call is admitted until the node restarts.
     receipts_failed: AtomicBool,
+    refusals: server::RefusalLog,
 }
 
 impl Link {
@@ -221,10 +222,23 @@ impl Link {
             calls: Arc::new(tokio::sync::Semaphore::new(limits.max_calls.max(1))),
             limits,
             receipts_failed: AtomicBool::new(false),
+            refusals: server::RefusalLog::new(),
         };
         // A call the last run died in the middle of gets its receipt before any new call is admitted.
         server::record_interrupted(&link);
         Ok(link)
+    }
+
+    /// Journal one refusal, within the refusal budget (`server::RefusalLog`).
+    fn note_refusal(&self, line: String) {
+        match self.refusals.note(std::time::Instant::now()) {
+            server::Note::Log => self.authority.log(&line),
+            server::Note::LogAfterSkipped(skipped) => {
+                self.authority.log(&format!("{skipped} refusal lines in the last minute were not logged"));
+                self.authority.log(&line);
+            }
+            server::Note::Skip => {}
+        }
     }
 
     fn peer_allowed(&self, peer: Peer) -> bool {

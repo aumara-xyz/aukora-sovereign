@@ -938,3 +938,19 @@ async fn sockets_that_stall_in_the_body_hold_no_call_slot_and_are_cut_off() {
     assert_eq!(rig.link.calls.available_permits(), 2);
     assert_eq!(rig.upstream_calls(), 1, "a stalled body never reached the provider");
 }
+
+#[test]
+fn refusal_lines_in_the_journal_are_budgeted_and_summed_and_names_are_made_safe() {
+    use super::server::{journal_names, Note, RefusalLog};
+    let log = RefusalLog::new();
+    let start = std::time::Instant::now();
+    let seen: Vec<Note> = (0..25).map(|_| log.note(start)).collect();
+    assert_eq!(seen.iter().filter(|n| **n == Note::Log).count(), 20);
+    assert_eq!(seen.iter().filter(|n| **n == Note::Skip).count(), 5);
+    assert_eq!(log.note(start + std::time::Duration::from_secs(61)), Note::LogAfterSkipped(5));
+    assert_eq!(log.note(start + std::time::Duration::from_secs(62)), Note::Log, "a fresh minute starts a fresh budget");
+    let names = vec!["dsh_a\nforged: line".to_owned(), "x".repeat(100), "b".into(), "c".into(), "d".into(), "e".into(), "f".into(), "g".into(), "h".into(), "i".into()];
+    let shown = journal_names(&names);
+    assert!(!shown.contains('\n') && !shown.contains(':') && shown.ends_with("(+2 more)"), "{shown}");
+    assert!(shown.starts_with("dsh_a?forged??line,"));
+}

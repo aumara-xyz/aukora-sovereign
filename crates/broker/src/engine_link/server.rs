@@ -16,7 +16,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::net::{UnixListener, UnixStream};
@@ -83,7 +83,7 @@ pub async fn serve_connection(link: Arc<Link>, stream: UnixStream, peer: Peer) {
 
 async fn handle(link: Arc<Link>, peer: Peer, request: Request<Incoming>) -> Response<Body> {
     if !link.peer_allowed(peer) {
-        link.authority.log("refused peer");
+        link.note_refusal("refused peer".into());
         return refusal(&refuse::peer());
     }
     let path = request.uri().path().to_owned();
@@ -96,8 +96,62 @@ async fn handle(link: Arc<Link>, peer: Peer, request: Request<Incoming>) -> Resp
     match messages(link.clone(), request).await {
         Ok(response) => response,
         Err(refused) => {
-            link.authority.log(&format!("refused {} ({})", refused.code, refused.status));
+            link.note_refusal(format!("refused {} ({})", refused.code, refused.status));
             refusal(&refused)
+        }
+    }
+}
+
+/// Member names the engine chose, made safe for one journal line: plain characters only (a newline in a name would
+/// forge a line), short, and no more than eight.
+pub(super) fn journal_names(names: &[String]) -> String {
+    let shown: Vec<String> = names
+        .iter()
+        .take(8)
+        .map(|name| name.chars().take(40).map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') { c } else { '?' }).collect())
+        .collect();
+    let more = names.len().saturating_sub(shown.len());
+    if more > 0 { format!("{} (+{more} more)", shown.join(",")) } else { shown.join(",") }
+}
+
+/// What the journal does with one more refusal line.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Note {
+    Log,
+    /// Log it, after saying how many earlier ones were left out.
+    LogAfterSkipped(u32),
+    Skip,
+}
+
+/// A refusal budget: the engine is the only caller and can refuse itself as fast as it can send, so at most
+/// `REFUSAL_LINES` refusal lines a minute reach the journal; the rest are counted and summed in one line when the
+/// minute turns. Refusals themselves are unaffected (every one is still answered and none costs money).
+pub(super) struct RefusalLog {
+    window: Mutex<(Instant, u32, u32)>,
+}
+
+const REFUSAL_LINES: u32 = 20;
+const REFUSAL_WINDOW: Duration = Duration::from_secs(60);
+
+impl RefusalLog {
+    pub(super) fn new() -> Self {
+        Self { window: Mutex::new((Instant::now(), 0, 0)) }
+    }
+
+    pub(super) fn note(&self, now: Instant) -> Note {
+        let Ok(mut window) = self.window.lock() else { return Note::Log };
+        let (started, logged, skipped) = &mut *window;
+        if now.saturating_duration_since(*started) >= REFUSAL_WINDOW {
+            let earlier = *skipped;
+            *window = (now, 1, 0);
+            return if earlier > 0 { Note::LogAfterSkipped(earlier) } else { Note::Log };
+        }
+        if *logged < REFUSAL_LINES {
+            *logged += 1;
+            Note::Log
+        } else {
+            *skipped += 1;
+            Note::Skip
         }
     }
 }
@@ -161,7 +215,7 @@ async fn messages(link: Arc<Link>, request: Request<Incoming>) -> Result<Respons
     }
     let checked = request::check(&raw, &budget, link.limits.max_request_bytes)?;
     if !checked.dropped.is_empty() {
-        link.authority.log(&format!("removed request extensions: {}", checked.dropped.join(",")));
+        link.authority.log(&format!("removed request extensions: {}", journal_names(&checked.dropped)));
     }
 
     // Reserve the worst case, with the output capped so the worst case fits.
