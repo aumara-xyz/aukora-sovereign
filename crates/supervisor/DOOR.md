@@ -159,8 +159,10 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
   counts, then asks again. `trusted`: any grantable class (net, memory; mcp and delegate have no executor, so on this door a
   clear of theirs is still refused) clears inside a live grant with NO daily count; the grant's own scope, its window (seven days at most) and
   its revocation are the only bounds, and every clear is still written to `autoclear.jsonl`. `plugin`, `persist`,
-  `shell-interactive` and `unknown` can never be granted and ask under every setting, `trusted` included; `fs-outside`
-  never reaches the slider (always denied, above).
+  `shell-interactive` and `unknown` can never be granted: the slider never clears them under any setting, `trusted`
+  included. They have no executor, so run inside the node the door answers `no-executor` without asking the owner (item 6);
+  with no approver (`door serve` on its own) the ask is only written to `asks.jsonl`. `fs-outside` never reaches the
+  slider (always denied, above).
 - Moving to a higher number is a loosening. The setting lives in the slider policy file (`"setting":"trusted"`, a new
   value there only: the permission codec `PermissionBody` and its pinned vectors keep their three spellings and refuse
   `trusted`), which is the critical gate target `door/slider-policy.json`, so loosening takes the owner's passkey like any
