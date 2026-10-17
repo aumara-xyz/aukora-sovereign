@@ -847,8 +847,8 @@ class Replay:
 
     def prefix_rule(self, work, file, document):
         """An earlier rows file (`--prefix`) is held to the same walk as the rows: one that does not verify under the pinned
-        key is FORGED at its row, and one longer than the tail is a shorter tail, in both engines (the pinned vectors
-        carry neither case)."""
+        key is FORGED at its row, and one longer than the tail is a shorter tail; and a node key must be in the prime-order
+        subgroup, in both engines (the pinned vectors carry none of these cases)."""
         key = {"source": "original", "pointer": "/publicKey"}
         forged = "A" * 86 + "=="
         cases = [
@@ -861,6 +861,12 @@ class Replay:
               "retained_rows": {"source": "original", "pointer": "/rows"}, "pinned_key": key},
              {"verdict": "REWRITTEN", "exit": 2, "sequence": 4, "exact_location": True, "codes": ["verifier:shorter-than-checkpoint"]}),
         ]
+        # A pinned node key with a torsion component (an honest key plus a point of order 4) is not of small order, which
+        # was all the Rust crate tested, but libsodium, and so the Python twin, refuses it.
+        mixed = "40c7570f4dd54835b9131184410ed4a0cc93e7d9ad053cbc6d07a62426999582"
+        cases.append(({"id": "torsion-bearing-pinned-chain-key", "mode": "chain", "fixture": "aura-4", "pinned_key": {"source": "prepared", "pointer": "/publicKey"},
+                       "edits": [{"op": "replace", "pointer": "/publicKey", "value": mixed}]},
+                      {"not_verdict": "VERIFIED", "exit": 64, "codes": ["verifier:key-weak"]}))
         for case, expected in cases:
             self.chain_or_bundle(work, file, document, case, expected)
 

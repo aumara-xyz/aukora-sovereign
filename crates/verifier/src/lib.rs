@@ -155,9 +155,13 @@ fn key(bytes: &[u8]) -> Result<VerifyingKey> {
     public_key(s)
 }
 
+/// A key the Python twin (libsodium's point validation) would also admit: a canonical encoding of a point of the
+/// prime-order subgroup. Small order alone is not the whole test: a key with a torsion component is refused too.
 fn public_key(encoded: &str) -> Result<VerifyingKey> {
-    let key = VerifyingKey::from_bytes(&hex32(encoded)?).map_err(|_| refusal("key"))?;
-    if key.is_weak() {
+    let bytes = hex32(encoded)?;
+    let key = VerifyingKey::from_bytes(&bytes).map_err(|_| refusal("key"))?;
+    let point = key.to_edwards();
+    if key.is_weak() || !point.is_torsion_free() || point.compress().to_bytes() != bytes {
         Err(refusal("key-weak"))
     } else {
         Ok(key)

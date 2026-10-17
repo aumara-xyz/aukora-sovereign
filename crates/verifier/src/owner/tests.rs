@@ -501,6 +501,25 @@ fn an_earlier_head_without_a_presented_head_is_no_observation() {
 }
 
 #[test]
+fn a_node_key_must_be_a_canonical_point_of_the_prime_order_subgroup() {
+    use crate::public_key;
+    // RFC 8032 test 1 public key: an honest key.
+    let honest = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    assert!(public_key(honest).is_ok());
+    // The same key plus a point of order 4: not small order itself, but it has a torsion component.
+    let mixed = "40c7570f4dd54835b9131184410ed4a0cc93e7d9ad053cbc6d07a62426999582";
+    assert_eq!(public_key(mixed).expect_err("mixed order").reason, "key-weak");
+    // The identity and a point of order 4 are small order; the identity written non-canonically (y = p + 1) is neither.
+    for weak in [
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    ] {
+        assert_eq!(public_key(weak).expect_err(weak).reason, "key-weak", "{weak}");
+    }
+}
+
+#[test]
 fn an_apply_with_no_operation_id_is_rewritten() {
     let report = unapproved(vec![fact(), propose(), apply_to("", TARGET)]);
     assert_eq!(report.verdict(), Verdict::Rewritten);
