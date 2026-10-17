@@ -566,3 +566,23 @@ for the owner-lifecycle branch, which edits that paragraph).
 call (`no-executor`). `build_plugins.py` now writes `search: false` into dsh-tool-web's row in every preset that
 mounts it (standard, ptc, cordis; minimal mounts none) and stops on any other shape; `web_fetch` stays. NODE: the
 bundle rebuilt from the node's pinned harness differs from the staged one by exactly those three lines.
+
+**O21 (open, the next big item; design note only, no code): the model call as a named crossing (Auma R1).**
+Everything the engine can read (the workspace, recalled memory, every fetched page) can leave in the next prompt to
+`api.deepseek.com`, up to 8 MiB a call, with no class, no card and no line anywhere but the broker's receipt (which
+holds the request's SHA-256 and size, not what was in it). The door guards every other exit; this one is guarded only
+by cost. Proposed shape, smallest first:
+1. **Name it.** A `model` class in the receipts and on the Aura health surface: per call the prompt bytes and the
+   bytes new since the session's previous call (a model turn resends its history; the delta is what newly left), and
+   per day "N calls, X MiB to <provider>". Naming changes behaviour; a card per turn would not.
+2. **Budget the bytes, not only the money.** The owner-approved budget (`engine/model-budget.json`) gains
+   `max_new_bytes_per_call` and `max_bytes_per_day`; past either the broker refuses (402-style, `QUOTA`) and raises
+   one card ("Auma wants to send 1.4 MiB of new context to DeepSeek"), approved per call like a door ask.
+3. **Canaries.** The owner can mark strings (a `.env` value, a key prefix, a Kira note id) the broker refuses to
+   send, scanned like the EchoGuard scans replies (decoded, every window), so a marked secret cannot leave by prompt.
+4. **Taint-aware.** After the door's taint is set (P4) a prompt carries untrusted content by definition; the broker
+   could lower `max_new_bytes_per_call` while tainted, which bounds what an injected page can make Auma paste.
+5. **A second provider** (Prime Intellect) is a second socket, budget, key card and byte budget, never a header on
+   this one (Auma's review section 4).
+Not decided: whether the delta is measured by the broker (it would have to keep the previous request per session,
+which the engine names) or the cheaper per-call total only; and what the health line says when the cost is unknown.
