@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Aumara and Peter Viviani
 /** The spatial primitives: components plus the framework-neutral stylesheet they emit markup for. */
 import './primitives.css'
+// The face's skin: the same look on surfaces it does not render itself (Prime's copied menus and thread rows).
+import './skin-face.css'
 
 export {
   AppHeader, AppSurface, DetailSection, FieldTable, Footnote, IconTile, Lead, LevelScale, LockedAction, Meter, Mono,
