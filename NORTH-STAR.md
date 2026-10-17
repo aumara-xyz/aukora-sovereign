@@ -195,13 +195,15 @@ Mapping onto this plan (SRC source, ISO isolated/assembly test, DEP deployed on 
 |---|---|---|
 | B01/B02, O01–O05 | T1/T2, the rehearsal node | ISO (T2: 20/20 builds, 0 escapes) + DEP partial; **deployed B01/B02 pair OPEN — the gate before T1 is claimed** |
 | B06–B08, O35/O36 | build contract (`crates/supervisor/BUILD.md` §7) | SRC + ISO; builder, orchestrator, release hook OPEN |
-| B09/B10, B28/B29, O21, O25 | door call-id ledger, broker spend journal | SRC + ISO; broker OUTCOME_UNKNOWN (B29) OPEN |
+| B09/B10, B28/B29, O21, O25 | door call-id ledger (forgets old segments by design) + durable approval consumption, broker spend journal | SRC + ISO; B09 rests on approval consumption, not the ledger alone; broker OUTCOME_UNKNOWN (B29) OPEN |
 | B24–B27 | gate card, stranger's verifier | SRC; verifier `display_sha256` check OPEN (row 52) |
-| O08–O09, O26–O30, O34 | OpenShell gateway (mTLS, root-only port), `engine-run.sh verify` | SRC + DEP at start; uid 65534 reach and runtime policy drift OPEN |
+| O08–O09, O34 (part) | OpenShell gateway (mTLS, root-only port), startup effective-policy verify (`engine-run.sh:46`) | SRC + DEP for the startup check only; uid 65534 reach and runtime policy drift OPEN |
+| O26–O30 | approved control-plane mutation, route inventory, revision checks, activation reconciliation | OPEN |
 | O15/O16/O19 | the broker (key outside the wall, approval by digest) | SRC + ISO + DEP (fake-key 401) |
-| B38–B40 | Kira 2 | SRC; structured corrections, source lineage, "no recorded overlap" OPEN (K2-18) |
-| O10–O12, O17/O18 | crossings go through the door, not OpenShell middleware | SUP (test them as door cases) |
-| B20–B23 | Laya is a deterministic slider + standing grants, not a semantic assessor | SUP in that form |
+| B38–B40 | Kira 2 | supersede/quarantine + recall moving corrected notes out of live candidates: SRC + ISO (`service/mod.rs:643`, `hybrid.rs:484`); OPEN: agents actually invoking supersede, the installed High→Medium case, empty sources becoming a self-root (`store.rs:386`) labelled "independent" (`recall.rs:62`), "no recorded overlap" wording (K2-18) |
+| B37/O38 | private material into the inference route (the broker forwards `messages`/`system`, checks shape, model and budget only: `engine_link/request.rs:12,74`) | Peter 2026-10-16 approved provider data; OPEN: a synthetic private-memory sentinel proves owner-local/private-scope notes never reach the broker |
+| O10–O12, O17/O18 | crossings go through the door, not OpenShell middleware | mechanism SUP; invariants retained: fail-closed coverage and final object binding tested at the door/executor |
+| B20–B23 | Laya is a deterministic slider + standing grants, not a semantic assessor | mechanism SUP; invariants retained: no assessor authority, binding, policy denial (`door/standing.rs:384`) |
 
 **KEEP** T2 as defined (hostile plugin, postinstall and injected page; 20 real builds in the wall ≤1.5× bare metal; a
 negative control that fails with the wall off) and re-run it for every engine or OpenShell change.
