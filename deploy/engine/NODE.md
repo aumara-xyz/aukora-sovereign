@@ -50,7 +50,9 @@ owner session.
    following links, owned by aukora, mode 0600 or 0640, one link. The engine's uid is neither root nor aukora. A newly approved set restarts it. Losing any condition stops it.
 
 New or changed non-authority packages never load (the closure copies only approved bytes); they become one proposal
-(the approved set plus all of them). A refused proposal is raised again only after 10 minutes or when the bytes change.
+(the approved set plus all of them). A card that ran out of time (closed, never answered) is raised again after 10
+minutes; a set the owner explicitly **Declined** is not raised again until the owner asks again (O19), and the engine
+says `plugin-set-declined` meanwhile.
 Hot reload and creator mode are never loaded and never approvable (`floor::plugins::is_hot_reload`).
 
 ## 3. The plugin fingerprint gate, end to end
@@ -139,8 +141,8 @@ and on every request re-checks that scope against the ledger, the release floor 
 and keeps the session; a withdrawn approval answers 403 and ends it) and the **shell session** that minted the ticket
 (O12): the ticket and the session name its store digest, the session never outlives it (expiry = min(12 h, the shell
 session's end)), and an expired, revoked or re-epoched shell session ends every engine session minted from it with
-403 at once. The shell's sign-out is `POST /api/session/end` (same-origin JSON, bound shell session; there was none
-before; no button in the shell yet). It forwards an allowlist of
+403 at once. The shell's sign-out is `POST /api/session/end` (same-origin JSON, bound shell session); the shell's button is
+"Sign out", pinned at the base of the right-hand menu (O18). It forwards an allowlist of
 headers (never the browser's cookies) plus the harness's own cookie, which it obtained by exchanging the launch
 token the harness printed inside the wall; the browser never sees the token or that cookie. Replies lose every
 `Set-Cookie` and CORS header and gain `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `no-referrer` (the
@@ -376,14 +378,36 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
    (`POST /api/session/end`) → the engine origin answers 403 at once and an open engine WebSocket closes 1008 within
    5 s (NODE, O12); re-bind or a release change → 403 as well.
 
-**Redeploying a bound node (not an upgrade).** There is no owner-approved upgrade path for a bound node yet (O17): a
-switched release leaves the floor on the old one, and the shell and the owner origin then refuse to serve. The
-rehearsal therefore re-ran genesis on the same VM for each new release, as root: stop the supervisor; MOVE (never
-delete) `/var/lib/aukora` to `/root/rehearsal-N-state` with copies of `/var/lib/aukora-release`, `claim.sha256` and
-`egress.json`; remove `claim-delivered`; `node_release.stage` the new release, point `previous` and `current`,
-`write_active(rid, manifest, digest, 0, None)`, `apply_units`; a new claim commitment (`node_release.py claim
---digest`, the secret made on the Mac, the link in a 0600 file); start the supervisor; walk D1-D7; `claim --delivered`.
-Kira's state, the engine install, `/etc/aukora` and Caddy stay. Only for a disposable test node.
+**E. Upgrade a bound node (O17).** The node keeps serving its approved release (shell, owner origin, engine) until
+the owner approves the new one; nothing switches before that.
+1. Build the release as in C1 (`scripts/reproduce.sh build COMMIT DIR --twice`) and copy `release.json` and
+   `release.tar` to the node (`/root/upgrade-stage`, 0700).
+2. On the node, as root, from the CURRENT release's tools:
+   `python3 -B /opt/aukora/current/deploy/upgrade/node_release.py stage --stage /root/upgrade-stage` (prints the id),
+   then `... node_release.py offer --id ID`. This only makes the link `/opt/aukora/offered`.
+3. Within a poll the running release raises the card "Upgrade this node to a new release" (`base_sha256` = the
+   running release, `release_sha256` = the new `release.json`'s SHA-256). The engine keeps running.
+4. The owner approves it with the passkey. The floor advances in one Aura transaction; the supervisor logs
+   `release: the owner approved release …; restarting to switch to it` and exits 75; systemd starts it again and the
+   unit's root pre-start (`node_release.py follow`, which reads the floor through the installed binary as aukora with
+   `sovereign release floor`) moves `current` to the new release and `previous` to the old one, writes `active.json`
+   and drops the offer (journal: `node-release follow: switched to ID`). The engine stops only for that restart and
+   starts again on the new release (a release that changed the plugins still needs its plugin-set card).
+5. Not approved: Decline (the owner's no; it stays declined until the owner asks again from Approvals), or the card
+   simply stays up (release cards do not expire). `node_release.py withdraw` takes the offer back; the running release
+   then withdraws the card (an expiry with reason `withdrawn`, never a decline). Either way the current release keeps
+   running. Never withdraw after the owner approved: `follow` switches to the staged release the floor names even
+   without the offer, but only while it is still staged.
+A node installed before this release has no `follow` step and no upgrade card: bring it to this release once by the
+redeploy below (or the signed-pointer `upgrade.sh`, whose new binary then waits for the release card as before).
+`upgrade.sh`/`node_release.py switch` (the owner-signed pointer) remain; on a bound node prefer `offer`.
+
+**Redeploying a bound node (disposable test nodes only).** The rehearsal re-ran genesis on the same VM for each new
+release, as root: stop the supervisor; MOVE (never delete) `/var/lib/aukora` to `/root/rehearsal-N-state` with copies
+of `/var/lib/aukora-release`, `claim.sha256` and `egress.json`; remove `claim-delivered`; `node_release.stage` the new
+release, point `previous` and `current`, `write_active(rid, manifest, digest, 0, None)`, `apply_units`; a new claim
+commitment (`node_release.py claim --digest`, the secret made on the Mac, the link in a 0600 file); start the
+supervisor; walk D1-D7; `claim --delivered`. Kira's state, the engine install, `/etc/aukora` and Caddy stay.
 
 **Stop / roll back.** `systemctl stop aukora-sovereign` stops the engine too (`PartOf`). Remove `/etc/aukora/engine-v1.json`
 and restart the supervisor to run the node without an engine. Upgrades: a new release changes the binary, so the floor
@@ -419,8 +443,9 @@ RAN on the wall-test VM, not the node: the DNS control (the same probe resolves 
 
 Not built: the face's own owner-approval surfaces pointing at the owner origin;
 `door/standing-grants.json` as a gate target (the slider runs on the starter, no grants); an inventory sync for nodes
-installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`); an upgrade path for a
-bound node (O17).
+installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`); a pre-swap probe of an
+offered release (ruling 18): an approved release that cannot start leaves the node without a shell until the
+operator redeploys (O20).
 
 ## 10. Open items
 
@@ -446,19 +471,15 @@ the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated
   proposes the new terms on a card (changed terms propose again).
 - **O16** Nebius: the tenant's public IPv4 quota is 3 (pilot, the wall-test VM and an unassigned 2026-10-09 address
   held it; the rehearsal took the wall-test VM's address). The node's VM needs one. Note only, no code.
-- **O17** (NEW, Peter's call) A bound node cannot take a new release. `ReleaseApproval::ensure_proposal` and
-  `approve` handle only the install's starting floor; `ReleaseFiles::advance_approved` (floor ⇒ a newer release) has
-  no caller; and `with_release` refuses to serve the shell AND the owner origin while the floor names another release,
-  so after `node_release.py switch` the owner cannot even reach the card. The rehearsal redeployed by re-running
-  genesis (section 8, "Redeploying a bound node"). Needs: a proposal from the floor's release to the running one,
-  the owner origin served from the approved (previous) release until it is approved, then `advance_approved`.
-- **O19** (NEW, found live) Closing a card without approving it declines the proposal for good: the controller's
-  re-proposal of the same plugin set ten minutes later is refused `gate:declined-unchanged`, so the engine waits on
-  `awaiting-plugin-set-approval` with no card until the bytes change (genesis 5 had to be redone). An owner who closes
-  the card by mistake cannot recover. Either Close should not decline, or a declined set needs a way back.
-- **O18** (NEW, small) A browser that lost its shell session gets no visible way to sign in: the shell hides
-  `frontdoor:session-required` and the AUMLOK face's "Sign in" did not render (blank face) on the rehearsal; the walk
-  posted the face's `/passkey` navigation itself. Also no sign-out button for `POST /api/session/end`.
+- **O20** (NEW, Peter's call) No pre-swap probe of an offered release (ruling 18's safety net). The node verifies the
+  offered tree (manifest, every leaf, the binary) before the card goes up, but it cannot run it first: an approved
+  release that then fails to start leaves the node without a shell (the old release refuses a floor that names the new
+  one) until the operator redeploys. Needs: a probe of the candidate on a copy of the state before the card is raised.
+- Live and Zeta Harp faces (shell, `app/faces/live`, `app/faces/zetaharp`): their CSP still says `connect-src 'none'`,
+  which blanks a face that imports `design/index.js` (the AUMLOK face's cause, O18). Not changed here (stock apps).
+
+O17, O18 and O19 are closed by the owner-lifecycle branch (node/owner-lifecycle, 2026-10-17); see the table at the
+end of this section.
 
 Closed by the blockers branch (node/blockers, 2026-10-17), each verified LIVE on the rehearsal node (`aukora-rehearsal`,
 re-run genesis three times: releases 424b87a…-82ada51f, 28b6fc8…-a35e16a7, 6a64be9…-ea0195a3; software passkey,
