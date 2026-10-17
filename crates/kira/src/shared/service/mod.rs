@@ -447,8 +447,15 @@ fn visible(caller: &Caller, note: &StoredNote) -> bool {
     (caller.owner || note.meta.privacy != Privacy::Local) && caller.reads_scope(&note.meta.scope)
 }
 
-/// A note as the wire shows it, built from a store read (which re-verified it).
-fn note_json(note: &StoredNote) -> Value {
+/// The note that stands where a superseded `note` once did, when this caller may read it (an id the caller cannot read
+/// is not revealed). `None` for a live note.
+fn current_visible(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Option<String> {
+    let current = store.get(note.current_id.as_deref()?).ok().flatten()?;
+    visible(caller, &current).then(|| hex(current.event.id.as_bytes()))
+}
+
+/// A note as the wire shows it, built from a store read (which re-verified it). `current` is `current_visible`.
+fn note_json(note: &StoredNote, current: Option<String>) -> Value {
     let m = &note.meta;
     json!({
         "id": hex(note.event.id.as_bytes()), "seq": note.seq, "author": hex(note.event.pubkey.as_bytes()),
@@ -456,7 +463,7 @@ fn note_json(note: &StoredNote) -> Value {
         "subject": m.subject, "lane": m.lane.wire(), "form": m.form.wire(), "review": m.review.wire(),
         "privacy": m.privacy.wire(), "capture": m.capture.wire(), "scope": m.scope, "epoch": m.epoch,
         "sources": m.sources, "slot": m.slot, "valid_from": m.valid_from, "valid_to": m.valid_to,
-        "roots": note.roots, "superseded_by": note.superseded_by, "quarantined": note.quarantined,
+        "roots": note.roots, "superseded_by": note.superseded_by, "current_id": current, "quarantined": note.quarantined,
     })
 }
 
@@ -469,13 +476,13 @@ fn stub(note: &StoredNote) -> Value {
 }
 
 /// The note; a stub if it is quarantined; for a note this caller may not read, only a receipt that it exists.
-fn view(caller: &Caller, note: &StoredNote) -> Value {
+fn view(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Value {
     if !visible(caller, note) {
         json!({"id": hex(note.event.id.as_bytes()), "privacy": note.meta.privacy.wire(), "withheld": true})
     } else if note.quarantined {
         stub(note)
     } else {
-        note_json(note)
+        note_json(note, current_visible(store, caller, note))
     }
 }
 
@@ -605,7 +612,7 @@ impl State {
         if let Some(wake) = &self.wake {
             let _ = wake.send(());
         }
-        Ok(view(caller, &note))
+        Ok(view(&self.store, caller, &note))
     }
 
     /// One note by id, or the head of a slot (`aukora:self`, `aukora:resume`, `resume:<agent>`): the newest live note
@@ -621,15 +628,32 @@ impl State {
     }
 
     fn get(&mut self, caller: &Caller, p: GetParams) -> Result<Value> {
+        let mut from_event = None;
         let note = if is_hex64(&p.id) {
-            self.store.get(&p.id)?
+            match self.store.get(&p.id)? {
+                Some(note) => Some(note),
+                // The id of a supersede event (`superseded_by` on the retired note) names the note that replaced it.
+                None => match self.store.current_for_event(&p.id)? {
+                    Some(current) => {
+                        from_event = Some(p.id.clone());
+                        self.store.get(&current)?
+                    }
+                    None => None,
+                },
+            }
         } else if readable_slot(&p.id) {
             self.store.slot(&p.id)?
         } else {
             return Err(refuse("id-invalid"));
         };
         match note {
-            Some(note) if visible(caller, &note) => Ok(view(caller, &note)),
+            Some(note) if visible(caller, &note) => {
+                let mut shown = view(&self.store, caller, &note);
+                if let Some(event) = from_event {
+                    shown["resolved_from"] = json!(event);
+                }
+                Ok(shown)
+            }
             _ => Err(refuse("not-found")),
         }
     }
@@ -647,7 +671,7 @@ impl State {
                 scanned += 1;
                 cursor = Some(note.seq);
                 if visible(caller, note) {
-                    shown.push(view(caller, note));
+                    shown.push(view(&self.store, caller, note));
                     if shown.len() == limit {
                         break 'pages;
                     }
@@ -674,7 +698,7 @@ impl State {
         let event = Event::sign(self.key(&caller.name)?, now(), SUPERSEDE_KIND, tags, String::new())?;
         let id = self.store.record(event)?;
         let target = self.store.get(&p.target)?.ok_or_else(|| refuse("not-found"))?;
-        Ok(json!({"event": id, "target": view(caller, &target)}))
+        Ok(json!({"event": id, "target": view(&self.store, caller, &target)}))
     }
 
     fn quarantine(&mut self, caller: &Caller, p: QuarantineParams) -> Result<Value> {
@@ -751,7 +775,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 }
                 live += usize::from(item.correction.is_none());
                 let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
-                let mut shown = if note.quarantined { stub(&note) } else { note_json(&note) };
+                let mut shown = if note.quarantined { stub(&note) } else { note_json(&note, current_visible(&s.store, &caller, &note)) };
                 shown["score"] = json!(item.score);
                 shown["also_by"] = json!(item.also_by);
                 shown["also_by_ids"] = json!(item.also_by_ids);

@@ -19,8 +19,8 @@ pub const POOL: usize = 50;
 pub const RRF_K: f64 = 60.0;
 /// Live candidates sent to the reranker; with a reranker, only these can be returned as live items.
 pub const RERANK_TOP: usize = 20;
-/// Superseded or quarantined notes shown as corrections.
-pub const MAX_CORRECTIONS: usize = 2;
+/// History items (superseded, quarantined) shown after the current items.
+pub const MAX_CORRECTIONS: usize = 4;
 /// Character budget when the query leaves it at 0.
 pub const DEFAULT_BUDGET: usize = 4_800;
 /// Epoch searched when the query leaves it at 0 (epoch 1 is the archived import).
@@ -48,6 +48,8 @@ pub const COSINE_FLOOR: f32 = 0.60;
 /// Keyword rows read before the epoch and scope filters: FTS5 ranks over every epoch at once.
 const KEYWORD_SCAN: usize = 1_000;
 const MAX_QUERY_BYTES: usize = 4_096;
+/// Dead notes kept after the prepare phase; `finish` admits the few whose current note is returned.
+const MAX_HISTORY_CANDIDATES: usize = 32;
 const MAX_INDEX_BATCH: usize = 256;
 
 /// Words too common to count as a keyword hit for the threshold. They still rank in FTS5; they only cannot make
@@ -269,6 +271,9 @@ struct Cand {
     /// Shares a content word (not a stopword) with the query.
     hit: bool,
     rerank: Option<f32>,
+    /// Added because the stale note it replaced matched the question: it stands for that statement whatever words it
+    /// shares with the question, so it is relevant by inheritance.
+    inherited: bool,
 }
 
 impl Cand {
@@ -301,6 +306,8 @@ impl Cand {
     }
 
     fn item(&self, score: f32, also_by: Vec<String>, also_by_ids: Vec<String>, roots: usize, correction: Option<&str>) -> RecallItem {
+        // A retired note points at the note that stands where it did (the service shows the id only to a caller who
+        // may read that note).
         let meta = &self.note.meta;
         RecallItem {
             id: self.id.clone(),
@@ -318,6 +325,7 @@ impl Cand {
             score,
             roots,
             correction: correction.map(str::to_owned),
+            current_id: if correction == Some("superseded") { self.note.current_id.clone() } else { None },
         }
     }
 }
@@ -369,7 +377,6 @@ enum Slot {
     OwnerWords,
     /// The caller's own experience.
     OwnExperience,
-    Correction,
     Rest,
 }
 
@@ -381,7 +388,9 @@ pub struct Prepared {
     budget: usize,
     query_digest: String,
     live: Vec<Cand>,
-    corrections: Vec<Cand>,
+    /// Superseded and quarantined notes that match the question: shown only as history of a returned current note
+    /// (superseded) or as a stub (quarantined), after the current items.
+    history: Vec<Cand>,
     integrity: bool,
     embedder_down: bool,
     index_bad: bool,
@@ -482,22 +491,41 @@ impl SharedStore {
                 let note = loader.cache.remove(&seq).flatten()?;
                 let hit = words(&note.event.content).any(|w| query_words.contains(&w));
                 let id = hex(note.event.id.as_bytes());
-                Some(Cand { note, id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None })
+                Some(Cand { note, id, fused: score, cosine: cosines.get(&seq).copied(), hit, rerank: None, inherited: false })
             })
             .collect();
         cands.sort_by(|a, b| b.fused.total_cmp(&a.fused).then_with(|| a.id.cmp(&b.id)));
 
-        // Superseded and quarantined notes never stand as memory; a matching few are shown as corrections.
-        let (dead, live): (Vec<Cand>, Vec<Cand>) =
+        // Superseded and quarantined notes never stand as memory. A superseded note that matches is history of the note
+        // that replaced it, so that note is a candidate too, even when it shares fewer words with the question than the
+        // stale one did: the question gets the current answer, never only the retired one.
+        let (dead, mut live): (Vec<Cand>, Vec<Cand>) =
             cands.into_iter().partition(|c| c.note.quarantined || c.note.superseded_by.is_some());
-        let corrections: Vec<Cand> = dead.into_iter().filter(Cand::evidence).take(MAX_CORRECTIONS).collect();
+        let mut history: Vec<Cand> = dead.into_iter().filter(Cand::evidence).collect();
+        let mut pulled = 0;
+        for stale in history.iter().filter(|c| !c.note.quarantined) {
+            let Some(current) = stale.note.current_id.as_deref() else { continue };
+            if pulled >= MAX_CORRECTIONS || live.iter().any(|c| c.id == current) {
+                continue;
+            }
+            let Ok(Some(found)) = self.get(current) else { continue };
+            if found.quarantined || found.superseded_by.is_some() {
+                continue;
+            }
+            if let Some(note) = loader.note(found.seq).cloned() {
+                let hit = words(&note.event.content).any(|w| query_words.contains(&w));
+                live.push(Cand { id: current.to_owned(), note, fused: stale.fused, cosine: None, hit, rerank: None, inherited: true });
+                pulled += 1;
+            }
+        }
+        history.truncate(MAX_HISTORY_CANDIDATES);
         Ok(Prepared {
             text: text.to_owned(),
             caller: q.caller.to_ascii_lowercase(),
             budget,
             query_digest,
             live,
-            corrections,
+            history,
             integrity: loader.integrity,
             embedder_down,
             index_bad,
@@ -540,7 +568,7 @@ impl Prepared {
     /// Recall's second phase, without the store: rerank (a model call), dedupe, reserved lanes and the budget.
     pub fn finish(self, rr: Option<&dyn Reranker>) -> RecallOutcome {
         let Prepared {
-            text, caller, budget, query_digest, mut live, corrections, integrity, embedder_down, index_bad, dense, embed_model, indexed, total,
+            text, caller, budget, query_digest, mut live, history, integrity, embedder_down, index_bad, dense, embed_model, indexed, total,
         } = self;
         // Rerank the top live candidates.
         let mut reranker_down = false;
@@ -561,8 +589,8 @@ impl Prepared {
         }
         let reranked = rr.is_some() && !reranker_down;
         // `strong` decides whether there is an answer; `weak` decides which notes ride along once there is one.
-        let strong = |c: &Cand| if reranked { c.rerank.is_some_and(|s| s >= RERANK_FLOOR) } else { c.evidence() };
-        let weak = |c: &Cand| if reranked { c.rerank.is_some_and(|s| s >= RERANK_KEEP) } else { c.evidence() };
+        let strong = |c: &Cand| c.inherited || if reranked { c.rerank.is_some_and(|s| s >= RERANK_FLOOR) } else { c.evidence() };
+        let weak = |c: &Cand| c.inherited || if reranked { c.rerank.is_some_and(|s| s >= RERANK_KEEP) } else { c.evidence() };
 
         // Dedupe by statement hash within one privacy level: the highest-standing note stands, every author and note
         // id is named, ancestry roots are unioned.
@@ -626,10 +654,6 @@ impl Prepared {
                 (lane, exempt, g.keep.item(g.score, also_by, also_by_ids, g.roots.len(), None))
             })
             .collect();
-        ordered.extend(corrections.iter().map(|c| {
-            let label = if c.note.quarantined { "quarantined" } else { "superseded" };
-            (Slot::Correction, true, c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), Some(label)))
-        }));
         ordered.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.score.total_cmp(&a.2.score)).then_with(|| a.2.id.cmp(&b.2.id)));
 
         // Fill the budget in lane order; an item that does not fit is skipped, never cut, and a skipped relevant
@@ -656,10 +680,27 @@ impl Prepared {
         let (mut items, mut omitted, mut kept_live) = (Vec::new(), 0, 0);
         for ((_, _, item), taken) in ordered.into_iter().zip(taken) {
             if taken {
-                kept_live += usize::from(item.correction.is_none());
+                kept_live += 1;
                 items.push(item);
-            } else if item.correction.is_none() {
+            } else {
                 omitted += 1;
+            }
+        }
+
+        // History comes after the current items, with what is left of the budget: a superseded note only beside the
+        // note that stands for it (which must itself be among the items), a quarantined one only as a stub.
+        let shown: BTreeSet<&str> = items.iter().flat_map(|i| std::iter::once(i.id.as_str()).chain(i.also_by_ids.iter().map(String::as_str))).collect();
+        let mut past: Vec<RecallItem> = history
+            .iter()
+            .filter(|c| c.note.quarantined || c.note.current_id.as_deref().is_some_and(|id| shown.contains(id)))
+            .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.note.roots.len(), Some(if c.note.quarantined { "quarantined" } else { "superseded" })))
+            .collect();
+        past.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
+        for item in past.into_iter().take(MAX_CORRECTIONS) {
+            let size = item.text.chars().count();
+            if used + size <= budget {
+                used += size;
+                items.push(item);
             }
         }
 

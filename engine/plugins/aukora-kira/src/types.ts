@@ -77,7 +77,10 @@ export interface KiraNote {
   valid_from?: number | null
   valid_to?: number | null
   roots?: string[]
+  /** Id of the supersede EVENT that retired this note (audit pointer). */
   superseded_by?: string | null
+  /** Id of the note that stands where this retired note did (when the caller may read it). `get` on the event id resolves to it. */
+  current_id?: string | null
   quarantined: boolean
   withheld?: boolean
   correction?: string | null

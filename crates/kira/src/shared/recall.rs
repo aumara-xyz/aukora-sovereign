@@ -61,8 +61,10 @@ pub struct RecallItem {
     pub score: f32,
     /// Independent ancestry roots (computed by the store, never taken from tags).
     pub roots: usize,
-    /// "superseded" or "quarantined" when shown in the corrections lane. A quarantined item's text is empty.
+    /// "superseded" or "quarantined" when shown as history after the current items. A quarantined item's text is empty.
     pub correction: Option<String>,
+    /// For a superseded item, the id of the note that stands where it did (always among the live items returned).
+    pub current_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

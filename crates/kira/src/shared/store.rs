@@ -61,7 +61,11 @@ pub struct StoredNote {
     /// The author is registered as an owner (read from the agents table, never from a tag).
     pub author_owner: bool,
     pub roots: Vec<String>,
+    /// The id of the supersede EVENT that retired this note (an audit pointer; `get` on it resolves to `current_id`).
     pub superseded_by: Option<String>,
+    /// The id of the note that stands now: the replacement of the supersede, followed through any later supersede of
+    /// the replacement itself. None for a live note, for a retraction (no replacement) and for a replacement cycle.
+    pub current_id: Option<String>,
     pub quarantined: bool,
 }
 
@@ -324,15 +328,56 @@ impl SharedStore {
         Ok(!controls.is_empty())
     }
 
-    /// The first verified supersede of note `id_hex` (written by `author`), signed by that author or the owner.
-    fn superseded_by(&self, id_hex: &str, author: &str) -> Result<Option<String>> {
+    /// The verified supersede of note `id_hex` (written by `author`) that retired it: (event id, replacement note id).
+    /// Each is signed by that author or the owner.
+    fn superseded_by(&self, id_hex: &str, author: &str) -> Result<Option<(String, Option<String>)>> {
         let controls = self.verified_controls(SUPERSEDE_KIND, id_hex)?;
         for (row, event) in &controls {
             if single_tag(event, "supersedes")? != id_hex || (row.pubkey != author && !self.is_owner(&row.pubkey)?) {
                 return Err(refuse("note-integrity"));
             }
         }
-        Ok(controls.into_iter().next().map(|(row, _)| row.id))
+        Ok(controls.into_iter().next().map(|(row, event)| (row.id, single_tag(&event, "replacement").ok().map(str::to_owned))))
+    }
+
+    /// The note that stands where `id_hex` once did: its replacement, and that note's replacement if it was itself
+    /// superseded, and so on. None when `id_hex` is not superseded, was retracted without a replacement, or the chain
+    /// loops back on itself.
+    fn current_of(&self, id_hex: &str) -> Result<Option<String>> {
+        let (mut here, mut seen) = (id_hex.to_owned(), BTreeSet::from([id_hex.to_owned()]));
+        loop {
+            let author: Option<String> = self
+                .db
+                .query_row("SELECT pubkey FROM events WHERE id = ?1 AND kind = ?2", params![here, NOTE_KIND], |r| r.get(0))
+                .optional()
+                .map_err(sql)?;
+            let Some(author) = author else { return Ok(None) };
+            match self.superseded_by(&here, &author)? {
+                None => return Ok((here != id_hex).then_some(here)),
+                Some((_, None)) => return Ok(None),
+                Some((_, Some(next))) => {
+                    if !seen.insert(next.clone()) {
+                        return Ok(None);
+                    }
+                    here = next;
+                }
+            }
+        }
+    }
+
+    /// The note an event id stands for: for a supersede event, the note that stands now where its target was. None for
+    /// anything else (a quarantine, an unknown id, a retraction).
+    pub fn current_for_event(&self, event_id: &str) -> Result<Option<String>> {
+        let target: Option<String> = self
+            .db
+            .query_row("SELECT target FROM events WHERE id = ?1 AND kind = ?2", params![event_id, SUPERSEDE_KIND], |r| r.get(0))
+            .optional()
+            .map_err(sql)?
+            .flatten();
+        match target {
+            Some(target) => self.current_of(&target),
+            None => Ok(None),
+        }
     }
 
     // ---------- append ----------
@@ -500,9 +545,11 @@ impl SharedStore {
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
-        let superseded_by = self.superseded_by(&row.id, &row.pubkey)?;
+        let retired = self.superseded_by(&row.id, &row.pubkey)?;
+        let current_id = if retired.is_some() { self.current_of(&row.id)? } else { None };
+        let superseded_by = retired.map(|(event, _)| event);
         let quarantined = self.quarantined(&row.pubkey)?;
-        Ok(Some(StoredNote { seq, event, meta, author_name, author_owner, roots, superseded_by, quarantined }))
+        Ok(Some(StoredNote { seq, event, meta, author_name, author_owner, roots, superseded_by, current_id, quarantined }))
     }
 
     pub fn get(&self, id_hex: &str) -> Result<Option<StoredNote>> {

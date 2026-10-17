@@ -412,9 +412,86 @@ fn superseded_and_quarantined_notes_appear_only_as_corrections() {
     assert_eq!(correction(&bad).as_deref(), Some("quarantined"));
     // A quarantined note is a stub: no body.
     assert_eq!(r.items.iter().find(|i| i.id == bad).map(|i| i.text.as_str()), Some(""));
-    // Corrections fill lane (d), ahead of the unreserved rest, and never more than two.
+    // History comes after the current items, never before them.
     assert_eq!(r.items.iter().filter(|i| i.correction.is_some()).count(), 2);
-    assert_eq!(r.items.last().map(|i| i.id.as_str()), Some(new.as_str()));
+    assert_eq!(r.items.first().map(|i| i.id.as_str()), Some(new.as_str()));
+    assert!(r.items[1..].iter().all(|i| i.correction.is_some()));
+    let stale = r.items.iter().find(|i| i.id == old).unwrap();
+    assert_eq!(stale.current_id.as_deref(), Some(new.as_str()), "a retired note names the note that stands, not the event");
+}
+
+/// Dot's F1 case, bench A1: High corrected to Medium by supersede. The current note leads; the retired one follows,
+/// labelled, naming the note (not the supersede event) that replaced it.
+#[test]
+fn a_correction_renders_after_the_current_note_and_names_it() {
+    let a = key();
+    let mut s = store_with(&[("dot", &a, false)]);
+    let high = note(&mut s, &a, "Finding F1 co-presence wording severity is HIGH.", 1);
+    let medium = note(&mut s, &a, "Finding F1 co-presence wording severity is MEDIUM.", 2);
+    let event = Event::sign(&a, 3, SUPERSEDE_KIND, vec![vec!["supersedes".into(), high.clone()], vec!["replacement".into(), medium.clone()]], String::new()).unwrap();
+    let event_id = s.record(event).unwrap();
+    let r = s.recall(&query("What is the severity of finding F1?", "x"), None, None).unwrap();
+    assert_eq!(r.status, RecallStatus::Found);
+    let ids: Vec<&str> = r.items.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(ids, [medium.as_str(), high.as_str()], "current first, history after");
+    assert_eq!(r.items[0].correction, None);
+    assert_eq!((r.items[1].correction.as_deref(), r.items[1].current_id.as_deref()), (Some("superseded"), Some(medium.as_str())));
+    let stored = s.get(&high).unwrap().unwrap();
+    assert_eq!(stored.superseded_by.as_deref(), Some(event_id.as_str()), "the event id stays as the audit pointer");
+    assert_eq!(stored.current_id.as_deref(), Some(medium.as_str()));
+    assert_eq!(s.current_for_event(&event_id).unwrap().as_deref(), Some(medium.as_str()));
+    assert!(s.get(&event_id).unwrap().is_none(), "an event id is not a note; the service resolves it");
+}
+
+/// A retired note is history of the current note only: one that is not answering this question's current note does
+/// not ride along on unrelated answers (bench A1: unrelated superseded findings leaked into other answers).
+#[test]
+fn a_superseded_note_is_admitted_only_as_history_of_a_returned_current_note() {
+    let a = key();
+    let mut s = store_with(&[("dot", &a, false)]);
+    // The stale note matches the question, its replacement shares no word with it: the replacement is pulled in.
+    let high = note(&mut s, &a, "Redirect bypass finding K2-9 is rated HIGH.", 1);
+    let low = note(&mut s, &a, "Downgraded after retest: low impact.", 2);
+    let sup = vec![vec!["supersedes".into(), high.clone()], vec!["replacement".into(), low.clone()]];
+    s.record(Event::sign(&a, 3, SUPERSEDE_KIND, sup, String::new()).unwrap()).unwrap();
+    // An unrelated retired note whose replacement is not an answer to this question.
+    let old_relay = note(&mut s, &a, "The relay finding is rated HIGH too.", 4);
+    let new_relay = note(&mut s, &a, "Relay endpoint moved to the new host.", 5);
+    let sup = vec![vec!["supersedes".into(), old_relay.clone()], vec!["replacement".into(), new_relay.clone()]];
+    s.record(Event::sign(&a, 6, SUPERSEDE_KIND, sup, String::new()).unwrap()).unwrap();
+    let r = s.recall(&query("How is the redirect bypass finding K2-9 rated?", "x"), None, None).unwrap();
+    assert_eq!(r.status, RecallStatus::Found);
+    let ids: Vec<&str> = r.items.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(ids, [low.as_str(), high.as_str()], "{ids:?}");
+    assert!(!ids.contains(&old_relay.as_str()), "a retired note whose current note is not returned must not appear");
+    // A retraction (no replacement) has no current note, so it is never history of one.
+    let wrong = note(&mut s, &a, "Finding K2-12 token replay is CRITICAL.", 7);
+    s.record(Event::sign(&a, 8, SUPERSEDE_KIND, vec![vec!["supersedes".into(), wrong.clone()]], String::new()).unwrap()).unwrap();
+    let live = note(&mut s, &a, "Finding K2-12 was checked twice.", 9);
+    let r = s.recall(&query("Finding K2-12 token replay", "x"), None, None).unwrap();
+    assert!(r.items.iter().any(|i| i.id == live) && r.items.iter().all(|i| i.id != wrong));
+}
+
+/// HIGH -> MEDIUM -> LOW: the oldest note names the note that stands now, not the middle one.
+#[test]
+fn a_chain_of_corrections_points_at_the_note_that_stands_now() {
+    let a = key();
+    let mut s = store_with(&[("dot", &a, false)]);
+    let ids: Vec<String> = ["HIGH", "MEDIUM", "LOW"]
+        .iter()
+        .enumerate()
+        .map(|(i, level)| note(&mut s, &a, &format!("Finding K2-15 invite replay is {level}."), i as u64 + 1))
+        .collect();
+    for (i, pair) in ids.windows(2).enumerate() {
+        let tags = vec![vec!["supersedes".into(), pair[0].clone()], vec!["replacement".into(), pair[1].clone()]];
+        s.record(Event::sign(&a, 10 + i as u64, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
+    }
+    assert_eq!(s.get(&ids[0]).unwrap().unwrap().current_id.as_deref(), Some(ids[2].as_str()));
+    assert_eq!(s.get(&ids[1]).unwrap().unwrap().current_id.as_deref(), Some(ids[2].as_str()));
+    assert_eq!(s.get(&ids[2]).unwrap().unwrap().current_id, None);
+    let r = s.recall(&query("severity of finding K2-15 invite replay", "x"), None, None).unwrap();
+    assert_eq!(r.items[0].id, ids[2]);
+    assert!(r.items[1..].iter().all(|i| i.correction.as_deref() == Some("superseded") && i.current_id.as_deref() == Some(ids[2].as_str())));
 }
 
 #[test]

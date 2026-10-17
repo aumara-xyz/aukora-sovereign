@@ -342,6 +342,37 @@ fn supersede_is_signed_by_the_caller() {
     assert!(done["result"]["target"]["superseded_by"].is_string(), "{done}");
 }
 
+/// Bench A1b: `superseded_by` held the id of the supersede event and `get` on it answered `kira:not-found`, so a reader
+/// could not follow a stale note to the current one.
+#[test]
+fn a_stale_note_leads_to_the_current_one_and_get_resolves_the_event_id() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let high = call(&f.state, &claude, "remember", note("Finding K2-9 is rated HIGH", "builders"))["result"]["id"].as_str().unwrap().to_owned();
+    let medium = call(&f.state, &claude, "remember", note("Finding K2-9 is rated MEDIUM", "builders"))["result"]["id"].as_str().unwrap().to_owned();
+    let done = call(&f.state, &claude, "supersede", json!({"target": high, "replacement": medium}));
+    let event = done["result"]["event"].as_str().unwrap().to_owned();
+    assert_eq!(done["result"]["target"]["superseded_by"], event.as_str());
+    assert_eq!(done["result"]["target"]["current_id"], medium.as_str(), "{done}");
+    // get on the event id answers with the note that now stands.
+    let got = call(&f.state, &grok, "get", json!({"id": event}));
+    assert_eq!((got["result"]["id"].clone(), got["result"]["resolved_from"].clone()), (json!(medium), json!(event)), "{got}");
+    // get on the stale note shows the same pointer; the recall item carries it too.
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], medium.as_str());
+    let recalled = call(&f.state, &grok, "recall", json!({"query": "how is finding K2-9 rated"}));
+    let ids: Vec<&str> = recalled["result"]["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [medium.as_str(), high.as_str()], "{recalled}");
+    assert_eq!(recalled["result"]["items"][1]["current_id"], medium.as_str());
+    // A replacement the caller may not read is not revealed through the pointer, nor through the event id.
+    let secret = call(&f.state, &owner, "remember", note("Finding K2-20 is rated CRITICAL, see the owner folder", "local"))["result"]["id"].as_str().unwrap().to_owned();
+    let stale = call(&f.state, &owner, "remember", note("Finding K2-20 is rated LOW", "builders"))["result"]["id"].as_str().unwrap().to_owned();
+    let done = call(&f.state, &owner, "supersede", json!({"target": stale, "replacement": secret}));
+    let event = done["result"]["event"].as_str().unwrap().to_owned();
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": stale}))["result"]["current_id"], Value::Null);
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": event}))["error"], "kira:not-found");
+    assert_eq!(call(&f.state, &owner, "get", json!({"id": event}))["result"]["id"], secret.as_str());
+}
+
 #[test]
 fn import_skips_secrets_and_is_idempotent() {
     let f = fixture();
