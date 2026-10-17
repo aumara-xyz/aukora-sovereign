@@ -121,7 +121,7 @@ pending; the node records it later by itself (below).
   attempt, never deleted), `spent_receipts` (never updated or deleted), `devices` (never deleted), all pinned to this
   node id.
 - A pairing, its join token and context last 5 minutes. A receipt verifies only while the pairing lives, within 10 s
-  of its second timestamp (a device clock up to 3 s ahead is tolerated), with both timestamps inside the window.
+  of its second timestamp (a device clock up to 3 s ahead is tolerated), with both timestamps in [the pairing's creation second, its expiry second + 3 s], checked before verification.
 - At most 8 receipt submissions per pairing; then it closes. **The owner is never locked out:** a new start always
   works (and closes the previous unfinished pairing). Join tokens and bearers are 256-bit; guessing gives nothing to
   limit. Unfinished pairings older than a day are forgotten at the next start; spent ones stay.

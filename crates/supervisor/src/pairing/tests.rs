@@ -294,7 +294,7 @@ fn receipts_that_do_not_match_the_pinned_context_refuse() {
         (receipt(world.node, "AUKORA first pairing", &owner, &phone, t_a, t_b), "context-mismatch"),
         (receipt(world.node, &context, &owner, &stranger, t_a, t_b), "device-mismatch"),
         (receipt(NodeId::from_bytes([8; 16]), &context, &owner, &phone, t_a, t_b), "context-mismatch"),
-        (receipt(world.node, &context, &owner, &phone, t_a - 30, t_b - 30), "stale-frame"),
+        (receipt(world.node, &context, &owner, &phone, T0 / 1000 + 1, T0 / 1000 + 2), "stale-frame"),
         (receipt(world.node, &context, &owner, &phone, t_a + 10, t_b + 10), "future-frame"),
         (b"{\"schema\":\"aukora.copresence.hardened.v1\"}".to_vec(), "fields"),
     ];
@@ -508,4 +508,32 @@ fn once_the_receipt_is_spent_a_store_failure_still_answers_with_the_verdict() {
     // The sweep finds the committed fact and records it; still one fact.
     assert_eq!(world.pairing.settle_pending(&world.facts).unwrap(), (1, 0));
     assert_eq!(world.facts.rows.borrow().len(), 1);
+}
+
+#[test]
+fn both_receipt_times_must_lie_in_the_pairing_window() {
+    let world = world();
+    let (owner, phone) = (Device::new(1), Device::new(2));
+    let (id, _, context) = joined(&world, &owner, &phone);
+    let now = T0 + 6_000;
+    let created = T0 / 1000;
+    let cases = [
+        // t_a an hour ahead (t_b with it, so the pair is self-consistent).
+        (now / 1000 + 3_600, now / 1000 + 3_600),
+        // t_b (and so t_a, which is never later) before the pairing was created.
+        (created - 5, created - 2),
+        // t_a one second before creation, t_b inside.
+        (created - 1, created + 5),
+        // Past expiry plus the clock allowance.
+        (created + PAIRING_LIFETIME_MS / 1000 + CLOCK_AHEAD_SECONDS + 1, created + PAIRING_LIFETIME_MS / 1000 + CLOCK_AHEAD_SECONDS + 1),
+    ];
+    for (t_a, t_b) in cases {
+        let bytes = receipt(world.node, &context, &owner, &phone, t_a, t_b);
+        let refused = world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap_err();
+        assert_eq!(refused.reason, "receipt-window", "t_a={t_a} t_b={t_b}");
+    }
+    assert!(world.facts.rows.borrow().is_empty());
+    // t_a at the creation second, t_b now: both inside the window, accepted.
+    let bytes = receipt(world.node, &context, &owner, &phone, created, now / 1000);
+    world.pairing.submit(&world.owner, &id, &bytes, now, &world.facts).unwrap();
 }

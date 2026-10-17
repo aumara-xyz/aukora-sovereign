@@ -163,6 +163,18 @@ fn pairing_id(text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Both receipt timestamps lie in [created, expires + CLOCK_AHEAD_SECONDS], in whole
+/// seconds. Checked on the claims before verification (so a refusal is journalled as a
+/// refusal) and again on the verified core.
+fn receipt_window(row: &Row, t_a: u64, t_b: u64) -> Result<()> {
+    let first = row.created_ms / 1000;
+    let last = (row.expires_ms / 1000).saturating_add(CLOCK_AHEAD_SECONDS);
+    if [t_a, t_b].iter().any(|t| *t < first || *t > last) {
+        return Err(refuse("receipt-window"));
+    }
+    Ok(())
+}
+
 fn owns(row: &Row, owner: &Owner) -> Result<()> {
     if row.subject != owner.subject.to_string()
         || row.epoch != owner.epoch
@@ -412,6 +424,7 @@ impl Pairing {
     /// field the node pins matches. Session ids and attempt counters stay the devices'.
     fn expected(&self, row: &Row, receipt: &[u8]) -> Result<(v1::Context, [u8; 65], [u8; 65])> {
         let claims = v1::read_receipt_claims(receipt)?;
+        receipt_window(row, claims.core.t_a_seconds, claims.core.t_b_seconds)?;
         let context = claims.core.context;
         let pinned = row.context.as_deref().ok_or(refuse("pairing-state"))?;
         let initiator = device_key(&row.initiator_key)?;
@@ -475,11 +488,7 @@ impl Pairing {
             v1::verify_receipt(receipt, &expected, checked_now, &mut journal)?
         };
         let core = &verified.body().core;
-        if core.t_a_seconds < row.created_ms / 1000
-            || core.t_b_seconds.saturating_mul(1000) >= row.expires_ms
-        {
-            return Err(refuse("receipt-window"));
-        }
+        receipt_window(&row, core.t_a_seconds, core.t_b_seconds)?;
         let digest = verified.digest().to_string();
         let (initiator_id, joiner_id) = (key_id(&initiator), key_id(&joiner));
         let devices = || -> Result<Value> {
