@@ -58,6 +58,13 @@ The receipt's two participants must both name this node, their two keys must be 
 (either order), the method screen-to-screen, no sound, motion or intent layer. Session ids and attempt counters in
 the participants stay the devices' own. A change of meaning is a new schema.
 
+## Reading codes
+
+Both pairing pages read the other screen with jsQR 1.4.0 (`portal/vendor/jsQR.min.js`, the exact file the
+phone-tested portal-v0 used, Apache-2.0, licence in `portal/vendor/LICENSE-jsQR`; both pinned in `checks/pins.json`).
+The phone page loads it with a plain `<script src>`; the owner's pairing port adds it on first `open()`. Nothing
+else loads it and nothing comes from a CDN. Where it is missing, `BarcodeDetector` is the fallback.
+
 ## Device keys
 
 Each device makes one P-256 ECDSA key in WebCrypto with a non-extractable private half and keeps it in IndexedDB on
@@ -145,16 +152,19 @@ export const pairingPort: PairingPort | null = createNodePairingPort();
   wrong node, stranger key, stale and future frames, tampered signature, attempt bound, single-use and expiring join,
   session separation, pending fact settled once, reopen).
 - `cargo test -p frontdoor --lib`: portal paths on the owner surface only; pairing routes; phone page headers.
-- `JSQR=<jsQR.min.js> node tests/copresence/twin.mjs --runs=5`: two isolated headless-Chrome contexts against a local
+- `node tests/copresence/twin.mjs --runs=5`: two isolated headless-Chrome contexts against a local
   stand-in node running `supervisor::pairing` (`crates/supervisor/src/pairing/twin.rs`): 5 of 5 paired in about
-  4.5 s, phone verified, one fact per run, replay refused, both devices listed, no CSP violation. Cameras are canvas
-  streams painted by the driver; TLS, the owner session check and Aura are stood in. Not the physical test.
+  4.5 s, phone verified, one fact per run, replay refused, both devices listed, no CSP violation. Both pages read
+  codes with the vendored jsQR. Cameras are canvas streams painted by the driver; TLS, the owner session check and Aura are stood in. Not the physical test.
 
 ## Open
 
-- **Bloom keys for own-device pairing.** The relationship bloom needs two distinct row-113 person keys; an owner
-  pairing their own phone has one person. The verdict carries `personNostrKeys: null` until a choice is made.
-- **QR reading on iPhone and Safari.** They have no `BarcodeDetector`. `portal/node/decoder.ts` uses a page-loaded
-  `jsQR` (the decoder portal-v0 was phone-tested with); the release does not ship it yet.
+- **Bloom keys for own-device pairing** (waiting on Peter). The relationship bloom needs two distinct row-113 person
+  keys; an owner pairing their own phone has one person. The verdict carries `personNostrKeys: null`; onboarding
+  shows "Verified" without a bloom.
+- **Own Aura kind** for the pairing fact (C3 registry, schema migration, verifier) and **AUMLOK `add_device`** for
+  making a paired phone an authority device with the passkey: both on the Kira open list.
+- **Licence in the release.** `portal/vendor/LICENSE-jsQR` sits beside the script in the repository; the release
+  build ships only code and data extensions, so the served release carries the script without its licence file.
 - **Frame size.** A FACE/SEENYOU frame is a version-40 QR (177 modules). The rehearsal needed about 8 px per module.
   A real phone camera at arm's length has not been tried with this engine.

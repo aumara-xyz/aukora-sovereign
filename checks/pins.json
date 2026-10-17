@@ -544,6 +544,8 @@
   "engine/plugins/aukora-foundation/tsdown.config.ts": "4e1d0872b988e69560956213f76cc1c9dc0642775880a85554a390110f5f1348",
   "immune/ANTIBODIES.tsv": "1ada0197297750a6fe994124fa7227ddd59466f31764f750e6e1d6768420cdb7",
   "portal/bloom/person-bloom-v2.json": "f10350c60cbbcfbca4c63407635b009ef7fa703a7a1bc1b4855721253ef2f725",
+  "portal/vendor/LICENSE-jsQR": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+  "portal/vendor/jsQR.min.js": "32214c74ee92d37de6d88276987690d996ce757668e82ca1709dba5e0be9fcce",
   "spec/CARRY-LIST.md": "0406152d31d4a7468aa1bf4fea2cfc1325343943c02c589c9da825ee8d7352a6",
   "spec/CONTRACTS.md": "498fc8bdb9e779425864a40a22f89c373aaf329568164682ede9102a2f80a301",
   "spec/COVERAGE-2026-10-15.md": "97a24547742943b9a8a7f9c0e303ffae84332145fe3f4c36dac653eaa49576ce",

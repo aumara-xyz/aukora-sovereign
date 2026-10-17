@@ -17,7 +17,7 @@ import type { PentoraExpansion } from "../bloom/index.js";
 import type { ContextExchange, PersonNostrKeys, PortalExchange, PortalObservation, PortalServices, ReceiptVerdict } from "../contracts.js";
 import { awaitContext, contextNode, PairingClient, type PairingStart, type PairingVerdict } from "./client.js";
 import { deviceKey, OWNER_DEVICE_STORE, type DeviceKey } from "./device-key.js";
-import { frameDecoder } from "./decoder.js";
+import { frameDecoder, loadJsQr } from "./decoder.js";
 
 export type PairingCanvases = { readonly frame: HTMLCanvasElement; readonly video: HTMLVideoElement; readonly bloom: HTMLCanvasElement };
 export type NodePairingPortOptions = {
@@ -147,6 +147,7 @@ export function createNodePairingPort(options: NodePairingPortOptions = {}): Nod
     async open({ frame, video, bloom }, signal) {
       checkAbort(signal);
       const keys = await ownKey();
+      if (!options.decode) await loadJsQr().catch(() => { /* BarcodeDetector may still serve */ });
       const decode = options.decode ?? frameDecoder();
       const attempts = new IndexedAttempts("aukora.copresence.attempts.owner.v1");
       const optical = cameraSurface(frame, video, options.pentora ?? unavailablePentora, decode, bloom);

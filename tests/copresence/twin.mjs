@@ -3,11 +3,11 @@
 // Co-presence pairing rehearsal: two isolated headless-Chrome contexts are the owner's computer and the phone; a
 // locally run stand-in node (crates/supervisor/src/pairing/twin.rs) runs the real supervisor::pairing organ.
 //
-//   JSQR=/path/to/jsQR.min.js node tests/copresence/twin.mjs [--runs=3]
+//   node tests/copresence/twin.mjs [--runs=3]
 //
 // Real: the portal engine and the node port (compiled from portal/ exactly as app/build.mjs strips TypeScript), the
 // phone page under its production CSP, WebCrypto device keys in each context's own IndexedDB, QR drawing, QR reading
-// (jsQR, injected because headless Chrome has no BarcodeDetector), the node's join, context, verification, single
+// with the vendored jsQR the pages load themselves (portal/vendor), the node's join, context, verification, single
 // spend and device list. Stood in: each camera is a canvas stream onto which this driver paints the other screen's
 // frame canvas; no lens, glare, focus or second clock. TLS, the owner session and the Aura ledger are stood in by the
 // test node. This is not the physical test.
@@ -27,7 +27,6 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let failed = 0;
 const check = (ok, label, detail = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}${detail ? `  ${detail}` : ''}`); if (!ok) failed++; };
 
-if (!process.env.JSQR || !fs.existsSync(process.env.JSQR)) { console.log('[UNPERFORMED] set JSQR to a jsQR.min.js file'); process.exit(2); }
 if (!fs.existsSync(CHROME)) { console.log(`[UNPERFORMED] Chrome not found at ${CHROME}`); process.exit(2); }
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'copresence-twin-')));
@@ -39,7 +38,7 @@ function compile(from, to) {
     if (entry.isDirectory()) { compile(source, path.join(to, entry.name)); continue; }
     if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
       fs.writeFileSync(path.join(to, entry.name.replace(/\.ts$/, '.js')), stripTypeScriptTypes(fs.readFileSync(source, 'utf8'), { mode: 'strip' }));
-    } else if (/\.(html|css|json)$/.test(entry.name)) fs.copyFileSync(source, path.join(to, entry.name));
+    } else if (/\.(html|css|json|js)$/.test(entry.name)) fs.copyFileSync(source, path.join(to, entry.name));
   }
 }
 compile(path.join(ROOT, 'portal'), path.join(served, 'portal'));
@@ -106,14 +105,12 @@ const cameraShim = `(() => {
   };
   navigator.mediaDevices.getUserMedia = async () => { stream ??= canvas.captureStream(15); return stream; };
 })();`;
-const jsqr = fs.readFileSync(process.env.JSQR, 'utf8');
 
 async function device(name) {
   const { browserContextId } = await send('Target.createBrowserContext', { disposeOnDetach: true });
   const { targetId } = await send('Target.createTarget', { url: 'about:blank', browserContextId });
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
   for (const domain of ['Page', 'Runtime', 'Log']) await send(`${domain}.enable`, {}, sessionId);
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: jsqr }, sessionId);
   await send('Page.addScriptToEvaluateOnNewDocument', { source: cameraShim }, sessionId);
   const evaluate = async expression => {
     const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
