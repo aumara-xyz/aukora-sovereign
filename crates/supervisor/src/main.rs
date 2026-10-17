@@ -25,6 +25,10 @@ fn run() -> canon::Result<()> {
     if arguments.first().is_some_and(|command| command == "release") {
         return release::pointer::run(&arguments[1..]);
     }
+    // Kira 2, the shared memory service on the Mac: serve, register, token, import, mcp.
+    if arguments.first().is_some_and(|command| command == "kira") {
+        return kira::shared::service::cli(&arguments[1..]);
+    }
     let [command, option, path] = arguments.as_slice() else {
         return Err(canon::Refusal {
             organ: "supervisor",

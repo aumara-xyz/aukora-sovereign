@@ -10,3 +10,4 @@ pub mod notes;
 pub mod openviking;
 pub mod permissions;
 pub mod recall;
+pub mod shared;

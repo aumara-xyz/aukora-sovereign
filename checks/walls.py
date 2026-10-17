@@ -124,7 +124,8 @@ def file_findings(path, text):
         return found
     if low.endswith(".rs"):
         code = strip_rs(text)
-        for rule, pattern, allowed in (("no-test-suites", TEST_ATTR, set()), ("wall-smuggle", SMUGGLE, set()),
+        # Peter, 2026-10-17: unit tests (#[cfg(test)] modules) are allowed; nothing gates a merge on them.
+        for rule, pattern, allowed in (("wall-smuggle", SMUGGLE, set()),
                                        ("wall-network", NET, ALLOW["net"]), ("wall-exec", PROC, ALLOW["proc"]),
                                        ("wall-unsafe", UNSAFE, ALLOW["unsafe"]), ("wall-lint", LINT_OFF, set()), ("wall-abi", ABI, {"launcher"})):
             if unit not in allowed and re.search(pattern, code):

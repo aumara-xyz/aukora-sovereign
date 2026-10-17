@@ -1,7 +1,7 @@
 # crates/kira
 - **Owns:** encrypted memory, cited recall, demotion (never deletion), memory permissions, the OpenViking adapter.
 - **Never owns:** authority or model calls.
-- **May depend on:** canon, aura.
+- **May depend on:** canon, aura, nostr.
 - **Bricks:** 57, 58, 59, 60, 124 (NORTH-STAR.md).
 - **Storage:** SQLite note retention, authenticated encryption, demotion, cited recall, permissions and local indexing; Aura and key access use injected adapters.
 - **Health:** 18 private checks and 8 corner sides; missing observers report failed, never verified.
