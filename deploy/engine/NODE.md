@@ -385,18 +385,23 @@ the owner approves the new one; nothing switches before that.
 2. On the node, as root, from the CURRENT release's tools:
    `python3 -B /opt/aukora/current/deploy/upgrade/node_release.py stage --stage /root/upgrade-stage` (prints the id),
    then `... node_release.py offer --id ID`. This only makes the link `/opt/aukora/offered`.
-3. The running release verifies the offered tree, then probes it (O20): it copies its state to
-   `/var/lib/aukora/release-probe` and runs the offered binary there (`sovereign release probe`; journal `release:
-   probing the offered release …`, then `… started on a copy of the state; its card can go up` or `… did not start …;
-   no card`, tried again after 10 minutes). Only then does it raise the card "Upgrade this node to a new release"
+3. The running release verifies the offered tree, then probes it (O20) in its own unit, never in its own process
+   tree: it starts `aukora-release-probe@ID.service` (polkit: that template, start only). There root (the installed
+   release's `release_probe.py prepare`) copies the identity, floor, targets, sessions and the ledger (SQLite
+   `VACUUM INTO`) for a throwaway user (DynamicUser, no network, no capabilities, none of `/var/lib/aukora*`,
+   `/etc/aukora`, the door, broker, engine or Kira sockets); the offered binary runs `sovereign release probe` on that
+   copy; systemd kills the whole cgroup at 90 s; root (`release_probe.py finish`) records the outcome in
+   `/var/lib/aukora-release/probe/ID.json`. Journal: `release: probing the offered release …`, then `… started on a
+   copy of the state; its card can go up` or `… did not start …; no card` (tried again after 10 minutes). Only then does it raise the card "Upgrade this node to a new release"
    (`base_sha256` = the running release, `release_sha256` = the new `release.json`'s SHA-256). The engine keeps running.
 4. The owner approves it with the passkey. The floor advances in one Aura transaction; the supervisor logs
    `release: the owner approved release …; restarting to switch to it` and exits 75; systemd starts it again and the
    unit's root pre-start (`node_release.py follow`, which reads the floor through the installed binary as aukora with
    `sovereign release floor`) checks the floor against root's anchor (`/var/lib/aukora-release/anchor.json`: the
    floor root last accepted; the new floor must extend it, later version and the same spent approvals plus more),
-   advances the anchor, moves `current` to the new release and `previous` to the old one, writes `active.json` and
-   drops the offer (journal: `node-release follow: switched to ID`). A floor behind or beside the anchor (a restored
+   advances the anchor, writes an activation intent (`activation.json`, synced), moves `current` to the new release
+   and `previous` to the old one, writes `active.json`, removes the intent and drops the offer (a crash in between is
+   finished at the next start from the intent) (journal: `node-release follow: switched to ID`). A floor behind or beside the anchor (a restored
    snapshot of the service's state) is refused (`refused: the floor is behind the anchored floor …`) and the
    supervisor will not serve it (`floor-behind-anchor`). Going back to an older release is an owner approval like any
    other: `offer` the older staged release and approve its card. The engine stops only for that restart and
@@ -407,6 +412,12 @@ the owner approves the new one; nothing switches before that.
    then withdraws the card (an expiry with reason `withdrawn`, never a decline). Either way the current release keeps
    running. Never withdraw after the owner approved: `follow` switches to the staged release the floor names even
    without the offer, but only while it is still staged.
+**Before the first anchor.** Root writes its anchor at the first start that follows an owner floor (or the first
+switch). Until then the only check is that the floor names the running release or moved on from it; an older
+approved state restored in that window is not caught by the anchor (Codex re-review: no concrete bypass found in
+this flow, but the window is real). The polkit rule that lets the supervisor start the probe is written by
+`engine_install.py` (`aukora-engine.rules`); a node without an engine has no probe rule, so its offers never get a
+card. A release from before the probe unit never offers a card through a running release that probes in a unit.
 A node installed before this release has no `follow` step and no upgrade card: bring it to this release once by the
 redeploy below (or the signed-pointer `upgrade.sh`, whose new binary then waits for the release card as before).
 `upgrade.sh`/`node_release.py switch` (the owner-signed pointer) remain; on a bound node prefer `offer`.
@@ -530,7 +541,7 @@ D (ed7a900…-16c5a08c, the fixes below) through B's own card, then E (aff2272�
 | **B30** (Codex HIGH) rollback by restore | root keeps `/var/lib/aukora-release/anchor.json` (root 0644, synced): the floor it last accepted; `follow` needs that floor or a successor (later version, spent approvals extended), refuses behind, divergent or a non-root anchor; the supervisor refuses to serve a floor behind it (`floor-behind-anchor`) | on D a restart anchored D's floor (`unchanged (anchored)`, seq 40, 3 spent); the D-era state was copied, E approved (anchor seq 46, 4 spent); the D-era copy was restored and the supervisor restarted: `node-release follow: refused: the floor is behind the anchored floor (restored or divergent state)`, `current` stayed E, the supervisor journaled `the floor is behind the floor root accepted …; refusing to serve it`, the engine stayed `inactive`; the real state put back: E served, engine `running` |
 | owner-approved rollback | going back is a new card from the running floor to the older release | E offered D: probe passed, card, approved, `switched to ed7a900e3be3-16c5a08c4f1e`; anchor seq 51, 5 spent, history A, B, E |
 | **O20** pre-swap probe | the offered release's own binary runs `sovereign release probe` on a copy of the state (ledger via `VACUUM INTO`); the card goes up only on `probe ok <digest>` | E offered on D: `probing the offered release b66fdcab…` then `… started on a copy of the state; its card can go up` within a second, then the card; B (no probe command) offered on E: `the offered release's probe said: supervisor:release-pointer-usage`, `… did not start …; no card`, no pending release card |
-| re-proposal cap | bytes whose card simply expired are held back 24 h (`gate:recently-expired`) unless the owner asks again; listed beside the declines | unit tests (`adapters::gate`); not exercised live |
+| re-proposal cap | bytes whose card simply expired are held back 24 h (`gate:recently-expired`) unless the owner asks again for that very card (its `aukora-owner-again-v1` fact; other evidence does not lift it, Codex re-review 3); listed beside the declines | unit tests (`adapters::gate`); not exercised live |
 | Live, Zeta Harp, Lingwa faces | `connect-src 'self'` (their JSON module imports were blocked, the AUMLOK cause) | checks green; not opened on the node |
 
 Tests (Mac): `cargo test -p floor` (10, three new: genesis and upgrade ordering), `-p supervisor -- adapters::gate
