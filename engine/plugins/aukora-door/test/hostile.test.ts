@@ -328,3 +328,25 @@ test('verdicts are forgotten when the result is final', async () => {
     await rig.close()
   }
 })
+
+test('every request carries its own printable wire id, even when the model reuses or garbles its call id', async () => {
+  const rig = await makeRig()
+  try {
+    const run = async (callId: string, token: symbol): Promise<void> => {
+      const exec: ExecLike = { callId, name: 'kira_remember', arguments: { statement: 'x' }, token }
+      await rig.door.preExecute(exec, async () => ({ kind: 'allow' }))
+      await rig.door.execute(exec, async () => ({ isError: false, value: 1, content: [] }))
+      rig.door.forget(exec)
+    }
+    await run('call_0', Symbol('a'))
+    await run('call_0', Symbol('b'))
+    await run('has space\nnew line \u20ac and a very long tail '.padEnd(400, 'z'), Symbol('c'))
+    const ids = rig.stub.seen.verified.map(entry => entry.callId)
+    assert.equal(ids.length, 3)
+    assert.equal(new Set(ids).size, 3)
+    for (const id of ids) assert.match(id, /^[\x21-\x7e]{1,256}$/)
+    assert.match(ids[0] ?? '', /^[0-9a-f]{16}-1-call_0$/)
+  } finally {
+    await rig.close()
+  }
+})

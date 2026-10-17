@@ -12,6 +12,7 @@
 //
 // Everything fails closed: a missing socket, a timeout, a malformed reply, a mismatch, an unknown tool.
 
+import { randomBytes } from 'node:crypto'
 import { bindCall, CanonError } from './canonical.ts'
 import type { BoundCall } from './canonical.ts'
 import { callDoor, DoorError } from './client.ts'
@@ -24,6 +25,21 @@ import type {
 export const REFUSAL_NAME = 'AukoraDoorRefusal'
 
 const MAX_VERDICTS = 4096
+
+/**
+ * The id a request carries on the wire. The model's own call id is not unique (some providers number calls from
+ * zero in every turn) and not safe for a line-oriented log, so the door sees `<process nonce>-<counter>-<call id>`,
+ * with the model's id reduced to `[A-Za-z0-9_.:-]` and cut to 64 characters: unique per request, printable ASCII,
+ * at most 256 bytes. The server consumes each wire id once.
+ */
+function wireIdFactory(): (callId: string) => string {
+  const nonce = randomBytes(8).toString('hex')
+  let counter = 0
+  return callId => {
+    counter += 1
+    return `${nonce}-${counter}-${String(callId).replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 64)}`
+  }
+}
 
 /** Validate a DoorConfig and fill in defaults. Throws a plain Error naming the first problem. */
 export function resolveConfig(raw: DoorConfig): ResolvedConfig {
@@ -113,6 +129,7 @@ export interface Door {
 export function createDoor(rawConfig: DoorConfig): Door {
   const config = resolveConfig(rawConfig)
   const verdicts = new Map<symbol, Verdict>()
+  const wireId = wireIdFactory()
 
   const record = (exec: ExecLike, call: BoundCall, callClass: CallClass): void => {
     if (verdicts.size >= MAX_VERDICTS) {
@@ -178,7 +195,7 @@ export function createDoor(rawConfig: DoorConfig): Door {
 
       const request: DoorRequest = {
         v: 1,
-        call_id: exec.callId,
+        call_id: wireId(exec.callId),
         tool: call.tool,
         args_canonical_b64: bytesOf(call),
         digest_sha256: call.digest,

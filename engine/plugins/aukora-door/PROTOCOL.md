@@ -28,7 +28,7 @@ re-verifies itself.
 | Field | Type | Meaning |
 |---|---|---|
 | `v` | `1` | Protocol version. Any other value is denied. |
-| `call_id` | string | The registry's call id for this execution. Echoed in the reply; the server consumes it once. |
+| `call_id` | string | Unique per request: `<process nonce>-<counter>-<the model's call id, reduced to [A-Za-z0-9_.:-] and cut to 64 characters>`. 1..=256 printable ASCII bytes, no space. Echoed in the reply; the server consumes it once. |
 | `tool` | string | The tool name as dispatched (1..256 UTF-8 bytes, no NUL). |
 | `args_canonical_b64` | string | Standard base64 of the C1 canonical UTF-8 text of the tool arguments. |
 | `digest_sha256` | string | 64 lowercase hex digits, the call digest below. A claim to be checked, never trusted. |
@@ -106,6 +106,8 @@ No other field is allowed anywhere; the client rejects the whole reply otherwise
   approve first. A later retry is a new call with a new `call_id`.
 
 ## What the Rust side must do
+
+Implemented by `sovereign door serve` in `crates/supervisor/src/door` (see `crates/supervisor/DOOR.md`).
 
 1. Parse the request strictly: exactly the six fields, `v` equal to 1, field types and sizes as above. Anything else:
    deny `bad-request`.
