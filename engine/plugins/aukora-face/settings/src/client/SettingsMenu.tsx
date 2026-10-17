@@ -7,6 +7,15 @@ const ICON: Readonly<Record<string, IconName>> = {
   'general': 'general', 'models': 'model', 'plugins': 'plugins', 'agent-presets': 'presets', 'archived': 'archive',
 }
 
+/** One line under each section's name (every launcher is the two-line form). English until the locale lands. */
+const SUMMARY: Readonly<Record<string, string>> = {
+  'general': 'language, look and defaults',
+  'models': 'model providers and keys',
+  'plugins': 'what the harness ships',
+  'agent-presets': 'how the agent works',
+  'archived': 'sessions you put away',
+}
+
 /**
  * Render every registered settings section as a direct System-menu launcher.
  * @param props - composed system-menu props.
@@ -34,6 +43,7 @@ export function SettingsMenu({
             data-settings-section={row.id}
             aria-label={row.label}
             title={row.label}
+            summary={SUMMARY[row.id] ?? 'settings'}
             expanded={active}
             onToggle={(open) => { if (open) openSurface('settings', row.id); else closeSurface() }}
           />

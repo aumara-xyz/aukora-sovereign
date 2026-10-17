@@ -16,7 +16,7 @@
   justify-content: flex-start;
   gap: 12px;
   width: calc(100% - 4px);
-  height: var(--ak-portal-h2);
+  height: calc(var(--ak-portal-h2) + 2px); /* the 68px head plus its 1px ring, like a PortalButton card */
   min-height: 0;
   margin: 10px 2px;
   padding: 0 16px;
@@ -74,7 +74,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  height: var(--ak-portal-h2);
+  height: calc(var(--ak-portal-h2) + 2px); /* the 68px head plus its 1px ring, like a PortalButton card */
   min-height: 0;
   padding: 0 16px;
   box-sizing: border-box;

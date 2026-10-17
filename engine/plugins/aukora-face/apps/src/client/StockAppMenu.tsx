@@ -40,7 +40,7 @@ function StockAppMenu({ spec, activeSurface, openSurface, t }: StockAppMenuProps
     >
       <span className={css.menuCopy}>
         <strong>{t(`${spec.copy}.name`)}</strong>
-        {spec.copy !== 'humanGraph' && spec.copy !== 'media' && <span>{t(`${spec.copy}.menu`)}</span>}
+        <span>{t(`${spec.copy}.menu`)}</span>
       </span>
     </button>
   )

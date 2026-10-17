@@ -27,7 +27,10 @@ export function MemoryMenu({ activeSurface, openSurface, t }: MemoryMenuProps) {
       title={t('menu.memory.tip')}
       onClick={() => { openSurface('memory', undefined, 'contained') }}
     >
-      {t('menu.memory')}
+      <span>
+        <strong>{t('menu.memory')}</strong>
+        <span>{t('menu.memory.tip')}</span>
+      </span>
     </button>
   )
 }
