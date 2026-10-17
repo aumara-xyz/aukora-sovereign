@@ -148,6 +148,8 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         ledger.clone(),
     )?);
     gate.configure_targets(config.gate_targets()?)?;
+    // The door for the engine's crossings, when this node has a policy for it: its asks become gate proposals.
+    crate::door::start_in_node(&config, ledger.clone(), gate.clone());
     if let BindingState::Bound(scope) = ledger.binding()? {
         // A floor that differs from the installed release is a refused shell, never a crash loop (SCOUT 6c4046c).
         // Raising the release proposal is best effort at start-up: a refused or stale proposal leaves the shell

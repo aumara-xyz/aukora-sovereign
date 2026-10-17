@@ -104,7 +104,9 @@ No other field is allowed anywhere; the client rejects the whole reply otherwise
   `value`. `text` is used only as the plain text content. The tool body in the engine does **not** run.
 - **deny:** nothing ran. The model sees `Error: the door refused this action (<refusal>); nothing ran`.
 - **ask:** nothing ran; the door has raised, or will raise, an owner card. The model sees that the owner has to
-  approve first. A later retry is a new call with a new `call_id`.
+  approve first. A later retry is a new call with a new `call_id`. With the node's door the owner approves this exact
+  call (its digest) on the owner origin; repeating the identical call then runs it once (`ask-<class>:pending` while it
+  waits).
 
 ## What the Rust side must do
 

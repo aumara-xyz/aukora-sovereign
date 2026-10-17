@@ -88,6 +88,10 @@ impl<S: TargetStore> ScopedGate<S> {
             && proposal.request.target.as_str().starts_with("sites/")
         {
             site_facts(&self.config, &proposal)?
+        } else if action == OwnerOperation::Apply
+            && proposal.request.target.as_str().starts_with(crate::door::TARGET_PREFIX)
+        {
+            door_facts(&proposal)?
         } else {
             content_facts(&proposal, action, &before)?
         };
@@ -202,6 +206,29 @@ fn content_facts(
         facts.from_to.push(("after".into(), text(value)?));
     }
     Ok(facts)
+}
+
+/// The card for a door ask. Every fact is read back from the bytes the owner's passkey covers.
+fn door_facts(proposal: &Proposal) -> Result<ReviewFacts> {
+    let record = crate::door::read(&proposal.request.new_bytes)?;
+    let mut from_to = vec![
+        ("base_sha256".into(), base_value(proposal.request.base)?),
+        ("new_bytes_b64".into(), text(encode_bytes(&proposal.request.new_bytes))?),
+    ];
+    if let Ok(after) = std::str::from_utf8(&proposal.request.new_bytes) {
+        from_to.push(("after".into(), text(after)?));
+    }
+    Ok(ReviewFacts {
+        says: "Let the engine run this one call, exactly as displayed.".into(),
+        facts: vec![
+            ("target".into(), text(proposal.request.target.as_str())?),
+            ("tool".into(), text(&record.tool)?),
+            ("class".into(), text(&record.class)?),
+            ("call_sha256".into(), text(&record.digest_sha256)?),
+            ("new_sha256".into(), text(proposal.new_digest)?),
+        ],
+        from_to,
+    })
 }
 
 fn site_facts(config: &GateConfig, proposal: &Proposal) -> Result<ReviewFacts> {

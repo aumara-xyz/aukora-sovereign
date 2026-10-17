@@ -34,7 +34,7 @@ fn refuse() -> Refusal {
     Refusal { organ: "supervisor", reason: "door-state" }
 }
 
-fn open_append(path: &Path) -> Result<File> {
+pub(super) fn open_append(path: &Path) -> Result<File> {
     OpenOptions::new().create(true).read(true).append(true).mode(0o600).open(path).map_err(|_| refuse())
 }
 

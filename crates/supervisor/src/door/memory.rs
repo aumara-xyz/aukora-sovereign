@@ -89,11 +89,18 @@ fn send(policy: &MemoryPolicy, token: &str, method: &str, params: &Json) -> Resu
     }
 }
 
-/// Forward one memory tool call. The error is the refusal token (the service's own `kira:<reason>` passes through).
-pub fn forward(policy: &MemoryPolicy, tool: &str, args: &Value) -> Result<Json, String> {
+/// What the door checks before it talks to anyone: the tool is one of the engine's, its arguments are in range.
+/// Also run before an owner is asked, so nobody is asked to approve a call the door would refuse anyway.
+pub fn preflight(tool: &str, args: &Value) -> Result<(&'static str, Json), String> {
     let method = method(tool).map_err(str::to_owned)?;
     let params: Json = serde_json::from_slice(&json::to_canonical(args)).map_err(|_| "memory-params".to_owned())?;
     check_ceilings(method, &params).map_err(str::to_owned)?;
+    Ok((method, params))
+}
+
+/// Forward one memory tool call. The error is the refusal token (the service's own `kira:<reason>` passes through).
+pub fn forward(policy: &MemoryPolicy, tool: &str, args: &Value) -> Result<Json, String> {
+    let (method, params) = preflight(tool, args)?;
     let token = read_token(policy).map_err(str::to_owned)?;
     send(policy, &token, method, &params)
 }

@@ -84,6 +84,8 @@ pub struct Policy {
     /// Sustained requests per second the door will look at, and the burst it tolerates.
     pub rate_per_second: u32,
     pub rate_burst: u32,
+    /// Where the door listens when the node runs it (`door serve --socket` overrides this one).
+    pub socket: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -101,6 +103,7 @@ struct RawPolicy {
     max_frame_bytes: Option<usize>,
     rate_per_second: Option<u32>,
     rate_burst: Option<u32>,
+    socket: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -224,6 +227,11 @@ impl Policy {
         if !(1..=1_000).contains(&rate_per_second) || !(1..=10_000).contains(&rate_burst) {
             return Err(refuse());
         }
+        let socket = match raw.socket {
+            Some(socket) if absolute(&socket) => Some(PathBuf::from(socket)),
+            Some(_) => return Err(refuse()),
+            None => None,
+        };
         Ok(Policy {
             peers,
             workspace_roots: raw.workspace_roots,
@@ -234,6 +242,7 @@ impl Policy {
             max_frame_bytes,
             rate_per_second,
             rate_burst,
+            socket,
         })
     }
 
@@ -307,6 +316,14 @@ mod tests {
         assert!(Policy::parse(&with("\"classes\":{\"net\":\"sometimes\"}")).is_err());
         assert!(Policy::parse(&with("\"extra\":1")).is_err());
         assert!(Policy::parse(&BASE.replace("\"v\":1", "\"v\":2")).is_err());
+    }
+
+    #[test]
+    fn the_socket_the_node_listens_on_is_an_absolute_path() {
+        assert_eq!(Policy::parse(BASE).unwrap().socket, None);
+        let policy = Policy::parse(&with("\"socket\":\"/run/aukora/door.sock\"")).unwrap();
+        assert_eq!(policy.socket, Some(PathBuf::from("/run/aukora/door.sock")));
+        assert!(Policy::parse(&with("\"socket\":\"door.sock\"")).is_err());
     }
 
     #[test]

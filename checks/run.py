@@ -106,7 +106,7 @@ DEPLOY_PINS = {
     "deploy/spawn/guard.py": "ca7eb41a9e0ebf9006319ff9644316e9662052f7d509fe4207fc5b2a511a5915",
     "deploy/spawn/host.py": "f7dc95e52b5ceb8d2873fc186e9f8c42db7df95b28f85bd04e07c4c0b8ea9b46",
     "deploy/spawn/lxd.py": "e7a85a22f6f4b0ddd7d97dd4f5b69f63995e85ec4998f0c04462a70f1b362be2",
-    "deploy/spawn/node_install.py": "5b477e07ed46fbafa5cf2b4680a989c6587362b30faeb3303c6f720be7d45633",
+    "deploy/spawn/node_install.py": "f21abf19663a4de5b2a3622d68ece2977aaf8a1900ae92a1d7e249180e0a99df",
     "deploy/spawn/release.py": "c59b7b74f77b4a743ace8082bb3ca3151930b992a8cceb43cfc99c8cda915537",
     "deploy/spawn/spawn.py": "32f65c91a2e152317f54940ac679710f72ee6a767e4ffd90aea49cbc2a18d958",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",

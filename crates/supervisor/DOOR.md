@@ -32,10 +32,27 @@ with `cargo test -p supervisor door`.
    protection therefore covers the last 250,000 to 500,000 ids. `door.lock` is `flock`ed, so two doors cannot share a
    state folder. (This stops a captured or approved request being run again; an engine that mints a fresh id is
    bounded by the class policy and the rate limit.)
-6. **Ask.** `ask` appends `{call_id, class, tool, digest, time}` to `asks.jsonl` (fsync; 16 MiB cap, after which an ask
-   is refused as `asks-full` until the owner drains the file) for the approval path, and answers `ask` (`ask-<class>`).
-   No new Aura kind is needed and no gate proposal is made yet (the gate accepts only targets in its inventory, which
-   the installer ships empty).
+6. **Ask.** Without an approver (`door serve` on its own) `ask` appends `{call_id, class, tool, digest, time}` to
+   `asks.jsonl` (fsync; 16 MiB cap, then `asks-full`) and answers `ask` (`ask-<class>`); nothing else happens. Run
+   inside the node (below), an ask is a real owner request:
+   - Only a class with an executor is ever asked about, and only after the door's own checks pass (arguments, host on
+     the allowlist, memory ceilings): the owner is never asked to approve a call the door would refuse anyway. Other
+     classes answer `no-executor`.
+   - The call becomes a gate proposal: the record `gate::door` writes (canonical JSON: `args`, `call_id`, `class`,
+     `digest_sha256`, `kind`, `tool`, `v`) replaces `door/ask-NN.json`, the first free of eight critical content targets
+     the installer ships. The owner origin renders it with the generic review/passkey flow; the card says "Let the engine
+     run this one call, exactly as displayed", with tool, class, call digest and the exact record under "Exact changes".
+     The guest's own `propose` refuses `door/` targets.
+   - The approval belongs to the **call digest**, not the call id. The model repeats the identical call (fresh id): while
+     the proposal is unanswered the reply is `ask-<class>:pending`; once applied, the door appends `used` to
+     `approvals.jsonl` (fsync) and only then executes. One approval lets exactly one call through; a crash between the
+     two loses the run and never repeats it. A refused, retired or expired proposal is raised afresh.
+   - `approvals.jsonl` is the door's memory of open asks (16 MiB cap, 4,096 open); a torn or unreadable line can only
+     lose an ask. A sweep every 60 s settles expired proposals (the gate expires a pending proposal only in `recover`,
+     which otherwise runs at start-up, and a target holds one open proposal, so unanswered asks would hold their slots
+     until a restart).
+   - Refusals the engine can see: `approvals-unbound` (node not claimed), `approvals-not-installed` (no `door/` targets
+     in the inventory), `approvals-busy` (eight asks already open), `ask-too-large` (record over 12 KiB), `approvals-full`.
 7. **Executors** (only `net` and `memory` have one; a policy cannot `allow` any other class, and `fs-outside` is
    always denied):
    - `net`, `web_fetch`: the URL must be https (http only if the policy says so), carry no user info, name an
@@ -75,9 +92,18 @@ without following a symlink and checked on the open descriptor; unknown fields a
 ```
 
 `state_dir` (a real directory of the door's user, created or tightened to 0700; a symlink or a foreign owner is
-refused) holds `door.lock`, `consumed.<n>.log` and `asks.jsonl`. The socket is created with the umask's mode and then
+refused) holds `door.lock`, `consumed.<n>.log`, `asks.jsonl` and, with an approver, `approvals.jsonl`. The socket is created with the umask's mode and then
 set to 0666 when peers are checked by uid (any local user can connect, only the allowlisted uid is served) or 0600
 for `socket-permissions`.
+
+## Running inside the node
+
+`sovereign serve --config` starts the door itself when the config directory holds `door-policy-v1.json` (root-owned,
+not group- or world-writable, read like `gate-targets-v1.json`; absent means no door). It is the same policy text as
+above plus `"socket": "/abs/path"` where the door listens. The door runs on plain threads in the node process (the gate
+lives only there) and a door that cannot start is logged, never a node crash. The installer ships the eight
+`door/ask-NN.json` targets; an older node needs them added to its inventory by an owner-approved sync (not built yet).
+The policy file is **not** installed by default: enabling the door is the operator's decision.
 
 ## Deployment requirements (the code cannot check these)
 
@@ -96,7 +122,11 @@ for `socket-permissions`.
 ## Not done, on purpose
 
 - Executors for `mcp`, `plugin`, `persist`, `delegate`: they can be `deny` or `ask` only. `web_search` has none yet.
-- A gate proposal for `ask` (needs inventory targets and a decision about the approval card's content).
+- A gate proposal for the classes that have no executor (`plugin`, `persist`, `delegate`, `mcp`): there is nothing the
+  door could run after an approval, so they answer `no-executor` instead of asking.
+- Existing nodes: the inventory sync that adds the `door/` targets.
+- No integration test drives a real gate proposal through the owner flow (there is no gate harness in main); the door's
+  ask flow is tested against a scripted approver, the record and card with unit tests, the adapter by compile only.
 - A per-class quota of connection slots, and a limit on how fast a hostile engine can fill `asks.jsonl` below the
   rate limit.
 - The Linux `SO_PEERCRED` path is three lines and compiles only on Linux; it was written on macOS and is covered by

@@ -141,6 +141,46 @@ impl GateAdapter {
         })
     }
 
+    /// Open one owner-reviewed proposal for the door at `target` (`door/...`), against whatever the target holds now.
+    /// Only the door reaches this; the guest's own `propose` refuses `door/` targets.
+    pub fn propose_door(
+        &self,
+        scope: PrincipalScope,
+        target: String,
+        note: String,
+        bytes: Vec<u8>,
+    ) -> ServiceFuture<'_, ProposalId> {
+        self.submit(move |gate, host| {
+            let target = TargetId::new(target)?;
+            let base = gate.target_store().observe(&target)?.digest;
+            host.scoped(scope, |txn| {
+                gate.propose(
+                    txn,
+                    ProposalRequest {
+                        target,
+                        base,
+                        new_bytes: bytes,
+                        model_note: note,
+                        cell: None,
+                        new_evidence: None,
+                        suggestion: SuggestionOrder::Single,
+                    },
+                    &mut NoInjection,
+                )
+                .map(|proposal| proposal.id)
+            })
+        })
+    }
+
+    /// Settle expired proposals now. The gate expires a pending proposal only inside `recover`, which otherwise runs
+    /// once at start-up, and a target holds at most one live proposal; without this an unanswered ask keeps its
+    /// target busy until the node restarts. Returns how many proposals recovery could not settle.
+    pub fn sweep_expired(&self) -> ServiceFuture<'_, usize> {
+        self.submit(|gate, host| {
+            host.transaction(|txn| Ok(gate.recover(txn, &mut NoInjection)?.blocked.len()))
+        })
+    }
+
     fn submit<T: Send + 'static>(
         &self,
         operation: impl FnOnce(&mut ScopedGate<ConfinedStore>, &HostLedger) -> Result<T>
@@ -190,6 +230,9 @@ impl GateService for GateAdapter {
         _: &'a FrameId,
         request: Propose,
     ) -> ServiceFuture<'a, Accepted> {
+        if request.target.starts_with("door/") {
+            return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
+        }
         self.submit(move |gate, host| {
             let bytes = request.replacement_bytes()?;
             host.scoped(scope, |txn| {

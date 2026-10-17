@@ -5,6 +5,7 @@
 pub mod card;
 pub mod coverage;
 pub mod decision;
+pub mod door;
 pub mod health;
 pub mod install;
 mod observation;

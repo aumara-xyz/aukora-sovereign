@@ -86,6 +86,22 @@ impl NodeConfig {
         Ok(targets)
     }
 
+    /// The door's policy beside the inventory, read the same way (root-owned, not writable by others, no symlink).
+    /// Absent means this node runs no door.
+    pub fn door_policy_text(&self) -> Result<Option<String>> {
+        const NAME: &str = "door-policy-v1.json";
+        let directory = disk::open_host_directory(&self.directory)?;
+        match rustix::fs::statat(&directory, NAME, rustix::fs::AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(_) => {}
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(_) => return Err(super::refused("config-unreadable")),
+        }
+        let raw = disk::read_host_file(&self.directory.join(NAME), 65_536)?;
+        String::from_utf8(raw)
+            .map(Some)
+            .map_err(|_| super::refused("config-unreadable"))
+    }
+
     fn gate_inventory_absent(&self) -> Result<bool> {
         let directory = disk::open_host_directory(&self.directory)?;
         match rustix::fs::statat(

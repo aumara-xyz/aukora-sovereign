@@ -9,6 +9,7 @@
 //!
 //! What it is not: a wall. The OS confines the engine; this process is where authority and keys live.
 
+mod approver;
 mod classify;
 mod fetch;
 mod files;
@@ -18,6 +19,7 @@ mod peer;
 mod policy;
 mod wire;
 
+use approver::{Approval, ApprovalLog, Approver, AskRecord, GateApprover};
 use canon::{Refusal, Result};
 use classify::Class;
 use ledger::{AskLog, Ledger};
@@ -37,6 +39,8 @@ use wire::{Decision, Request};
 const MAX_CONNECTIONS: usize = 32;
 const READ_DEADLINE: Duration = Duration::from_secs(5);
 const WRITE_DEADLINE: Duration = Duration::from_secs(10);
+/// How often an approver settles what the owner left unanswered.
+const SWEEP_EVERY: Duration = Duration::from_secs(60);
 
 fn refuse(reason: &'static str) -> Refusal {
     Refusal { organ: "supervisor", reason }
@@ -83,24 +87,43 @@ pub struct Door {
     policy: Policy,
     ledger: Ledger,
     asks: AskLog,
+    /// The owner path for `ask` classes, when the node supplies one; without it an ask is only recorded.
+    owner: Option<Owner>,
     bucket: Bucket,
     runtime: tokio::runtime::Runtime,
     active: AtomicUsize,
 }
 
+/// The approver, the door's durable memory of what it has asked, and the lock that keeps one ask at a time.
+struct Owner {
+    approver: Arc<dyn Approver>,
+    log: ApprovalLog,
+    turn: Mutex<()>,
+}
+
 impl Door {
     /// Open the state folder (a real directory of ours, 0700), lock and load the consumed ids, open the asks log.
+    #[cfg(test)]
     pub fn open(policy: Policy) -> Result<Door> {
+        Door::open_with(policy, None)
+    }
+
+    /// As `open`, with an approver that raises owner requests for `ask` classes.
+    pub fn open_with(policy: Policy, approver: Option<Arc<dyn Approver>>) -> Result<Door> {
         files::private_dir(&policy.state_dir, "door-state")?;
         let ledger = Ledger::open(&policy.state_dir)?;
         let asks = AskLog::open(&policy.state_dir.join("asks.jsonl"))?;
+        let owner = match approver {
+            Some(approver) => Some(Owner { approver, log: ApprovalLog::open(&policy.state_dir.join("approvals.jsonl"))?, turn: Mutex::new(()) }),
+            None => None,
+        };
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .map_err(|_| refuse("door-state"))?;
         let bucket = Bucket::new(policy.rate_per_second, policy.rate_burst);
-        Ok(Door { policy, ledger, asks, bucket, runtime, active: AtomicUsize::new(0) })
+        Ok(Door { policy, ledger, asks, owner, bucket, runtime, active: AtomicUsize::new(0) })
     }
 
     fn peer_allowed(&self, peer: Peer) -> bool {
@@ -146,19 +169,89 @@ impl Door {
     }
 
     fn ask(&self, class: Class, request: &Request) -> Decision {
+        match &self.owner {
+            Some(owner) => self.ask_owner(owner, class, request),
+            None => self.ask_recorded(class, request),
+        }
+    }
+
+    /// Without an approver an ask is written down for whatever picks it up, and nothing runs.
+    fn ask_recorded(&self, class: Class, request: &Request) -> Decision {
+        match self.asks.record(&self.ask_line(class, request)) {
+            Ok(()) => Decision::Ask(format!("ask-{}", class.name())),
+            Err(_) => Decision::Deny("asks-full".into()),
+        }
+    }
+
+    fn ask_line(&self, class: Class, request: &Request) -> String {
         let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        let line = json!({
+        json!({
             "at": at,
             "call_id": request.call_id,
             "class": class.name(),
             "tool": request.tool,
             "digest_sha256": wire::call_digest(&request.tool, &request.args_bytes),
         })
-        .to_string();
-        match self.asks.record(&line) {
-            Ok(()) => Decision::Ask(format!("ask-{}", class.name())),
-            Err(_) => Decision::Deny("asks-full".into()),
+        .to_string()
+    }
+
+    /// What the door would refuse anyway, found before the owner is asked: a class with no executor, bad arguments, a
+    /// host off the allowlist, a memory call above the engine's ceilings.
+    fn preflight(&self, class: Class, request: &Request) -> std::result::Result<(), String> {
+        match class {
+            Class::Net => {
+                let net = self.policy.net.as_ref().filter(|_| request.tool == "web_fetch").ok_or("no-executor")?;
+                fetch::check_url(net, net_url(request)?).map(|_| ()).map_err(str::to_owned)
+            }
+            Class::Memory => {
+                self.policy.memory.as_ref().ok_or("no-executor")?;
+                memory::preflight(&request.tool, &request.args).map(|_| ())
+            }
+            _ => Err("no-executor".into()),
         }
+    }
+
+    /// An ask with an owner behind it. The approval belongs to the call digest, not to the call id: the model repeats
+    /// the identical call (a fresh id) once the owner has approved, and that one call then runs. The approval is spent,
+    /// durably, before the call executes; a crash in between costs the run, never repeats it.
+    fn ask_owner(&self, owner: &Owner, class: Class, request: &Request) -> Decision {
+        if let Err(code) = self.preflight(class, request) {
+            return Decision::Deny(code);
+        }
+        // One ask at a time: two concurrent repeats of an approved call cannot both spend it, and one call is
+        // never raised twice.
+        let _turn = owner.turn.lock().unwrap_or_else(PoisonError::into_inner);
+        let digest = wire::call_digest(&request.tool, &request.args_bytes);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Some((handle, raised)) = owner.log.get(&digest) {
+            // An answer is good for a limited time; an older request is raised again, whatever the approver says.
+            let state = if now.saturating_sub(raised) > approver::APPROVAL_TTL_SECS { Approval::Gone } else { owner.approver.state(&handle) };
+            match state {
+                Approval::Approved => {
+                    return match owner.log.finish(&digest, &handle, "used") {
+                        Ok(()) => self.execute(class, request),
+                        Err(code) => Decision::Deny(code.into()),
+                    };
+                }
+                Approval::Pending => return Decision::Ask(format!("ask-{}:pending", class.name())),
+                Approval::Gone => {
+                    if let Err(code) = owner.log.finish(&digest, &handle, "gone") {
+                        return Decision::Deny(code.into());
+                    }
+                }
+            }
+        }
+        let ask = AskRecord { call_id: &request.call_id, class: class.name(), tool: &request.tool, digest_sha256: &digest, args: &request.args };
+        let handle = match owner.approver.request(&ask) {
+            Ok(handle) => handle,
+            Err(code) => return Decision::Deny(code.into()),
+        };
+        if let Err(code) = owner.log.begin(&digest, &handle, now) {
+            return Decision::Deny(code.into());
+        }
+        // The audit trail of what was asked; the approval itself lives in the gate and the approvals log.
+        let _ = self.asks.record(&self.ask_line(class, request));
+        Decision::Ask(format!("ask-{}", class.name()))
     }
 
     fn execute(&self, class: Class, request: &Request) -> Decision {
@@ -176,11 +269,10 @@ impl Door {
     }
 
     fn execute_net(&self, request: &Request) -> Decision {
-        use canon::json::ValueView;
         let (Some(net), "web_fetch") = (&self.policy.net, request.tool.as_str()) else { return Decision::Deny("no-executor".into()) };
-        let url = match (request.args.view(), request.args.get("url").map(canon::json::Value::view)) {
-            (ValueView::Object(members), Some(ValueView::Text(url))) if members.len() == 1 => url,
-            _ => return Decision::Deny("bad-args".into()),
+        let url = match net_url(request) {
+            Ok(url) => url,
+            Err(code) => return Decision::Deny(code),
         };
         // The whole reply line must fit what the plugin accepts, so a full-size page is cut here, not refused after it ran.
         let reply_limit = self.policy.max_frame_bytes.saturating_sub(2048);
@@ -217,6 +309,15 @@ impl Door {
             }
         };
         write_reply(&mut stream, &reply);
+    }
+}
+
+/// The one argument `web_fetch` takes.
+fn net_url(request: &Request) -> std::result::Result<&str, String> {
+    use canon::json::ValueView;
+    match (request.args.view(), request.args.get("url").map(canon::json::Value::view)) {
+        (ValueView::Object(members), Some(ValueView::Text(url))) if members.len() == 1 => Ok(url),
+        _ => Err("bad-args".into()),
     }
 }
 
@@ -289,8 +390,8 @@ fn bind(socket: &Path, world_connectable: bool) -> Result<UnixListener> {
     Ok(listener)
 }
 
-/// Serve until killed.
-pub fn serve(policy: Policy, socket: &Path) -> Result<()> {
+/// Check the policy against this platform and user, open the state, bind the socket.
+fn start(policy: Policy, socket: &Path, approver: Option<Arc<dyn Approver>>) -> Result<(Arc<Door>, UnixListener)> {
     let by_uid = matches!(policy.peers, PeerRule::Uids(_));
     if by_uid && !peer::peercred_supported() {
         // Without kernel peer credentials a uid allowlist would silently allow everyone.
@@ -298,9 +399,25 @@ pub fn serve(policy: Policy, socket: &Path) -> Result<()> {
     }
     policy.check_peer_uids(files::euid())?;
     files::parent_not_writable_by_others(socket, "door-socket")?;
-    let door = Arc::new(Door::open(policy)?);
+    let door = Arc::new(Door::open_with(policy, approver)?);
     let listener = bind(socket, by_uid)?;
-    eprintln!("door: serving on {}", socket.display());
+    if door.owner.is_some() {
+        let door = Arc::clone(&door);
+        std::thread::Builder::new()
+            .name("door-sweep".into())
+            .spawn(move || loop {
+                std::thread::sleep(SWEEP_EVERY);
+                if let Some(owner) = &door.owner {
+                    owner.approver.sweep();
+                }
+            })
+            .map_err(|_| refuse("door-state"))?;
+    }
+    Ok((door, listener))
+}
+
+/// Accept connections until the listener fails for good.
+fn accept_loop(door: &Arc<Door>, listener: &UnixListener) {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
         let peer = peer::of(&stream);
@@ -314,13 +431,50 @@ pub fn serve(policy: Policy, socket: &Path) -> Result<()> {
             write_reply(&mut stream, &wire::reply_line("unknown", &Decision::Deny("busy".into())));
             continue;
         }
-        let slot = Slot(Arc::clone(&door));
+        let slot = Slot(Arc::clone(door));
         let _ = std::thread::Builder::new().spawn(move || {
             let slot = slot;
             slot.0.serve_stream(stream, peer);
         });
     }
+}
+
+/// Serve until killed.
+pub fn serve(policy: Policy, socket: &Path) -> Result<()> {
+    let (door, listener) = start(policy, socket, None)?;
+    eprintln!("door: serving on {}", socket.display());
+    accept_loop(&door, &listener);
     Ok(())
+}
+
+/// Run the door inside the node when the config directory holds `door-policy-v1.json` (absent: no door). The door's
+/// `ask` classes then raise real owner requests in this node's gate. A door that cannot start is logged and the node
+/// carries on without it; the engine's crossings are refused while it is down. Everything past reading the file runs
+/// on the door's own thread: the door owns a tokio runtime, which must never be dropped inside the node's.
+pub fn start_in_node(config: &crate::config::NodeConfig, ledger: Arc<crate::adapters::HostLedger>, gate: Arc<crate::adapters::GateAdapter>) {
+    let log = |refusal: Refusal| eprintln!("door: not started: {}:{}", refusal.organ, refusal.reason);
+    let text = match config.door_policy_text() {
+        Ok(Some(text)) => text,
+        Ok(None) => return,
+        Err(refusal) => return log(refusal),
+    };
+    let spawned = std::thread::Builder::new().name("door".into()).spawn(move || {
+        let started = Policy::parse(&text).and_then(|policy| {
+            let socket = policy.socket.clone().ok_or_else(|| refuse("door-policy"))?;
+            let approver: Arc<dyn Approver> = Arc::new(GateApprover::new(gate, ledger));
+            start(policy, &socket, Some(approver)).map(|(door, listener)| (door, listener, socket))
+        });
+        match started {
+            Ok((door, listener, socket)) => {
+                eprintln!("door: serving on {} (owner approvals through the gate)", socket.display());
+                accept_loop(&door, &listener);
+            }
+            Err(refusal) => eprintln!("door: not started: {}:{}", refusal.organ, refusal.reason),
+        }
+    });
+    if spawned.is_err() {
+        log(refuse("door-state"));
+    }
 }
 
 /// `sovereign door serve --socket PATH --policy FILE`.
@@ -630,6 +784,175 @@ mod tests {
         std::os::unix::fs::symlink(&real, &link).unwrap();
         let text = policy_text(&link, "{\"mode\":\"socket-permissions\"}", "", "");
         assert!(Door::open(Policy::parse(&text).unwrap()).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    use super::approver::fake::Fake;
+
+    /// A door whose asks go to the scripted approver, with the Kira stub's socket wired as its memory executor.
+    fn owner_door(dir: &Path, fake: &Arc<Fake>, classes: &str) -> Door {
+        let token = dir.join("door.token");
+        std::fs::write(&token, "door-token\n").unwrap();
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let extra = format!(
+            ",\"memory\":{{\"socket\":\"{}\",\"token_file\":\"{}\"}},\"net\":{{\"hosts\":[\"docs.rs\"]}}",
+            dir.join("kira.sock").display(),
+            token.display()
+        );
+        let text = policy_text(&dir.join("state"), "{\"mode\":\"peercred\",\"uids\":[1001]}", classes, &extra);
+        let approver: Arc<dyn approver::Approver> = fake.clone();
+        Door::open_with(Policy::parse(&text).unwrap(), Some(approver)).unwrap()
+    }
+
+    /// A stand-in for the Kira service answering `count` requests; yields the request lines it saw.
+    fn kira_stub(dir: &Path, count: usize) -> std::thread::JoinHandle<Vec<String>> {
+        let listener = UnixListener::bind(dir.join("kira.sock")).unwrap();
+        std::thread::spawn(move || {
+            (0..count)
+                .map(|_| {
+                    let (stream, _) = listener.accept().unwrap();
+                    let mut text = String::new();
+                    std::io::BufReader::new(stream.try_clone().unwrap()).read_line(&mut text).unwrap();
+                    let mut stream = stream;
+                    writeln!(stream, "{}", json!({"ok": true, "result": {"status": "found", "items": []}})).unwrap();
+                    text
+                })
+                .collect()
+        })
+    }
+
+    const RECALL: &str = "{\"query\":\"figurine\"}";
+
+    fn call(door: &Door, id: &str, tool: &str, args: &str, class: &str) -> Decision {
+        door.judge(Peer::Uid(1001), &line(id, tool, args, class)).1
+    }
+
+    fn ask_code(decision: &Decision) -> &str {
+        match decision {
+            Decision::Ask(code) => code,
+            other => panic!("expected ask, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_ask_with_an_owner_raises_one_request_and_a_repeat_while_it_waits_raises_none() {
+        let dir = temp("owner-pending");
+        let fake = Arc::new(Fake::default());
+        let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+        assert_eq!(ask_code(&call(&door, "a-1", "kira_recall", RECALL, "memory")), "ask-memory");
+        assert_eq!(ask_code(&call(&door, "a-2", "kira_recall", RECALL, "memory")), "ask-memory:pending");
+        let raised = fake.raised.lock().unwrap().clone();
+        assert_eq!(raised, vec![format!("kira_recall|memory|{}", wire::call_digest("kira_recall", RECALL.as_bytes()))]);
+        // A different call is a different request.
+        call(&door, "a-3", "kira_recall", "{\"query\":\"other\"}", "memory");
+        assert_eq!(fake.raised.lock().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_approved_call_runs_once_and_the_next_repeat_needs_a_new_approval() {
+        let dir = temp("owner-approved");
+        let stub = kira_stub(&dir, 1);
+        let fake = Arc::new(Fake::default());
+        let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+        assert_eq!(ask_code(&call(&door, "b-1", "kira_recall", RECALL, "memory")), "ask-memory");
+        fake.answer(&format!("{:032x}", 1), approver::Approval::Approved);
+        let Decision::Allow { value, .. } = call(&door, "b-2", "kira_recall", RECALL, "memory") else { panic!("the approved call must run") };
+        assert_eq!(value["status"], "found");
+        let seen: serde_json::Value = serde_json::from_str(&stub.join().unwrap()[0]).unwrap();
+        assert_eq!((seen["token"].as_str(), seen["method"].as_str()), (Some("door-token"), Some("recall")));
+        // The approval is spent: the same call again raises a new request.
+        assert_eq!(ask_code(&call(&door, "b-3", "kira_recall", RECALL, "memory")), "ask-memory");
+        assert_eq!(fake.raised.lock().unwrap().len(), 2);
+        // The same call id is still never accepted twice.
+        assert_eq!(denied(&call(&door, "b-2", "kira_recall", RECALL, "memory")), "replay");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_open_ask_survives_a_restart_and_a_spent_approval_does_not() {
+        let dir = temp("owner-restart");
+        let stub = kira_stub(&dir, 1);
+        let fake = Arc::new(Fake::default());
+        {
+            let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+            assert_eq!(ask_code(&call(&door, "c-1", "kira_recall", RECALL, "memory")), "ask-memory");
+        }
+        // The owner approves while the door is down; the restarted door finds the open ask in its log.
+        fake.answer(&format!("{:032x}", 1), approver::Approval::Approved);
+        {
+            let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+            assert!(matches!(call(&door, "c-2", "kira_recall", RECALL, "memory"), Decision::Allow { .. }));
+        }
+        stub.join().unwrap();
+        // Spent before it ran, so a second restart cannot run it again: the approver still says "approved".
+        let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+        assert_eq!(ask_code(&call(&door, "c-3", "kira_recall", RECALL, "memory")), "ask-memory");
+        assert_eq!(fake.raised.lock().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_lost_request_is_raised_again_not_run() {
+        let dir = temp("owner-gone");
+        let fake = Arc::new(Fake::default());
+        let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+        call(&door, "d-1", "kira_recall", RECALL, "memory");
+        fake.answer(&format!("{:032x}", 1), approver::Approval::Gone);
+        assert_eq!(ask_code(&call(&door, "d-2", "kira_recall", RECALL, "memory")), "ask-memory");
+        assert_eq!(fake.raised.lock().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_owner_is_never_asked_about_a_call_the_door_would_refuse_anyway() {
+        let dir = temp("owner-preflight");
+        let fake = Arc::new(Fake::default());
+        let door = owner_door(&dir, &fake, "\"memory\":\"ask\",\"net\":\"ask\",\"plugin\":\"ask\"");
+        let owner = "{\"capture\":\"model-generated\",\"form\":\"fact\",\"lane\":\"decision\",\"privacy\":\"builders\",\"scope\":\"auma\",\"subject\":\"s\",\"text\":\"x\"}";
+        assert_eq!(denied(&call(&door, "e-1", "kira_remember", owner, "memory")), "lane-closed");
+        assert_eq!(denied(&call(&door, "e-2", "kira_quarantine_source", "{\"pubkey\":\"00\"}", "memory")), "owner-only");
+        assert_eq!(denied(&call(&door, "e-3", "web_fetch", "{\"url\":\"https://evil.example/x\"}", "net")), "host-not-allowed");
+        assert_eq!(denied(&call(&door, "e-4", "web_fetch", "{\"url\":7}", "net")), "bad-args");
+        assert_eq!(denied(&call(&door, "e-5", "web_search", "{\"query\":\"x\"}", "net")), "no-executor");
+        assert_eq!(denied(&call(&door, "e-6", "plugin_manager", "{\"action\":\"install\"}", "plugin")), "no-executor");
+        assert!(fake.raised.lock().unwrap().is_empty());
+        // An allowed host is asked about (and nothing is fetched while it waits).
+        assert_eq!(ask_code(&call(&door, "e-7", "web_fetch", "{\"url\":\"https://docs.rs/serde\"}", "net")), "ask-net");
+        assert_eq!(fake.raised.lock().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn when_no_request_can_be_raised_the_engine_is_told_so_and_nothing_runs() {
+        let dir = temp("owner-fail");
+        let fake = Arc::new(Fake::default());
+        let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+        *fake.fail.lock().unwrap() = Some("approvals-busy");
+        assert_eq!(denied(&call(&door, "f-1", "kira_recall", RECALL, "memory")), "approvals-busy");
+        assert!(fake.raised.lock().unwrap().is_empty());
+        // Once it can, the same call goes through the owner path.
+        *fake.fail.lock().unwrap() = None;
+        assert_eq!(ask_code(&call(&door, "f-2", "kira_recall", RECALL, "memory")), "ask-memory");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_approval_older_than_its_time_limit_is_raised_again_not_run() {
+        let dir = temp("owner-stale");
+        std::fs::create_dir_all(dir.join("state")).unwrap();
+        let digest = wire::call_digest("kira_recall", RECALL.as_bytes());
+        let stale = format!("{:032x}", 99);
+        std::fs::write(
+            dir.join("state").join("approvals.jsonl"),
+            format!("{{\"at\":1,\"digest\":\"{digest}\",\"e\":\"open\",\"handle\":\"{stale}\"}}\n"),
+        )
+        .unwrap();
+        let fake = Arc::new(Fake::default());
+        fake.answer(&stale, approver::Approval::Approved);
+        let door = owner_door(&dir, &fake, "\"memory\":\"ask\"");
+        assert_eq!(ask_code(&call(&door, "g-1", "kira_recall", RECALL, "memory")), "ask-memory");
+        assert_eq!(fake.raised.lock().unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(dir);
     }
 }
