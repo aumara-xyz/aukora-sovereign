@@ -1,17 +1,22 @@
-/** Settings-section entries in the shell's right-side System menu. */
-import clsx from 'clsx'
+/** Settings-section entries in the shell's right-side System menu: one launcher portal per section. */
+import { PortalButton, type IconName } from '@aukora/face-layout/client'
 import type { SettingsMenuComponentProps } from './shell-contract.ts'
-import css from './SettingsRoot.module.css'
+
+/** The glyph for each known section; a section added later gets the general one. */
+const ICON: Readonly<Record<string, IconName>> = {
+  'general': 'general', 'models': 'model', 'plugins': 'plugins', 'agent-presets': 'presets', 'archived': 'archive',
+}
 
 /**
- * Render every registered settings section as a direct System-menu row.
+ * Render every registered settings section as a direct System-menu launcher.
  * @param props - composed system-menu props.
- * @returns the settings section menu buttons.
+ * @returns the settings section launchers.
  */
 export function SettingsMenu({
   activeSurface,
   surfaceTarget,
   openSurface,
+  closeSurface,
   useSections,
 }: SettingsMenuComponentProps) {
   const rows = useSections(snapshot => snapshot)
@@ -21,18 +26,17 @@ export function SettingsMenu({
       {rows.map((row) => {
         const active = activeSurface === 'settings' && row.id === selected?.id
         return (
-          <button
+          <PortalButton
             key={row.id}
-            type="button"
-            className={clsx(css.menuItem, active && css.menuItemActive)}
-            aria-current={active ? 'page' : undefined}
+            menu
+            tone="blue"
+            icon={ICON[row.id] ?? 'general'}
+            data-settings-section={row.id}
             aria-label={row.label}
-            onClick={() => { openSurface('settings', row.id) }}
-          >
-            <span className={css.systemMenuCopy}>
-              <strong>{row.label}</strong>
-            </span>
-          </button>
+            title={row.label}
+            expanded={active}
+            onToggle={(open) => { if (open) openSurface('settings', row.id); else closeSurface() }}
+          />
         )
       })}
     </>

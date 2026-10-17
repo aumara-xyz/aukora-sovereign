@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AumlokSurfaceInjected } from './AumlokSurface.tsx'
 import { IdentityCard, type ReadIdentity } from './IdentityCard.tsx'
+import { PortalButton } from '@aukora/face-layout/client'
 import css from './Aumlok.module.css'
 
 export interface IdentitySurfaceInjected {
@@ -11,16 +12,11 @@ export interface IdentitySurfaceInjected {
   refreshControlStatus: () => void
 }
 
-export function IdentityMenu({ activeSurface, openSurface, t }:
+export function IdentityMenu({ activeSurface, openSurface, closeSurface, t }:
   PropsRuntime<'shell.menu.system'> & PropsLocale<'aumlok'>) {
-  const active = activeSurface === 'identity'
-  return <button type="button" data-identity-launcher
-    className={clsx(css.menuItem, active && css.menuItemActive)}
-    aria-current={active ? 'page' : undefined} onClick={() => { openSurface('identity') }}>
-    <span className={css.menuCopy}>
-      <strong>{t('identity.title')}</strong><span>{t('identity.description')}</span>
-    </span>
-  </button>
+  return <PortalButton menu tone="blue" icon="identity" data-identity-launcher=""
+    title={t('identity.title')} summary={t('identity.description')} expanded={activeSurface === 'identity'}
+    onToggle={(open) => { if (open) openSurface('identity'); else closeSurface() }} />
 }
 
 export function IdentitySurface({ activeSurface, closeSurface, openSurface, useControlProjection,

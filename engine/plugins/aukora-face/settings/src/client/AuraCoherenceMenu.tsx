@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Aumara and Peter Viviani
-/** Text-only Aura Coherence entry in the shell's right-side System menu. */
-import clsx from 'clsx'
+/** Aura Coherence entry in the shell's right-side System menu. */
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import css from './SettingsRoot.module.css'
+import { PortalButton } from '@aukora/face-layout/client'
 
 /** Full props for the standalone Aura Coherence System launcher. */
 export type AuraCoherenceMenuProps =
@@ -11,27 +10,25 @@ export type AuraCoherenceMenuProps =
   & PropsLocale<'settings'>
 
 /**
- * Open the standalone Aura Coherence surface.
+ * Open the standalone Aura Coherence surface (a launcher portal: icon tile, left-justified, +/−).
  * @param props - System-menu owner share and localized copy.
- * @returns the Aura Coherence launcher button.
+ * @returns the Aura Coherence launcher.
  */
 export function AuraCoherenceMenu({
   activeSurface,
   openSurface,
+  closeSurface,
   t,
 }: AuraCoherenceMenuProps) {
-  const active = activeSurface === 'aura-coherence'
   return (
-    <button
-      type="button"
-      className={clsx(css.menuItem, active && css.menuItemActive)}
-      aria-current={active ? 'page' : undefined}
-      onClick={() => { openSurface('aura-coherence') }}
-    >
-      <span className={css.systemMenuCopy}>
-        <strong>{t('aura.trigger')}</strong>
-        <span>{t('aura.menu')}</span>
-      </span>
-    </button>
+    <PortalButton
+      menu
+      tone="blue"
+      icon="aura"
+      title={t('aura.trigger')}
+      summary={t('aura.menu')}
+      expanded={activeSurface === 'aura-coherence'}
+      onToggle={(open) => { if (open) openSurface('aura-coherence'); else closeSurface() }}
+    />
   )
 }

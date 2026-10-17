@@ -14,6 +14,7 @@
  *               surface rgba(38,43,54,0.72)
  *   tone ring   1px border = tone at 30% (rest); 70% + glow 0 0 14px tone at 14% (open or hover). Never thicker.
  *   portal      radius 14px; head height 68px (two lines: title + one-line summary) or 52px (title only);
+ *               a right-hand menu launcher is always 68px (so every menu lines up); stack gap 10px;
  *               head padding 0 16px; gap 12px; body padding 4px 16px 18px.
  *   icon tile   30 x 30px, radius 10px, inset ring 1px tone at 28%, glyph 16px, stroke 1.4px, round caps, tone colour.
  *   type        title 13.5px/20px weight 520 tracking .02em; summary 11.5px/18px muted; both one line, ellipsis.
@@ -142,6 +143,8 @@
   box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
 }
 .ak-portal--menu { margin: 10px 2px; }
+/* Every launcher in a right-hand menu is the two-line height, title-only or not, so the stacks line up across tabs. */
+.ak-portal--menu > .ak-portal__head { height: var(--ak-portal-h2); }
 /* A caller of the previous PortalButton API (long text it must not cut): same frame, the header grows past the standard height. */
 .ak-portal--free > .ak-portal__head { height: auto; min-height: var(--ak-portal-h1); padding-block: 10px; }
 .ak-portal--free > .ak-portal__head .ak-portal__title, .ak-portal--free > .ak-portal__head .ak-portal__summary { white-space: normal; }
