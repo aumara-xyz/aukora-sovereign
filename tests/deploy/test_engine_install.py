@@ -365,5 +365,27 @@ class HarnessLink(unittest.TestCase):
             shutil.rmtree(scratch)
 
 
+class FenceTable(unittest.TestCase):
+    """The pre-start refuses to start the engine when the fence table is not in the kernel (node sweep, node-4)."""
+
+    def run_block(self, listing, exit_code=0):
+        scratch = tempfile.mkdtemp(prefix="fence-")
+        try:
+            stub = os.path.join(scratch, "nft")
+            with open(stub, "w") as handle:
+                handle.write("#!/bin/sh\ncat <<'EOF'\n%s\nEOF\nexit %d\n" % (listing, exit_code))
+            os.chmod(stub, 0o755)
+            prelude = 'set -eu\nfail() { echo "engine-prestart: $1" >&2; exit 1; }\nNFT=%s\n' % stub
+            return subprocess.run(["sh", "-c", prelude + prestart_block("fence")], capture_output=True)
+        finally:
+            shutil.rmtree(scratch)
+
+    def test_only_a_loaded_fence_table_lets_the_start_go_on(self):
+        loaded = "table inet aukora_engine_fence {\n\tchain output {\n\t\tip daddr 192.0.2.53 drop\n\t}\n}"
+        self.assertEqual(self.run_block(loaded).returncode, 0)
+        self.assertNotEqual(self.run_block("", 1).returncode, 0, "no such table")
+        self.assertNotEqual(self.run_block("table inet aukora_engine_fence {\n}", 0).returncode, 0, "an emptied table")
+
+
 if __name__ == "__main__":
     unittest.main()

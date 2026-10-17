@@ -36,6 +36,14 @@ active=$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["rele
 admitted=$(python3 -I -c 'import json,os,sys;print(json.load(os.fdopen(os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW)))["release"])' "$CTL/admission.json") ||
     fail "no admission from the supervisor"
 [ -n "$active" ] && [ "$active" = "$admitted" ] || fail "the admission is not for the active release"
+# The host fence must be in the kernel now, not only "loaded once" by aukora-engine-fence.service (RemainAfterExit: a
+# flushed ruleset or a firewall reload leaves that unit active with the table gone). Without it the engine would start
+# with the DNS drops and the :690 uid reject missing (node sweep, node-4).
+NFT=/usr/sbin/nft
+# >>> fence (tests/deploy/test_engine_install.py runs this block alone)
+"$NFT" list table inet aukora_engine_fence 2>/dev/null | grep -qF 'ip daddr 192.0.2.53 drop' ||
+    fail "the engine fence table is not loaded (aukora-engine-fence.service)"
+# <<< fence
 # 0. The wall's own files come from the ACTIVE release on every start (SCOUT's sweep, M9: copied once at install, an
 #    upgrade's approved policy or in-wall scripts never took effect): the OpenShell policy (rendered with the engine's
 #    uid and gid), the sandbox's resolv.conf, the in-wall bridge and the authority overlay. Root-owned, read-only to the
