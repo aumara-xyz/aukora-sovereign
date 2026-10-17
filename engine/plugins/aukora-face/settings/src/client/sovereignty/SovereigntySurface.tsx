@@ -9,12 +9,12 @@
  *
  * NAVIGATION (SPATIAL-DESIGN-RULES 4c and 7): the home is a grid of portal buttons. A portal telescopes open to the
  * whole lane in place and its own header closes it again; there is no back arrow. The open portal is the surface's
- * target (`openSurface('sovereignty', id)`), so the shell remembers it like any other surface state.
+ * state; the shell's target only deep-links into one. Opening a portal never resizes a lane.
  *
  * READ-ONLY: this surface runs inside the engine's origin. It reads one snapshot and renders it. It has no verb;
  * every change is an `OwnerAction`, a link to the owner origin where the owner's passkey decides.
  */
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { PortalButton } from '@aukora/face-layout/client'
 import type { CategoryId, SovereigntySnapshot, Tone } from './model.ts'
@@ -86,11 +86,16 @@ function isCategory(value: string | undefined): value is CategoryId {
  * @param props - composed shell-surface props.
  * @returns the surface element tree.
  */
-export function SovereigntySurface({ activeSurface, surfaceTarget, openSurface, closeSurface }: SovereigntySurfaceProps) {
+export function SovereigntySurface({ activeSurface, surfaceTarget, closeSurface }: SovereigntySurfaceProps) {
   const active = activeSurface === SOVEREIGNTY_SURFACE
   // ONE READ, THEN ONLY RENDERING. The stub today; a node-backed reader of the same shape later.
   const s = useMemo(() => readSovereigntyStub(), [])
-  const open = isCategory(surfaceTarget) ? surfaceTarget : null
+  // THE OPEN PORTAL IS THIS SURFACE'S OWN STATE, NOT THE SHELL'S. Opening a portal must never move a lane: the shell's
+  // `openSurface` always sets the pane preset (selectSurface -> center-right-wide, two-thirds), so a portal opened
+  // through it snapped a one-third lane to two-thirds. The shell's target is read once as a deep link (a menu or
+  // another app may open `sovereignty/<id>`), and from then on the portal opens and closes inside the current lane.
+  const [open, setOpen] = useState<CategoryId | null>(isCategory(surfaceTarget) ? surfaceTarget : null)
+  useEffect(() => { if (isCategory(surfaceTarget)) setOpen(surfaceTarget) }, [surfaceTarget])
 
   useEffect(() => {
     if (!active) return
@@ -99,11 +104,11 @@ export function SovereigntySurface({ activeSurface, surfaceTarget, openSurface, 
       if (event.key !== 'Escape' || event.defaultPrevented || isEditableTarget(event.target)) return
       event.preventDefault()
       if (open === null) closeSurface()
-      else openSurface(SOVEREIGNTY_SURFACE)
+      else setOpen(null)
     }
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [active, open, closeSurface, openSurface])
+  }, [active, open, closeSurface])
 
   const shown = open === null ? CATEGORY_IDS : CATEGORY_IDS.filter(id => id === open)
   return (
@@ -131,7 +136,7 @@ export function SovereigntySurface({ activeSurface, surfaceTarget, openSurface, 
                     buttonClassName={css.portalHead}
                     contentClassName={css.detail}
                     expanded={open === id}
-                    onExpandedChange={(next) => { openSurface(SOVEREIGNTY_SURFACE, next ? id : undefined) }}
+                    onExpandedChange={(next) => { setOpen(next ? id : null) }}
                     icon={<span className={css.icon}><CategoryIcon id={id} /></span>}
                     title={<span data-sov-title>{face.title}</span>}
                     subtitle={<span data-sov-sub>{face.summary}</span>}
