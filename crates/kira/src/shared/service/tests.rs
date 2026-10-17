@@ -528,6 +528,56 @@ fn the_latest_correction_in_force_wins() {
     assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], urgent.as_str());
 }
 
+fn state_of(f: &Fixture, token: &str, id: &str) -> String {
+    let r = call(&f.state, token, "get", json!({"id": id}));
+    r["result"]["state"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned()
+}
+
+/// Every note and every recall item says where it stands: proposed, supported, disputed, corrected or resolved.
+#[test]
+fn every_item_shows_its_lifecycle_state_computed_from_its_relations() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    // A lone agent's claim is proposed; the owner's own words are supported.
+    let claim = remember_id(&f, &claude, "The staging relay listens on port 7443");
+    assert_eq!(state_of(&f, &grok, &claim), "proposed");
+    let mut typed = note("The production relay listens on port 8443", "builders");
+    typed["capture"] = json!("owner-typed");
+    let typed = call(&f.state, &owner, "remember", typed)["result"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(state_of(&f, &grok, &typed), "supported");
+    let r = call(&f.state, &grok, "recall", json!({"query": "which port does the production relay listen on"}));
+    assert_eq!(r["result"]["items"][0]["state"], "supported");
+    assert_eq!(r["result"]["states"], json!({"proposed": 1, "supported": 1}), "both relay notes match: {r}");
+    // Counterevidence that cites the claim disputes it. One the caller cannot read disputes nothing for that caller.
+    let mut against = note("The staging relay refused connections on port 7443 at noon", "builders");
+    against["form"] = json!("counterevidence");
+    against["sources"] = json!([claim]);
+    let against_id = call(&f.state, &grok, "remember", against)["result"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(state_of(&f, &claude, &claim), "disputed");
+    let r = call(&f.state, &claude, "recall", json!({"query": "which port does the staging relay listen on"}));
+    let item = r["result"]["items"].as_array().unwrap().iter().find(|i| i["id"] == claim.as_str()).unwrap();
+    assert_eq!(item["state"], "disputed", "{r}");
+    let mut hidden = note("The owner saw the typed port is wrong", "local");
+    hidden["form"] = json!("counterevidence");
+    hidden["sources"] = json!([typed]);
+    call(&f.state, &owner, "remember", hidden);
+    assert_eq!(state_of(&f, &grok, &typed), "supported", "a dispute the caller cannot read is not shown to it");
+    assert_eq!(state_of(&f, &owner, &typed), "disputed");
+    // A dispute does not change what found means: the owner's decision is still an answer.
+    assert_eq!(call(&f.state, &owner, "recall", json!({"query": "which port does the production relay listen on"}))["result"]["status"], "found");
+    // The claim is corrected by a proposal: disputed while pending, then corrected, and the replacement is resolved.
+    let fixed = remember_id(&f, &grok, "The staging relay listens on port 7444");
+    let proposal = call(&f.state, &grok, "supersede", json!({"target": claim, "replacement": fixed}))["result"]["event"].as_str().unwrap().to_owned();
+    assert_eq!(state_of(&f, &claude, &claim), "disputed");
+    assert_eq!(state_of(&f, &claude, &fixed), "proposed");
+    call(&f.state, &claude, "accept_correction", json!({"proposal": proposal}));
+    assert_eq!((state_of(&f, &claude, &claim), state_of(&f, &claude, &fixed)), ("corrected".to_owned(), "resolved".to_owned()));
+    let r = call(&f.state, &claude, "recall", json!({"query": "which port does the staging relay listen on"}));
+    let by_id = |id: &str| r["result"]["items"].as_array().unwrap().iter().find(|i| i["id"] == id).unwrap().clone();
+    assert_eq!((by_id(&fixed)["state"].clone(), by_id(&claim)["state"].clone()), (json!("resolved"), json!("corrected")), "{r}");
+    assert!(state_of(&f, &claude, &against_id) == "proposed");
+}
+
 /// Quarantining a source withdraws the corrections it proposed, accepted or not.
 #[test]
 fn a_quarantined_proposers_corrections_are_void() {

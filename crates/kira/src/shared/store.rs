@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS embeddings(seq INTEGER NOT NULL, model TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS supersede_links(event_id TEXT PRIMARY KEY, target TEXT NOT NULL, replacement TEXT);
 CREATE INDEX IF NOT EXISTS supersede_links_replacement ON supersede_links(replacement);
+CREATE TABLE IF NOT EXISTS citations(seq INTEGER NOT NULL, source TEXT NOT NULL, form TEXT NOT NULL, PRIMARY KEY(seq, source));
+CREATE INDEX IF NOT EXISTS citations_source ON citations(source);
 ";
 
 /// The chain format this build writes. v1 hashed (prev, id); v2 adds the seq and the signed created_at.
@@ -303,6 +305,39 @@ fn upgrade_links(db: &mut Connection) -> Result<()> {
     tx.commit().map_err(sql)
 }
 
+/// Fills the derived `citations` table (which note cites which, and in what form) for a store written before it
+/// existed. Like the other derived tables it is not in the chain; it only finds candidates, and a reader re-loads
+/// and re-verifies every note it names.
+fn upgrade_citations(db: &mut Connection) -> Result<()> {
+    let have: Option<String> = db
+        .query_row("SELECT value FROM meta WHERE key = 'citations'", [], |r| r.get(0))
+        .optional()
+        .map_err(sql)?;
+    if have.is_some() {
+        return Ok(());
+    }
+    let tx = db.transaction().map_err(sql)?;
+    let rows: Vec<(i64, Vec<u8>)> = {
+        let mut stmt = tx.prepare("SELECT seq, raw FROM events WHERE kind = ?1 ORDER BY seq").map_err(sql)?;
+        let rows = stmt
+            .query_map(params![NOTE_KIND], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows
+    };
+    for (seq, raw) in rows {
+        let event = Event::decode(&raw)?;
+        let Ok(meta) = NoteMeta::parse(&event.tags, &event.content) else { continue };
+        for source in &meta.sources {
+            tx.execute("INSERT OR IGNORE INTO citations(seq, source, form) VALUES (?1, ?2, ?3)", params![seq, source, meta.form.wire()])
+                .map_err(sql)?;
+        }
+    }
+    tx.execute("INSERT INTO meta(key, value) VALUES ('citations', '1')", []).map_err(sql)?;
+    tx.commit().map_err(sql)
+}
+
 impl SharedStore {
     pub fn open(path: &Path) -> Result<Self> {
         let mut db = Connection::open(path).map_err(sql)?;
@@ -310,6 +345,7 @@ impl SharedStore {
         upgrade_chain(&mut db)?;
         upgrade_lineage(&mut db)?;
         upgrade_links(&mut db)?;
+        upgrade_citations(&mut db)?;
         Ok(Self { db })
     }
 
@@ -319,6 +355,7 @@ impl SharedStore {
         upgrade_chain(&mut db)?;
         upgrade_lineage(&mut db)?;
         upgrade_links(&mut db)?;
+        upgrade_citations(&mut db)?;
         Ok(Self { db })
     }
 
@@ -510,6 +547,38 @@ impl SharedStore {
         Ok(self.corrections_of(id_hex, &author)?.1)
     }
 
+    /// Ids of the notes that cite `id_hex` as a source in the form `counterevidence`: what is said against it.
+    pub fn counter_evidence(&self, id_hex: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .db
+            .prepare("SELECT e.id FROM citations c JOIN events e ON e.seq = c.seq AND e.kind = ?2 WHERE c.source = ?1 AND c.form = 'counterevidence' ORDER BY e.seq")
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![id_hex, NOTE_KIND], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
+    /// Whether a correction in force names note `id_hex` as the replacement of some earlier note: it stands where a
+    /// corrected note once did.
+    pub fn replaces_something(&self, id_hex: &str) -> Result<bool> {
+        let mut stmt = self.db.prepare("SELECT event_id, target FROM supersede_links WHERE replacement = ?1").map_err(sql)?;
+        let links = stmt
+            .query_map(params![id_hex], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        for (event_id, target) in links {
+            let Some(author) = self.note_author(&target)? else { continue };
+            if self.corrections_of(&target, &author)?.0.iter().any(|c| c.event == event_id) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// The note a correction event is aimed at (a supersede, or an accept's proposal).
     pub fn correction_target(&self, event_id: &str) -> Result<Option<String>> {
         self.db
@@ -647,6 +716,13 @@ impl SharedStore {
                 tx.execute("INSERT INTO fts(rowid, body) VALUES (?1, ?2)", params![seq, event.content]).map_err(sql)?;
                 for root in &roots {
                     tx.execute("INSERT INTO ancestry(seq, root) VALUES (?1, ?2)", params![seq, root]).map_err(sql)?;
+                }
+                for source in &meta.sources {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO citations(seq, source, form) VALUES (?1, ?2, ?3)",
+                        params![seq, source, meta.form.wire()],
+                    )
+                    .map_err(sql)?;
                 }
                 tx.commit().map_err(sql)?;
             }

@@ -485,9 +485,38 @@ fn proposals_visible(store: &SharedStore, caller: &Caller, note: &StoredNote) ->
         .collect()
 }
 
-/// A note as the wire shows it, built from a store read (which re-verified it).
-fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Value {
+/// Where a note stands in its life, computed from the relations the store holds, as far as this caller may read them:
+/// `corrected` (a correction in force retired it; `current_id` says what stands now), `disputed` (a correction is
+/// proposed against it, or a counterevidence note cites it), `resolved` (it stands where a corrected note once did),
+/// `supported` (it stands on the owner's words or review, an owner-run import, or roots by two different authors) and
+/// `proposed` (a claim nobody has backed). It labels; it never changes what `found` means (a dispute is one note
+/// away for anyone who can write, so it must not be able to veto an owner's decision).
+fn lifecycle(store: &SharedStore, caller: &Caller, note: &StoredNote, evidence: &str) -> &'static str {
+    if note.superseded_by.is_some() {
+        return "corrected";
+    }
+    let id = hex(note.event.id.as_bytes());
+    let against = store.counter_evidence(&id).unwrap_or_default().into_iter().any(|other| {
+        store.get(&other).ok().flatten().is_some_and(|n| {
+            visible(caller, &n) && !n.quarantined && n.superseded_by.is_none() && validity(&n.meta, now()) == "current"
+        })
+    });
+    if against || !proposals_visible(store, caller, note).is_empty() {
+        "disputed"
+    } else if store.replaces_something(&id).unwrap_or(false) {
+        "resolved"
+    } else if evidence == "unverified" {
+        "proposed"
+    } else {
+        "supported"
+    }
+}
+
+/// A note as the wire shows it, built from a store read (which re-verified it). `evidence` is what a recall found the
+/// statement to stand on (all its repeaters together); without one it is worked out from the note's own roots.
+fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote, evidence: Option<&str>) -> Value {
     let (m, current) = (&note.meta, current_visible(store, caller, note));
+    let evidence = evidence.unwrap_or_else(|| super::hybrid::evidence_of(store, note));
     json!({
         "id": hex(note.event.id.as_bytes()), "seq": note.seq, "author": hex(note.event.pubkey.as_bytes()),
         "author_name": note.author_name, "created_at": note.event.created_at, "text": note.event.content,
@@ -496,6 +525,7 @@ fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Value {
         "sources": m.sources, "slot": m.slot, "valid_from": m.valid_from, "valid_to": m.valid_to,
         "roots": note.roots, "superseded_by": note.superseded_by, "current_id": current, "quarantined": note.quarantined,
         "validity": validity(&note.meta, now()), "proposals": proposals_visible(store, caller, note),
+        "evidence": evidence, "state": lifecycle(store, caller, note, evidence),
         // A note that cites nothing is a root of its own: nothing in the store supports it but its author's word.
         "lineage": if m.sources.is_empty() { "unsupported" } else { "sourced" },
     })
@@ -516,7 +546,7 @@ fn view(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Value {
     } else if note.quarantined {
         stub(note)
     } else {
-        note_json(store, caller, note)
+        note_json(store, caller, note, None)
     }
 }
 
@@ -826,6 +856,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
     let caller = Caller { name: caller.name.clone(), pubkey: caller.pubkey.clone(), owner: record.owner, scopes: record.scopes };
     let mut status = outcome.status.clone();
     let (mut items, mut live, mut changed) = (Vec::new(), 0usize, false);
+    let mut states: BTreeMap<String, usize> = BTreeMap::new();
     for item in &outcome.items {
         match s.store.get(&item.id) {
             Ok(Some(note)) if visible(&caller, &note) => {
@@ -836,7 +867,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 }
                 live += usize::from(item.correction.is_none());
                 let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
-                let mut shown = if note.quarantined { stub(&note) } else { note_json(&s.store, &caller, &note) };
+                let mut shown = if note.quarantined { stub(&note) } else { note_json(&s.store, &caller, &note, Some(item.evidence)) };
                 shown["score"] = json!(item.score);
                 // Others who stated the same words. Repetition is not support: see `evidence` and `roots`. `also_by`
                 // is the old name of `repeated_by`.
@@ -845,7 +876,9 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 shown["also_by"] = json!(item.also_by);
                 shown["also_by_ids"] = json!(item.also_by_ids);
                 shown["correction"] = json!(correction);
-                shown["evidence"] = json!(item.evidence);
+                if let (None, Some(state)) = (item.correction.as_deref(), shown.get("state").and_then(Value::as_str)) {
+                    *states.entry(state.to_owned()).or_default() += 1;
+                }
                 items.push(shown);
             }
             Ok(Some(_)) => changed |= item.correction.is_none(),
@@ -866,7 +899,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
     };
     Ok(json!({
         "status": status, "reason": reason, "items": items, "omitted": outcome.omitted, "indexed": outcome.indexed,
-        "total": outcome.total, "query_digest": outcome.query_digest,
+        "total": outcome.total, "query_digest": outcome.query_digest, "states": states,
         "judged": {
             "by": outcome.judged_by, "rerank_floor": outcome.rerank_floor, "cosine_floor": outcome.cosine_floor,
             "embed_model": outcome.embed_model, "rerank_model": outcome.rerank_model,

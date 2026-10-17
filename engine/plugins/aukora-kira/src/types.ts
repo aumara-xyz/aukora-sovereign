@@ -82,6 +82,14 @@ export interface KiraNote {
   /** Id of the note that stands where this retired note did (when the caller may read it). `get` on the event id resolves to it. */
   current_id?: string | null
   quarantined: boolean
+  /** What the note stands on: owner-review, owner-words, archive-import, corroborated or unverified. */
+  evidence?: 'owner-review' | 'owner-words' | 'archive-import' | 'corroborated' | 'unverified'
+  /** Lifecycle, computed from relations: proposed, supported, disputed, corrected or resolved. */
+  state?: 'proposed' | 'supported' | 'disputed' | 'corrected' | 'resolved'
+  /** `unsupported` for a note that cites nothing (a root of its own), `sourced` otherwise. */
+  lineage?: 'unsupported' | 'sourced'
+  /** Corrections proposed against this note that its author or the owner has not accepted yet. */
+  proposals?: Array<{ event: string; by: string; replacement: string; reason?: string | null }>
   /** `current`, `expired` (past valid_to) or `not-yet-valid` (before valid_from) now. */
   validity?: 'current' | 'expired' | 'not-yet-valid'
   withheld?: boolean

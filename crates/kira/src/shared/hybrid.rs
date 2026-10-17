@@ -327,6 +327,27 @@ impl Evidence {
     }
 }
 
+/// What a note stands on: owner review, the owner's words, the owner's archive import, or ancestry roots written by at
+/// least `2` different authors (`root_authors`). Web-derived material never counts as corroborated, whoever repeats it.
+fn provenance(meta: &NoteMeta, root_authors: usize) -> Evidence {
+    if meta.review == Review::OwnerSigned {
+        Evidence::OwnerReview
+    } else if meta.capture.owner_class() {
+        Evidence::OwnerWords
+    } else if IMPORT_IS_EVIDENCE && meta.capture == Capture::Import {
+        Evidence::ArchiveImport
+    } else if root_authors >= 2 && meta.capture != Capture::WebDerived {
+        Evidence::Corroborated
+    } else {
+        Evidence::Unverified
+    }
+}
+
+/// The wire label of what a single note stands on (see `RecallItem::evidence`), from its own roots.
+pub fn evidence_of(store: &SharedStore, note: &StoredNote) -> &'static str {
+    provenance(&note.meta, store.root_authors(note.seq).map_or(0, |a| a.len())).wire()
+}
+
 struct Cand {
     note: StoredNote,
     /// Distinct authors of the root notes of this note's ancestry.
@@ -345,21 +366,8 @@ struct Cand {
 }
 
 impl Cand {
-    /// What this note stands on: owner review, the owner's words, the owner's archive import, or roots by at least two
-    /// different authors. Web-derived material never counts as corroborated, whoever repeats it.
     fn provenance(&self) -> Evidence {
-        let meta = &self.note.meta;
-        if meta.review == Review::OwnerSigned {
-            Evidence::OwnerReview
-        } else if meta.capture.owner_class() {
-            Evidence::OwnerWords
-        } else if IMPORT_IS_EVIDENCE && meta.capture == Capture::Import {
-            Evidence::ArchiveImport
-        } else if self.root_authors.len() >= 2 && meta.capture != Capture::WebDerived {
-            Evidence::Corroborated
-        } else {
-            Evidence::Unverified
-        }
+        provenance(&self.note.meta, self.root_authors.len())
     }
 
     /// The note itself matches the question: a keyword hit or the cosine floor.
