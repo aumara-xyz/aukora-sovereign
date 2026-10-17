@@ -4,11 +4,16 @@
 //! - the raw bytes, for any 12-byte window of the provider key in the encodings `EchoGuard` knows;
 //! - every string the event decodes to (member names and values, after JSON unescaping, so `sk...` is the
 //!   key it spells);
-//! - a rolling window of the decoded content text (`text`, `thinking`, `partial_json`, `signature`), per content
-//!   block and across blocks, so a key handed out a few characters per delta is caught when the pieces meet.
+//! - a rolling window of the decoded content text, one per (block, field) as the engine accumulates it (`text`,
+//!   `thinking`, `partial_json`, `signature` each on its own) and one per field across blocks, so a key handed out a
+//!   few characters per delta is caught when the pieces meet;
+//! - a tool call's arguments, whole and decoded, at its block's end: every event from the tool block's start to its
+//!   stop is held (pings and all) until then, so no piece of the arguments reaches the engine before they are
+//!   scanned; a stream that ends inside a tool block releases none of it.
 //!
 //! An event that cannot be parsed, or is larger than the scan bound, stops the stream: what cannot be scanned is not
 //! released. The newest complete event is also held until the caller has settled the call and asks for `tail`.
+//! (Codex reviews of the broker commit, rounds 1 and 2.)
 //! Usage comes from `message_start` and `message_delta` (the latest value of each field wins, as the harness's own
 //! `updateUsage` does), the end from `message_stop`, in-band errors from `error` (Codex review of the broker commit).
 
@@ -17,6 +22,8 @@ use std::collections::BTreeMap;
 
 /// The largest event scanned (a usage event is small; a text delta is a few kilobytes).
 const MAX_EVENT: usize = 1 << 20;
+/// Events held back at once (a tool block's whole stream at most).
+const MAX_HELD: usize = 4 << 20;
 /// Decoded content text kept per window: far more than the key, so any split of it meets in one window.
 const WINDOW: usize = 8192;
 const MAX_TOKENS: u64 = 100_000_000;
@@ -49,9 +56,13 @@ pub struct Meter {
     event_start: usize,
     event: String,
     data: Vec<u8>,
+    /// Scanned events not yet released; the newest starts at `newest`.
     held: Vec<u8>,
-    blocks: BTreeMap<u64, Vec<u8>>,
-    all_text: Vec<u8>,
+    newest: usize,
+    /// Tool blocks started and not yet stopped: while any is open, nothing is released.
+    open_tools: std::collections::BTreeSet<u64>,
+    blocks: BTreeMap<(u64, &'static str), Vec<u8>>,
+    across: BTreeMap<&'static str, Vec<u8>>,
     /// A tool call's argument text, whole, decoded and scanned again when its block stops (its JSON escapes only
     /// become characters when the harness parses it then).
     tool_json: BTreeMap<u64, Vec<u8>>,
@@ -78,8 +89,10 @@ impl Meter {
             event: String::new(),
             data: Vec::new(),
             held: Vec::new(),
+            newest: 0,
+            open_tools: std::collections::BTreeSet::new(),
             blocks: BTreeMap::new(),
-            all_text: Vec::new(),
+            across: BTreeMap::new(),
             tool_json: BTreeMap::new(),
             usage: Usage::default(),
             saw_input: false,
@@ -116,9 +129,16 @@ impl Meter {
             self.cursor = next;
             if line.is_empty() {
                 self.dispatch()?;
-                out.append(&mut self.held);
-                self.held = self.buf[self.event_start..next].to_vec();
+                self.newest = self.held.len();
+                self.held.extend_from_slice(&self.buf[self.event_start..next]);
                 self.event_start = next;
+                if self.held.len() > MAX_HELD {
+                    return Err(Stop::Unscannable);
+                }
+                if self.open_tools.is_empty() {
+                    out.extend(self.held.drain(..self.newest));
+                    self.newest = 0;
+                }
             } else {
                 self.line(&line)?;
             }
@@ -139,6 +159,10 @@ impl Meter {
     /// (the harness's parser agrees) and is dropped.
     pub fn tail(&mut self) -> Vec<u8> {
         self.buf.clear();
+        if !self.open_tools.is_empty() {
+            self.held.clear();
+        }
+        self.newest = 0;
         std::mem::take(&mut self.held)
     }
 
@@ -149,7 +173,13 @@ impl Meter {
 
     /// Whether the stream ended the way a complete Messages reply ends, with usage for both directions.
     pub fn complete(&self) -> bool {
-        self.started && self.stopped && !self.provider_error && !self.broken && self.saw_input && self.saw_output
+        self.started
+            && self.stopped
+            && self.open_tools.is_empty()
+            && !self.provider_error
+            && !self.broken
+            && self.saw_input
+            && self.saw_output
     }
 
     fn line(&mut self, line: &[u8]) -> Result<(), Stop> {
@@ -200,8 +230,16 @@ impl Meter {
                     self.update(usage);
                 }
             }
+            "content_block_start" => {
+                let block = value.get("content_block");
+                if block.and_then(|b| b.get("type")).and_then(serde_json::Value::as_str) == Some("tool_use") {
+                    let index = value.get("index").and_then(serde_json::Value::as_u64).unwrap_or(u64::MAX);
+                    self.open_tools.insert(index);
+                }
+            }
             "content_block_stop" => {
                 let index = value.get("index").and_then(serde_json::Value::as_u64).unwrap_or(u64::MAX);
+                self.open_tools.remove(&index);
                 if let Some(json) = self.tool_json.remove(&index) {
                     // What the harness will parse; if it does not parse, the harness refuses it too.
                     if let Ok(arguments) = serde_json::from_slice::<serde_json::Value>(&json) {
@@ -246,9 +284,10 @@ impl Meter {
                         }
                         json.extend_from_slice(text.as_bytes());
                     }
-                    let block = self.blocks.entry(index).or_default();
+                    let block = self.blocks.entry((index, field)).or_default();
                     let block_ok = push_window(block, text.as_bytes(), &self.guard);
-                    if !block_ok || !push_window(&mut self.all_text, text.as_bytes(), &self.guard) {
+                    let across = self.across.entry(field).or_default();
+                    if !block_ok || !push_window(across, text.as_bytes(), &self.guard) {
                         return Err(Stop::KeyEcho);
                     }
                 }

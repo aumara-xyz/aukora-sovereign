@@ -586,3 +586,111 @@ fn a_torn_record_is_cut_away_before_the_next_reservation_and_a_malformed_one_ref
     assert!(spend::SpendLog::open(&dir).is_err());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The data events the engine actually received, decoded.
+fn forwarded(body: &[u8]) -> Vec<serde_json::Value> {
+    String::from_utf8_lossy(body)
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str(data).ok())
+        .collect()
+}
+
+/// Codex review of the broker commit, round 2: tool blocks are released whole, after their arguments are scanned;
+/// windows follow the engine's own accumulation, one per block and field.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tool_block_is_released_only_whole_and_scanned_and_fields_are_watched_apart() {
+    use serde_json::json;
+    let escaped: String = KEY.chars().map(|c| format!("\\u{:04x}", c as u32)).collect();
+    let start = tool_call_stream(10)[0].clone();
+    let ping = event("ping", json!({"type":"ping"}));
+    let tool_start = event("content_block_start", json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"fs_write","input":{}}}));
+    let arguments = |json_text: &str| -> Vec<Vec<u8>> {
+        json_text
+            .as_bytes()
+            .chunks(7)
+            .flat_map(|piece| {
+                let delta = json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":std::str::from_utf8(piece).unwrap()}});
+                [event("content_block_delta", delta), ping.clone(), ping.clone()]
+            })
+            .collect()
+    };
+    let stop = event("content_block_stop", json!({"type":"content_block_stop","index":0}));
+    let end = tool_call_stream(10)[12..].concat();
+    let assembled = |events: &[serde_json::Value]| -> String {
+        events.iter().filter_map(|e| e["delta"]["partial_json"].as_str()).collect()
+    };
+
+    // The key, escaped, in the arguments, pings between every piece: not one piece reaches the engine.
+    let leak = format!("{{\"text\":\"{escaped}\"}}");
+    let stream = [vec![start.clone(), tool_start.clone()], arguments(&leak), vec![stop.clone(), end.clone()]].concat();
+    let rig1 = rig(Reply::Sse(stream), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+    let (_, body, _) = rig1.call(harness_request("deepseek-flash", 100)).await;
+    let events = forwarded(&body);
+    assert_eq!(assembled(&events), "", "no argument piece was released");
+    assert!(String::from_utf8_lossy(&body).contains("reply-withheld"));
+    rig1.assert_no_key_anywhere();
+
+    // A stream that ends inside a tool block releases none of it.
+    let stream = [vec![start.clone(), tool_start.clone()], arguments("{\"path\":\"/work/a.rs\"}")].concat();
+    let rig2 = rig(Reply::Sse(stream), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+    let (_, body, _) = rig2.call(harness_request("deepseek-flash", 100)).await;
+    assert_eq!(assembled(&forwarded(&body)), "");
+    assert!(String::from_utf8_lossy(&body).contains("event: error"));
+
+    // Harmless arguments with pings inside the block: everything arrives, in order, byte for byte.
+    let stream = [vec![start.clone(), tool_start], arguments("{\"path\":\"/work/a.rs\"}"), vec![stop, end]].concat();
+    let rig3 = rig(Reply::Sse(stream.clone()), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+    let (status, body, _) = rig3.call(harness_request("deepseek-flash", 100)).await;
+    assert_eq!(status, 200);
+    assert_eq!(body, stream.concat());
+    assert_eq!(assembled(&forwarded(&body)), "{\"path\":\"/work/a.rs\"}");
+
+    // The key in thinking, four characters at a time, each piece followed by an unrelated signature piece: the
+    // engine accumulates the two apart, and so does the scan.
+    let thinking_start = event("content_block_start", json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}));
+    let mut stream = vec![start, thinking_start];
+    for piece in KEY.as_bytes().chunks(4) {
+        stream.push(event("content_block_delta", json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":std::str::from_utf8(piece).unwrap()}})));
+        stream.push(event("content_block_delta", json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Zm9v"}})));
+    }
+    let rig4 = rig(Reply::Sse(stream), Some(budget(1_000_000, 200_000, 100)), true, true).await;
+    let (_, body, _) = rig4.call(harness_request("deepseek-flash", 100)).await;
+    let thinking: String = forwarded(&body).iter().filter_map(|e| e["delta"]["thinking"].as_str().map(str::to_owned)).collect();
+    assert!(!thinking.contains(&KEY[..12]), "{thinking}");
+    let receipt: serde_json::Value = serde_json::from_str(&rig4.fake.receipts.lock().unwrap()[0]).unwrap();
+    assert_eq!(receipt["body"]["outcome"], "key-echo");
+}
+
+#[test]
+fn a_grown_journal_is_compacted_without_losing_a_charge_or_a_call() {
+    let dir = std::env::temp_dir().join(format!("aukora-engine-compact-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    let file = dir.join("spend-v1.jsonl");
+    {
+        let log = spend::SpendLog::open(&dir).unwrap();
+        for n in 0..50 {
+            log.reserve("a", &format!("a{n}"), |_| Ok(100)).unwrap();
+            log.settle("a", &format!("a{n}"), 40).unwrap();
+        }
+        log.reserve("a", "open", |_| Ok(900)).unwrap(); // never settles: charged in full
+        log.reserve("b", "b1", |_| Ok(7)).unwrap();
+        log.settle("b", "b1", 7).unwrap();
+    }
+    let before = std::fs::metadata(&file).unwrap().len();
+    let log = spend::SpendLog::open_compacting(&dir, 1024).unwrap();
+    assert_eq!(log.used("a"), spend::Used { microusd: 50 * 40 + 900, requests: 51 });
+    assert_eq!(log.used("b"), spend::Used { microusd: 7, requests: 1 });
+    let after = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(after.lines().count(), 2, "{after}");
+    assert!((after.len() as u64) < before);
+    assert!(!dir.join(".spend-v1.jsonl.new").exists());
+    // The compacted journal takes new records and reads back the same after another restart.
+    log.reserve("a", "next", |_| Ok(5)).unwrap();
+    drop(log);
+    let log = spend::SpendLog::open(&dir).unwrap();
+    assert_eq!(log.used("a"), spend::Used { microusd: 50 * 40 + 900 + 5, requests: 52 });
+    let _ = std::fs::remove_dir_all(dir);
+}

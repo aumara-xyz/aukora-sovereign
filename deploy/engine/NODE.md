@@ -174,8 +174,10 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   sent, and `max_tokens` is lowered so that worst case fits the per-call cap and what is left of the total; it
   settles at the reported cost (input, cache hits, cache writes, output). A call whose usage is incomplete, or that
   was cut, is charged its reservation; one that never settled (a crash) is charged in full at the next start.
-  The file is whole lines only: a torn last record is cut away (and synced) at open, a complete line that does not
-  read refuses to start the link, and a failed append is cut back before any further reservation.
+  The file is whole lines only (its folder synced after it is created): a torn last record is cut away (and synced)
+  at open, a complete line that does not
+  read refuses to start the link, and a failed append is cut back before any further reservation. Past 64 MiB it is
+  compacted at open into one summary line per budget (charged, calls), synced and renamed in; no charge is dropped.
 - **Request.** Parsed and rebuilt (what was checked is what is sent): JSON object, only the members the adapter
   writes (`model stream messages max_tokens thinking output_config system temperature stop_sequences tools top_p
   top_k`), `stream: true`, model on the approved list, at most 8 MiB. The harness's upload extensions (`dsh_*`: the
@@ -185,9 +187,10 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   Files API is not served (404): the adapter then sends images inline (row 4 caps that at 4 MiB).
 - **Reply.** Streamed through unchanged, one whole event at a time, each released only after it was scanned: its
   raw bytes for every 12-byte window of the key (plain, without `sk-`, base64, hex; `EchoGuard`), every string it
-  decodes to (JSON escapes undone), a rolling window of the decoded content text per block and across blocks (so a
-  key handed out a few characters per delta is caught), and a tool call's whole arguments, decoded, when its block
-  stops. An event that cannot be parsed or exceeds 1 MiB stops the stream. The newest event is held until the call
+  decodes to (JSON escapes undone), a rolling window of the decoded content text per (block, field) and per field
+  across blocks, as the engine accumulates them (so a key handed out a few characters per delta is caught), and a
+  tool call's whole arguments, decoded, when its block stops: every event of a tool block (pings included) is held
+  until then, and a stream that ends inside one releases none of it. An event that cannot be parsed or exceeds 1 MiB stops the stream. The newest event is held until the call
   is settled and its receipt appended. On a hit the stream ends with an SSE `error` event (`reply-withheld`); a
   broken stream ends with one too. The reported model is recorded only as an approved name, else `unrecognized`.
 - **Receipt.** One Aura `broker.settle` **fact** per call that reached the provider (`aukora-engine-model-receipt-v1`:
@@ -204,8 +207,9 @@ thinking, text and a tool call byte-for-byte, the stripped headers and members, 
 spend; refusals for no key, unapproved key, no or expired budget, disallowed model, oversized, non-streaming, unknown
 member, wrong peer; a spent budget and a used-up call count; the key echoed in an error, split across two stream
 chunks, in base64, as JSON escapes, five characters per delta, escaped inside a tool call's arguments and as the
-reported model; an incomplete stream; a reservation that never settled; a torn record followed by a new reservation and a
-second crash; a malformed record. LINUX: the socket, `SO_PEERCRED`,
+reported model; tool arguments split between pings, a stream ending inside a tool block, thinking pieces between
+signature pieces; an incomplete stream; a reservation that never settled; a torn record followed by a new reservation and a
+second crash; a malformed record; compaction. LINUX: the socket, `SO_PEERCRED`,
 the bridge inside the wall, the composition with rows 4 and 5, DeepSeek itself.
 
 The TEMPORARY alternative (an OpenShell provider plus a `network_policies` hole for `api.deepseek.com`) is not

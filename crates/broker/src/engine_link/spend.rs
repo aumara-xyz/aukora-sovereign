@@ -8,7 +8,10 @@
 //! The file is only ever whole lines (Codex review of the broker commit): at open, a torn last record (a crash
 //! mid-write) is cut back to the last newline and the cut is synced before any call is admitted; a complete line
 //! that does not read refuses to open (the budget is ambiguous: the owner looks, nothing is spent meanwhile). A failed
-//! append is cut back the same way, and until that cut is synced no reservation is taken.
+//! append is cut back the same way, and until that cut is synced no reservation is taken. The folder is synced after the
+//! file is created, so a synced reservation never lives in a file the folder forgot. A file grown past `COMPACT_AT` is
+//! rewritten at open as one summary line per budget (charged so far, calls admitted), synced, renamed over the old
+//! one and the folder synced: no charge is ever dropped (Codex review, round 2).
 
 use super::{refuse, LinkRefusal};
 use serde::{Deserialize, Serialize};
@@ -22,15 +25,19 @@ use std::sync::Mutex;
 const FILE: &str = "spend-v1.jsonl";
 const MAX_LINE: usize = 1024;
 const MAX_FILE: u64 = 1 << 30;
+const COMPACT_AT: u64 = 64 << 20;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Line {
     budget: String,
     id: String,
-    /// `reserve` carries the amount set aside; `settle` the amount charged.
+    /// `reserve` carries the amount set aside; `settle` the amount charged; `summary` (compaction) the amount charged
+    /// before it and, in `requests`, the calls admitted before it.
     op: String,
     microusd: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    requests: Option<u64>,
 }
 
 #[derive(Default)]
@@ -62,6 +69,10 @@ pub struct Used {
 
 impl SpendLog {
     pub fn open(dir: &Path) -> Result<Self, &'static str> {
+        Self::open_compacting(dir, COMPACT_AT)
+    }
+
+    pub(super) fn open_compacting(dir: &Path, compact_at: u64) -> Result<Self, &'static str> {
         let meta = std::fs::symlink_metadata(dir).map_err(|_| "spend-state")?;
         if !meta.is_dir() || meta.permissions().mode() & 0o077 != 0 {
             return Err("spend-state");
@@ -74,6 +85,7 @@ impl SpendLog {
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(dir.join(FILE))
             .map_err(|_| "spend-state")?;
+        sync_dir(dir)?;
         let mut bytes = Vec::new();
         (&mut file).take(MAX_FILE + 1).read_to_end(&mut bytes).map_err(|_| "spend-state")?;
         if bytes.len() as u64 > MAX_FILE {
@@ -98,6 +110,10 @@ impl SpendLog {
                     tally.outstanding.remove(&entry.id);
                     tally.charged = tally.charged.saturating_add(entry.microusd);
                 }
+                "summary" => {
+                    tally.charged = tally.charged.saturating_add(entry.microusd);
+                    tally.requests = tally.requests.saturating_add(entry.requests.ok_or("spend-state")?);
+                }
                 _ => return Err("spend-state"),
             }
         }
@@ -106,6 +122,10 @@ impl SpendLog {
             let open: u64 = tally.outstanding.values().fold(0, |sum, v| sum.saturating_add(*v));
             tally.charged = tally.charged.saturating_add(open);
             tally.outstanding.clear();
+        }
+        if whole as u64 > compact_at {
+            let (file, length) = compact(dir, &tallies)?;
+            return Ok(Self { state: Mutex::new(State { file, length, dirty: false, tallies }) });
         }
         Ok(Self { state: Mutex::new(State { file, length: whole as u64, dirty: false, tallies }) })
     }
@@ -125,7 +145,7 @@ impl SpendLog {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         repair(&mut state).map_err(|_| refuse::unavailable("spend-state"))?;
         let amount = admit(used(&state.tallies, budget))?;
-        append(&mut state, &Line { budget: budget.into(), id: id.into(), op: "reserve".into(), microusd: amount })
+        append(&mut state, &Line { budget: budget.into(), id: id.into(), op: "reserve".into(), microusd: amount, requests: None })
             .map_err(|_| refuse::unavailable("spend-state"))?;
         let tally = state.tallies.entry(budget.to_owned()).or_default();
         tally.requests += 1;
@@ -138,13 +158,48 @@ impl SpendLog {
     pub fn settle(&self, budget: &str, id: &str, charged: u64) -> Result<(), &'static str> {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         repair(&mut state)?;
-        append(&mut state, &Line { budget: budget.into(), id: id.into(), op: "settle".into(), microusd: charged })?;
+        append(&mut state, &Line { budget: budget.into(), id: id.into(), op: "settle".into(), microusd: charged, requests: None })?;
         if let Some(tally) = state.tallies.get_mut(budget) {
             tally.outstanding.remove(id);
             tally.charged = tally.charged.saturating_add(charged);
         }
         Ok(())
     }
+}
+
+fn sync_dir(dir: &Path) -> Result<(), &'static str> {
+    File::open(dir).and_then(|folder| folder.sync_all()).map_err(|_| "spend-state")
+}
+
+/// One summary line per budget, carrying everything charged (interrupted reservations included, as at open) and
+/// every call admitted; written beside the journal, synced, renamed over it, the folder synced.
+fn compact(dir: &Path, tallies: &BTreeMap<String, Tally>) -> Result<(File, u64), &'static str> {
+    let mut bytes = Vec::new();
+    for (budget, tally) in tallies {
+        let line = Line {
+            budget: budget.clone(),
+            id: "summary".into(),
+            op: "summary".into(),
+            microusd: tally.charged,
+            requests: Some(tally.requests),
+        };
+        bytes.extend(serde_json::to_vec(&line).map_err(|_| "spend-state")?);
+        bytes.push(b'\n');
+    }
+    let fresh = dir.join(".spend-v1.jsonl.new");
+    let _ = std::fs::remove_file(&fresh);
+    let mut file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(&fresh)
+        .map_err(|_| "spend-state")?;
+    file.write_all(&bytes).and_then(|()| file.sync_all()).map_err(|_| "spend-state")?;
+    std::fs::rename(&fresh, dir.join(FILE)).map_err(|_| "spend-state")?;
+    sync_dir(dir)?;
+    Ok((file, bytes.len() as u64))
 }
 
 fn used(tallies: &BTreeMap<String, Tally>, budget: &str) -> Used {
