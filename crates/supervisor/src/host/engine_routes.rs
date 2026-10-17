@@ -18,14 +18,14 @@ impl Host {
         self.with_release(|_| Ok(())).is_ok()
     }
 
-    /// The active release's id (`release` in `active.json`, the SHA-256 of its release.json), or empty if unreadable.
-    pub fn release_digest(&self) -> String {
+    /// The active release's id (`release` in `active.json`, the SHA-256 of its release.json); `None` if unreadable,
+    /// and then no admission is written (Grok review of the node commit, part 4 #2).
+    pub fn release_digest(&self) -> Option<String> {
         std::fs::read(&self.config.release_state)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|value| value.get("release").and_then(serde_json::Value::as_str).map(str::to_owned))
             .filter(|text| text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()))
-            .unwrap_or_default()
     }
 
     /// `GET /engine/open` on the shell origin: a bound owner (shell session) is sent to the engine origin with a fresh

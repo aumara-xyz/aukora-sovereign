@@ -32,9 +32,20 @@ install -d -o root -g root -m 0755 "$HOME_DIR/profiles" "$PROFILE" "$HOME_DIR/no
 for file in package.json cordis.yml cordis.patch.yml pnpm-workspace.yaml; do
     install -o root -g root -m 0644 "/opt/aukora/current/deploy/engine/profile/$file" "$PROFILE/$file"
 done
+# >>> home-patch (tests/deploy/test_engine_install.py runs this block alone)
+# The home's user patch. Root never opens a name the engine could have chosen (Codex review of the node commit,
+# finding 1: a planted `cordis.patch.yml.new -> /etc/aukora/node.json` once made this step overwrite a host file):
+# the new file is made exclusively (mktemp, O_EXCL) in the root-owned profiles folder just asserted above (same
+# filesystem as the home), written and set there, then renamed over the name. rename(2) replaces whatever entry the
+# engine left at that name, a link included, and never follows it; a folder there makes `mv -T` fail, which stops
+# the start.
 path=$HOME_DIR/cordis.patch.yml
-if [ -L "$path" ] || { [ -e "$path" ] && [ "$(stat -c %u "$path")" != 0 ]; }; then rm -f -- "$path"; fi
-printf '[]\n' > "$path.new" && chown root:root "$path.new" && chmod 0644 "$path.new" && mv -f "$path.new" "$path"
+[ "$(stat -c %u:%a "$HOME_DIR/profiles")" = 0:755 ] && [ ! -L "$HOME_DIR/profiles" ] || fail "profiles folder is not root's"
+fresh=$(mktemp "$HOME_DIR/profiles/.cordis.patch.yml.XXXXXXXX")
+printf '[]\n' > "$fresh"
+chmod 0644 "$fresh"
+mv -fT -- "$fresh" "$path" || { rm -f -- "$fresh"; fail "cannot place the home patch"; }
+# <<< home-patch
 
 # 1.
 /opt/aukora/current/bin/sovereign engine closure --control /run/aukora-engine-ctl \

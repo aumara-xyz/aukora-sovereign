@@ -33,15 +33,29 @@ const harness = spawn('/engine/node/bin/node', [
   DSH_TELEMETRY_DISABLED: '1', LANG: 'C.UTF-8', TMPDIR: '/tmp',
 } })
 
+// The launch token goes to the launch file only: the copy of stdout in the journal has it redacted, line by line, so
+// a token split across two reads is still caught (Grok review of the node commit, part 6 #1). The launch file is
+// 0640 in the setgid io folder: the engine writes it, the supervisor's group reads it, nobody else.
+const redact = (text) => text.replace(/([?&]token=)[^\s&#]*/g, '$1[redacted]')
 let written = false
 let pending = ''
+let journal = ''
 harness.stdout.on('data', (chunk) => {
-  process.stderr.write(chunk)
+  const text = chunk.toString('utf8')
+  journal += text
+  const lines = journal.split('\n')
+  journal = lines.pop()
+  if (journal.length > 8192) {
+    lines.push(journal)
+    journal = ''
+  }
+  for (const line of lines) process.stderr.write(redact(line) + '\n')
   if (written) return
-  pending = (pending + chunk.toString('utf8')).slice(-8192)
-  const line = pending.split('\n').find((text) => /\?token=[A-Za-z0-9_-]{43}/.test(text))
+  pending = (pending + text).slice(-8192)
+  const line = pending.split('\n').find((candidate) => /\?token=[A-Za-z0-9_-]{43}/.test(candidate))
   if (line !== undefined) {
     written = true
+    pending = ''
     writeFileSync(LAUNCH, line.slice(0, 4096) + '\n', { mode: 0o640 })
   }
 })
@@ -57,6 +71,7 @@ bridge.maxConnections = 64
 bridge.listen(SOCKET, () => chmodSync(SOCKET, 0o660))
 
 harness.on('exit', (code, signal) => {
+  if (journal) process.stderr.write(redact(journal) + '\n')
   process.stderr.write('entry: harness exited ' + String(code ?? signal) + '\n')
   bridge.close()
   rmSync(SOCKET, { force: true })

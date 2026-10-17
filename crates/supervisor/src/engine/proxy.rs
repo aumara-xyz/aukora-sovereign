@@ -55,8 +55,14 @@ fn text(status: StatusCode, message: &'static str) -> Response<Body> {
 }
 
 fn harden(headers: &mut http::HeaderMap) {
+    // Added beside the harness's own policy: browsers enforce every CSP header they get, so this only narrows it.
+    headers.append(
+        "content-security-policy",
+        http::HeaderValue::from_static("frame-ancestors 'none'; base-uri 'self'; form-action 'self'"),
+    );
+    // These take one value; a second header from the harness would make the browser ignore both (Grok review of
+    // the node commit, part 3 #2), so ours replaces whatever the harness sent.
     for (name, value) in [
-        ("content-security-policy", "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"),
         ("x-frame-options", "DENY"),
         ("referrer-policy", "no-referrer"),
         ("x-content-type-options", "nosniff"),
@@ -64,7 +70,35 @@ fn harden(headers: &mut http::HeaderMap) {
         ("cross-origin-resource-policy", "same-origin"),
         ("strict-transport-security", "max-age=31536000"),
     ] {
-        headers.append(name, http::HeaderValue::from_static(value));
+        headers.insert(name, http::HeaderValue::from_static(value));
+    }
+}
+
+/// Percent-decode one path segment once; `None` if an escape is malformed.
+fn decode_segment(segment: &str) -> Option<Vec<u8>> {
+    let bytes = segment.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(at + 1..at + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    Some(out)
+}
+
+/// A segment that is, or once decoded becomes, a dot segment, a separator, or another escape (double encoding).
+fn unsafe_segment(segment: &str) -> bool {
+    match decode_segment(segment) {
+        None => true,
+        Some(decoded) => {
+            decoded == b"." || decoded == b".." || decoded.iter().any(|b| matches!(b, b'/' | b'\\' | b'%' | 0))
+        }
     }
 }
 
@@ -74,7 +108,7 @@ pub fn admit_target(uri: &http::Uri) -> Option<String> {
     if !path.starts_with('/')
         || path.len() > 4096
         || path.contains("//")
-        || path.split('/').any(|segment| matches!(segment, "." | ".." | "%2e" | "%2E" | "%2e%2e" | "%2E%2E"))
+        || path.split('/').any(unsafe_segment)
         || path.bytes().any(|b| b.is_ascii_control() || b == b'\\')
     {
         return None;
@@ -156,8 +190,9 @@ async fn harness_session(engine: &Engine) -> Result<String> {
     Ok(cookie)
 }
 
-fn now() -> u64 {
-    crate::host::now().unwrap_or(0)
+/// The clock, or nothing: a clock that cannot be read refuses the request (Grok review, part 3 #3).
+fn now() -> Option<u64> {
+    crate::host::now().ok().filter(|now| *now > 0)
 }
 
 async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr, request: Request<Incoming>) -> Response<Body> {
@@ -172,12 +207,18 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
         return text(StatusCode::NOT_IMPLEMENTED, "upgrades are not forwarded\n");
     }
     let Some(target) = admit_target(request.uri()) else { return text(StatusCode::NOT_FOUND, "not found\n") };
+    // The browser asks for a service worker's script with `Service-Worker: script`. None is ever served here, so no
+    // engine page can install one to watch the owner's navigations (and read a ticket in flight; Grok review, part 4 #1).
+    if request.headers().contains_key("service-worker") {
+        return text(StatusCode::FORBIDDEN, "service workers are not allowed on the engine origin\n");
+    }
+    let Some(now) = now() else { return text(StatusCode::SERVICE_UNAVAILABLE, "clock unavailable\n") };
     let lifetime = engine.config.session_hours * 3_600_000;
     if let Some(ticket) = target.strip_prefix(ENTER_PREFIX) {
-        if request.method() != http::Method::GET {
-            return text(StatusCode::METHOD_NOT_ALLOWED, "\n");
+        if request.method() != http::Method::GET || !top_level_navigation(request.headers()) {
+            return text(StatusCode::FORBIDDEN, "Open the engine from your node (https://<your node>/engine/open).\n");
         }
-        let redeemed = engine.access.lock().map_err(|_| refuse("engine-state")).and_then(|mut access| access.redeem(ticket, now(), lifetime));
+        let redeemed = engine.access.lock().map_err(|_| refuse("engine-state")).and_then(|mut access| access.redeem(ticket, now, lifetime));
         return match redeemed {
             Ok((bearer, _, _)) => {
                 let mut response = text(StatusCode::SEE_OTHER, "\n");
@@ -192,7 +233,7 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     }
     let cookies: Vec<&str> = request.headers().get_all("cookie").iter().filter_map(|value| value.to_str().ok()).collect();
     let bearer = access::bearer_from(&cookies);
-    let scope = bearer.as_deref().and_then(|bearer| engine.access.lock().ok()?.session(bearer, now()));
+    let scope = bearer.as_deref().and_then(|bearer| engine.access.lock().ok()?.session(bearer, now));
     let Some(scope) = scope else {
         return text(StatusCode::UNAUTHORIZED, "Open the engine from your node (https://<your node>/engine/open).\n");
     };
@@ -203,6 +244,16 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
         return text(StatusCode::FORBIDDEN, "This engine session ended: the owner binding or the approved release changed.\n");
     }
     relay(&engine, request, &target).await
+}
+
+/// A ticket is spent only by the owner's own top-level navigation: not by a fetch, a frame or a worker that some page
+/// on this origin started.
+fn top_level_navigation(headers: &http::HeaderMap) -> bool {
+    let one = |name: &str, want: &str| {
+        let mut values = headers.get_all(name).iter();
+        values.next().is_some_and(|value| value.as_bytes() == want.as_bytes()) && values.next().is_none()
+    };
+    one("sec-fetch-mode", "navigate") && one("sec-fetch-dest", "document")
 }
 
 /// Forward one admitted request to the harness with the harness's own cookie and only the allowlisted headers, and
@@ -274,7 +325,12 @@ mod tests {
         let uri = |text: &str| text.parse::<http::Uri>().unwrap();
         assert_eq!(admit_target(&uri("/api/x?a=1")).as_deref(), Some("/api/x?a=1"));
         assert_eq!(admit_target(&uri("/")).as_deref(), Some("/"));
-        for bad in ["/?token=abc", "/?a=1&token=x", "/?TOKEN=x", "/a/../b", "/a//b", "/%2e%2e/x", "/?x_token=1"] {
+        assert_eq!(admit_target(&uri("/files/a%20b.txt")).as_deref(), Some("/files/a%20b.txt"));
+        for bad in [
+            "/?token=abc", "/?a=1&token=x", "/?TOKEN=x", "/a/../b", "/a//b", "/%2e%2e/x", "/?x_token=1",
+            "/%2e%2e%2f%2e%2e%2frun/aukora-engine/io/launch-url", "/%2E%2e/x", "/.%2E/x", "/%2e./x", "/a%2fb",
+            "/a%5cb", "/%252e%252e/x", "/a%zz", "/a%2", "/%00",
+        ] {
             assert_eq!(admit_target(&uri(bad)), None, "{bad}");
         }
     }
@@ -384,10 +440,25 @@ mod tests {
         for name in DROP {
             headers.remove(*name);
         }
+        headers.insert("cross-origin-opener-policy", http::HeaderValue::from_static("unsafe-none"));
+        headers.insert("referrer-policy", http::HeaderValue::from_static("unsafe-url"));
+        headers.insert("content-security-policy", http::HeaderValue::from_static("script-src 'self'"));
         harden(&mut headers);
         assert!(headers.get("set-cookie").is_none() && headers.get("access-control-allow-origin").is_none());
+        // One value each for the single-valued policies; the harness's CSP stays and ours is added beside it.
+        assert_eq!(headers.get_all("cross-origin-opener-policy").iter().collect::<Vec<_>>(), ["same-origin"]);
+        assert_eq!(headers.get_all("referrer-policy").iter().collect::<Vec<_>>(), ["no-referrer"]);
+        assert_eq!(headers.get_all("content-security-policy").iter().count(), 2);
+        let navigate = |mode: &'static str, dest: &'static str| {
+            let mut headers = http::HeaderMap::new();
+            headers.insert("sec-fetch-mode", http::HeaderValue::from_static(mode));
+            headers.insert("sec-fetch-dest", http::HeaderValue::from_static(dest));
+            top_level_navigation(&headers)
+        };
+        assert!(navigate("navigate", "document"));
+        assert!(!navigate("cors", "empty") && !navigate("navigate", "iframe") && !top_level_navigation(&http::HeaderMap::new()));
         assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
-        assert!(headers.get("content-security-policy").unwrap().to_str().unwrap().contains("frame-ancestors 'none'"));
+        assert!(headers.get_all("content-security-policy").iter().any(|v| v.to_str().unwrap().contains("frame-ancestors 'none'")));
         assert!(!FORWARD.contains(&"cookie") && !FORWARD.contains(&"authorization"));
     }
 }

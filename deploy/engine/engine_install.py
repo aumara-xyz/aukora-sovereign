@@ -144,53 +144,141 @@ def fetch(name, item, stage):
     return path
 
 
-def safe_extract(archive_path, destination, strip=0):
-    """Regular files, folders and in-tree links only; no absolute or parent paths; everything root-owned, not
-    writable by others. A link that points outside the tree refuses."""
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+FILE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _member_parts(member, strip):
+    """The member's path below the destination, as checked components; refuses absolute, parent and odd names."""
+    if member.name.startswith("/") or "\0" in member.name:
+        core.refuse("engine-install", "archive-path")
+    parts = [p for p in member.name.split("/") if p not in ("", ".")]
+    if any(p == ".." or len(p.encode("utf-8", "surrogateescape")) > 255 for p in parts):
+        core.refuse("engine-install", "archive-path")
+    return parts[strip:]
+
+
+def _open_beneath(root_fd, parts):
+    """The folder root/parts..., each component opened through its parent's descriptor without following a link
+    (O_NOFOLLOW|O_DIRECTORY): a component that is a link, a file or anything else refuses. Missing folders are made
+    (0755). Nothing is ever resolved through a path string, so no earlier member can redirect a later one."""
+    fd = os.dup(root_fd)
+    try:
+        for part in parts:
+            try:
+                os.mkdir(part, 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            following = os.open(part, DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = following
+        return fd
+    except OSError:
+        os.close(fd)
+        core.refuse("engine-install", "archive-path")
+
+
+def _write_member(parent_fd, name, source, mode):
+    """A new regular file in parent_fd: created exclusively (an existing entry of any kind refuses), written and
+    chmodded through its own descriptor."""
+    try:
+        fd = os.open(name, FILE_FLAGS, 0o600, dir_fd=parent_fd)
+    except OSError:
+        core.refuse("engine-install", "archive-member")
+    with os.fdopen(fd, "wb") as out:
+        shutil.copyfileobj(source, out)
+        os.fchmod(out.fileno(), mode)
+
+
+def safe_extract(archive_path, destination, strip=0, links=False):
+    """Extract into a fresh destination, root-owned and not writable by others.
+
+    Only regular files and folders are written, each through descriptors opened beneath the destination without
+    following any link (Codex review of the node commit, finding 2: chained links once let a lexical check pass and a
+    later member write /etc as root). Devices, fifos and everything else refuse. With `links` (pinned artifacts only:
+    node, the harness install and the toolchain carry their own in-tree links) a symlink whose text stays inside the
+    tree is created but never followed while extracting, a hard link becomes a copy of its target, and every link is
+    resolved once more at the end: one that leaves the destination refuses and the destination is removed. Without
+    `links` (the plugin archive, whose packages are not yet approved) any link refuses."""
     if os.path.lexists(destination):
+        if os.path.islink(destination) or not os.path.isdir(destination):
+            core.refuse("engine-install", "archive-destination")
         shutil.rmtree(destination)
     os.makedirs(destination, mode=0o755)
-    with tarfile.open(archive_path) as archive:
-        for member in archive.getmembers():
-            parts = [p for p in member.name.split("/") if p not in ("", ".")][strip:]
-            if not parts:
-                continue
-            if any(p == ".." for p in parts) or member.name.startswith("/"):
-                core.refuse("engine-install", "archive-path")
-            target = os.path.join(destination, *parts)
-            if member.isdir():
-                os.makedirs(target, mode=0o755, exist_ok=True)
-            elif member.isfile():
-                os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
-                with archive.extractfile(member) as source, open(target, "wb") as out:
-                    shutil.copyfileobj(source, out)
-                os.chmod(target, 0o755 if member.mode & 0o111 else 0o644)
-            elif member.issym():
-                link = member.linkname
-                resolved = os.path.normpath(os.path.join(os.path.dirname(target), link))
-                if link.startswith("/") or not resolved.startswith(destination + os.sep):
+    try:
+        _extract_beneath(archive_path, destination, strip, links)
+    except core.Refusal:
+        shutil.rmtree(destination)  # rmtree never follows a link; no partial tree survives a refusal
+        raise
+
+
+def _extract_beneath(archive_path, destination, strip, links):
+    root_fd = os.open(destination, DIR_FLAGS)
+    try:
+        with tarfile.open(archive_path) as archive:
+            for member in archive.getmembers():
+                parts = _member_parts(member, strip)
+                if not parts:
+                    continue
+                if member.isdir():
+                    os.close(_open_beneath(root_fd, parts))
+                    continue
+                if member.isreg() or (links and member.islnk()):
+                    # extractfile reads a hard link's target data; the result is an ordinary, independent file.
+                    try:
+                        source = archive.extractfile(member)
+                    except (KeyError, tarfile.TarError):
+                        source = None  # a hard link to a name the archive does not hold
+                    if source is None:
+                        core.refuse("engine-install", "archive-member")
+                    parent = _open_beneath(root_fd, parts[:-1])
+                    try:
+                        with source:
+                            _write_member(parent, parts[-1], source, 0o755 if member.mode & 0o111 else 0o644)
+                    finally:
+                        os.close(parent)
+                elif links and member.issym():
+                    text = member.linkname
+                    lexical = os.path.normpath(os.path.join(destination, *parts[:-1], text))
+                    if (not text or text.startswith("/") or "\0" in text
+                            or not lexical.startswith(destination.rstrip(os.sep) + os.sep)):
+                        core.refuse("engine-install", "archive-link")
+                    parent = _open_beneath(root_fd, parts[:-1])
+                    try:
+                        os.symlink(text, parts[-1], dir_fd=parent)
+                    except OSError:
+                        core.refuse("engine-install", "archive-member")
+                    finally:
+                        os.close(parent)
+                elif member.issym() or member.islnk():
                     core.refuse("engine-install", "archive-link")
-                os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
-                os.symlink(link, target)
-            else:
-                core.refuse("engine-install", "archive-member")
+                else:
+                    core.refuse("engine-install", "archive-member")
+    finally:
+        os.close(root_fd)
+    real_root = os.path.realpath(destination)
     for root, dirs, files in os.walk(destination):
         for name in dirs + files:
             path = os.path.join(root, name)
+            if os.path.islink(path):
+                resolved = os.path.realpath(path)
+                if resolved != real_root and not resolved.startswith(real_root + os.sep):
+                    core.refuse("engine-install", "archive-link")
             os.lchown(path, 0, 0)
 
 
 def install_artifacts(artifacts, stage):
     owned_dir(ENGINE_ROOT, 0o755)
     owned_dir(KIRA_ROOT, 0o755)
-    safe_extract(fetch("node", artifacts["node"], stage), ENGINE_ROOT + "/node", strip=1)
-    safe_extract(fetch("dsh", artifacts["dsh"], stage), ENGINE_ROOT + "/dsh")
+    # Pinned artifacts (checked against engine-pins.json by fetch) may carry in-tree links; nothing else may.
+    safe_extract(fetch("node", artifacts["node"], stage), ENGINE_ROOT + "/node", strip=1, links=True)
+    safe_extract(fetch("dsh", artifacts["dsh"], stage), ENGINE_ROOT + "/dsh", links=True)
     if not os.path.isfile(ENGINE_ROOT + "/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js"):
         core.refuse("engine-install", "dsh-layout")
     version = json.load(open(ENGINE_ROOT + "/dsh/node_modules/@deepseek-ai/dsh/package.json"))["version"]
     if version != "0.2.1-alpha.5":
         core.refuse("engine-install", "dsh-version")
-    safe_extract(fetch("rust", artifacts["rust"], stage), "/opt/rust")
+    safe_extract(fetch("rust", artifacts["rust"], stage), "/opt/rust", links=True)
     openshell = fetch("openshell", artifacts["openshell"], stage)
     scratch = CACHE + "/openshell"
     safe_extract(openshell, scratch)
@@ -211,14 +299,18 @@ def install_artifacts(artifacts, stage):
     if os.path.lexists(target):
         shutil.rmtree(target)
     os.makedirs(target, mode=0o755)
-    with zipfile.ZipFile(llama) as archive:
-        for member in archive.infolist():
-            name = os.path.basename(member.filename)
-            if member.is_dir() or not (name == "llama-server" or name.endswith(".so")):
-                continue  # only the server and its shared libraries
-            with archive.open(member) as source, open(os.path.join(target, name), "wb") as out:
-                shutil.copyfileobj(source, out)
-            os.chmod(os.path.join(target, name), 0o755)
+    target_fd = os.open(target, DIR_FLAGS)
+    try:
+        with zipfile.ZipFile(llama) as archive:
+            for member in archive.infolist():
+                name = os.path.basename(member.filename)
+                if member.is_dir() or not (name == "llama-server" or name.endswith(".so")):
+                    continue  # only the server and its shared libraries
+                # A zip "link" is written as a plain file holding its text; a repeated name refuses.
+                with archive.open(member) as source:
+                    _write_member(target_fd, name, source, 0o755)
+    finally:
+        os.close(target_fd)
     if not os.path.isfile(target + "/llama-server"):
         core.refuse("engine-install", "llama-layout")
     owned_dir(KIRA_ROOT + "/models", 0o755)
@@ -300,14 +392,28 @@ def register_kira():
     sovereign = RELEASE + "/bin/sovereign"
     scratch = "/var/lib/aukora-kira/.tokens"
     owned_dir(scratch, 0o700, "kira", "kira")
+    owner_token = "/root/aukora-kira-owner.token"
+    kira = pwd.getpwnam("kira")
     for agent, extra, destination, owner in (
             ("auma", ["--scopes", "auma"], CONFIG + "/door-kira.token", "aukora"),
-            ("owner", ["--owner"], "/root/aukora-kira-owner.token", "root")):
+            ("owner", ["--owner"], owner_token, "root")):
         if os.path.exists(destination):
             continue
         temporary = scratch + "/" + agent
-        run(["runuser", "-u", "kira", "--", sovereign, "kira", "register", agent, "--state", "/var/lib/aukora-kira",
-             "--token-file", temporary] + extra)
+        # Once the store has an owner, `kira register` needs the owner's token (--owner-token-file, a 0600 file the
+        # caller owns). The first install registers auma before the owner, so this only applies to a re-run that
+        # stopped between the two: root lends kira a private copy for the one command and removes it at once.
+        lent = []
+        if os.path.exists(owner_token):
+            lent = ["--owner-token-file", scratch + "/owner-token"]
+            core.atomic_write(lent[1], core.read_regular(owner_token, 4096, "engine-install"), 0o600,
+                              (kira.pw_uid, kira.pw_gid))
+        try:
+            run(["runuser", "-u", "kira", "--", sovereign, "kira", "register", agent, "--state",
+                 "/var/lib/aukora-kira", "--token-file", temporary] + extra + lent)
+        finally:
+            if lent:
+                os.unlink(lent[1])
         data = core.read_regular(temporary, 4096, "engine-install")
         os.unlink(temporary)
         account = pwd.getpwnam(owner)

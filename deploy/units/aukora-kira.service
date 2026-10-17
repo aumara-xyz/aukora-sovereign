@@ -7,6 +7,8 @@
 Description=AUKORA Kira 2 shared memory
 After=aukora-kira-embed.service aukora-kira-rerank.service
 Wants=aukora-kira-embed.service aukora-kira-rerank.service
+# The model servers' private network namespace: Kira reaches 127.0.0.1:8771/8772 there and nowhere else.
+JoinsNamespaceOf=aukora-kira-embed.service
 Before=aukora-sovereign.service
 
 [Service]
@@ -26,6 +28,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateNetwork=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

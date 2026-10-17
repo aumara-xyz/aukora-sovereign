@@ -531,6 +531,11 @@ pub fn start_in_node(config: &crate::config::NodeConfig, ledger: Arc<crate::adap
     }
 }
 
+/// Whether the door would start on this policy text (the engine controller treats anything else as no door).
+pub fn policy_parses(text: &str) -> bool {
+    Policy::parse(text).is_ok_and(|policy| policy.socket.is_some())
+}
+
 /// `sovereign door serve --socket PATH --policy FILE`.
 pub fn run(arguments: &[OsString]) -> Result<()> {
     let [command, socket_flag, socket, policy_flag, policy] = arguments else { return Err(refuse("usage")) };

@@ -4,8 +4,8 @@
 # finding 3). [GUESS] the --config spelling: use the wall-test VM's gateway command line if it differs.
 [Unit]
 Description=AUKORA OpenShell gateway for the engine sandbox
-After=docker.service network-online.target
-Requires=docker.service
+After=docker.service network-online.target aukora-engine-fence.service
+Requires=docker.service aukora-engine-fence.service
 
 [Service]
 Type=exec
@@ -16,6 +16,33 @@ RestartSec=5s
 StateDirectory=aukora-openshell
 StateDirectoryMode=0700
 UMask=0077
+# Grok review of the node commit, part 7 #1. Root, because it drives docker (whose socket is root-equivalent anyway),
+# but with nothing else: it listens on a privileged loopback port (690, openshell-gateway.toml), so no other local user
+# can bind that port during a restart gap and pose as the gateway, and the fence lets only root connect to it. The one
+# capability kept is binding that port. [GUESS] that OpenShell 0.1.4 needs no other capability or path: if the first
+# node's gateway fails under these lines, widen exactly what its journal names, in a reviewed commit.
+ReadWritePaths=/run/docker.sock
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
 
 [Install]
 WantedBy=multi-user.target

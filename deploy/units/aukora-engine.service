@@ -5,7 +5,7 @@
 # set matches. This unit runs as root only to drive the local OpenShell gateway; the engine inside runs as auma.
 [Unit]
 Description=AUKORA engine: the DeepSeek Harness inside OpenShell (Ring 1)
-After=docker.service aukora-openshell-gateway.service aukora-engine-fence.service aukora-kira.service
+After=docker.service aukora-openshell-gateway.service aukora-engine-fence.service aukora-kira.service aukora-sovereign.service
 Requires=aukora-openshell-gateway.service aukora-engine-fence.service
 # Stopping or restarting the supervisor stops the engine; it comes back only when the supervisor starts it again.
 PartOf=aukora-sovereign.service
@@ -16,6 +16,9 @@ StartLimitBurst=5
 
 [Service]
 Type=exec
+# No admission from the supervisor's current run: the start is skipped (not failed, so no restart loop and no start
+# limit), and the supervisor starts the unit itself once it has decided (Grok review of the node commit, part 2 #2).
+ExecCondition=/usr/bin/test -f /run/aukora-engine-ctl/admission.json
 ExecStartPre=/opt/aukora/current/deploy/engine/engine-prestart.sh
 ExecStart=/opt/aukora/current/deploy/engine/engine-run.sh create
 ExecStartPost=/opt/aukora/current/deploy/engine/engine-run.sh verify

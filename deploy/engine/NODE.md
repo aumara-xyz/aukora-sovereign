@@ -16,7 +16,7 @@ Marks: **RAN** = executed for this branch (on the Mac unless stated); **LINUX** 
 | `sovereign serve` (supervisor, gate, AUMLOK, Aura, frontdoor, broker, **door**, **engine controller**, **engine origin**) | aukora | 18080, 18081, `/run/aukora-door/door.sock` | Kira socket (group kira-clients), engine web socket, `systemctl start/stop aukora-engine.service` (polkit, that unit only) |
 | `sovereign kira serve` | kira | `/run/aukora-kira/kira.sock` (0660, dir 2750 kira:kira-clients) | llama servers on 127.0.0.1:8771/8772 |
 | llama-server ×2 (embed, rerank) | kira | 127.0.0.1:8771, :8772 (nft: only uid kira may connect) | nothing (IPAddressDeny=any) |
-| openshell-gateway | root | 127.0.0.1:17690 | docker |
+| openshell-gateway | root (hardened unit; only CAP_NET_BIND_SERVICE) | 127.0.0.1:690 (privileged: no other user can bind it; the fence lets only root connect) | docker |
 | the engine: `node entry.mjs` → `dsh --profile aukora` | **auma** (uid ≠ root, aukora, kira), inside the sandbox | 127.0.0.1:3080 *inside* the sandbox; `/run/aukora-engine-io/web.sock` (bridge) | the door socket; nothing else (no network, no resolver) |
 
 Keys: the owner's passkey stays on the owner's device; the node's signing keys, Aura, the gate, the claim digest and the
@@ -107,8 +107,13 @@ single use) and redirects to `https://engine.<shell>/.aukora/enter/<ticket>`. Th
 and on every request re-checks that scope against the ledger and the release floor. It forwards an allowlist of
 headers (never the browser's cookies) plus the harness's own cookie, which it obtained by exchanging the launch
 token the harness printed inside the wall; the browser never sees the token or that cookie. Replies lose every
-`Set-Cookie` and CORS header and gain `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `no-referrer`. Caddy and the
-proxy both refuse a query that names `token`. WebSocket upgrades are not forwarded (the terminal is off).
+`Set-Cookie` and CORS header and gain `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `no-referrer` (the
+single-valued ones replace the harness's own, so it cannot cancel them). Caddy and the proxy both refuse a query that
+names `token`; a path segment that decodes to `.`, `..`, a separator or another escape is refused. The ticket is spent
+only by a top-level navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`), and no service worker can be
+installed on the engine origin (its script request, `Service-Worker: script`, is refused), so no engine page can watch
+the owner's next navigation for a ticket. A clock that cannot be read refuses. WebSocket upgrades are not forwarded
+(the terminal is off).
 RAN: unit tests with a fake harness on a unix socket (cookie isolation, exchange, re-exchange after a harness restart,
 header stripping); the real harness's exchange (303 + `dsh-auth-*` cookie; 401 without it; 401 on a wrong Host).
 
@@ -116,7 +121,10 @@ The owner origin is unchanged and Rust-served. The guest's `propose` refuses `en
 
 ## 6. Kira 2 and the door on the node
 
-Kira: `aukora-kira.service` as user kira, state `/var/lib/aukora-kira` (0700), socket 0660 in a 2750
+Kira: `aukora-kira.service` as user kira, in one private network namespace with its two model servers
+(`PrivateNetwork` + `JoinsNamespaceOf`: no other host process can bind or reach 8771/8772, so the alias Kira checks
+cannot be squatted; each model file is hashed against its pin before its server starts), state `/var/lib/aukora-kira`
+(0700), socket 0660 in a 2750
 kira:kira-clients folder (new `--group-socket` flag; every request still needs a token). Two agents are registered at
 install: **auma** (scope `auma`, non-owner; token `/etc/aukora/door-kira.token`, aukora 0600: only the door reads it)
 and **owner** (`--owner`; token `/root/aukora-kira-owner.token`, root 0600: the owner's tools only, never the door, never
@@ -197,8 +205,13 @@ then `python3 -B -I deploy/engine/build_plugins.py --dsh <DSH install> --faces e
 **Stop / roll back.** `systemctl stop aukora-sovereign` stops the engine too (`PartOf`). Remove `/etc/aukora/engine-v1.json`
 and restart the supervisor to run the node without an engine. Upgrades: a new release changes the binary, so the floor
 stops the engine until the owner approves that release; plugins changed by the release need a new set approval. The
-root closure step also refuses unless the supervisor's `admission.json` names the active release, and the supervisor
-deletes it whenever it decides "stop", so a start systemd propagates by itself (`PartOf`) cannot outrun the decision.
+root pre-start refuses unless the supervisor's `admission.json` names the active release (the closure refuses one with
+no release id), and the admission belongs to one supervisor run: it is removed when the supervisor stops
+(`ExecStopPost`), again when the controller starts (which also stops a running or still-activating engine), and on
+every "stop" decision. The engine unit starts only after the supervisor (`After=`) and is skipped, not failed, while
+there is no admission (`ExecCondition`), so a start systemd propagates by itself (`PartOf`) cannot outrun the
+decision and cannot exhaust the start limit. A start still in `activating` counts as running and is stopped when a
+condition is lost.
 
 ## 9. What is built, stubbed, Linux-only
 
@@ -226,7 +239,9 @@ installed before this branch (they refuse `engine-install: inventory-lacks-engin
 
 - **O1** VM size: `vm.py` `smallest_preset` and `BOOT_DISK_GIB = "40"` are pinned deploy code; the engine node needs a
   larger preset and disk (an `AUKORA_NEBIUS_PRESET` override, reviewed).
-- **O2** The exact OpenShell argv (runbook A3).
+- **O2** The exact OpenShell argv (runbook A3), and how the 0.1.4 CLI is pointed at the gateway's endpoint
+  (127.0.0.1:690 since the Grok review; the wall test used another port) and verifies it: until the CLI
+  authenticates the gateway itself, the privileged port and the fence are what keep an impostor out.
 - **O3** Gateway auth: the wall test ran `allow_unauthenticated_users=true` on a dev gateway; this config sets false. If
   0.1.4 cannot authenticate the local CLI otherwise, choose before the first public node (loopback-only either way).
 - **O4** `deploy/engine/*` is in the release (so the owner's release approval covers it) but not in `checks/run.py`'s

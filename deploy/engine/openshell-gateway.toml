@@ -4,8 +4,9 @@
 # NOT the wall test's dev setting: allow_unauthenticated_users is false here; the CLI authenticates with the
 # gateway's local client material. If the 0.1.4 gateway refuses that combination, the installer stops and NODE.md
 # open item O3 applies (do not ship allow_unauthenticated_users=true on a public node).
+# A privileged port: only root can bind it, so no local user can stand in for the gateway (Grok review, part 7 #1).
 [openshell.gateway]
-listen = "127.0.0.1:17690"
+listen = "127.0.0.1:690"
 
 [openshell.gateway.gateway_jwt]
 signing_key_path = "/var/lib/aukora-openshell/jwt/signing.pem"

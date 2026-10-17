@@ -45,9 +45,22 @@ verify() {
         sleep 1
     done
     case "$effective" in *"Status: Effective"*) ;; *) echo "engine-run: policy not effective" >&2; exit 1 ;; esac
-    # Every line of our policy that names a rule must be in the effective policy, and no network policy may exist.
-    for want in "hard_requirement" "run_as_user: \"$AUMA_UID\"" "/run/aukora-door" "/engine-home" "network_policies: {}"; do
-        printf '%s' "$effective" | grep -qF -- "$want" || { echo "engine-run: effective policy lacks: $want" >&2; exit 1; }
+    # Whole lines, not substrings (Grok review of the node commit, part 5 #2): `hard_requirement: false` or a network
+    # stanza beside an empty one must not pass. [GUESS] the output shape of `openshell policy get` (O2).
+    for want in '[[:space:]]*compatibility:[[:space:]]*hard_requirement([[:space:]]+#.*)?' \
+                "[[:space:]]*run_as_user:[[:space:]]*\"$AUMA_UID\"([[:space:]]+#.*)?" \
+                "[[:space:]]*run_as_group:[[:space:]]*\"$AUMA_UID\"([[:space:]]+#.*)?" \
+                '[[:space:]]*network_policies:[[:space:]]*\{\}([[:space:]]+#.*)?' \
+                '[[:space:]]*-[[:space:]]*/run/aukora-door([[:space:]]+#.*)?' \
+                '[[:space:]]*-[[:space:]]*/engine-home([[:space:]]+#.*)?'; do
+        printf '%s\n' "$effective" | grep -qxE -- "$want" || { echo "engine-run: effective policy lacks: $want" >&2; exit 1; }
+    done
+    # Exactly one of each, and nothing the node never mounts or allows.
+    for once in 'network_policies:' 'run_as_user:' 'compatibility:'; do
+        [ "$(printf '%s\n' "$effective" | grep -cF -- "$once")" = 1 ] || { echo "engine-run: effective policy repeats: $once" >&2; exit 1; }
+    done
+    for never in docker.sock /etc/aukora /var/lib/aukora /run/aukora-kira /root best_effort; do
+        if printf '%s\n' "$effective" | grep -qF -- "$never"; then echo "engine-run: effective policy names: $never" >&2; exit 1; fi
     done
 }
 

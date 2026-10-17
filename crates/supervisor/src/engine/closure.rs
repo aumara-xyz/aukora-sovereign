@@ -37,8 +37,15 @@ pub fn admitted(control: &Path) -> Result<(PluginSet, Digest32)> {
         serde_json::from_slice(&read_small(&control.join("admission.json"), 4096)?).map_err(|_| refuse("engine-admission"))?;
     let set = PluginSet::parse(&set_bytes)?;
     let pin = set.set_hash()?;
+    // The release check against the active release is the pre-start's (engine-prestart.sh); here an admission
+    // without a release id is not one.
+    let release_ok = record
+        .get("release")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|text| text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()));
     if record.get("v").and_then(serde_json::Value::as_u64) != Some(1)
         || record.get("set_hash").and_then(serde_json::Value::as_str) != Some(pin.to_string().as_str())
+        || !release_ok
     {
         return Err(refuse("engine-admission"));
     }
@@ -144,7 +151,7 @@ mod tests {
     fn hand_over(control: &Path, set: &PluginSet, pin_text: &str) {
         std::fs::create_dir_all(control).unwrap();
         std::fs::write(control.join("plugin-set.json"), set.canonical_bytes().unwrap()).unwrap();
-        std::fs::write(control.join("admission.json"), format!("{{\"v\":1,\"set_hash\":\"{pin_text}\"}}")).unwrap();
+        std::fs::write(control.join("admission.json"), format!("{{\"v\":1,\"set_hash\":\"{pin_text}\",\"release\":\"{}\"}}", "a".repeat(64))).unwrap();
         for name in ["plugin-set.json", "admission.json"] {
             std::fs::set_permissions(control.join(name), std::fs::Permissions::from_mode(0o644)).unwrap();
         }

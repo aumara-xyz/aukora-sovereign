@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -43,18 +44,50 @@ def fail(reason):
     sys.exit('build-plugins: ' + reason)
 
 
-def copy_tree(src, dst):
+def beneath(path, root):
+    """path, resolved, if it stays under root (resolved); otherwise the build fails."""
+    resolved, top = path.resolve(), root.resolve()
+    if resolved != top and top not in resolved.parents:
+        fail('path leaves its root: %s' % path)
+    return resolved
+
+
+def copy_file(source, target, out):
+    """One regular file, never through a link, into a target that stays under out (Grok review of the node commit,
+    part 5 #4: a symlinked source or an absolute or `..` destination once escaped)."""
+    info = os.lstat(source)
+    if not stat.S_ISREG(info.st_mode):
+        fail('not a regular file (a link?): %s' % source)
+    beneath(target.parent if target.parent.exists() else out, out)
+    if target.exists() or target.is_symlink():
+        fail('target exists: %s' % target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    beneath(target.parent, out)
+    shutil.copyfile(source, target, follow_symlinks=False)
+
+
+def copy_tree(src, dst, out):
+    if src.is_symlink():
+        fail('link in package: %s' % src)
     for path in sorted(src.rglob('*')):
         if path.is_symlink():
             fail('link in package: %s' % path)
         target = dst / path.relative_to(src)
         if path.is_dir():
             target.mkdir(parents=True, exist_ok=True)
+            beneath(target, out)
         elif path.is_file():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, target)
+            copy_file(path, target, out)
         else:
             fail('special file in package: %s' % path)
+
+
+def relative_name(rel):
+    """A package-relative path from someone else's manifest: plain, relative, no `..`."""
+    if not isinstance(rel, str) or not rel or rel.startswith('/') or '\\' in rel or \
+            any(part in ('', '.', '..') for part in rel.split('/')):
+        fail('bad relative path in a manifest: %r' % (rel,))
+    return rel
 
 
 def package(out, folder, manifest_src, files):
@@ -66,14 +99,13 @@ def package(out, folder, manifest_src, files):
     manifest = json.loads(manifest_src.read_text())
     if not NAME.match(manifest.get('name', '')):
         fail('package name %r is not @aukora/...' % manifest.get('name'))
-    shutil.copyfile(manifest_src, dst / 'package.json')
+    copy_file(manifest_src, dst / 'package.json', out)
     for relative, source in files:
-        target = dst / relative
-        if source.is_dir():
-            copy_tree(source, target)
+        target = dst / relative_name(relative)
+        if source.is_dir() and not source.is_symlink():
+            copy_tree(source, target, out)
         else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
+            copy_file(source, target, out)
     return manifest['name']
 
 
@@ -123,12 +155,12 @@ def build_bundle(dsh, face_names, foundation_name, out):
     dst = out / 'aukora-face-bundle'
     dst.mkdir(parents=True)
     for rel in patches:
-        target = dst / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(web / rel, target)
+        rel = relative_name(rel)
+        beneath(web / rel, web)
+        copy_file(web / rel, dst / rel, out)
     for extra in ('presets',):
         if (web / extra).is_dir():
-            copy_tree(web / extra, dst / extra)
+            copy_tree(web / extra, dst / extra, out)
     main = dst / patches[0]
     text = main.read_text()
     for row in REPLACED:

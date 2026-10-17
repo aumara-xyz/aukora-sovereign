@@ -53,12 +53,16 @@ done
 # An engine node (deploy/engine/NODE.md): Kira and its model servers run as kira with nothing else; the engine unit is
 # started only by the supervisor, so it carries no install section and is not checked for enablement.
 if [ -f /etc/aukora/engine-v1.json ]; then
+    # [GUESS] systemctl show's spelling of an empty bounding set and of the address families (LINUX, not run yet).
     kira_properties="User=kira NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes PrivateTmp=yes PrivateDevices=yes
-RestrictNamespaces=yes MemoryDenyWriteExecute=yes IPAddressDeny=any"
+RestrictNamespaces=yes MemoryDenyWriteExecute=yes IPAddressDeny=any PrivateNetwork=yes CapabilityBoundingSet="
     for unit in aukora-kira.service aukora-kira-embed.service aukora-kira-rerank.service; do
         # shellcheck disable=SC2086
-        check_unit "$unit" 3.0 $kira_properties
+        check_unit "$unit" 3.0 $kira_properties "RestrictAddressFamilies=AF_UNIX AF_INET"
     done
+    check_unit aukora-openshell-gateway.service 6.0 NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes \
+        PrivateTmp=yes PrivateDevices=yes RestrictNamespaces=yes IPAddressDeny=any \
+        CapabilityBoundingSet=cap_net_bind_service
     for unit in aukora-kira.service aukora-kira-embed.service aukora-kira-rerank.service aukora-engine-fence.service \
         aukora-openshell-gateway.service; do
         systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"

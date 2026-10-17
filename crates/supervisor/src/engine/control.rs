@@ -91,13 +91,27 @@ async fn systemctl(verb: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// Whether the unit is anywhere but stopped: `is-active` prints its ActiveState, and `activating` (the root
+/// pre-start running) or `reloading` count as running, so a lost condition stops a start that is still under way
+/// (Grok review of the node commit, part 2 #1). An unreadable state counts as running: stopping is always safe.
 async fn active() -> bool {
-    tokio::process::Command::new("/usr/bin/systemctl")
-        .args(["is-active", "--quiet", UNIT])
+    let output = tokio::process::Command::new("/usr/bin/systemctl")
+        .args(["is-active", UNIT])
         .stdin(std::process::Stdio::null())
-        .status()
-        .await
-        .is_ok_and(|status| status.success())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await;
+    match output {
+        Ok(output) => !matches!(String::from_utf8_lossy(&output.stdout).trim(), "inactive" | "failed"),
+        Err(_) => true,
+    }
+}
+
+/// Withdraw the admission and the handed-over set: the root closure step then refuses any start this supervisor did
+/// not decide in this run (a start systemd propagates on its own, a crash loop that never reached a tick).
+fn withdraw(engine: &Engine) {
+    let _ = std::fs::remove_file(engine.config.control_dir.join("admission.json"));
+    let _ = std::fs::remove_file(engine.config.control_dir.join("plugin-set.json"));
 }
 
 fn hex(digest: &[u8]) -> String {
@@ -130,6 +144,11 @@ fn record_pin(host: &Host, pin: &Digest32, gate_digest: &str) {
 pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut proposed: Option<(Digest32, Instant)> = None;
     let mut started_from: Option<Vec<u8>> = None;
+    // Nothing from an earlier run admits anything: this run decides afresh (Grok review, part 2 #2 and part 4 #2).
+    withdraw(&engine);
+    if active().await {
+        let _ = systemctl("stop").await;
+    }
     loop {
         tokio::time::sleep(TICK).await;
         let bound = match host.ledger.binding() {
@@ -144,7 +163,8 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
         let decision = plan(Inputs {
             bound,
             release_approved: host.release_approved(),
-            door_configured: matches!(host.config.door_policy_text(), Ok(Some(_))),
+            // A door policy the door would refuse to start on is no door at all (Grok review, part 5 #3).
+            door_configured: matches!(host.config.door_policy_text(), Ok(Some(text)) if crate::door::policy_parses(&text)),
             approved: approved.as_deref(),
             found,
         });
@@ -166,7 +186,13 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
                 let changed = started_from.as_deref() != Some(set.as_slice());
                 if changed || !running {
                     let dir = engine.config.control_dir.clone();
-                    let record = admission(&set, &pin, &host.release_digest());
+                    // The release the floor just approved, by its id; no id, no admission.
+                    let Some(release) = host.release_digest() else {
+                        engine.set_status("release-unreadable");
+                        withdraw(&engine);
+                        continue;
+                    };
+                    let record = admission(&set, &pin, &release);
                     let written = write_atomic(&dir, "plugin-set.json", &set).and_then(|()| write_atomic(&dir, "admission.json", &record));
                     if let Err(refusal) = written {
                         engine.set_status(refusal.reason);
@@ -184,7 +210,7 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
             None => {
                 // Withdraw the admission first: a start that systemd propagates on its own (a supervisor restart)
                 // then fails in the root closure step instead of running without this decision.
-                let _ = std::fs::remove_file(engine.config.control_dir.join("admission.json"));
+                withdraw(&engine);
                 if running {
                     let _ = systemctl("stop").await;
                 }

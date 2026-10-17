@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Kira 2's embed model: llama.cpp llama-server on CPU, loopback 8771 only, as user kira. The alias is the model file's
 # SHA-256 (deploy/engine/engine-pins.json): Kira checks /v1/models serves exactly it, so a swapped file refuses.
+# The port lives in a network namespace of Kira's own (PrivateNetwork, shared by the two model units and Kira through
+# JoinsNamespaceOf): no other process on the host can bind it first or reach it, so the alias cannot be squatted
+# (Grok review of the node commit, part 6 #2). The model file is hashed against its pin before every start.
 [Unit]
 Description=AUKORA Kira 2 embed model (llama.cpp, CPU, loopback)
 After=aukora-engine-fence.service
-Wants=aukora-engine-fence.service
+Requires=aukora-engine-fence.service
 
 [Service]
 Type=exec
 User=kira
 Group=kira
+ExecStartPre=/bin/sh -c 'echo "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439  /opt/aukora-kira/models/embed.gguf" | /usr/bin/sha256sum --check --status'
 ExecStart=/opt/aukora-kira/llama/llama-server -m /opt/aukora-kira/models/embed.gguf --alias 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439 --embedding --pooling last -np 1 -c 2048 -b 2048 -ub 2048 -t 2 --host 127.0.0.1 --port 8771
 Restart=on-failure
 RestartSec=5s
@@ -17,6 +21,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateNetwork=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

@@ -1,0 +1,231 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""The engine installer's archive extraction and the pre-start home patch, against the two findings of the Codex
+review of the node commit (2026-10-17):
+
+  1. engine-prestart.sh must never open, as root, a name the engine could have planted in its home.
+  2. safe_extract must never write outside its destination, whatever links an archive carries.
+
+  python3 -B -m unittest discover -s tests/deploy -p 'test_*.py'
+
+The extraction tests run anywhere (lchown is stubbed; nothing here needs root). The pre-start test needs GNU
+coreutils (`mv -T`, `stat -c`) and is skipped elsewhere; as a non-root user it fakes only the owner check."""
+from __future__ import annotations
+
+import io
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+sys.path.insert(0, os.path.join(ROOT, "deploy", "engine"))
+import engine_install  # noqa: E402
+import core  # noqa: E402  (deploy/spawn, put on the path by engine_install)
+
+
+def member(archive, name, kind="file", data=b"x", link="", mode=0o644):
+    info = tarfile.TarInfo(name)
+    info.mode = mode
+    if kind == "file":
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+        return
+    info.type = {"dir": tarfile.DIRTYPE, "sym": tarfile.SYMTYPE, "hard": tarfile.LNKTYPE,
+                 "fifo": tarfile.FIFOTYPE, "char": tarfile.CHRTYPE}[kind]
+    info.linkname = link
+    if kind == "dir":
+        info.mode = 0o755
+    archive.addfile(info)
+
+
+class Extract(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.mkdtemp(prefix="engine-install-")
+        # A sibling of the destination standing in for the already-installed harness (/opt/aukora-engine/dsh), and a
+        # folder standing in for /etc: neither may gain a file.
+        self.dest = os.path.join(self.scratch, "engine", "plugins")
+        os.makedirs(os.path.join(self.scratch, "engine", "dsh"))
+        self.etc = os.path.join(self.scratch, "etc")
+        os.makedirs(os.path.join(self.etc, "cron.d"))
+        self.lchown = mock.patch.object(engine_install.os, "lchown", lambda *a: None)
+        self.lchown.start()
+
+    def tearDown(self):
+        self.lchown.stop()
+        shutil.rmtree(self.scratch)
+
+    def tar(self, members):
+        path = os.path.join(self.scratch, "a%d.tar" % len(os.listdir(self.scratch)))
+        with tarfile.open(path, "w") as archive:
+            for args in members:
+                member(archive, *args[:1], **args[1])
+        return path
+
+    def refused(self, path, reason, **options):
+        with self.assertRaises(core.Refusal) as caught:
+            engine_install.safe_extract(path, self.dest, **options)
+        self.assertEqual(str(caught.exception), "engine-install:" + reason)
+
+    def nothing_escaped(self):
+        self.assertEqual(os.listdir(os.path.join(self.etc, "cron.d")), [])
+        self.assertEqual(os.listdir(os.path.join(self.scratch, "engine", "dsh")), [])
+
+    def test_the_review_chain_writes_nothing_outside_with_or_without_links(self):
+        etc = os.path.relpath(self.etc, os.path.join(self.dest, "a", "b", "c"))
+        chain = [("a", {"kind": "dir"}), ("t", {"kind": "dir"}),
+                 ("a/b", {"kind": "sym", "link": "../t"}),
+                 ("a/b/c", {"kind": "sym", "link": "../../dsh"}),
+                 ("a/b/c/d", {"kind": "sym", "link": etc}),
+                 ("a/b/c/d/cron.d/aukora-pwn", {"data": b"* * * * * root id\n"})]
+        self.refused(self.tar(chain), "archive-link")  # the plugin archive: the first link refuses
+        self.nothing_escaped()
+        # A pinned artifact may carry links, but nothing is ever written through one: the second link already
+        # lies beneath the first and refuses.
+        self.refused(self.tar(chain), "archive-path", links=True)
+        self.nothing_escaped()
+
+    def test_the_plugin_archive_takes_only_files_and_folders(self):
+        for kind in ("sym", "hard"):
+            self.refused(self.tar([("p/lib/index.js", {}), ("p/x", {"kind": kind, "link": "p/lib/index.js"})]),
+                         "archive-link")
+        for kind in ("fifo", "char"):
+            self.refused(self.tar([("p/x", {"kind": kind})]), "archive-member")
+        self.refused(self.tar([("../x", {})]), "archive-path")
+        self.refused(self.tar([("/x", {})]), "archive-path")
+        self.refused(self.tar([("p/x", {}), ("p/x", {})]), "archive-member")  # a repeated name is not overwritten
+        engine_install.safe_extract(self.tar([("p", {"kind": "dir"}), ("p/lib/index.js", {"data": b"ok"}),
+                                              ("p/bin/run", {"mode": 0o755})]), self.dest)
+        with open(os.path.join(self.dest, "p/lib/index.js"), "rb") as handle:
+            self.assertEqual(handle.read(), b"ok")
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.dest, "p/bin/run")).st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.dest, "p/lib/index.js")).st_mode), 0o644)
+
+    def test_pinned_artifacts_keep_in_tree_links_and_refuse_the_rest(self):
+        engine_install.safe_extract(self.tar([
+            ("lib/node_modules/npm/bin/npm-cli.js", {"data": b"cli", "mode": 0o755}),
+            ("bin/npm", {"kind": "sym", "link": "../lib/node_modules/npm/bin/npm-cli.js"}),
+            ("bin/copy", {"kind": "hard", "link": "lib/node_modules/npm/bin/npm-cli.js"}),
+        ]), self.dest, links=True)
+        self.assertTrue(os.path.islink(os.path.join(self.dest, "bin/npm")))
+        copy = os.path.join(self.dest, "bin/copy")
+        self.assertFalse(os.path.islink(copy))
+        self.assertNotEqual(os.stat(copy).st_ino, os.stat(os.path.join(self.dest, "bin/npm")).st_ino)
+        self.refused(self.tar([("bin/x", {"kind": "sym", "link": "/etc/passwd"})]), "archive-link", links=True)
+        self.refused(self.tar([("bin/x", {"kind": "sym", "link": "../../dsh"})]), "archive-link", links=True)
+        # Lexically inside, really outside: a/u names dest/dsh on paper, but a/w is a link up to b, so a/u really
+        # reaches the harness next door. Found when every link is resolved at the end; nothing stays.
+        self.refused(self.tar([("a", {"kind": "dir"}), ("b", {"kind": "dir"}),
+                               ("a/w", {"kind": "sym", "link": "../b"}),
+                               ("a/u", {"kind": "sym", "link": "w/../../dsh"})]), "archive-link", links=True)
+        self.assertFalse(os.path.exists(self.dest))
+        # Any refusal leaves no partial tree behind.
+        self.refused(self.tar([("ok", {}), ("bin/x", {"kind": "sym", "link": "/etc/passwd"})]), "archive-link",
+                     links=True)
+        self.assertFalse(os.path.exists(self.dest))
+
+    def test_a_destination_that_is_a_link_refuses(self):
+        os.symlink(self.etc, self.dest)
+        self.refused(self.tar([("x", {})]), "archive-destination")
+        self.nothing_escaped()
+
+
+class BuildPlugins(unittest.TestCase):
+    """deploy/engine/build_plugins.py copies only regular files, never through a link, never outside --out."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "deploy", "engine"))
+        import build_plugins
+        self.build = build_plugins
+        self.scratch = tempfile.mkdtemp(prefix="build-plugins-")
+        self.out = os.path.join(self.scratch, "out")
+        os.makedirs(self.out)
+
+    def tearDown(self):
+        shutil.rmtree(self.scratch)
+
+    def test_links_and_escaping_paths_fail_the_build(self):
+        from pathlib import Path
+        out = Path(self.out)
+        secret = Path(self.scratch) / "secret"
+        secret.write_text("host file")
+        link = Path(self.scratch) / "client.js"
+        link.symlink_to(secret)
+        with self.assertRaises(SystemExit):
+            self.build.copy_file(link, out / "p" / "lib" / "client.js", out)
+        self.assertFalse((out / "p" / "lib" / "client.js").exists())
+        for bad in ("/etc/x", "../aukora-door/lib/index.js", "a/../../x", "", "a//b"):
+            with self.assertRaises(SystemExit):
+                self.build.relative_name(bad)
+        with self.assertRaises(SystemExit):
+            self.build.beneath(out / ".." / "elsewhere", out)
+        tree = Path(self.scratch) / "tree"
+        (tree / "sub").mkdir(parents=True)
+        (tree / "sub" / "x").symlink_to(secret)
+        with self.assertRaises(SystemExit):
+            self.build.copy_tree(tree, out / "t", out)
+        plain = Path(self.scratch) / "plain.js"
+        plain.write_text("ok")
+        self.build.copy_file(plain, out / "p" / "lib" / "index.js", out)
+        self.assertEqual((out / "p" / "lib" / "index.js").read_text(), "ok")
+
+
+def home_patch_block():
+    with open(os.path.join(ROOT, "deploy", "engine", "engine-prestart.sh"), encoding="utf-8") as handle:
+        text = handle.read()
+    start = text.index("# >>> home-patch")
+    return text[start:text.index("# <<< home-patch", start)]
+
+
+GNU = sys.platform.startswith("linux") and shutil.which("mktemp") is not None
+
+
+@unittest.skipUnless(GNU, "needs GNU coreutils (mv -T, stat -c); runs on the node or any Linux")
+class HomePatch(unittest.TestCase):
+    def run_block(self, home):
+        prelude = 'set -eu\nfail() { echo "engine-prestart: $1" >&2; exit 1; }\nHOME_DIR=%s\n' % home
+        env = dict(os.environ)
+        if os.geteuid() != 0:
+            # Not root: only the ownership test of the profiles folder is answered by a stub.
+            shim = tempfile.mkdtemp(prefix="shim-")
+            with open(os.path.join(shim, "stat"), "w") as handle:
+                handle.write('#!/bin/sh\necho 0:755\n')
+            os.chmod(os.path.join(shim, "stat"), 0o755)
+            env["PATH"] = shim + ":" + env["PATH"]
+        return subprocess.run(["sh", "-c", prelude + home_patch_block()], env=env, capture_output=True)
+
+    def test_a_planted_link_is_never_followed(self):
+        scratch = tempfile.mkdtemp(prefix="home-patch-")
+        try:
+            home = os.path.join(scratch, "home")
+            os.makedirs(os.path.join(home, "profiles"), mode=0o755)
+            victim = os.path.join(scratch, "node.json")
+            with open(victim, "w") as handle:
+                handle.write('{"node":"keep"}')
+            os.symlink(victim, os.path.join(home, "cordis.patch.yml.new"))
+            os.symlink(victim, os.path.join(home, "cordis.patch.yml"))
+            done = self.run_block(home)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            with open(victim) as handle:
+                self.assertEqual(handle.read(), '{"node":"keep"}')
+            patch = os.path.join(home, "cordis.patch.yml")
+            self.assertFalse(os.path.islink(patch))
+            with open(patch) as handle:
+                self.assertEqual(handle.read(), "[]\n")
+            self.assertEqual(stat.S_IMODE(os.lstat(patch).st_mode), 0o644)
+            self.assertEqual(os.listdir(os.path.join(home, "profiles")), [])
+            # A folder planted at the name stops the start instead of being written into.
+            os.unlink(patch)
+            os.mkdir(patch)
+            self.assertNotEqual(self.run_block(home).returncode, 0)
+            self.assertEqual(os.listdir(patch), [])
+        finally:
+            shutil.rmtree(scratch)
+
+
+if __name__ == "__main__":
+    unittest.main()
