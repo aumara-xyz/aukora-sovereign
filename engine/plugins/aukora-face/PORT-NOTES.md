@@ -132,7 +132,10 @@ list** (with that reason); cutting them from the source needs the conductor's wo
 - `pnpm-lock.yaml` here is the harness checkout's lockfile at the tag plus the nine face importers. `build-face.py` copies it over the checkout's and runs `pnpm install --frozen-lockfile`; `--update-lockfile` is the one way to change it.
   It also runs `scripts/generate-typert.ts` first (a fresh or re-copied checkout has no `lib/typert.remote-client.*`, and `tsc -b` stops on them).
 - `checks/baseline.json` `copied_from_prime` lists exact files (the Prime exemption is no longer the whole folder). Every copied file that is byte-identical to Prime 3673b98 is pinned by sha256 in `checks/pins.json`, so any edit shows;
-  a file edited here (the table above, section 1-11) is not pinned and answers to the ordinary checks.
+  a file edited here (the table above, section 1-11) is not pinned and answers to the ordinary checks. A Prime copy edited
+  later at Peter's word (the System menu launchers, the composer, the lane store, ...) is listed in `checks/baseline.json`
+  `edited_copies` with its reason: its bytes stay pinned (any further edit shows) AND it is scanned like authored code
+  (file size, foreign paths, the walls); `checks/run.py` fails a listed file that is not pinned.
 - `NOTICE` and `licenses/` carry Prime's notices (DeepSeek Harness MIT, Dakini React/Base UI/Lucide/Three, Auma Lingwa CC-BY-SA), byte-identical to Prime's `licenses/` at the same relative paths.
 
 ## Peter's mode control (2026-10-17, face/laya; redesigned after "too tight, the bubbles are way too big, it must fit the one-third lane")
@@ -172,7 +175,7 @@ Mono, LockedAction, Footnote, IconTile, AkIcon.
   under that name). It still accepts the old props, so Prime's memory app takes the new frame with no edit to it.
 - A portal opens inside the lane it is in. Never route a portal's open state through `openSurface`: the shell's
   `selectSurface` always sets the pane preset to `center-right-wide` (that was the one-third-to-two-thirds snap).
-- Edited Prime copies (pins refreshed): `settings/src/client/AuraCoherenceMenu.tsx`, `settings/src/client/SettingsMenu.tsx`,
+- Edited Prime copies (pinned and scanned: `checks/baseline.json` `edited_copies`): `settings/src/client/AuraCoherenceMenu.tsx`, `settings/src/client/SettingsMenu.tsx`,
   `aumlok/src/client/AumlokMenu.tsx`, `aumlok/src/client/IdentitySurface.tsx` (the System menu launchers).
 - **Skins** (same folder, imported by `primitives/index.ts`): `skin-face.css` gives Prime's copied launchers (Apps, Yours)
   and thread rows the PortalButton look by CSS alone (68px, left-justified, a 30px tile painted by a two-layer mask,

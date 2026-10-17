@@ -755,6 +755,18 @@ for p in files:
     elif re.search(r"(^|[-_])results?\.(txt|json|log|md)$", pathlib.Path(low).name) or "/evidence/" in f"/{low}":
         fail("clutter", p)
 
+# 4a. Edited Prime copies (checks/baseline.json `edited_copies`): their bytes stay pinned, so any further edit shows,
+#     AND they answer to every scan authored code does (size, foreign paths, walls). A pin alone exempts only data.
+edited = baseline.get("edited_copies", {})
+for p, reason in edited.items():
+    if not (isinstance(reason, str) and reason.strip()):
+        fail("edited-copies", f"{p} is listed without a reason")
+    if p not in pins:
+        fail("edited-copies", f"{p} is an edited copy and must stay pinned in checks/pins.json")
+    if p not in files:
+        fail("edited-copies", f"{p} is listed but is not a tracked file")
+scan_exempt = set(pins) - set(edited)
+
 # 4. Data is pinned by hash and never edited; authored files stay under 1,000 lines.
 for p, digest in pins.items():
     if not (ROOT / p).is_file():
@@ -762,7 +774,7 @@ for p, digest in pins.items():
     elif hashlib.sha256((ROOT / p).read_bytes()).hexdigest() != digest:
         fail("pins", f"{p} changed")
 for p in files:
-    if p in pins or not re.search(r"\.(rs|mjs|js|ts|py|sh|md)$", p):
+    if p in scan_exempt or not re.search(r"\.(rs|mjs|js|ts|py|sh|md)$", p):
         continue
     lines = (ROOT / p).read_bytes().count(b"\n")
     if lines > 1000 and p not in baseline["oversized_files"] and p not in copied:
@@ -771,7 +783,7 @@ for p in files:
 # 5. No absolute paths and no path into another repository, in code.
 pattern = re.compile(r"/Users/|aukora-(prime|genesis|contact|buzz|sovereign-archive)/")
 for p in files:
-    if p in pins or p.startswith("checks/") or not re.search(r"\.(rs|mjs|js|ts|py|sh|toml|json)$", p):
+    if p in scan_exempt or p.startswith("checks/") or not re.search(r"\.(rs|mjs|js|ts|py|sh|toml|json)$", p):
         continue
     if pattern.search((ROOT / p).read_text(errors="replace")) and p not in baseline["foreign_paths"]:
         fail("foreign-path", p)
@@ -865,7 +877,7 @@ for node in ("s1", "s2", "s3", "s4", "pilot"):
 #     frontdoor and launcher never read the health map or a picture; browser code never evaluates strings or writes raw
 #     HTML; and there are no test suites.
 for p in files:
-    if p in pins:
+    if p in scan_exempt:
         continue
     for rule, detail in walls.file_findings(p, (ROOT / p).read_text(errors="replace")):
         if rule == "wall-browser" and p in copied:
