@@ -50,18 +50,53 @@ pub struct Grant {
 pub struct Access {
     tickets: HashMap<[u8; 32], Grant>,
     sessions: HashMap<[u8; 32], Grant>,
+    /// Sessions that were ended (sign-out, binding, release) before they expired, until they would have: their
+    /// cookie is answered 403 "ended", not 401 "open the engine", so the owner sees why (O12).
+    ended: HashMap<[u8; 32], u64>,
+}
+
+/// What a session cookie names now.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Lookup {
+    Live(Grant),
+    Ended,
+    Unknown,
 }
 
 impl Access {
     fn prune(&mut self, now: u64) {
         self.tickets.retain(|_, grant| grant.expires > now);
         self.sessions.retain(|_, grant| grant.expires > now);
+        self.ended.retain(|_, expires| *expires > now);
+    }
+
+    fn mark_ended(&mut self, digest: [u8; 32], expires: u64) {
+        if self.ended.len() >= MAX_SESSIONS {
+            if let Some(oldest) = self.ended.iter().min_by_key(|(_, at)| **at).map(|(digest, _)| *digest) {
+                self.ended.remove(&oldest);
+            }
+        }
+        self.ended.insert(digest, expires);
     }
 
     /// End every engine session (and spend every ticket) minted from this shell session.
     pub fn end_shell(&mut self, shell: Digest32) {
         self.tickets.retain(|_, grant| grant.shell != shell);
-        self.sessions.retain(|_, grant| grant.shell != shell);
+        let gone: Vec<([u8; 32], u64)> =
+            self.sessions.iter().filter(|(_, grant)| grant.shell == shell).map(|(digest, grant)| (*digest, grant.expires)).collect();
+        for (digest, expires) in gone {
+            self.sessions.remove(&digest);
+            self.mark_ended(digest, expires);
+        }
+    }
+
+    /// The session a cookie names: live, ended early, or unknown (never ours, or expired).
+    pub fn lookup(&mut self, bearer: &str, now: u64) -> Lookup {
+        let Some(digest) = key(bearer) else { return Lookup::Unknown };
+        if self.ended.get(&digest).is_some_and(|expires| *expires > now) {
+            return Lookup::Ended;
+        }
+        self.session(bearer, now).map_or(Lookup::Unknown, Lookup::Live)
     }
 
     /// A ticket for this owner scope, minted from the shell session `shell` that ends at `shell_expires`.
@@ -112,7 +147,9 @@ impl Access {
 
     pub fn end(&mut self, bearer: &str) {
         if let Some(digest) = key(bearer) {
-            self.sessions.remove(&digest);
+            if let Some(grant) = self.sessions.remove(&digest) {
+                self.mark_ended(digest, grant.expires);
+            }
         }
     }
 }
@@ -188,6 +225,11 @@ mod tests {
         let pending = access.mint_ticket(scope(1), shell(2), FOREVER, 0).unwrap();
         access.end_shell(shell(2));
         assert!(access.session(&mine, 1).is_none() && access.session(&theirs, 1).is_some());
+        // An ended session is told apart from one that never was, until it would have expired.
+        assert_eq!(access.lookup(&mine, 1), Lookup::Ended);
+        assert!(matches!(access.lookup(&theirs, 1), Lookup::Live(_)));
+        assert_eq!(access.lookup(&"b".repeat(43), 1), Lookup::Unknown);
+        assert_eq!(access.lookup(&mine, 1_000_000), Lookup::Unknown);
         assert!(access.redeem(&pending, 1, 1_000_000).is_err());
     }
 

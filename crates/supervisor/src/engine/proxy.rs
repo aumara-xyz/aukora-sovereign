@@ -33,6 +33,7 @@ use supervisor::ingress::BindingState;
 
 type Body = BoxBody<Bytes, hyper::Error>;
 const MAX_CONNECTIONS: usize = 64;
+const ENDED: &str = "This engine session ended: you signed out of your node, or the owner binding or the approved release changed.\n";
 const MAX_LAUNCH_FILE: u64 = 65_536;
 const HEADER_DEADLINE: Duration = Duration::from_secs(10);
 /// Request headers a browser may pass to the harness. Everything else (cookies first of all) stays here.
@@ -211,6 +212,7 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     let Some(target) = admit_target(request.uri()) else { return text(StatusCode::NOT_FOUND, "not found\n") };
     if upgrade {
         if let Err(reason) = socket::admit_upgrade(request.method(), request.headers(), &target, &engine.config.host) {
+            eprintln!("engine: WebSocket upgrade refused: {reason:?}");
             return text(reason.status(), reason.message());
         }
     }
@@ -241,9 +243,16 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     }
     let cookies: Vec<&str> = request.headers().get_all("cookie").iter().filter_map(|value| value.to_str().ok()).collect();
     let bearer = access::bearer_from(&cookies);
-    let grant = bearer.as_deref().and_then(|bearer| engine.access.lock().ok()?.session(bearer, now));
-    let Some(grant) = grant else {
-        return text(StatusCode::UNAUTHORIZED, "Open the engine from your node (https://<your node>/engine/open).\n");
+    let lookup = match (bearer.as_deref(), engine.access.lock()) {
+        (Some(bearer), Ok(mut access)) => access.lookup(bearer, now),
+        _ => access::Lookup::Unknown,
+    };
+    let grant = match lookup {
+        access::Lookup::Live(grant) => grant,
+        access::Lookup::Ended => return text(StatusCode::FORBIDDEN, ENDED),
+        access::Lookup::Unknown => {
+            return text(StatusCode::UNAUTHORIZED, "Open the engine from your node (https://<your node>/engine/open).\n")
+        }
     };
     match still_admitted(&host, &grant, now).await {
         Admitted::Yes => {}
@@ -255,19 +264,13 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
             if let (Some(bearer), Ok(mut access)) = (bearer.as_deref(), engine.access.lock()) {
                 access.end(bearer);
             }
-            return text(
-                StatusCode::FORBIDDEN,
-                "This engine session ended: you signed out of your node, or the owner binding or the approved release changed.\n",
-            );
+            return text(StatusCode::FORBIDDEN, ENDED);
         }
         Admitted::ShellEnded => {
             if let Ok(mut access) = engine.access.lock() {
                 access.end_shell(grant.shell);
             }
-            return text(
-                StatusCode::FORBIDDEN,
-                "This engine session ended: you signed out of your node, or the owner binding or the approved release changed.\n",
-            );
+            return text(StatusCode::FORBIDDEN, ENDED);
         }
     }
     if upgrade {
@@ -337,6 +340,7 @@ async fn websocket(
         }
     }
     let Some(accept) = socket::switched(reply.status(), reply.headers()) else {
+        eprintln!("engine: the harness did not switch protocols (HTTP {})", reply.status().as_u16());
         return text(StatusCode::BAD_GATEWAY, "The engine refused the live connection.\n");
     };
     let harness_side = hyper::upgrade::on(reply);
