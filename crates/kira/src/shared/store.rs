@@ -3,7 +3,7 @@
 //! vector indexes as rebuildable side tables, and an author registry. Every returned note is re-verified, and so is
 //! every supersede or quarantine event that changes how a note reads.
 
-use super::note::{check_capture_lane, may_write_slot, NoteMeta, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
+use super::note::{check_capture_lane, may_write_slot, NoteMeta, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
 use canon::{Refusal, Result};
 use nostr::{Event, VerifiedEvent};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -14,6 +14,9 @@ use std::path::Path;
 fn refuse(code: &'static str) -> Refusal {
     Refusal { organ: "kira", reason: code }
 }
+
+/// The longest reason a correction may give.
+const MAX_REASON: usize = 512;
 
 fn sql(_: rusqlite::Error) -> Refusal {
     refuse("store-sql")
@@ -36,6 +39,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(body, tokenize='unicode61 remo
 CREATE TABLE IF NOT EXISTS embeddings(seq INTEGER NOT NULL, model TEXT NOT NULL, vec BLOB NOT NULL,
   PRIMARY KEY(seq, model));
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS supersede_links(event_id TEXT PRIMARY KEY, target TEXT NOT NULL, replacement TEXT);
+CREATE INDEX IF NOT EXISTS supersede_links_replacement ON supersede_links(replacement);
 ";
 
 /// The chain format this build writes. v1 hashed (prev, id); v2 adds the seq and the signed created_at.
@@ -49,6 +54,25 @@ pub struct AgentRecord {
     pub scopes: Vec<String>,
     pub owner: bool,
     pub revoked_at: Option<u64>,
+}
+
+/// A correction in force: the supersede event, the seq it came into force at, and the note it names as replacement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Correction {
+    event: String,
+    at: i64,
+    replacement: Option<String>,
+}
+
+/// A correction of someone else's note, signed by another agent, that the note's author or an owner has not accepted.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Proposal {
+    /// The id of the supersede event.
+    pub event: String,
+    /// The proposer's public key (hex).
+    pub by: String,
+    pub replacement: Option<String>,
+    pub reason: Option<String>,
 }
 
 /// A re-verified note with what the store knows about it.
@@ -248,12 +272,44 @@ fn upgrade_lineage(db: &mut Connection) -> Result<()> {
     tx.commit().map_err(sql)
 }
 
+/// Fills the derived `supersede_links` table for a store written before it existed (it is derived from the events and
+/// is not in the chain; the read path re-verifies every control event it relies on).
+fn upgrade_links(db: &mut Connection) -> Result<()> {
+    let have: Option<String> = db
+        .query_row("SELECT value FROM meta WHERE key = 'links'", [], |r| r.get(0))
+        .optional()
+        .map_err(sql)?;
+    if have.is_some() {
+        return Ok(());
+    }
+    let tx = db.transaction().map_err(sql)?;
+    let rows: Vec<(String, Vec<u8>)> = {
+        let mut stmt = tx.prepare("SELECT id, raw FROM events WHERE kind = ?1 ORDER BY seq").map_err(sql)?;
+        let rows = stmt
+            .query_map(params![SUPERSEDE_KIND], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows
+    };
+    for (id, raw) in rows {
+        let event = Event::decode(&raw)?;
+        let target = single_tag(&event, "supersedes")?.to_owned();
+        let replacement = single_tag(&event, "replacement").ok().map(str::to_owned);
+        tx.execute("INSERT OR IGNORE INTO supersede_links(event_id, target, replacement) VALUES (?1, ?2, ?3)", params![id, target, replacement])
+            .map_err(sql)?;
+    }
+    tx.execute("INSERT INTO meta(key, value) VALUES ('links', '1')", []).map_err(sql)?;
+    tx.commit().map_err(sql)
+}
+
 impl SharedStore {
     pub fn open(path: &Path) -> Result<Self> {
         let mut db = Connection::open(path).map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
         upgrade_chain(&mut db)?;
         upgrade_lineage(&mut db)?;
+        upgrade_links(&mut db)?;
         Ok(Self { db })
     }
 
@@ -262,6 +318,7 @@ impl SharedStore {
         db.execute_batch(SCHEMA).map_err(sql)?;
         upgrade_chain(&mut db)?;
         upgrade_lineage(&mut db)?;
+        upgrade_links(&mut db)?;
         Ok(Self { db })
     }
 
@@ -377,34 +434,101 @@ impl SharedStore {
         Ok(!controls.is_empty())
     }
 
-    /// The verified supersede of note `id_hex` (written by `author`) that retired it: (event id, replacement note id).
-    /// Each is signed by that author or the owner.
-    fn superseded_by(&self, id_hex: &str, author: &str) -> Result<Option<(String, Option<String>)>> {
-        let controls = self.verified_controls(SUPERSEDE_KIND, id_hex)?;
-        for (row, event) in &controls {
-            if single_tag(event, "supersedes")? != id_hex || (row.pubkey != author && !self.is_owner(&row.pubkey)?) {
+    /// Every supersede of note `id_hex` (written by `author`), verified: those in force, oldest first, and the proposals
+    /// nobody entitled has accepted. A supersede signed by the author or an owner is in force from its own seq. Any
+    /// other registered agent's supersede is a proposal: in force from the seq of the accept an entitled signer
+    /// gave it, void while its proposer is quarantined.
+    fn corrections_of(&self, id_hex: &str, author: &str) -> Result<(Vec<Correction>, Vec<Proposal>)> {
+        let (mut in_force, mut pending) = (Vec::new(), Vec::new());
+        for (row, event) in self.verified_controls(SUPERSEDE_KIND, id_hex)? {
+            if single_tag(&event, "supersedes")? != id_hex {
                 return Err(refuse("note-integrity"));
             }
+            let replacement = single_tag(&event, "replacement").ok().map(str::to_owned);
+            if row.pubkey == author || self.is_owner(&row.pubkey)? {
+                in_force.push(Correction { event: row.id, at: row.seq, replacement });
+                continue;
+            }
+            if self.quarantined(&row.pubkey)? {
+                continue;
+            }
+            let mut accepted = None;
+            for (accept, accepted_event) in self.verified_controls(ACCEPT_KIND, &row.id)? {
+                if single_tag(&accepted_event, "accepts")? != row.id || (accept.pubkey != author && !self.is_owner(&accept.pubkey)?) {
+                    return Err(refuse("note-integrity"));
+                }
+                accepted.get_or_insert(accept.seq);
+            }
+            match accepted {
+                Some(at) => in_force.push(Correction { event: row.id, at, replacement }),
+                None => pending.push(Proposal {
+                    event: row.id,
+                    by: row.pubkey,
+                    replacement,
+                    reason: single_tag(&event, "reason").ok().map(str::to_owned),
+                }),
+            }
         }
-        Ok(controls.into_iter().next().map(|(row, event)| (row.id, single_tag(&event, "replacement").ok().map(str::to_owned))))
+        in_force.sort_by_key(|c| c.at);
+        Ok((in_force, pending))
+    }
+
+    /// What retired note `id_hex` (written by `author`): the correction in force that came last, so a note corrected
+    /// twice stands corrected by the second. A note that was the replacement in an earlier correction of some target
+    /// that was later corrected to another note is retired too, by that later correction: it lost.
+    fn retirement(&self, id_hex: &str, author: &str) -> Result<Option<Correction>> {
+        if let Some(last) = self.corrections_of(id_hex, author)?.0.pop() {
+            return Ok(Some(last));
+        }
+        let mut stmt = self.db.prepare("SELECT event_id, target FROM supersede_links WHERE replacement = ?1").map_err(sql)?;
+        let links = stmt
+            .query_map(params![id_hex], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        for (event_id, target) in links {
+            let Some(target_author) = self.note_author(&target)? else { continue };
+            let (in_force, _) = self.corrections_of(&target, &target_author)?;
+            let Some(mine) = in_force.iter().find(|c| c.event == event_id) else { continue };
+            if let Some(last) = in_force.iter().rev().find(|c| c.at > mine.at && c.replacement.as_deref() != Some(id_hex)) {
+                return Ok(Some(last.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn note_author(&self, id_hex: &str) -> Result<Option<String>> {
+        self.db
+            .query_row("SELECT pubkey FROM events WHERE id = ?1 AND kind = ?2", params![id_hex, NOTE_KIND], |r| r.get(0))
+            .optional()
+            .map_err(sql)
+    }
+
+    /// The proposals against a note that nobody entitled has accepted yet, oldest first.
+    pub fn pending_corrections(&self, id_hex: &str) -> Result<Vec<Proposal>> {
+        let Some(author) = self.note_author(id_hex)? else { return Ok(Vec::new()) };
+        Ok(self.corrections_of(id_hex, &author)?.1)
+    }
+
+    /// The note a correction event is aimed at (a supersede, or an accept's proposal).
+    pub fn correction_target(&self, event_id: &str) -> Result<Option<String>> {
+        self.db
+            .query_row("SELECT target FROM events WHERE id = ?1 AND kind IN (?2, ?3)", params![event_id, SUPERSEDE_KIND, ACCEPT_KIND], |r| r.get(0))
+            .optional()
+            .map_err(sql)
     }
 
     /// The note that stands where `id_hex` once did: its replacement, and that note's replacement if it was itself
-    /// superseded, and so on. None when `id_hex` is not superseded, was retracted without a replacement, or the chain
+    /// superseded, and so on. None when `id_hex` is not retired, was retracted without a replacement, or the chain
     /// loops back on itself.
     fn current_of(&self, id_hex: &str) -> Result<Option<String>> {
         let (mut here, mut seen) = (id_hex.to_owned(), BTreeSet::from([id_hex.to_owned()]));
         loop {
-            let author: Option<String> = self
-                .db
-                .query_row("SELECT pubkey FROM events WHERE id = ?1 AND kind = ?2", params![here, NOTE_KIND], |r| r.get(0))
-                .optional()
-                .map_err(sql)?;
-            let Some(author) = author else { return Ok(None) };
-            match self.superseded_by(&here, &author)? {
+            let Some(author) = self.note_author(&here)? else { return Ok(None) };
+            match self.retirement(&here, &author)? {
                 None => return Ok((here != id_hex).then_some(here)),
-                Some((_, None)) => return Ok(None),
-                Some((_, Some(next))) => {
+                Some(Correction { replacement: None, .. }) => return Ok(None),
+                Some(Correction { replacement: Some(next), .. }) => {
                     if !seen.insert(next.clone()) {
                         return Ok(None);
                     }
@@ -529,25 +653,82 @@ impl SharedStore {
             SUPERSEDE_KIND => {
                 let target = single_tag(&event, "supersedes")?.to_owned();
                 let replacement = single_tag(&event, "replacement").ok().map(str::to_owned);
-                let original: Option<String> = tx
-                    .query_row("SELECT pubkey FROM events WHERE id = ?1 AND kind = ?2", params![target, NOTE_KIND], |r| r.get(0))
+                if let Ok(reason) = single_tag(&event, "reason") {
+                    if reason.is_empty() || reason.len() > MAX_REASON || reason.chars().any(char::is_control) {
+                        return Err(refuse("supersede-reason"));
+                    }
+                }
+                let original: Option<(String, String, String)> = tx
+                    .query_row(
+                        "SELECT pubkey, scope, privacy FROM events WHERE id = ?1 AND kind = ?2",
+                        params![target, NOTE_KIND],
+                        |r| Ok((r.get(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default(), r.get::<_, Option<String>>(2)?.unwrap_or_default())),
+                    )
                     .optional()
                     .map_err(sql)?;
-                let original = original.ok_or_else(|| refuse("supersede-target-unknown"))?;
+                let (original, scope, privacy) = original.ok_or_else(|| refuse("supersede-target-unknown"))?;
+                let replacement_author: Option<String> = match &replacement {
+                    Some(rep) => Some(
+                        tx.query_row("SELECT pubkey FROM events WHERE id = ?1 AND kind = ?2", params![rep, NOTE_KIND], |r| r.get(0))
+                            .optional()
+                            .map_err(sql)?
+                            .ok_or_else(|| refuse("supersede-replacement-unknown"))?,
+                    ),
+                    None => None,
+                };
                 if original != author && !agent.owner {
-                    return Err(refuse("supersede-not-author"));
-                }
-                if let Some(rep) = &replacement {
-                    let ok: i64 = tx
-                        .query_row("SELECT count(*) FROM events WHERE id = ?1 AND kind = ?2", params![rep, NOTE_KIND], |r| r.get(0))
-                        .map_err(sql)?;
-                    if ok == 0 {
-                        return Err(refuse("supersede-replacement-unknown"));
+                    // Someone else's note: a proposal, in force once its author or the owner accepts it. The proposer
+                    // must be able to read the note (same refusal as for a note it cannot see, so nothing is revealed)
+                    // and must offer its own replacement, so a proposal puts words in no one else's mouth.
+                    let reads = privacy != "local" && agent.scopes.iter().any(|x| x == "*" || *x == scope);
+                    if !reads || replacement.is_none() {
+                        return Err(refuse("supersede-not-author"));
+                    }
+                    if replacement_author.as_deref() != Some(author.as_str()) {
+                        return Err(refuse("supersede-replacement-not-yours"));
                     }
                 }
                 tx.execute(
                     "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, target) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![seq, id, author, created_at, SUPERSEDE_KIND, raw, chain, target],
+                )
+                .map_err(sql)?;
+                tx.execute("INSERT INTO supersede_links(event_id, target, replacement) VALUES (?1, ?2, ?3)", params![id, target, replacement])
+                    .map_err(sql)?;
+                tx.commit().map_err(sql)?;
+            }
+            ACCEPT_KIND => {
+                let proposal = single_tag(&event, "accepts")?.to_owned();
+                let row: Option<(String, String)> = tx
+                    .query_row(
+                        "SELECT pubkey, target FROM events WHERE id = ?1 AND kind = ?2",
+                        params![proposal, SUPERSEDE_KIND],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(sql)?;
+                let (proposer, target) = row.ok_or_else(|| refuse("accept-target-unknown"))?;
+                let target_author: String = tx
+                    .query_row("SELECT pubkey FROM events WHERE id = ?1 AND kind = ?2", params![target, NOTE_KIND], |r| r.get(0))
+                    .map_err(sql)?;
+                let proposer_owner: i64 = tx
+                    .query_row("SELECT COALESCE(MAX(owner), 0) FROM agents WHERE pubkey = ?1", params![proposer], |r| r.get(0))
+                    .map_err(sql)?;
+                if proposer == target_author || proposer_owner != 0 {
+                    return Err(refuse("accept-not-a-proposal"));
+                }
+                if target_author != author && !agent.owner {
+                    return Err(refuse("accept-not-author"));
+                }
+                let taken: i64 = tx
+                    .query_row("SELECT count(*) FROM events WHERE kind = ?1 AND target = ?2", params![ACCEPT_KIND, proposal], |r| r.get(0))
+                    .map_err(sql)?;
+                if taken > 0 {
+                    return Err(refuse("accept-duplicate"));
+                }
+                tx.execute(
+                    "INSERT INTO events(seq, id, pubkey, created_at, kind, raw, chain, target) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![seq, id, author, created_at, ACCEPT_KIND, raw, chain, proposal],
                 )
                 .map_err(sql)?;
                 tx.commit().map_err(sql)?;
@@ -607,9 +788,9 @@ impl SharedStore {
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
-        let retired = self.superseded_by(&row.id, &row.pubkey)?;
+        let retired = self.retirement(&row.id, &row.pubkey)?;
         let current_id = if retired.is_some() { self.current_of(&row.id)? } else { None };
-        let superseded_by = retired.map(|(event, _)| event);
+        let superseded_by = retired.map(|c| c.event);
         let quarantined = self.quarantined(&row.pubkey)?;
         Ok(Some(StoredNote { seq, event, meta, author_name, author_owner, roots, superseded_by, current_id, quarantined }))
     }
@@ -965,6 +1146,41 @@ mod tests {
         assert_eq!(s.get(&derived).unwrap().unwrap().roots, vec![first.clone()]);
         assert_eq!(s.get(&first).unwrap().unwrap().roots, vec![first]);
         assert_eq!(s.get(&other_scope).unwrap().unwrap().roots, vec![other_scope.clone()]);
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = path.clone().into_os_string();
+            name.push(suffix);
+            let _ = std::fs::remove_file(name);
+        }
+    }
+
+    #[test]
+    fn the_last_correction_wins_and_the_links_table_is_rebuilt_for_an_old_store() {
+        let a = key();
+        let path = std::env::temp_dir().join(format!("kira-links-{}.sqlite", pub_hex(&key())));
+        let (high, medium, low) = {
+            let mut s = SharedStore::open(&path).unwrap();
+            s.register_agent("a", &pub_hex(&a), &["builders".into()], false).unwrap();
+            let ids: Vec<String> = ["is HIGH", "is MEDIUM", "is LOW"]
+                .iter()
+                .enumerate()
+                .map(|(i, level)| hex32(s.append(sign(&a, &draft(&format!("finding K2-15 {level}"), "builders"), Review::Remembered, i as u64 + 1)).unwrap().event.id.as_bytes()))
+                .collect();
+            for (at, replacement) in [(10, &ids[1]), (11, &ids[2])] {
+                let tags = vec![vec!["supersedes".into(), ids[0].clone()], vec!["replacement".into(), replacement.clone()]];
+                s.record(Event::sign(&a, at, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
+            }
+            // The store from before the links table existed.
+            s.db.execute("DELETE FROM supersede_links", []).unwrap();
+            s.db.execute("DELETE FROM meta WHERE key = 'links'", []).unwrap();
+            (ids[0].clone(), ids[1].clone(), ids[2].clone())
+        };
+        let s = SharedStore::open(&path).unwrap();
+        let get = |id: &str| s.get(id).unwrap().unwrap();
+        assert_eq!(get(&high).current_id.as_deref(), Some(low.as_str()), "the second correction wins over the first");
+        let lost = get(&medium);
+        assert!(lost.superseded_by.is_some(), "the replacement that lost is history, not a second live answer");
+        assert_eq!(lost.current_id.as_deref(), Some(low.as_str()));
+        assert!(get(&low).superseded_by.is_none());
         for suffix in ["", "-wal", "-shm"] {
             let mut name = path.clone().into_os_string();
             name.push(suffix);

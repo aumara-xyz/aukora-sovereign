@@ -17,7 +17,8 @@
 use super::hybrid::query_vector;
 use super::llama::{HttpEmbedder, HttpReranker};
 use super::note::{
-    readable_slot, valid_agent_name, Capture, Form, Lane, NoteDraft, Privacy, Review, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND,
+    readable_slot, valid_agent_name, Capture, Form, Lane, NoteDraft, Privacy, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND,
+    SUPERSEDE_KIND,
 };
 use super::hybrid::Prepared;
 use super::recall::{Embedder, RecallOutcome, RecallQuery, RecallStatus, Reranker};
@@ -60,7 +61,7 @@ const MAX_LIST_SCAN: usize = 5_000;
 const MAX_REQUEST: usize = 1 << 20;
 const MAX_REPLY: usize = 64 << 20;
 const PROTOCOLS: [&str; 4] = ["2025-06-18", "2025-11-25", "2025-03-26", "2024-11-05"];
-const TOOLS: [&str; 6] = ["remember", "recall", "get", "list_recent", "supersede", "quarantine_source"];
+const TOOLS: [&str; 7] = ["remember", "recall", "get", "list_recent", "supersede", "accept_correction", "quarantine_source"];
 
 fn refuse(code: &'static str) -> Refusal {
     Refusal { organ: "kira", reason: code }
@@ -433,6 +434,13 @@ struct ListParams {
 struct SupersedeParams {
     target: String,
     replacement: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AcceptParams {
+    proposal: String,
 }
 
 #[derive(Deserialize)]
@@ -462,9 +470,24 @@ fn current_visible(store: &SharedStore, caller: &Caller, note: &StoredNote) -> O
     visible(caller, &current).then(|| hex(current.event.id.as_bytes()))
 }
 
-/// A note as the wire shows it, built from a store read (which re-verified it). `current` is `current_visible`.
-fn note_json(note: &StoredNote, current: Option<String>) -> Value {
-    let m = &note.meta;
+/// The corrections proposed against a live note that nobody entitled has accepted yet, as far as this caller may read
+/// them: `{event, by, replacement, reason}`. A reviewer's proposal beside the note, not yet in force.
+fn proposals_visible(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Vec<Value> {
+    let id = hex(note.event.id.as_bytes());
+    let Ok(pending) = store.pending_corrections(&id) else { return Vec::new() };
+    pending
+        .into_iter()
+        .filter_map(|p| {
+            let replacement = store.get(p.replacement.as_deref()?).ok().flatten().filter(|n| visible(caller, n) && !n.quarantined)?;
+            let by = store.agent(&p.by).ok().flatten().map_or_else(|| "unknown".to_owned(), |a| a.name);
+            Some(json!({"event": p.event, "by": by, "replacement": hex(replacement.event.id.as_bytes()), "reason": p.reason}))
+        })
+        .collect()
+}
+
+/// A note as the wire shows it, built from a store read (which re-verified it).
+fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Value {
+    let (m, current) = (&note.meta, current_visible(store, caller, note));
     json!({
         "id": hex(note.event.id.as_bytes()), "seq": note.seq, "author": hex(note.event.pubkey.as_bytes()),
         "author_name": note.author_name, "created_at": note.event.created_at, "text": note.event.content,
@@ -472,7 +495,7 @@ fn note_json(note: &StoredNote, current: Option<String>) -> Value {
         "privacy": m.privacy.wire(), "capture": m.capture.wire(), "scope": m.scope, "epoch": m.epoch,
         "sources": m.sources, "slot": m.slot, "valid_from": m.valid_from, "valid_to": m.valid_to,
         "roots": note.roots, "superseded_by": note.superseded_by, "current_id": current, "quarantined": note.quarantined,
-        "validity": validity(&note.meta, now()),
+        "validity": validity(&note.meta, now()), "proposals": proposals_visible(store, caller, note),
         // A note that cites nothing is a root of its own: nothing in the store supports it but its author's word.
         "lineage": if m.sources.is_empty() { "unsupported" } else { "sourced" },
     })
@@ -493,7 +516,7 @@ fn view(store: &SharedStore, caller: &Caller, note: &StoredNote) -> Value {
     } else if note.quarantined {
         stub(note)
     } else {
-        note_json(note, current_visible(store, caller, note))
+        note_json(store, caller, note)
     }
 }
 
@@ -697,6 +720,9 @@ impl State {
         Ok(json!({"notes": shown, "next_before": next_before}))
     }
 
+    /// Supersede a note. By its author or the owner this is in force at once. By any other agent (which must offer a
+    /// replacement note of its own) it is only a proposal, listed on the note until its author or the owner accepts
+    /// it with `accept_correction`. The latest correction in force wins.
     fn supersede(&mut self, caller: &Caller, p: SupersedeParams) -> Result<Value> {
         if !is_hex64(&p.target) || p.replacement.as_deref().is_some_and(|r| !is_hex64(r)) {
             return Err(refuse("id-invalid"));
@@ -706,9 +732,31 @@ impl State {
         if let Some(replacement) = &p.replacement {
             tags.push(vec!["replacement".to_owned(), replacement.clone()]);
         }
+        if let Some(reason) = &p.reason {
+            tags.push(vec!["reason".to_owned(), reason.clone()]);
+        }
         let event = Event::sign(self.key(&caller.name)?, now(), SUPERSEDE_KIND, tags, String::new())?;
         let id = self.store.record(event)?;
         let target = self.store.get(&p.target)?.ok_or_else(|| refuse("not-found"))?;
+        let proposed = target.superseded_by.as_deref() != Some(id.as_str()) && target.author_name != caller.name && !caller.owner;
+        Ok(json!({"event": id, "proposed": proposed, "target": view(&self.store, caller, &target)}))
+    }
+
+    /// Accept a proposed correction of a note: signed by the note's author or the owner. From then on the proposal is
+    /// in force, and it wins over any correction that came before it.
+    fn accept_correction(&mut self, caller: &Caller, p: AcceptParams) -> Result<Value> {
+        if !is_hex64(&p.proposal) {
+            return Err(refuse("id-invalid"));
+        }
+        // Only a note the caller may read can be reached through its proposal: anything else is not found.
+        let target = self.store.correction_target(&p.proposal)?.and_then(|id| self.store.get(&id).ok().flatten());
+        if !target.as_ref().is_some_and(|t| visible(caller, t)) {
+            return Err(refuse("not-found"));
+        }
+        self.rate(caller)?;
+        let event = Event::sign(self.key(&caller.name)?, now(), ACCEPT_KIND, vec![vec!["accepts".to_owned(), p.proposal.clone()]], String::new())?;
+        let id = self.store.record(event)?;
+        let target = self.store.get(&target.map(|t| hex(t.event.id.as_bytes())).unwrap_or_default())?.ok_or_else(|| refuse("not-found"))?;
         Ok(json!({"event": id, "target": view(&self.store, caller, &target)}))
     }
 
@@ -788,7 +836,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 }
                 live += usize::from(item.correction.is_none());
                 let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
-                let mut shown = if note.quarantined { stub(&note) } else { note_json(&note, current_visible(&s.store, &caller, &note)) };
+                let mut shown = if note.quarantined { stub(&note) } else { note_json(&s.store, &caller, &note) };
                 shown["score"] = json!(item.score);
                 // Others who stated the same words. Repetition is not support: see `evidence` and `roots`. `also_by`
                 // is the old name of `repeated_by`.
@@ -841,6 +889,7 @@ fn dispatch(state: &Mutex<State>, line: &str) -> Result<Value> {
         "get" => s.get(&caller, parse(request.params)?),
         "list_recent" => s.list_recent(&caller, parse(request.params)?),
         "supersede" => s.supersede(&caller, parse(request.params)?),
+        "accept_correction" => s.accept_correction(&caller, parse(request.params)?),
         "quarantine_source" => s.quarantine(&caller, parse(request.params)?),
         _ => Err(refuse("method-unknown")),
     }

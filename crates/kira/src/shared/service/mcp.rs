@@ -46,8 +46,10 @@ fn tools(owner: bool) -> Value {
          "inputSchema": object(&["id"], json!({"id": text("A note id (64 lowercase hex) or a slot: aukora:self, aukora:resume or resume:<agent>.")}))},
         {"name": "list_recent", "description": "List the newest notes, newest first; page with next_before.",
          "inputSchema": object(&[], json!({"limit": int("Default 20, at most 500."), "before": int("The next_before cursor from the last page."), "epoch": int("Default 2.")}))},
-        {"name": "supersede", "description": "Mark one of your notes as replaced (the owner may supersede any). Nothing is deleted.",
-         "inputSchema": object(&["target"], json!({"target": id, "replacement": text("Id of the note that replaces it.")}))},
+        {"name": "supersede", "description": "Correct a note: say which note replaces it. On your own note (or as the owner) it is in force at once; on someone else's note it is a proposal that needs your own replacement note and takes effect when its author or the owner accepts it (accept_correction). The latest correction in force wins. Nothing is deleted.",
+         "inputSchema": object(&["target"], json!({"target": id, "replacement": text("Id of the note that replaces it. Required for a note that is not yours, and it must be your own note."), "reason": text("Why (optional, up to 512 characters).")}))},
+        {"name": "accept_correction", "description": "Accept a correction someone proposed against a note of yours (the owner may accept any). Until then the proposal only sits beside the note.",
+         "inputSchema": object(&["proposal"], json!({"proposal": text("The event id of the proposal, from the note's proposals list or the supersede reply.")}))},
         {"name": "quarantine_source", "description": "Owner only: quarantine every note signed by one key; that key can no longer write.",
          "inputSchema": object(&["pubkey"], json!({"pubkey": text("The source's public key, 64 hex.")}))},
     ]);
@@ -146,7 +148,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mcp_lists_six_tools_and_forwards_calls() {
+    fn mcp_lists_seven_tools_and_forwards_calls() {
         let mut seen = Vec::new();
         let mut forward = |method: &str, params: &Value| {
             seen.push((method.to_owned(), params.clone()));
@@ -188,13 +190,13 @@ mod tests {
         for reply in [Ok(json!({"name": "claude", "owner": false})), Err("kira:service-unreachable".to_owned())] {
             let tools = list(reply);
             let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-            assert_eq!(names, TOOLS[..5]);
+            assert_eq!(names, TOOLS[..6]);
             let remember = &tools[0]["inputSchema"]["properties"];
             assert!(remember.get("owner_signed").is_none());
             assert_eq!(remember["capture"]["enum"], json!(["web-derived", "model-generated"]));
         }
         let owner = list(Ok(json!({"owner": true})));
-        assert_eq!(owner.as_array().unwrap().len(), 6);
+        assert_eq!(owner.as_array().unwrap().len(), 7);
         assert!(owner[0]["inputSchema"]["properties"].get("owner_signed").is_some());
     }
 }

@@ -7,10 +7,14 @@ use sha2::{Digest, Sha256};
 
 /// A memory note.
 pub const NOTE_KIND: u16 = 4500;
-/// Replaces one earlier note (`supersedes` tag); the old note stays readable.
+/// Replaces one earlier note (`supersedes` tag, optional `replacement` and `reason`); the old note stays readable.
+/// Signed by the note's author or the owner it is in force at once; signed by anyone else it is a proposal.
 pub const SUPERSEDE_KIND: u16 = 4501;
 /// Quarantines every note signed by one source key (`source` tag).
 pub const QUARANTINE_KIND: u16 = 4502;
+/// Accepts a proposed correction (`accepts` tag: the id of the 4501 event). A supersede signed by anyone but the
+/// corrected note's author or the owner is only a proposal until the author or the owner signs one of these.
+pub const ACCEPT_KIND: u16 = 4503;
 
 fn refuse(code: &'static str) -> Refusal {
     Refusal { organ: "kira", reason: code }

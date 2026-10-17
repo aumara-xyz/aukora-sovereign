@@ -439,6 +439,111 @@ fn a_stale_note_leads_to_the_current_one_and_get_resolves_the_event_id() {
     assert_eq!(call(&f.state, &owner, "get", json!({"id": event}))["result"]["id"], secret.as_str());
 }
 
+fn remember_id(f: &Fixture, token: &str, text: &str) -> String {
+    let r = call(&f.state, token, "remember", note(text, "builders"));
+    r["result"]["id"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned()
+}
+
+fn ids_of(recalled: &Value) -> Vec<(String, Value)> {
+    recalled["result"]["items"].as_array().unwrap().iter().map(|i| (i["id"].as_str().unwrap().to_owned(), i["correction"].clone())).collect()
+}
+
+/// Bench A3: a reviewer correcting someone else's HIGH got `kira:supersede-not-author`, and the HIGH stayed live and
+/// unlabelled. Now the reviewer signs a PROPOSAL; the note shows it; it takes effect when the author or the owner accepts.
+#[test]
+fn a_reviewer_proposes_a_correction_and_it_takes_effect_when_the_author_accepts() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let high = remember_id(&f, &claude, "Finding K2-9 web_fetch redirect bypass is rated HIGH");
+    let medium = remember_id(&f, &grok, "Finding K2-9 web_fetch redirect bypass is rated MEDIUM, the redirect is same-origin only");
+    // A bare supersede of someone else's note, or one whose replacement is not the proposer's own, is still refused.
+    assert_eq!(call(&f.state, &grok, "supersede", json!({"target": high}))["error"], "kira:supersede-not-author");
+    let theirs = remember_id(&f, &owner, "Finding K2-9 is rated LOW by the owner");
+    assert_eq!(call(&f.state, &grok, "supersede", json!({"target": high, "replacement": theirs}))["error"], "kira:supersede-replacement-not-yours");
+    let proposed = call(&f.state, &grok, "supersede", json!({"target": high, "replacement": medium, "reason": "same-origin only"}));
+    assert_eq!(proposed["result"]["proposed"], true, "{proposed}");
+    let proposal = proposed["result"]["event"].as_str().unwrap().to_owned();
+    // Not yet in force: the HIGH is still the live note, and it shows the proposal beside it.
+    let q = json!({"query": "what is the severity of finding K2-9 web_fetch redirect bypass"});
+    let before = call(&f.state, &owner, "recall", q.clone());
+    let live = before["result"]["items"].as_array().unwrap().iter().find(|i| i["id"] == high.as_str()).unwrap().clone();
+    assert_eq!(live["correction"], Value::Null);
+    assert_eq!(live["proposals"][0]["replacement"], medium.as_str(), "{live}");
+    assert_eq!((live["proposals"][0]["by"].clone(), live["proposals"][0]["reason"].clone()), (json!("grok"), json!("same-origin only")));
+    assert_eq!(call(&f.state, &owner, "get", json!({"id": high}))["result"]["current_id"], Value::Null);
+    // Nobody but the note's author or the owner can accept; the proposer cannot accept their own.
+    assert_eq!(call(&f.state, &grok, "accept_correction", json!({"proposal": proposal}))["error"], "kira:accept-not-author");
+    assert_eq!(call(&f.state, &claude, "accept_correction", json!({"proposal": high}))["error"], "kira:not-found");
+    let accepted = call(&f.state, &claude, "accept_correction", json!({"proposal": proposal}));
+    assert_eq!(accepted["result"]["target"]["current_id"], medium.as_str(), "{accepted}");
+    // A second accept is refused (as an identical event within the same second, else as a duplicate accept).
+    let again = call(&f.state, &claude, "accept_correction", json!({"proposal": proposal}));
+    assert!(again["error"] == "kira:accept-duplicate" || again["error"] == "kira:note-duplicate", "{again}");
+    // Now the MEDIUM leads and the HIGH is labelled history that points at it.
+    let after = call(&f.state, &grok, "recall", q);
+    let shown = ids_of(&after);
+    assert_eq!(shown[0], (medium.clone(), Value::Null), "{after}");
+    assert!(shown.contains(&(high.clone(), json!("superseded"))));
+    let stale = after["result"]["items"].as_array().unwrap().iter().find(|i| i["id"] == high.as_str()).unwrap();
+    assert_eq!(stale["current_id"], medium.as_str());
+    // The owner may accept any proposal, and an own (author or owner) supersede is not a proposal.
+    let high2 = remember_id(&f, &claude, "Finding K2-10 is rated HIGH");
+    let medium2 = remember_id(&f, &grok, "Finding K2-10 is rated MEDIUM");
+    let proposal2 = call(&f.state, &grok, "supersede", json!({"target": high2, "replacement": medium2}))["result"]["event"].as_str().unwrap().to_owned();
+    assert_eq!(call(&f.state, &owner, "accept_correction", json!({"proposal": proposal2}))["result"]["target"]["current_id"], medium2.as_str());
+    let (draft, final_) = (remember_id(&f, &claude, "Finding K2-12 draft says HIGH"), remember_id(&f, &claude, "Finding K2-12 final says LOW"));
+    let own = call(&f.state, &claude, "supersede", json!({"target": draft, "replacement": final_}));
+    assert_eq!(own["result"]["proposed"], false);
+    assert_eq!(call(&f.state, &claude, "accept_correction", json!({"proposal": own["result"]["event"]}))["error"], "kira:accept-not-a-proposal");
+    // A note the proposer cannot read cannot be reached by proposing: same refusal as for an unreadable note.
+    let mut private = note("Finding K2-11 is the owner's private note", "local");
+    private["capture"] = json!("owner-typed");
+    let private = call(&f.state, &owner, "remember", private)["result"]["id"].as_str().unwrap().to_owned();
+    let mine = remember_id(&f, &grok, "Finding K2-11 is nothing");
+    assert_eq!(call(&f.state, &grok, "supersede", json!({"target": private, "replacement": mine}))["error"], "kira:supersede-not-author");
+}
+
+/// Bench A6/A6b: a note corrected twice stood corrected by the FIRST replacement; the later correction was ignored.
+#[test]
+fn the_latest_correction_in_force_wins() {
+    let f = fixture();
+    let (claude, grok) = (f.claude.clone(), f.grok.clone());
+    let high = remember_id(&f, &claude, "Finding K2-15 invite replay is rated HIGH");
+    let medium = remember_id(&f, &claude, "Finding K2-15 invite replay is rated MEDIUM");
+    let low = remember_id(&f, &claude, "Finding K2-15 invite replay is rated LOW");
+    assert_eq!(call(&f.state, &claude, "supersede", json!({"target": high, "replacement": medium}))["ok"], true);
+    assert_eq!(call(&f.state, &claude, "supersede", json!({"target": high, "replacement": low}))["ok"], true);
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], low.as_str());
+    // MEDIUM lost to LOW (it was only ever the first answer for HIGH): it is history, not a second live answer.
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": medium}))["result"]["current_id"], low.as_str());
+    let r = call(&f.state, &grok, "recall", json!({"query": "What is the current severity of invite replay finding K2-15?"}));
+    let shown = ids_of(&r);
+    assert_eq!(shown[0], (low.clone(), Value::Null), "{r}");
+    assert!(shown[1..].iter().all(|(_, label)| label == "superseded") && shown.len() == 3, "{r}");
+    // A proposal accepted later is in force from its acceptance, so it beats an older own correction.
+    let urgent = remember_id(&f, &grok, "Finding K2-15 invite replay is rated CRITICAL after the retest");
+    let proposal = call(&f.state, &grok, "supersede", json!({"target": high, "replacement": urgent}))["result"]["event"].as_str().unwrap().to_owned();
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], low.as_str(), "pending: not yet in force");
+    call(&f.state, &claude, "accept_correction", json!({"proposal": proposal}));
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], urgent.as_str());
+}
+
+/// Quarantining a source withdraws the corrections it proposed, accepted or not.
+#[test]
+fn a_quarantined_proposers_corrections_are_void() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let high = remember_id(&f, &claude, "Finding K2-16 is rated HIGH");
+    let medium = remember_id(&f, &grok, "Finding K2-16 is rated MEDIUM");
+    let proposal = call(&f.state, &grok, "supersede", json!({"target": high, "replacement": medium}))["result"]["event"].as_str().unwrap().to_owned();
+    call(&f.state, &claude, "accept_correction", json!({"proposal": proposal}));
+    assert_eq!(call(&f.state, &claude, "get", json!({"id": high}))["result"]["current_id"], medium.as_str());
+    let grok_key = lock(&f.state).pubkey_of("grok").unwrap();
+    call(&f.state, &owner, "quarantine_source", json!({"pubkey": grok_key}));
+    let after = call(&f.state, &claude, "get", json!({"id": high}));
+    assert_eq!((after["result"]["superseded_by"].clone(), after["result"]["current_id"].clone()), (Value::Null, Value::Null), "{after}");
+}
+
 #[test]
 fn import_skips_secrets_and_is_idempotent() {
     let f = fixture();
