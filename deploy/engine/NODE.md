@@ -204,13 +204,20 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   `network_policies: {}`; the broker socket is AF_UNIX through a read-write mount, like the door's.
 - **Peer.** `SO_PEERCRED` uid must be the engine's (`model-broker-v1.json` `peer_uids`); anything else is 403 before
   the body is read. Without kernel peer credentials (not Linux) the link does not start.
-- **Key** (`KeyInbox`, memory only). The owner types it at `https://<shell>/engine/model-key` (a self-contained page
+- **Key** (`KeyInbox`; at rest one 0600 file, O7 below). The owner types it at `https://<shell>/engine/model-key` (a self-contained page
   served by the supervisor, script and style pinned by hash in its CSP); `POST /api/engine/model-key` needs the bound
   owner's shell session (frontdoor: same origin, JSON). The broker holds the key and proposes
   `engine/model-key.json` = `{key_sha256, kind, provider, v}`: the card shows the digest only; the page shows its
   first 12 hex digits (the fingerprint) to compare. A call uses the key only while its SHA-256 equals the approved
-  one. Re-entering the approved key after a restart activates it without a new card; entering a different key
-  pauses the engine's calls until the owner approves it. The key is never in a file, the gate, Aura, a log or a reply.
+  one. Entering a different key pauses the engine's calls until the owner approves it. The key is never in the
+  gate, Aura, a log or a reply, and never inside the wall. **At rest (O7):** once the owner's passkey has approved the
+  card, the supervisor keeps the key in `/var/lib/aukora/model-key/model-key` (`broker::keyfile`: the folder 0700
+  and the file 0600, both the supervisor's own; a regular file, one link, opened without following symlinks;
+  written beside itself, synced, renamed in, the folder synced). At start it is loaded only if its SHA-256 equals the
+  `key_sha256` of the currently approved `engine/model-key.json`; a different digest removes the file, and a file that
+  is a symlink, not regular, shared, or not a key is not used (the journal says why, never the key). Entering a
+  different key removes the file at once (it is stored again when that card is approved); `ModelBroker::clear_key`
+  clears memory and file together.
 - **Budget.** `model-broker-v1.json` holds the terms (models, prices per million tokens, total and per-call cap in
   µUSD, call count, `valid_days`). The supervisor proposes them as `engine/model-budget.json` (with an expiry) and
   spends only against the bytes the owner's passkey applied; changed terms, or one day before expiry, propose again.
@@ -345,7 +352,8 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
    on it). Journal on Auma's first turn:
    `model-broker: call … completed …` (NODE with a fake key: `provider-refused`, the harness recorded DeepSeek's own
    HTTP 401 "Authentication Fails": engine, bridge, broker and provider all reached). After a supervisor restart the
-   key is gone (memory only): enter the same key again; the page says it is already approved (NODE).
+   stored key is loaded again when it is the approved one (journal: `model-broker: the stored key was loaded`); there is
+   nothing to retype.
    The reply renders in the chat and the session history loads after a reload (NODE since O9, with the fake key:
    "This turn failed · API key is invalid · AUTH"). The harness's preview notice is acknowledged by the overlay
    (row 3): its own Continue cannot persist inside the wall.
@@ -416,9 +424,10 @@ the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated
 - **O4** `deploy/engine/*` is in the release (so the owner's release approval covers it) but not in `checks/run.py`'s
   `DEPLOY_PINS`; pin `engine_install.py` and `engine.py` once reviewed.
 - **O5** The plugin-set pin in `ProtectedState` (floor schema change + Aura migration) instead of the audit file.
-- **O7** The model key is memory only (the `KeyInbox`; disk persistence was reserved for later): every supervisor
-  restart needs the owner to enter it again (NODE: re-entering it activates it without a card). Persisting it (a
-  0600 file in the broker's state, as the archive's keystore did) is Peter's call.
+- **O7** CLOSED (Peter, 2026-10-17: persist the key, no retyping). The approved key is kept in
+  `/var/lib/aukora/model-key/model-key` and loaded at start only if its SHA-256 matches the approved card (section 7,
+  Key). Residual: the file is a secret at rest on the node's disk, readable by the `aukora` user and root, like the
+  node's signing key beside it; a disk image of the node carries it.
 - **O8** The budget's prices in `engine_install.py` (`MODEL_BUDGET`) are placeholders above DeepSeek's published
   prices, and the model names are the harness's catalog (`deepseek-flash`, `deepseek-v4-pro`), not checked against
   the live API (NODE: the harness asked for `deepseek-flash`; DeepSeek answered 401 to the fake key before judging

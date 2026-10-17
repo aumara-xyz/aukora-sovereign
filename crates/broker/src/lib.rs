@@ -6,6 +6,7 @@ pub mod engine_link;
 pub mod grant;
 pub mod identity;
 pub mod intake;
+pub mod keyfile;
 pub mod keystore;
 pub mod provider;
 pub mod receipt;

@@ -3,8 +3,10 @@
 //! (`broker::engine_link`) served on `/run/aukora-broker/broker.sock`, bind-mounted into the wall like the door.
 //!
 //! The node supplies what the link may not decide for itself:
-//! - the key: the owner types it on the shell (`/engine/model-key`); it is held in the broker's `KeyInbox` (memory
-//!   only) and is usable only once the owner's passkey approves `engine/model-key.json`, which names it by SHA-256;
+//! - the key: the owner types it on the shell (`/engine/model-key`); it is held in the broker's `KeyInbox` and is usable
+//!   only once the owner's passkey approves `engine/model-key.json`, which names it by SHA-256. Once approved it is also
+//!   kept in one 0600 file in the supervisor's own state (`broker::keyfile`, NODE.md O7), loaded again at start only if
+//!   its digest is the approved one, and removed when the key is replaced or cleared;
 //! - the budget: `model-broker-v1.json` (root-owned, written by the installer) holds the terms; the supervisor proposes
 //!   them as `engine/model-budget.json` and only the bytes the owner's passkey applied are spent against. A budget
 //!   lasts `valid_days`; a renewal is proposed a day before it ends and is a new cap of its own;
@@ -13,6 +15,7 @@
 use crate::adapters::{GateAdapter, HostLedger};
 use broker::engine_link::budget::{Budget, KeyApproval, Prices, BUDGET_KIND, PROVIDER};
 use broker::engine_link::{self, Approved, Authority, Limits, Link, Pending, Upstream};
+use broker::keyfile::{reconcile, KeyFile, Step};
 use broker::keystore::KeyInbox;
 use canon::{
     alg::AlgorithmId,
@@ -22,7 +25,7 @@ use canon::{
 };
 use serde::Deserialize;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use supervisor::ingress::{BindingState, PrincipalScope};
 
@@ -30,6 +33,7 @@ use supervisor::ingress::{BindingState, PrincipalScope};
 pub const KEY_TARGET: &str = "engine/model-key.json";
 pub const BUDGET_TARGET: &str = "engine/model-budget.json";
 const TICK: Duration = Duration::from_secs(30);
+const KEY_TICK: Duration = Duration::from_secs(10);
 const PROPOSE_AGAIN: Duration = Duration::from_secs(600);
 const DAY_MS: u64 = 86_400_000;
 
@@ -149,6 +153,9 @@ impl Authority for NodeAuthority {
 pub struct ModelBroker {
     config: BrokerConfig,
     keys: Arc<KeyInbox>,
+    key_file: KeyFile,
+    /// The last key-file line journaled, so a steady condition is said once and not every few seconds.
+    key_said: Mutex<Option<String>>,
     gate: Arc<GateAdapter>,
     ledger: Arc<HostLedger>,
 }
@@ -173,7 +180,12 @@ impl ModelBroker {
         let approved = self.gate.approved_target(KEY_TARGET).await.ok().flatten();
         if approved.as_deref().and_then(KeyApproval::parse).is_some_and(|current| current == approval) {
             eprintln!("model-broker: the entered key is the approved one ({fingerprint})");
+            self.sync_key(Some(&approval.key_sha256), now);
             return Ok(KeyStage::Active(fingerprint));
+        }
+        // A different key replaces the stored one at once; it is stored again only after the owner approves its card.
+        if self.key_file.remove().is_err() {
+            eprintln!("model-broker: the stored key could not be removed");
         }
         let note = format!(
             "Let the engine's model calls use the DeepSeek key you just entered: fingerprint {fingerprint} (the first 12 \
@@ -182,6 +194,47 @@ impl ModelBroker {
         self.gate.propose_model_target(scope, KEY_TARGET, note, approval.canonical_bytes()).await?;
         eprintln!("model-broker: a key was entered; awaiting the owner's approval ({fingerprint})");
         Ok(KeyStage::AwaitingApproval(fingerprint))
+    }
+
+    /// Forget the key: out of memory, and the stored file removed. The owner's approval card is left as it is.
+    #[allow(dead_code)] // [not yet reached: the owner's "forget the key" action is not built]
+    pub fn clear_key(&self) -> Result<()> {
+        self.keys.clear()?;
+        self.key_file.remove()
+    }
+
+    /// One reconcile pass of the key file against the approved key digest (`None`: no approval known), journaled.
+    fn sync_key(&self, approved: Option<&str>, now: u64) -> Step {
+        let step = reconcile(&self.keys, &self.key_file, approved, now);
+        let line = match step {
+            Step::Idle => None,
+            Step::Loaded => Some("the stored key was loaded; its digest is the one you approved".to_owned()),
+            Step::Persisted => Some("the approved key is stored (a restart will not ask for it again)".to_owned()),
+            Step::Discarded => Some("the stored key is not the one you approved; it was removed and no key is held".to_owned()),
+            Step::Refused(reason) => Some(format!("the stored key was not used: {reason}; no key is held until you enter it")),
+        };
+        if let Ok(mut said) = self.key_said.lock() {
+            if *said != line {
+                if let Some(text) = &line {
+                    eprintln!("model-broker: {text}");
+                }
+                *said = line;
+            }
+        }
+        step
+    }
+
+    /// Keep the key file in step with the owner's approval: load the stored key at start once its card is the approved
+    /// one, and store the key once its card is approved.
+    async fn keep_key(self: Arc<Self>) {
+        loop {
+            let approved = self.gate.approved_target(KEY_TARGET).await.ok().flatten();
+            let digest = approved.as_deref().and_then(KeyApproval::parse).map(|approval| approval.key_sha256);
+            if let Ok(now) = crate::host::now() {
+                self.sync_key(digest.as_deref(), now);
+            }
+            tokio::time::sleep(KEY_TICK).await;
+        }
     }
 
     /// Keep an approved, current budget with the configured terms; propose one when there is none, when the terms
@@ -232,6 +285,7 @@ pub fn start_in_node(
     ledger: Arc<HostLedger>,
     gate: Arc<GateAdapter>,
     keys: Arc<KeyInbox>,
+    key_dir: PathBuf,
 ) -> Option<Arc<ModelBroker>> {
     let log = |refusal: Refusal| eprintln!("model-broker: not started: {}:{}", refusal.organ, refusal.reason);
     let text = match config.model_broker_config_text() {
@@ -257,10 +311,11 @@ pub fn start_in_node(
         let listener = engine_link::bind(&config.socket, true)?;
         eprintln!("model-broker: serving on {} (DeepSeek, owner-approved key and budget only)", config.socket.display());
         tokio::spawn(engine_link::serve(link, listener));
-        Ok(Arc::new(ModelBroker { config, keys, gate, ledger }))
+        Ok(Arc::new(ModelBroker { config, keys, key_file: KeyFile::new(key_dir), key_said: Mutex::new(None), gate, ledger }))
     })();
     match started {
         Ok(broker) => {
+            tokio::spawn(broker.clone().keep_key());
             tokio::spawn(broker.clone().keep_budget());
             Some(broker)
         }
@@ -314,5 +369,27 @@ mod tests {
         let text = String::from_utf8(bytes.clone()).unwrap();
         assert!(!text.contains("0123456789abcdef0123") && text.contains("key_sha256"));
         assert!(KeyApproval::parse(&bytes).is_some());
+    }
+
+    #[test]
+    fn an_approved_card_stores_the_key_and_a_restart_loads_it_only_for_that_card() {
+        use std::os::unix::fs::PermissionsExt;
+        let key = "sk-0123456789abcdef0123456789abcdef";
+        let dir = std::env::temp_dir().join(format!("aukora-model-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let file = KeyFile::new(&dir);
+        let card = |key: &str| KeyApproval::parse(&KeyApproval::for_key(key).canonical_bytes()).unwrap().key_sha256;
+        let keys = KeyInbox::new();
+        let ticket = keys.issue(1, 1000).unwrap();
+        keys.redeem(ticket.token(), key.to_owned(), 2).unwrap();
+        assert_eq!(reconcile(&keys, &file, Some(&card(key)), 3), Step::Persisted);
+        // The supervisor restarts: the same card loads it; a card for another key removes it.
+        let restarted = KeyInbox::new();
+        assert_eq!(reconcile(&restarted, &file, Some(&card("sk-fedcba9876543210fedcba9876543210")), 4), Step::Discarded);
+        assert!(restarted.key_sha256().unwrap().is_none() && std::fs::read_dir(&dir).unwrap().next().is_none());
+        assert_eq!(reconcile(&restarted, &file, Some(&card(key)), 5), Step::Idle, "nothing stored any more");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

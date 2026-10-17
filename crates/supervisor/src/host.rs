@@ -174,12 +174,15 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     ));
     // The engine's model path (deploy/engine/NODE.md section 7), when this node has `model-broker-v1.json`.
     state.subdirectory("model-broker")?;
+    // The owner-approved provider key at rest (broker::keyfile): a private folder of the supervisor's own state.
+    state.subdirectory("model-key")?;
     let model_broker = crate::model_broker::start_in_node(
         &config,
         config.state_root.join("model-broker"),
         ledger.clone(),
         gate.clone(),
         keys,
+        config.state_root.join("model-key"),
     );
     // Recovery refusal remains in the broker adapter and cannot take down owner ingress.
     let _recovery = broker.recover();

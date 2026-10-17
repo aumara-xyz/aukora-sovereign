@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Memory-only key intake. Disk persistence is reserved for worker 24.
+//! Key intake: the key is held in memory only. The one place it is kept on disk is `keyfile` (NODE.md O7), which
+//! the supervisor drives after the owner approves the key's SHA-256.
 
 use canon::{codes, Result};
 use sha2::{Digest, Sha256};
@@ -192,6 +193,22 @@ impl KeyInbox {
             }
         }
         Ok(())
+    }
+
+    /// The SHA-256 (lowercase hex, as the owner's card names it) of the key held now; `None` when there is none.
+    pub fn key_sha256(&self) -> Result<Option<String>> {
+        let state = self.state.lock().map_err(|_| codes::BROKER_STATE)?;
+        Ok(state.key.as_ref().map(|key| crate::engine_link::budget::KeyApproval::for_key(key).key_sha256))
+    }
+
+    /// A copy of the held key for the key file, only if its digest is `approved_sha256` (the owner's approved card).
+    pub fn key_to_persist(&self, approved_sha256: &str) -> Result<Option<Zeroizing<String>>> {
+        let state = self.state.lock().map_err(|_| codes::BROKER_STATE)?;
+        Ok(state
+            .key
+            .as_ref()
+            .filter(|key| crate::engine_link::budget::KeyApproval::for_key(key).key_sha256 == approved_sha256)
+            .map(|key| Zeroizing::new(key.to_string())))
     }
 
     pub(crate) fn key_for_generation(&self, generation: u64) -> Result<Zeroizing<String>> {
