@@ -174,6 +174,14 @@ Mono, LockedAction, Footnote, IconTile, AkIcon.
   `selectSurface` always sets the pane preset to `center-right-wide` (that was the one-third-to-two-thirds snap).
 - Edited Prime copies (pins refreshed): `settings/src/client/AuraCoherenceMenu.tsx`, `settings/src/client/SettingsMenu.tsx`,
   `aumlok/src/client/AumlokMenu.tsx`, `aumlok/src/client/IdentitySurface.tsx` (the System menu launchers).
+- **Skins** (same folder, imported by `primitives/index.ts`): `skin-face.css` gives Prime's copied launchers (Apps, Yours)
+  and thread rows the PortalButton look by CSS alone (68px, left-justified, a 30px tile painted by a two-layer mask,
+  + / −); `skin-tabs.css` sets one colour per right-hand tab (triangle mint, square blue, circle violet; threads mint);
+  `skin-harness.css` reskins DSH 0.2.1-alpha.5's settings sections, body popups, modals and tooltips with no @deepseek-ai
+  edit. Selectors are roles/ARIA/data attributes; hashed-class substrings are marked FRAGILE in the file (recheck them
+  when adopting 0.2.1-rc.2). Not reached by styling: the General page's "Edit shortcuts" button and font-size stepper
+  (grey fills from a class with no stable hook), the conversation lane and composer (not in scope), the harness's
+  sign-in dialog (not shown in this composition).
 - `app/design/spatial/` (the native shell's design lock, captures from Prime 3673b98) is NOT changed by this.
 
 ## Composition (what `preview-face.py` writes)

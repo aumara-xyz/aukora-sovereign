@@ -6,6 +6,8 @@ import './primitives.css'
 import './skin-face.css'
 // One colour per right-hand tab: triangle mint, square blue, circle violet; threads mint.
 import './skin-tabs.css'
+// The stock harness (its settings sections, popups, modals) in the same look, by CSS alone.
+import './skin-harness.css'
 
 export {
   AppHeader, AppSurface, DetailSection, FieldTable, Footnote, IconTile, Lead, LevelScale, LockedAction, Meter, Mono,

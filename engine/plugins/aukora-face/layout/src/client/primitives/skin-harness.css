@@ -1,0 +1,179 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/*
+ * THE STOCK HARNESS, RESKINNED (Peter, 2026-10-17). DeepSeek Harness 0.2.1-alpha.5's own settings sections, popup
+ * menus and modal dialogs take the primitives' look from this file alone: no @deepseek-ai package is edited or forked.
+ *
+ * Selector policy, for the 0.2.1-rc.2 adoption: STABLE = the harness's roles, ARIA and data attributes, and element
+ * names inside our own `[data-settings-surface]`. FRAGILE = a substring of a hashed CSS-module class; each is marked,
+ * and each degrades to the harness's own look if the class is renamed (nothing breaks, it just stops matching).
+ */
+
+/* ── Settings sections (Models, Built-in plugins, Agent presets, General and any later one) ─────────────────────── */
+[data-settings-surface] [data-slot='settings.section'] h2 {
+  margin: 0 0 6px;
+  color: var(--ak-text);
+  font-size: 22px;
+  line-height: 1.15;
+  font-weight: 480;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+[data-settings-surface] [data-slot='settings.section'] h2 + p {
+  margin: 0 0 14px;
+  color: var(--ak-text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+[data-settings-surface] [data-slot='settings.section'] h3 {
+  margin: 14px 0 6px;
+  color: var(--ak-muted);
+  font-family: var(--ak-mono);
+  font-size: 9.5px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* Cards: every list item a section shows is a record row (tone ring 30%, 70% + glow on hover or when active). */
+[data-settings-surface] [data-slot='settings.section'] ul > li {
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 30%, transparent);
+  border-radius: var(--ak-row-radius);
+  background: var(--ak-surface);
+  box-shadow: none;
+  transition: border-color var(--ak-ease), box-shadow var(--ak-ease);
+}
+[data-settings-surface] [data-slot='settings.section'] ul > li:hover,
+[data-settings-surface] [data-slot='settings.section'] ul > li:has(> button[aria-pressed='true']),
+[data-settings-surface] [data-slot='settings.section'] ul > li:has(> button[aria-expanded='true']) {
+  border-color: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 70%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
+}
+[data-settings-surface] [data-slot='settings.section'] ul > li > button { background: transparent; }
+
+/* Grey inner panels (the provider editor, skeleton cards): the same surface with a hairline. FRAGILE (a class ending `_editor`,
+   `skeletonCard`). */
+[data-settings-surface] [data-slot='settings.section'] [class$='_editor'],
+[data-settings-surface] [data-slot='settings.section'] [class*='_editor '],
+[data-settings-surface] [data-slot='settings.section'] [class*='skeletonCard'] {
+  border: 1px solid var(--ak-hairline);
+  border-radius: var(--ak-tile-radius);
+  background: transparent;
+}
+/* The dashed "add" block: a hairline record, not a dashed box. FRAGILE (`_addButton`). */
+[data-settings-surface] [data-slot='settings.section'] [class*='_addButton'] {
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 30%, transparent);
+  border-radius: var(--ak-row-radius);
+  background: var(--ak-surface);
+  color: var(--ak-tone, var(--ak-blue));
+}
+
+/* Buttons: the pill of the LockedAction (without the lock: these act in the settings app itself).
+   STABLE: `button[aria-haspopup]`. FRAGILE: the harness Button primitive (`_button_`) and section-local `…Button`. */
+[data-settings-surface] button[class*='_button_'],
+[data-settings-surface] [data-slot='settings.section'] button[aria-haspopup],
+[data-settings-surface] [data-slot='settings.section'] button[class*='Button']:not([class*='iconButton']):not([class*='helpButton']) {
+  min-height: 28px;
+  padding: 3px 12px;
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 38%, transparent);
+  border-radius: 999px;
+  background: var(--ak-surface);
+  color: var(--ak-tone, var(--ak-blue));
+  font-size: 12px;
+  line-height: 18px;
+  box-shadow: none;
+  transition: border-color var(--ak-ease), box-shadow var(--ak-ease);
+}
+[data-settings-surface] button[class*='_button_']:hover:not(:disabled),
+[data-settings-surface] [data-slot='settings.section'] button[aria-haspopup]:hover,
+[data-settings-surface] [data-slot='settings.section'] button[class*='Button']:not([class*='iconButton']):not([class*='helpButton']):hover {
+  border-color: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 70%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
+  background: var(--ak-surface);
+}
+/* The harness's filled (primary) button: never a white slab; the pill at full ring with the glow. FRAGILE
+   (`_primary_`, `_solid_`). */
+[data-settings-surface] button[class*='_primary_'],
+[data-settings-surface] button[class*='_solid_'] {
+  border-color: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 70%, transparent);
+  background: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 10%, var(--ak-surface));
+  color: var(--ak-tone, var(--ak-blue));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
+}
+/* Ghost buttons inside cards ("Mode details", "How to use") stay quiet: text in the tone, no frame until hover. */
+[data-settings-surface] [data-slot='settings.section'] li button[class*='_ghost_'] {
+  border-color: transparent;
+  background: transparent;
+}
+/* Toggle tiles (Appearance: Light / Dark / System): StatTiles look, the pressed one lit. STABLE (`aria-pressed`). */
+[data-settings-surface] [data-slot='settings.section'] :not(li) > button[aria-pressed] {
+  border: 1px solid var(--ak-hairline);
+  border-radius: var(--ak-row-radius);
+  background: transparent;
+  color: var(--ak-muted);
+}
+[data-settings-surface] [data-slot='settings.section'] :not(li) > button[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 60%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
+  color: var(--ak-tone, var(--ak-blue));
+}
+
+/* Fields: hairline, radius 10, the lane's surface. STABLE (element names). */
+[data-settings-surface] input:not([type='checkbox']):not([type='radio']):not([type='range']),
+[data-settings-surface] textarea,
+[data-settings-surface] select {
+  border: 1px solid var(--ak-hairline);
+  border-radius: var(--ak-tile-radius);
+  background: transparent;
+  color: var(--ak-text);
+  font-size: 12.5px;
+}
+[data-settings-surface] input:not([type='checkbox']):not([type='radio']):not([type='range']):focus,
+[data-settings-surface] textarea:focus,
+[data-settings-surface] select:focus {
+  border-color: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 70%, transparent);
+  outline: none;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
+}
+/* The harness's tags ("New task default", "Built-in"): the StatusPill. STABLE (`data-tone` on a span). */
+[data-settings-surface] [data-slot='settings.section'] span[data-tone] {
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 45%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ak-tone, var(--ak-blue));
+  font-family: var(--ak-mono);
+  font-size: 9.5px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+/* Code and ids: the FieldTable value type. */
+[data-settings-surface] [data-slot='settings.section'] code { font-family: var(--ak-mono); font-size: 11px; color: var(--ak-muted); }
+
+/* ── Popups the harness portals to <body> (selectors, menus, listboxes) and its modal dialogs ─────────────────────── */
+[role='menu'], [role='listbox'] {
+  border: 1px solid color-mix(in srgb, var(--ak-blue) 30%, transparent);
+  border-radius: var(--ak-portal-radius);
+  background: rgb(27, 31, 42);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-blue) 14%, transparent), 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+[role='menu'] [role^='menuitem'], [role='listbox'] [role='option'] {
+  border-radius: var(--ak-tile-radius);
+  font-size: 12.5px;
+}
+[role='menu'] [role^='menuitem']:hover, [role='menu'] [role^='menuitem'][data-highlighted],
+[role='listbox'] [role='option']:hover, [role='listbox'] [role='option'][data-highlighted] {
+  background: color-mix(in srgb, var(--ak-blue) 10%, transparent);
+  color: var(--ak-blue);
+}
+[role='dialog'][aria-modal='true'], [role='alertdialog'] {
+  border: 1px solid color-mix(in srgb, var(--ak-blue) 30%, transparent);
+  border-radius: 18px;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-blue) 14%, transparent), 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+[role='tooltip'] {
+  border: 1px solid var(--ak-hairline);
+  border-radius: var(--ak-tile-radius);
+}
