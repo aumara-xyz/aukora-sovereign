@@ -7,6 +7,7 @@ no sources, no node_modules, no links. On the node the supervisor fingerprints e
 set by name and digest (crates/supervisor/src/engine_plugins.rs); the root closure step copies only approved bytes.
 
   @aukora/door                       engine/plugins/aukora-door, lib/ built here with its own build.mjs (pinned node)
+  @aukora/kira                       engine/plugins/aukora-kira, the same way (Kira 2's tools, through the door)
   @aukora/face-<name> (nine)         engine/plugins/aukora-face/<name>, lib/ built by build-face.py (or a built bundle)
   @aukora/dsh-plugin-foundation      engine/plugins/aukora-foundation, lib/ built by build-face.py
   @aukora/face-bundle                the composition: dsh-web-app's patch from the pinned harness, with the four rows the
@@ -66,7 +67,8 @@ def copy_file(source, target, out):
     shutil.copyfile(source, target, follow_symlinks=False)
 
 
-def copy_tree(src, dst, out):
+def copy_tree(src, dst, out, skip=frozenset()):
+    """Every file under src into dst, except targets in `skip` (already placed, from the same source)."""
     if src.is_symlink():
         fail('link in package: %s' % src)
     for path in sorted(src.rglob('*')):
@@ -77,13 +79,17 @@ def copy_tree(src, dst, out):
             target.mkdir(parents=True, exist_ok=True)
             beneath(target, out)
         elif path.is_file():
-            copy_file(path, target, out)
+            if target not in skip:
+                copy_file(path, target, out)
         else:
             fail('special file in package: %s' % path)
 
 
 def relative_name(rel):
-    """A package-relative path from someone else's manifest: plain, relative, no `..`."""
+    """A package-relative path from someone else's manifest: plain, relative, no `..`. One leading `./` is allowed and
+    dropped: the pinned dsh-web-app names its patch `./cordis.patch.yml` (the node rehearsal's first real build)."""
+    if isinstance(rel, str) and rel.startswith('./'):
+        rel = rel[2:]
     if not isinstance(rel, str) or not rel or rel.startswith('/') or '\\' in rel or \
             any(part in ('', '.', '..') for part in rel.split('/')):
         fail('bad relative path in a manifest: %r' % (rel,))
@@ -109,16 +115,27 @@ def package(out, folder, manifest_src, files):
     return manifest['name']
 
 
-def build_door(node, out):
-    door = REPO / 'engine/plugins/aukora-door'
-    done = subprocess.run([node, 'build.mjs'], cwd=door, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+def build_own(node, out, folder):
+    """A plugin with no dependencies built by its own build.mjs (the door, Kira 2): lib/*.js and its patch."""
+    source = REPO / 'engine/plugins' / folder
+    done = subprocess.run([node, 'build.mjs'], cwd=source, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     if done.returncode != 0:
-        fail('door build: ' + done.stderr[-400:])
-    lib = sorted((door / 'lib').glob('*.js'))
+        fail('%s build: %s' % (folder, done.stderr[-400:]))
+    lib = sorted((source / 'lib').glob('*.js'))
     if not lib:
-        fail('door build left no lib/*.js')
-    return package(out, 'aukora-door', door / 'package.json',
-                   [('lib/' + path.name, path) for path in lib] + [('cordis.patch.yml', door / 'cordis.patch.yml')])
+        fail('%s build left no lib/*.js' % folder)
+    return package(out, folder, source / 'package.json',
+                   [('lib/' + path.name, path) for path in lib] + [('cordis.patch.yml', source / 'cordis.patch.yml')])
+
+
+def build_door(node, out):
+    return build_own(node, out, 'aukora-door')
+
+
+def build_kira(node, out):
+    """@aukora/kira: the kira_* tools, every call through the door (it holds no token). Mounted by the authority
+    overlay after the door (authority.patch.yml row 1)."""
+    return build_own(node, out, 'aukora-kira')
 
 
 def build_faces(faces, out):
@@ -154,13 +171,16 @@ def build_bundle(dsh, face_names, foundation_name, out):
     patches = [patches] if isinstance(patches, str) else patches
     dst = out / 'aukora-face-bundle'
     dst.mkdir(parents=True)
+    placed = set()
     for rel in patches:
         rel = relative_name(rel)
         beneath(web / rel, web)
         copy_file(web / rel, dst / rel, out)
+        placed.add(dst / rel)
+    # The pinned dsh-web-app lists its presets among its patches too: the rest of presets/ is copied around them.
     for extra in ('presets',):
         if (web / extra).is_dir():
-            copy_tree(web / extra, dst / extra, out)
+            copy_tree(web / extra, dst / extra, out, placed)
     main = dst / patches[0]
     text = main.read_text()
     for row in REPLACED:
@@ -209,7 +229,7 @@ def main():
     if out.exists() and any(out.iterdir()):
         fail('output folder must be empty: %s' % out)
     out.mkdir(parents=True, exist_ok=True)
-    names = [build_door(a.node, out)]
+    names = [build_door(a.node, out), build_kira(a.node, out)]
     faces = build_faces(a.faces.expanduser().resolve(), out)
     foundation = build_foundation(a.foundation.expanduser().resolve(), out)
     names += faces + [foundation, build_bundle(a.dsh.expanduser().resolve(), faces, foundation, out)]
