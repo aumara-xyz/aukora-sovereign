@@ -9,7 +9,7 @@
  * `model.ts`, which says which crate owns each); the digests are sha256 of throwaway strings, the times are
  * relative to one fixed `NOW_MS`, and the owner origin is a `.invalid` name that never resolves.
  *
- * PREVIEW ONLY: the surface reads this only when the page carries `SOVEREIGNTY_PREVIEW_GLOBAL`, which only
+ * PREVIEW ONLY: the surface reads this only when `isPreviewComposition()` (page global `__AUKORA_PREVIEW__`), which only
  * preview-face.py composes; a node shows honest empty portals instead. WIRING IS A SWAP: replace `readSovereigntyStub` with a reader that returns the same `SovereigntySnapshot` from
  * the node (read-only routes only) and set `source: 'node'`. Nothing in the components changes. The spec
  * (`SOVEREIGNTY-APP-SPEC.md`) lists the real source of every field.

@@ -94,16 +94,17 @@ def assemble(install: Path, stub_confinement: bool = False, sovereignty_stub: bo
     # copied switches that would reach out are set off here and the copied source is left as it is. Voice (the WebSocket
     # bridge and the Python sidecar) is not carried at all. The model-provider route has no address and no consent.
     if sovereignty_stub:
-        # PREVIEW ONLY: the Sovereignty view shows its made-up snapshot only when the page carries this global. A node's
-        # composition never has this plugin, so the view there shows each portal empty and says "Not connected yet".
-        (bundle / 'aukora-preview-sovereignty-stub.js').write_text(
-            "export const name = 'aukora-preview-sovereignty-stub'\n"
+        # PREVIEW ONLY: the one preview switch (layout `composition.ts`). Only with this global does Sovereignty show its
+        # made-up snapshot and the Risk slider approve a loosening by itself. A node's composition never has this
+        # plugin: Sovereignty shows each portal empty, and the slider is a request that opens the owner origin.
+        (bundle / 'aukora-preview-flag.js').write_text(
+            "export const name = 'aukora-preview-flag'\n"
             "export function apply(ctx) {\n"
             "  ctx.on('webserver/index-inject', (table) => {\n"
-            "    table.push({ kind: 'global', name: '__AUKORA_SOVEREIGNTY_PREVIEW__', value: { stub: true } })\n"
+            "    table.push({ kind: 'global', name: '__AUKORA_PREVIEW__', value: { stub: true } })\n"
             "  })\n"
             "}\n")
-        text += '    - id: aukora-preview-sovereignty-stub\n      name: ./aukora-preview-sovereignty-stub.js\n'
+        text += '    - id: aukora-preview-flag\n      name: ./aukora-preview-flag.js\n'
     text += (
         '\n# Sovereign: no provider, no repo or web lens, no weights script, no organism reader, no voice.\n'
         '- id: aukora-face-apps\n  config:\n'
@@ -136,14 +137,14 @@ def main():
     parser.add_argument('--no-start', action='store_true')
     parser.add_argument('--stub-confinement', action='store_true',
                         help='preview only: provide a no-op aukoraConfinement so the Chat | Build toggle is usable')
-    parser.add_argument('--no-sovereignty-stub', action='store_true',
-                        help='show Sovereignty as a node would: every portal empty ("Not connected yet"), no stub data')
+    parser.add_argument('--node-mode', action='store_true',
+                        help='compose as a node would: no preview switch (Sovereignty empty, the Risk slider a request to the owner origin)')
     a = parser.parse_args()
     install = a.install.expanduser().resolve()
     dsh = install / 'node_modules/.bin/dsh'
     if not dsh.is_file():
         sys.exit(f'dsh-not-installed: {dsh}')
-    profile = assemble(install, a.stub_confinement, not a.no_sovereignty_stub)
+    profile = assemble(install, a.stub_confinement, not a.node_mode)
     print(f'profile: {profile}')
     if a.no_start:
         return

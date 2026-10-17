@@ -476,8 +476,6 @@ export const CATEGORY_FACTS: Readonly<Record<CategoryId, { readonly title: strin
 }
 
 /**
- * THE PREVIEW GATE. The stub snapshot is read only when the page carries this global, and only `preview-face.py`
- * puts it there (a preview-only host plugin, never part of a node's composition). On a node there is no global, so the
- * view shows each portal empty and says so: it never shows made-up data as if it were the node's.
+ * THE PREVIEW GATE is the layout's one preview switch (`isPreviewComposition`, page global `__AUKORA_PREVIEW__`): the
+ * stub snapshot is read only in the preview; on a node every portal is empty and says so.
  */
-export const SOVEREIGNTY_PREVIEW_GLOBAL = '__AUKORA_SOVEREIGNTY_PREVIEW__'

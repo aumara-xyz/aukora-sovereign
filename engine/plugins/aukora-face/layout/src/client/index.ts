@@ -28,6 +28,7 @@ export type { Accent } from './primitives.tsx'
 // THE SPATIAL PRIMITIVES (2026-10-17): every portal, record and owner action in the face. The old disclosure-style
 // `PortalButton` in primitives.tsx (Prime's, pinned, unused) is superseded by this one.
 export * from './primitives/index.ts'
+export { PREVIEW_GLOBAL, isPreviewComposition, ownerOrigin } from './composition.ts'
 
 export { LayoutController } from './service.ts'
 export type { ILayout, MainPanelId, PanelInfo } from './service.ts'

@@ -17,11 +17,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  AppHeader, AppSurface, Footnote, Lead, PortalButton, PortalCell, PortalGrid, RecordList, RecordRow, StatusPill,
+  AppHeader, AppSurface, Footnote, isPreviewComposition, Lead, PortalButton, PortalCell, PortalGrid, RecordList, RecordRow, StatusPill,
 } from '@aukora/face-layout/client'
 import type { CategoryId, SovereigntySnapshot, Tone } from './model.ts'
 import {
-  CATEGORY_FACTS, CATEGORY_IDS, SETTING_FACTS, SOVEREIGNTY_COPY, SOVEREIGNTY_PREVIEW_GLOBAL, SOVEREIGNTY_SURFACE,
+  CATEGORY_FACTS, CATEGORY_IDS, SETTING_FACTS, SOVEREIGNTY_COPY, SOVEREIGNTY_SURFACE,
 } from './model.ts'
 import { readSovereigntyStub } from './stub.ts'
 import { approvalGroup, usd } from './format.ts'
@@ -79,13 +79,6 @@ export function faceOf(id: CategoryId, s: SovereigntySnapshot): Face {
   }
 }
 
-/** True only in the preview composition (see `SOVEREIGNTY_PREVIEW_GLOBAL`). */
-function previewPage(): boolean {
-  const page = globalThis as Partial<Record<string, unknown>>
-  const flag = page[SOVEREIGNTY_PREVIEW_GLOBAL]
-  return typeof flag === 'object' && flag !== null && (flag as { stub?: unknown }).stub === true
-}
-
 /** A portal's face on a node that does not answer yet. */
 function emptyFace(id: CategoryId): Face {
   const facts = CATEGORY_FACTS[id]
@@ -117,7 +110,7 @@ export function SovereigntySurface({ activeSurface, surfaceTarget, closeSurface 
   const active = activeSurface === SOVEREIGNTY_SURFACE
   // ONE READ, THEN ONLY RENDERING. The stub today; a node-backed reader of the same shape later.
   // THE STUB ONLY IN THE PREVIEW. On a node `s` is null until a read-only route exists, and every portal says so.
-  const s = useMemo<SovereigntySnapshot | null>(() => (previewPage() ? readSovereigntyStub() : null), [])
+  const s = useMemo<SovereigntySnapshot | null>(() => (isPreviewComposition() ? readSovereigntyStub() : null), [])
   // THE OPEN PORTAL IS THIS SURFACE'S OWN STATE, NOT THE SHELL'S. Opening a portal must never move a lane, and a
   // portal is not a navigation: it never goes through the shell's `openSurface` (which, until the rule-3 fix, set
   // the pane preset and snapped a one-third lane to two-thirds). The shell's target is read once as a deep link (a menu or

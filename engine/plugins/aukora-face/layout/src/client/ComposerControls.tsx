@@ -7,7 +7,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import { NS } from './locales.ts'
 import type { LayoutKey } from './locales.ts'
-import { createFaceLocalLaya, LAYA_SETTINGS, layaRank } from './laya.ts'
+import { createFaceLocalLaya, createNodeRequestLaya, LAYA_SETTINGS, layaRank, PREVIEW_APPROVE_MS } from './laya.ts'
+import { isPreviewComposition, ownerOrigin } from './composition.ts'
+import { LockedAction } from './primitives/index.ts'
 import type { LayaService, LayaSetting } from './laya.ts'
 import { createFaceLocalVision } from './vision.ts'
 import type { VisionService } from './vision.ts'
@@ -20,6 +22,8 @@ interface ControlsInjected {
   laya: LayaService
   /** The seam to whatever holds the Vision choice (see `vision.ts`). */
   vision: VisionService
+  /** True on a node: the slider is a request that opens the owner origin, not a setting. */
+  request: boolean
 }
 type Props = PropsRuntime<'conversation.input.permission'> & InjectFace<ControlsInjected> & PropsLocale<'layout'>
 
@@ -47,7 +51,7 @@ function EyeIcon({ on }: { on: boolean }) {
  * while Build is on, and the Vision eye. The switch follows the host projection; unavailable controls never invent
  * a selection. A host mode this app does not offer (full access) parks the knob in the middle rather than naming it.
  */
-export function ComposerControls({ locked, selectMode, laya, vision, useProjection, sessionId, t }: Props) {
+export function ComposerControls({ locked, selectMode, laya, vision, request, useProjection, sessionId, t }: Props) {
   const state = useProjection('aukoraComposerMode')
   const setting = useSyncExternalStore(laya.subscribe, laya.getState)
   const seeing = useSyncExternalStore(vision.subscribe, vision.getState)
@@ -84,8 +88,11 @@ export function ComposerControls({ locked, selectMode, laya, vision, useProjecti
   const requested = layaRank(setting.requested)
   const pending = requested > applied
   const label = `${requested + 1} · ${t(noteName[setting.requested])}`
-  const status = pending ? t('laya.pending') : setting.note === 'approved-preview' ? t('laya.approvedPreview') : ''
-  const layaHint = [status, t('laya.reason')].filter(Boolean).join(' ')
+  const asking = setting.note === 'needs-owner' && setting.asked !== undefined
+  const status = pending ? t('laya.pending') : setting.note === 'approved-preview' ? t('laya.approvedPreview')
+    : asking ? t('laya.needsOwner') : ''
+  // On a node the slider is a request until a node-backed service exists, and the control says so in its hint.
+  const layaHint = [status, request ? t('laya.requestOnly') : '', t('laya.reason')].filter(Boolean).join(' ')
 
   return <div className={css.controls} aria-busy={busy} data-composer-mode={state?.mode ?? 'unknown'}>
     <button type="button" role="switch" className={css.switch} aria-checked={building} aria-label={t('composer.mode')}
@@ -115,6 +122,10 @@ export function ComposerControls({ locked, selectMode, laya, vision, useProjecti
             if (next !== undefined) void laya.request(next)
           }} />
         {setting.note === 'approved-preview' && <span className={css.bubble} role="status">{t('laya.approvedPreview')}</span>}
+        {asking && <span className={css.request} role="status" data-laya-asked={setting.asked}>
+          <LockedAction verb={t('laya.needsOwner')} tone="blue" href={ownerOrigin()} note={t('laya.requestOnly')}
+            title={`${ownerOrigin()} · ${String(layaRank(setting.asked ?? setting.applied) + 1)} · ${t(noteName[setting.asked ?? setting.applied])}`} />
+        </span>}
       </span>
       <span className={css.name}>{t('laya.label')}</span>
       <span id={layaHintId} className={css.srOnly}>{layaHint}</span>
@@ -136,13 +147,19 @@ export function ComposerControls({ locked, selectMode, laya, vision, useProjecti
  * @param vision - where the Vision choice lives; the face-local service until `aukora-eye` is ported.
  */
 export function installComposerControls(
-  ctx: ClientContext, laya: LayaService = createFaceLocalLaya(), vision: VisionService = createFaceLocalVision(),
+  ctx: ClientContext, laya?: LayaService, vision: VisionService = createFaceLocalVision(),
 ): void {
+  // THE PREVIEW SWITCH DECIDES (composition.ts). Only the preview composition gets the face-local slider that approves a
+  // loosening by itself; on a node every move is a request that opens the owner origin, and nothing changes here.
+  const preview = isPreviewComposition()
+  const service = laya ?? (preview ? createFaceLocalLaya({ previewApproveMs: PREVIEW_APPROVE_MS }) : createNodeRequestLaya())
+  const request = laya === undefined && !preview
   ctx.slots.inject('conversation.input.permission', () => ctx.slots.register({
     name: 'conversation.input.permission', priority: -10, locale: NS,
     inject: (sessionId: SessionId): ControlsInjected => ({
-      laya,
+      laya: service,
       vision,
+      request,
       selectMode: async mode => {
         const result = await ctx.remote.commands.execute(sessionId, `/aukora-mode ${mode}`, [])
         if (!result.ok || result.value?.result.kind !== 'success') {

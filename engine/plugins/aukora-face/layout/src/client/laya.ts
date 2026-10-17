@@ -44,7 +44,11 @@ export function layaLoosens(next: LayaSetting, previous: LayaSetting): boolean {
 export interface LayaState {
   readonly applied: LayaSetting
   readonly requested: LayaSetting
-  readonly note: 'approved-preview' | null
+  /** `approved-preview`: the preview approved a loosening by itself. `needs-owner`: on a node, the move was a request
+   *  that only the owner origin can grant; nothing changed here. */
+  readonly note: 'approved-preview' | 'needs-owner' | null
+  /** With `needs-owner`: the setting that was asked for. */
+  readonly asked?: LayaSetting
 }
 
 /** What the door answered: the setting is in force, or it is a loosening that waits for the passkey. */
@@ -101,18 +105,20 @@ const NOTE_MS = 2500
 export interface FaceLocalLayaOptions {
   /** Storage for the setting; defaults to the browser's `localStorage` when there is one. */
   storage?: LayaStorage | undefined
-  /** PREVIEW ONLY: approve a waiting loosening after this many ms. 0 never approves (the loosening waits). */
+  /** PREVIEW ONLY: approve a waiting loosening after this many ms. 0 (the default) never approves: the loosening
+   *  waits. Only the preview composition passes `PREVIEW_APPROVE_MS` (`installComposerControls`). */
   previewApproveMs?: number
 }
 
 /**
  * The face-local service: the chosen setting lives in this browser because there is no node to hold it. With no
  * node there is also nobody to hold the passkey, so, for the preview alone, a loosening is approved after
- * `PREVIEW_APPROVE_MS` and the state says so (`note: 'approved-preview'`). A service backed by the node never does this.
+ * `PREVIEW_APPROVE_MS` and the state says so (`note: 'approved-preview'`) — and only when the preview composition asks
+ * for it. A service backed by the node never does this.
  */
 export function createFaceLocalLaya(options: FaceLocalLayaOptions = {}): LayaService {
   const storage = 'storage' in options ? options.storage : browserStorage()
-  const approveMs = options.previewApproveMs ?? PREVIEW_APPROVE_MS
+  const approveMs = options.previewApproveMs ?? 0
   let state = load(storage)
   let approve: ReturnType<typeof setTimeout> | undefined
   let noteTimer: ReturnType<typeof setTimeout> | undefined
@@ -154,6 +160,39 @@ export function createFaceLocalLaya(options: FaceLocalLayaOptions = {}): LayaSer
       set({ applied: setting, requested: setting, note: null })
       settle()
       return Promise.resolve('applied')
+    },
+  }
+}
+
+/** How long the "needs your passkey" request stays on screen. */
+const REQUEST_NOTE_MS = 8000
+
+/**
+ * ON A NODE, UNTIL A NODE-BACKED SERVICE EXISTS: THE SLIDER IS A REQUEST, NOT A SETTING. The face cannot read or write
+ * the door's policy (`door/slider-policy.json`), so it neither pretends a move applied nor approves one: the knob stays
+ * on the pinned starter's notch (`risky`), and any move, looser or tighter (both change the door's policy), reports
+ * `needs-owner` so the control can offer the owner origin, where the passkey decides. Nothing is stored.
+ */
+export function createNodeRequestLaya(): LayaService {
+  let state: LayaState = { applied: LAYA_DEFAULT, requested: LAYA_DEFAULT, note: null }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const listeners = new Set<() => void>()
+  const set = (next: LayaState): void => { state = next; for (const listener of listeners) listener() }
+  return {
+    getState: () => state,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    request(setting) {
+      clearTimeout(timer)
+      if (setting === state.applied) {
+        set({ applied: state.applied, requested: state.applied, note: null })
+        return Promise.resolve('applied')
+      }
+      set({ applied: state.applied, requested: state.applied, note: 'needs-owner', asked: setting })
+      timer = setTimeout(() => { set({ applied: state.applied, requested: state.applied, note: null }) }, REQUEST_NOTE_MS)
+      return Promise.resolve('needs-passkey')
     },
   }
 }
