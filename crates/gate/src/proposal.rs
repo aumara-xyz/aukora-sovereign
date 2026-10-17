@@ -163,6 +163,22 @@ pub enum SuggestionOrder {
     RuleAfterReviewedBatch { batch: OperationId },
 }
 
+/// The Aura fact the supervisor appends when the owner presses Ask again on the owner origin (a bound owner session):
+/// `{schema, declined, operation, target}`, actor `supervisor`, a `boot.facts` fact.
+pub const AGAIN_SCHEMA: &str = "aukora-owner-again-v1";
+
+/// Whether `record` is the owner's Ask again for exactly this card (`proposal`, its operation digest): the only
+/// evidence that lets bytes held back after an expiry be raised again within the day.
+pub fn is_owner_again(record: &AuthorityRecord, proposal: ProposalId, operation: OperationDigest) -> crate::Result<bool> {
+    if record.kind != Kind::BootFacts || record.phase != Phase::Fact || record.actor != "supervisor" || record.operation.is_some() {
+        return Ok(false);
+    }
+    let body = record_payload(&record.body)?;
+    Ok(body.get("schema").and_then(as_text) == Some(AGAIN_SCHEMA)
+        && body.get("declined").and_then(as_text) == Some(proposal.to_string().as_str())
+        && body.get("operation").and_then(as_text) == Some(operation.to_string().as_str()))
+}
+
 /// The operation digest the gate gives a request: the same node, target, base and bytes always give the same digest
 /// (the key a decline is recorded under).
 pub fn request_digest(node: NodeId, request: &ProposalRequest) -> crate::Result<OperationDigest> {

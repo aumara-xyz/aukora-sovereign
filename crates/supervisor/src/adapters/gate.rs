@@ -681,8 +681,8 @@ pub(crate) fn propose_again_in<S: TargetStore>(
         .map(|proposal| proposal.id)
 }
 
-/// The Aura fact that records the owner asking again for something they declined.
-pub const AGAIN_SCHEMA: &str = "aukora-owner-again-v1";
+/// The Aura fact that records the owner asking again for something they declined or that lapsed.
+pub use gate::proposal::AGAIN_SCHEMA;
 
 #[cfg(test)]
 mod tests {
@@ -843,6 +843,43 @@ mod tests {
         assert_eq!(rig.declines(), vec![(again, PLUGIN.to_owned())]);
         let third = rig.again(again, PLUGIN, set).unwrap();
         assert_eq!(rig.status(third), aura::storage::ProposalStatus::Pending);
+    }
+
+    #[test]
+    fn only_the_owners_ask_again_for_that_card_lifts_the_day_not_any_other_evidence() {
+        let mut rig = rig("cooldown", 1);
+        let set = br#"{"set":"a"}"#;
+        let first = rig.propose(PLUGIN, set).unwrap();
+        rig.expire_all();
+        // A proposer naming some other valid record (here a fact of its own) is still held back.
+        let gate = &mut rig.gate;
+        let target = TargetId::new(PLUGIN.to_owned()).unwrap();
+        let base = gate.target_store().observe(&target).unwrap().digest;
+        let unrelated = rig.ledger.transaction(|txn| {
+            let context = txn.observation_context()?;
+            let fact = txn.append_fact(FactRecord {
+                v: 1,
+                algorithm: AlgorithmId::Sha256,
+                authority: context.authority,
+                at: context.at,
+                kind: FactKind::BootFacts,
+                actor: "supervisor".into(),
+                body: canon::json::Value::object(vec![("schema".into(), canon::json::Value::text("something-else".into())?)])?,
+            })?;
+            gate.propose(
+                txn,
+                request(target.clone(), base, String::new(), set.to_vec(), Some(EvidenceReference { digest: fact.hash, source_record: fact.authority })),
+                &mut NoInjection,
+            )
+            .map(|proposal| proposal.id)
+        });
+        assert!(matches!(unrelated, Err(refusal) if refusal.reason == "recently-expired"));
+        // An Ask again for ANOTHER card is not this card's either.
+        let other = rig.propose(PLUGIN, br#"{"set":"b"}"#).unwrap();
+        rig.expire_all();
+        assert!(rig.again(other, PLUGIN, set).is_err(), "an Ask again naming another card does not lift this one");
+        // The owner's Ask again for this card does.
+        assert!(rig.again(first, PLUGIN, set).is_ok());
     }
 
     #[test]

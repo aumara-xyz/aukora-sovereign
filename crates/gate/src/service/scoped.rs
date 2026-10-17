@@ -337,16 +337,24 @@ impl<S: TargetStore> ScopedGate<S> {
                     source_record: evidence.source_record,
                 },
             )?;
-        } else if let Some(evidence) = &request.new_evidence {
-            let row = txn.record_at(evidence.source_record)?;
-            if row.authority != evidence.source_record || row.hash != evidence.digest {
-                return Err(crate::refuse("evidence-source"));
+        } else {
+            if let Some(evidence) = &request.new_evidence {
+                let row = txn.record_at(evidence.source_record)?;
+                if row.authority != evidence.source_record || row.hash != evidence.digest {
+                    return Err(crate::refuse("evidence-source"));
+                }
             }
-        } else if let Some((_, at)) = txn.last_expiry(digest)? {
-            // The same bytes whose card simply ran out of time: at most once a day, unless the owner asks again
-            // (which carries new evidence). Peter, 2026-10-17: no nagging, and no permanent no either.
-            if now(txn)?.saturating_sub(at) < aura::ledger::DAY_MS {
-                return Err(crate::refuse("recently-expired"));
+            if let Some((expired, at)) = txn.last_expiry(digest)? {
+                // The same bytes whose card simply ran out of time: at most once a day, unless the owner asked again
+                // for exactly that card (Peter, 2026-10-17: no nagging, and no permanent no either). Other evidence,
+                // however valid, does not lift the day (Codex re-review, finding 3).
+                let asked = match &request.new_evidence {
+                    Some(evidence) => proposal::is_owner_again(&txn.record_at(evidence.source_record)?, expired, digest)?,
+                    None => false,
+                };
+                if !asked && now(txn)?.saturating_sub(at) < aura::ledger::DAY_MS {
+                    return Err(crate::refuse("recently-expired"));
+                }
             }
         }
         Ok(())
