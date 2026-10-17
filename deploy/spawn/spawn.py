@@ -350,8 +350,9 @@ def describe(action, name, options):
               "Caddy block (validated, reloaded, rolled back on failure); write the claim commitment; deliver the "
               "claim link to a new --claim-out file or a terminal.")
     elif action == "create":
-        print("would: with --spend-ok, create one managed VM (smallest CPU preset, 40 GiB disk); ssh as the default "
-              "user; push and install as above, with Caddy on the VM; write the claim commitment; deliver the "
+        print("would: with --spend-ok, create one managed VM (smallest CPU preset with 4 vCPU and 16 GiB, 80 GiB "
+              "disk); ssh as the default user; push and install as above, with Caddy on the VM; write the claim "
+              "commitment; deliver the "
               "claim link to a new --claim-out file or a terminal.")
     elif action == "destroy":
         print("would: remove the node's Caddy block, its ingress device, and the container or VM, only if the "
