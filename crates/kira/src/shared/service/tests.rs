@@ -209,10 +209,17 @@ fn agent_captures_never_rise_and_commitments_are_the_owners() {
     let mut cites_plain = note("descaled twice now", "builders");
     cites_plain["sources"] = json!([plain_id]);
     assert_eq!(call(&f.state, &claude, "remember", cites_plain)["result"]["capture"], "model-generated");
-    // The owner's channel keeps its claim.
+    // The owner's channel keeps its claim, unless it cites the web: then it is web-derived like anyone's, and a
+    // commitment lane refuses it.
     let mut owner_observed = note("the owner saw the kettle descaled", "builders");
     owner_observed["capture"] = json!("tool-observed");
-    assert_eq!(call(&f.state, &owner, "remember", owner_observed)["result"]["capture"], "tool-observed");
+    assert_eq!(call(&f.state, &owner, "remember", owner_observed.clone())["result"]["capture"], "tool-observed");
+    owner_observed["sources"] = json!([web["result"]["id"]]);
+    assert_eq!(call(&f.state, &owner, "remember", owner_observed)["result"]["capture"], "web-derived");
+    let mut cited_decision = note("we descale monthly, as the manual says", "builders");
+    (cited_decision["lane"], cited_decision["capture"]) = (json!("decision"), json!("owner-typed"));
+    cited_decision["sources"] = json!([web["result"]["id"]]);
+    assert_eq!(call(&f.state, &owner, "remember", cited_decision)["error"], "kira:note-capture-lane");
     let mut decision = note("we descale the kettle monthly", "builders");
     decision["lane"] = json!("decision");
     assert_eq!(call(&f.state, &claude, "remember", decision.clone())["error"], "kira:note-capture-lane");

@@ -39,29 +39,42 @@ export const NOTE_FORMS = ['fact', 'snapshot', 'counterevidence'] as const
 /** Allowed privacy classes (`crates/kira/src/shared/note.rs`). */
 export const PRIVACY_CLASSES = ['builders', 'public', 'local'] as const
 
-/** Whether a tool name brings untrusted external content into the current turn, tainting later `kira_remember` calls. */
+/**
+ * Whether a tool name brings untrusted external content into the current turn, tainting later `kira_remember` calls:
+ * the web, MCP servers, and every delegation (another agent's output may carry what it read; see
+ * DELEGATION_TOOL_NAMES).
+ */
 export function isTaintingTool(name: string): boolean {
-  return name === 'web_fetch' || name === 'web_search' || name.startsWith('mcp__')
+  return name === 'web_fetch' || name === 'web_search' || name.startsWith('mcp__') || isDelegationTool(name)
 }
 
 /**
- * Every tool name the Rust door forwards to Kira's `remember` (`crates/supervisor/src/door/memory.rs` `method`: the
- * `kira_` and the `memory_` prefix). The taint check must cover all of them: a `memory_remember` registered by any
- * other plugin reaches the same write.
+ * The remember tool, and `memory_remember`: the Rust door no longer forwards `memory_*` (DSH 0.2.1-alpha.5 registers
+ * no such tool), but the check costs nothing if a door that still does is paired with this plugin.
  */
 export const REMEMBER_TOOL_NAMES: readonly string[] = ['kira_remember', 'memory_remember']
 
-/** Tool names whose results carry Kira notes; a returned `web-derived` note brings web content into the turn. */
+/**
+ * Tool names whose results carry Kira notes; a returned `web-derived` note brings web content into the turn. Supersede
+ * returns the superseded note (`target`) with its text.
+ */
 export const KIRA_READ_TOOL_NAMES: readonly string[] = [
-  'kira_recall', 'kira_get', 'kira_list_recent', 'memory_recall', 'memory_get', 'memory_list_recent',
+  'kira_recall', 'kira_get', 'kira_list_recent', 'kira_supersede',
+  'memory_recall', 'memory_get', 'memory_list_recent', 'memory_supersede',
 ]
 
 /**
- * Tools whose result is another agent's output (a native child, a fork, a ralph loop, a workflow script). The child
- * can read the web in its own turn and hand the text back; when anything was tainted while the delegation ran, its
- * result taints the caller's turn too.
+ * Tools that hand the caller another agent's output: a native child, a fork, a ralph loop, a workflow script, and the
+ * agent-team tools that spawn a teammate or read back its work. A child may run in a fresh process whose taint this
+ * process never sees, and no authenticated signal says a child stayed clean, so every delegation taints the caller's
+ * turn. Agent-team names by prefix (`team_`, `spawn_`), so a new one is covered.
  */
-export const DELEGATION_TOOL_NAMES: readonly string[] = ['subagent', 'subagent_fork', 'ralph', 'workflow']
+export const DELEGATION_TOOL_NAMES: readonly string[] = ['subagent', 'subagent_fork', 'ralph', 'workflow', 'wait_agent']
+
+/** Whether a tool hands back another agent's output (DELEGATION_TOOL_NAMES, or an agent-team `team_`/`spawn_` tool). */
+export function isDelegationTool(name: string): boolean {
+  return DELEGATION_TOOL_NAMES.includes(name) || name.startsWith('team_') || name.startsWith('spawn_')
+}
 
 /** Error thrown if a `kira_*` tool body is ever invoked in-process without @aukora/door intercepting it. */
 export class KiraDoorRequiredError extends Error {

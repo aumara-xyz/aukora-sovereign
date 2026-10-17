@@ -48,7 +48,7 @@ model-chosen `callId`.
   (their `cwd`/`workdir` still checked); session tools (`todo_write`, `ask_user_question`, goal tools, `skill`, the read-only `session_*` history queries, ...);
   a `subagent` or `ralph` with no `provider`.
 - **crossing:** `net` (`web_fetch`, `web_search`), `mcp` (`mcp__*`), `plugin` (`plugin_manager`, `plugin_*`),
-  `memory` (`kira_*`, `memory_*`), `persist` (`schedule_create`, `schedule_update`), `delegate` (a subagent or `ralph` with a
+  `memory` (`kira_*`), `persist` (`schedule_create`, `schedule_update`), `delegate` (a subagent or `ralph` with a
   `provider`, and every `workflow`: its script can name a provider in code the table cannot judge),
   `shell-interactive` (every `terminal_*` tool: a persistent process whose later input is not in the bytes judged at open), `fs-outside` (a file tool whose path leaves the workspace), and **`unknown` for every name not listed**.
 

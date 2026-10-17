@@ -157,28 +157,38 @@ test('memory_remember, which the Rust door forwards to the same Kira write, is h
   assert.equal(ceiling.kind, 'deny')
 })
 
-test('a delegated agent that read the web taints the caller when its result comes back', async () => {
-  const controller = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
-  const parent = {}
-  const child = {}
+test('every delegation taints the caller: a child in another process cannot report its own taint here', async () => {
   const clean = buildRememberArgs({ text: 'child said so', subject: 'test' })
-  // A delegation during which nothing was tainted leaves the caller clean.
-  const quiet = makeExec('subagent', { prompt: 'think' }, parent)
-  await controller.preExecute(quiet, allow)
-  controller.onToolResult(quiet, { isError: false, value: 'thought', content: [] })
-  assert.equal(controller.isTurnTainted(parent), false)
-  // The child fetches inside its own turn; its text comes back as the subagent result.
-  const spawn = makeExec('subagent', { prompt: 'look it up' }, parent)
-  await controller.preExecute(spawn, allow)
-  await controller.preExecute(makeExec('web_fetch', { url: 'https://example.org/' }, child), allow)
-  controller.onToolResult(spawn, { isError: false, value: 'example.org says...', content: [] })
-  assert.equal(controller.isTurnTainted(parent), true)
-  const decision = await controller.preExecute(makeExec('kira_remember', clean, parent), allow)
-  assert.equal(decision.kind, 'deny')
-  // A delegation result the plugin never saw start is assumed tainted.
-  const other = {}
-  controller.onToolResult(makeExec('workflow', { script: 'x' }, other), { isError: false, value: 'done', content: [] })
-  assert.equal(controller.isTurnTainted(other), true)
+  for (const tool of ['subagent', 'subagent_fork', 'ralph', 'workflow', 'wait_agent', 'spawn_teammate', 'team_task_get', 'team_task_list']) {
+    // The parent's controller never sees the child's web_fetch (fresh process); the result alone taints.
+    const parent = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+    const agent = {}
+    const spawn = makeExec(tool, { prompt: 'look it up' }, agent)
+    assert.equal((await parent.preExecute(spawn, allow)).kind, 'allow')
+    parent.onToolResult(spawn, { isError: false, value: 'example.org says...', content: [] })
+    assert.equal(parent.isTurnTainted(agent), true, tool)
+    const decision = await parent.preExecute(makeExec('kira_remember', clean, agent), allow)
+    assert.equal(decision.kind, 'deny', tool)
+  }
+  // A result whose start was never seen taints too.
+  const other = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+  const agent = {}
+  other.onToolResult(makeExec('subagent', { prompt: 'x' }, agent), { isError: false, value: 'done', content: [] })
+  assert.equal(other.isTurnTainted(agent), true)
+})
+
+test('superseding a web-derived note returns its text, so it taints the turn under either name', async () => {
+  const ok = (value: unknown) => ({ isError: false as const, value, content: [] })
+  for (const name of ['kira_supersede', 'memory_supersede']) {
+    const controller = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
+    const agent = {}
+    controller.onToolResult(makeExec(name, { target: 'a'.repeat(64) }, agent), ok({ event: 'e', target: { text: 'own words', capture: 'model-generated' } }))
+    assert.equal(controller.isTurnTainted(agent), false, name)
+    controller.onToolResult(makeExec(name, { target: 'a'.repeat(64) }, agent), ok({ event: 'e', target: { text: 'web content', capture: 'web-derived' } }))
+    assert.equal(controller.isTurnTainted(agent), true, name)
+    const decision = await controller.preExecute(makeExec('kira_remember', buildRememberArgs({ text: 'web content', subject: 's' }), agent), allow)
+    assert.equal(decision.kind, 'deny', name)
+  }
 })
 
 test('reading a web-derived note back from Kira taints the turn', async () => {

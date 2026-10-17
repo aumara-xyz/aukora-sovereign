@@ -199,7 +199,8 @@ pub fn derive(tool: &str, args: &Value, roots: &[String]) -> Derived {
     if tool.starts_with("terminal_") {
         return Derived::Cross(Class::ShellInteractive);
     }
-    if tool.starts_with("kira_") || tool.starts_with("memory_") {
+    // Only `kira_*`: DSH 0.2.1-alpha.5 registers no `memory_*` tool, so that prefix is not a memory channel (unknown).
+    if tool.starts_with("kira_") {
         return Derived::Cross(Class::Memory);
     }
     match tool {
@@ -274,6 +275,7 @@ mod tests {
         assert_eq!(call("mcp__a__b", "{}"), Derived::Cross(Class::Mcp));
         assert_eq!(call("plugin_manager", "{}"), Derived::Cross(Class::Plugin));
         assert_eq!(call("kira_recall", "{\"query\":\"x\"}"), Derived::Cross(Class::Memory));
+        assert_eq!(call("memory_remember", "{}"), Derived::Cross(Class::Unknown));
         assert_eq!(call("schedule_create", "{}"), Derived::Cross(Class::Persist));
         assert_eq!(call("subagent", "{\"task\":\"x\"}"), Derived::Local);
         assert_eq!(call("subagent", "{\"provider\":\"codex\"}"), Derived::Cross(Class::Delegate));

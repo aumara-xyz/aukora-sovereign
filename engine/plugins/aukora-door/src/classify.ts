@@ -94,7 +94,8 @@ export function classifyCall(tool: string, args: unknown, workspaceRoots: readon
   // debugger) is not in the bytes judged when it was opened, so it is not `bash`. Every terminal_* tool crosses, by
   // prefix, so a new one fails closed. No executor exists for the class: it can be denied or asked, never allowed.
   if (tool.startsWith('terminal_')) return 'shell-interactive'
-  if (tool.startsWith('kira_') || tool.startsWith('memory_')) return 'memory'
+  // Only `kira_*`: DSH 0.2.1-alpha.5 registers no `memory_*` tool, so that prefix is not a memory channel (unknown).
+  if (tool.startsWith('kira_')) return 'memory'
   if (tool === 'schedule_create' || tool === 'schedule_update') return 'persist'
   if (tool === 'schedule_list' || tool === 'schedule_delete') return 'local'
   // A workflow is a script: it can name a `provider` on any `agent()` call, in code this table does not parse and

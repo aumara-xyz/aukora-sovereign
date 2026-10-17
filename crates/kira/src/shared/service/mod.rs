@@ -574,9 +574,10 @@ impl State {
         if !caller.owner && claimed == Capture::ToolObserved {
             return Err(refuse("capture-unverified"));
         }
-        // Taint inheritance (spec v0.3 §2): citing a web-derived note makes this one web-derived. Citations only ever
-        // lower an agent's claim (model-generated or web-derived); they never raise it.
-        let capture = if !caller.owner && self.cites_web(&p.sources)? { Capture::WebDerived } else { claimed };
+        // Taint inheritance (spec v0.3 §2): citing a web-derived note makes this one web-derived, for every caller, the
+        // owner included (provenance is a fact, not a trust level). Citations only ever lower a claim, never raise it;
+        // so a commitment lane, which takes only the owner's own words, refuses a note that cites the web.
+        let capture = if self.cites_web(&p.sources)? { Capture::WebDerived } else { claimed };
         if p.text.len() > MAX_STATEMENT {
             return Err(refuse("statement-too-long"));
         }

@@ -41,6 +41,7 @@ import {
   REMEMBER_TOOL_NAMES,
   buildRememberArgs,
   createKiraTools,
+  isDelegationTool,
   isTaintingTool,
   kiraRefusalResult,
 } from './tools.ts'
@@ -71,6 +72,7 @@ export {
   createKiraController,
   createKiraTools,
   isLiveVerifiedNote,
+  isDelegationTool,
   isTaintingTool,
   kiraRefusalResult,
   noteText,

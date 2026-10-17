@@ -5,8 +5,8 @@
 // Responsibilities:
 //  1. Validate configuration (no Kira socket or token is ever held here).
 //  2. Enforce turn-level provenance taint: once a turn invokes an external tool (`web_fetch`, `web_search`,
-//     or `mcp__*`), reads a `web-derived` note back from Kira, or gets a delegated agent's result while anything
-//     was tainted, any `kira_remember` (or `memory_remember`) call in that turn must declare
+//     or `mcp__*`), reads a `web-derived` note back from Kira (supersede included), or delegates to another agent,
+//     any `kira_remember` (or `memory_remember`) call in that turn must declare
 //     `capture: "web-derived"` or it is denied in `tools/pre-execute` before reaching the wire.
 //  3. Enforce defense-in-depth client-side checks matching `crates/supervisor/src/door/memory.rs`
 //     (`capture-ceiling`, `owner-only`, `lane-closed`) without ever mutating `exec.arguments` (preserving
@@ -25,7 +25,6 @@ import {
 import {
   AGENT_CAPTURES,
   AGENT_LANES,
-  DELEGATION_TOOL_NAMES,
   isTaintingTool,
   KIRA_READ_TOOL_NAMES,
   KIRA_REFUSAL_NAME,
@@ -47,15 +46,18 @@ const ALLOWED_LANES = new Set<string>(AGENT_LANES)
 const ALLOWED_CAPTURES = new Set<string>(AGENT_CAPTURES)
 const REMEMBER_TOOLS = new Set<string>(REMEMBER_TOOL_NAMES)
 const READ_TOOLS = new Set<string>(KIRA_READ_TOOL_NAMES)
-const DELEGATION_TOOLS = new Set<string>(DELEGATION_TOOL_NAMES)
-/** Open delegations remembered at once (each is forgotten on its result); the oldest goes first past this. */
-const MAX_DELEGATIONS = 4096
 
-/** Whether a Kira read result carries a `web-derived` note (`kira_get` returns one note, recall `items`, a list `notes`). */
+/**
+ * Whether a Kira result carries a `web-derived` note: `kira_get` returns one note, recall `items`, a list `notes`, and
+ * supersede the superseded note as `target` (with its text: superseding keeps it readable).
+ */
 function carriesWebDerived(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   if (record.capture === 'web-derived') return true
+  if (typeof record.target === 'object' && record.target !== null && (record.target as Record<string, unknown>).capture === 'web-derived') {
+    return true
+  }
   for (const key of ['items', 'notes']) {
     const list = record[key]
     if (Array.isArray(list) && list.some(note => typeof note === 'object' && note !== null && (note as Record<string, unknown>).capture === 'web-derived')) {
@@ -139,9 +141,6 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
   const config = resolveKiraConfig(rawConfig)
   const taintedAgents = new WeakSet<object>()
   let globalTainted = false
-  // Counts every taint ever marked, so a delegation can tell whether anything was tainted while it ran.
-  let taintCount = 0
-  const delegations = new Map<symbol, number>()
 
   let cachedSelfText = ''
   let cachedResumeText = ''
@@ -153,7 +152,6 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
   }
 
   const markTurnTainted = (agent?: object): void => {
-    taintCount += 1
     if (agent !== undefined) {
       taintedAgents.add(agent)
     } else {
@@ -228,15 +226,6 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
         return next()
       }
 
-      if (DELEGATION_TOOLS.has(exec.name)) {
-        if (delegations.size >= MAX_DELEGATIONS) {
-          const oldest = delegations.keys().next()
-          if (!oldest.done) delegations.delete(oldest.value)
-        }
-        delegations.set(exec.token, taintCount)
-        return next()
-      }
-
       if (REMEMBER_TOOLS.has(exec.name)) {
         const args = (typeof exec.arguments === 'object' && exec.arguments !== null ? exec.arguments : {}) as Record<string, unknown>
 
@@ -266,11 +255,6 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     onToolResult(exec, result) {
       if (isTaintingTool(exec.name)) {
         markTurnTainted(exec.agent)
-      } else if (DELEGATION_TOOLS.has(exec.name)) {
-        // A child that read the web hands its text back here. Unknown start (never seen pre-execute): assume it did.
-        const started = delegations.get(exec.token)
-        delegations.delete(exec.token)
-        if (started === undefined || taintCount > started) markTurnTainted(exec.agent)
       } else if (READ_TOOLS.has(exec.name) && result !== undefined && !result.isError && carriesWebDerived(result.value)) {
         markTurnTainted(exec.agent)
       }

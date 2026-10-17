@@ -52,6 +52,7 @@ test('network, mcp, plugin, memory and persistence tools are crossings', () => {
   assert.equal(classifyCall('plugin_manager', { action: 'install' }, roots), 'plugin')
   assert.equal(classifyCall('kira_remember', { statement: 'x' }, roots), 'memory')
   assert.equal(classifyCall('kira_recall', { query: 'x' }, roots), 'memory')
+  assert.equal(classifyCall('memory_remember', { text: 'x' }, roots), 'unknown')
   assert.equal(classifyCall('schedule_create', {}, roots), 'persist')
   assert.equal(classifyCall('schedule_list', {}, roots), 'local')
 })

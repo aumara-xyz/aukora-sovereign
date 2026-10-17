@@ -71,7 +71,7 @@ about itself. The server re-derives its own class for the tool and uses the stri
 | `net` | outbound network from a model tool (web fetch, web search) | broker/allowlist, else ask |
 | `mcp` | a tool served by an MCP server (`mcp__*`) | ask unless pinned |
 | `plugin` | plugin install, upgrade or removal | ask (owner fingerprint approval) |
-| `memory` | any Kira call (`kira_*`, `memory_*`) | forwarded to the memory service with the engine's identity |
+| `memory` | any Kira call (`kira_*`) | forwarded to the memory service with the engine's identity |
 | `persist` | creating or changing a schedule (future autonomous action) | ask |
 | `delegate` | a subagent or `ralph` with a named external provider; every `workflow` (its script can name a provider) | ask |
 | `shell-interactive` | a persistent terminal (`terminal_*`): what runs later is not in the bytes judged at open | deny or ask |

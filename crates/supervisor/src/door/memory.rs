@@ -19,7 +19,8 @@ const CLOSED_LANES: [&str; 5] = ["charter", "ruling", "decision", "self", "resum
 
 /// The Kira method for a tool name, or the refusal token.
 pub fn method(tool: &str) -> Result<&'static str, &'static str> {
-    let name = tool.strip_prefix("kira_").or_else(|| tool.strip_prefix("memory_")).ok_or("memory-tool")?;
+    // `kira_*` only: DSH 0.2.1-alpha.5 registers no `memory_*` tool, and a name nothing registers is not forwarded.
+    let name = tool.strip_prefix("kira_").ok_or("memory-tool")?;
     match name {
         "remember" => Ok("remember"),
         "recall" => Ok("recall"),
@@ -144,7 +145,8 @@ mod tests {
                                   ("kira_list_recent", "list_recent"), ("kira_supersede", "supersede")] {
             assert_eq!(method(tool), Ok(forwarded), "{tool}");
         }
-        assert_eq!(method("memory_recall"), Ok("recall"));
+        assert_eq!(method("memory_recall"), Err("memory-tool"));
+        assert_eq!(method("memory_remember"), Err("memory-tool"));
         assert_eq!(method("kira_list_recent"), Ok("list_recent"));
         assert_eq!(method("kira_quarantine_source"), Err("owner-only"));
         assert_eq!(method("kira_register"), Err("memory-tool"));

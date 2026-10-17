@@ -27,12 +27,13 @@ itself signs as the token's agent and never lets an agent claim more than `model
 3. **Judge-then-lock compatibility.** `@aukora/kira` registers its `tools/pre-execute` hook with `{ global: true }`
    (without `prepend: true`), so `@aukora/door` (`{ prepend: true, global: true }`) always binds and digests first and
    then passes through to this hook; a deny here is the decision. `@aukora/kira` never mutates `exec.arguments`.
-4. **Turn-level provenance taint.** A turn is tainted when it calls `web_fetch`, `web_search` or `mcp__*`, when a Kira
-   read (`kira_recall`, `kira_get`, `kira_list_recent`) returns a `web-derived` note, and when a delegated agent's
-   result (`subagent`, `subagent_fork`, `ralph`, `workflow`) comes back after anything was tainted while it ran (a
-   child's web text returns to the caller as that result). In a tainted turn every remember the door would forward
-   (`kira_remember` and `memory_remember`) must say `capture: "web-derived"`, or it is denied (`code: 'turn-tainted'`).
-   Taint resets at `step === 1` of the agent's next turn.
+4. **Turn-level provenance taint.** A turn is tainted when it calls `web_fetch`, `web_search` or `mcp__*`; when a Kira
+   result (`kira_recall`, `kira_get`, `kira_list_recent`, or `kira_supersede`, which returns the superseded note with
+   its text) carries a `web-derived` note; and on every delegation (`subagent`, `subagent_fork`, `ralph`, `workflow`,
+   `wait_agent`, and agent-team `spawn_*` / `team_*` tools). A child may run in a fresh process whose taint this one
+   never sees, and nothing authenticated says a child stayed clean, so every delegation counts. In a tainted turn
+   `kira_remember` (and `memory_remember`, should a door still forward it) must say `capture: "web-derived"`, or it is
+   denied (`code: 'turn-tainted'`). Taint resets at `step === 1` of the agent's next turn.
 5. **Session-start `aukora:self` and `aukora:resume` injection.** At session start (`agent/created`, `agent/pre-step`,
    and the first `system-prompt/assemble`) the plugin reads each slot with one `kira_get { id: '<slot>' }` through
    `ctx.tools.execute` (so through `@aukora/door` -> Rust door -> Kira 2) and registers them as `SystemPrompt`
