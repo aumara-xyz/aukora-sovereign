@@ -32,6 +32,10 @@ pub enum OwnerRoute {
     ApprovalCeremonyV1,
     ApprovalReviewV1,
     ApprovalAssertionV1,
+    /// The owner's Decline of one card: a deliberate no, no passkey (NODE.md O19).
+    ApprovalDeclineV1,
+    /// The owner asks again for something they declined: a fresh card for the same bytes (NODE.md O19).
+    ApprovalAgainV1,
     /// Co-presence pairing, bound owner session: start, poll, submit the receipt, list devices.
     PairingStart,
     PairingStatus,
@@ -71,6 +75,8 @@ impl OwnerRoute {
             (Method::Post, "/api/approvals") => Ok(Self::ApprovalCeremonyV1),
             (Method::Post, "/api/v1/approvals/review") => Ok(Self::ApprovalReviewV1),
             (Method::Post, "/api/v1/approvals/assertion") => Ok(Self::ApprovalAssertionV1),
+            (Method::Post, "/api/v1/approvals/decline") => Ok(Self::ApprovalDeclineV1),
+            (Method::Post, "/api/v1/approvals/again") => Ok(Self::ApprovalAgainV1),
             (Method::Post, "/api/approvals/retire/challenge") => Ok(Self::ApprovalRetireChallenge),
             (Method::Post, "/api/pairing/start") => Ok(Self::PairingStart),
             (Method::Post, "/api/pairing/status") => Ok(Self::PairingStatus),
@@ -94,6 +100,8 @@ pub fn is_gate_route(route: OwnerRoute) -> bool {
             | OwnerRoute::ApprovalReviewV1
             | OwnerRoute::ApprovalAssertionV1
             | OwnerRoute::ApprovalRetireChallenge
+            | OwnerRoute::ApprovalDeclineV1
+            | OwnerRoute::ApprovalAgainV1
     )
 }
 
@@ -124,6 +132,10 @@ pub enum GateRequest {
         action: OwnerOperation,
         assertion: GateAssertionMaterial,
     },
+    /// The owner's Decline (no passkey).
+    Decline { proposal: ProposalId },
+    /// Ask again for a declined card.
+    Again { proposal: ProposalId },
 }
 
 /// Owner-only review responses include escaped before/after text and base64 target bytes.
@@ -192,6 +204,16 @@ pub fn decode_gate_request(route: OwnerRoute, body: &Value) -> Result<GateReques
             proposal: ProposalId::from_hex(gate_text(body, "id")?)
                 .map_err(|_| canon::codes::FRONTDOOR_BODY_INVALID)?,
             action: OwnerOperation::Retire,
+        });
+    }
+    if matches!(route, OwnerRoute::ApprovalDeclineV1 | OwnerRoute::ApprovalAgainV1) {
+        gate_keys(body, &["proposal_id"])?;
+        let proposal = ProposalId::from_hex(gate_text(body, "proposal_id")?)
+            .map_err(|_| canon::codes::FRONTDOOR_BODY_INVALID)?;
+        return Ok(if route == OwnerRoute::ApprovalDeclineV1 {
+            GateRequest::Decline { proposal }
+        } else {
+            GateRequest::Again { proposal }
         });
     }
     match route {
@@ -360,6 +382,14 @@ pub fn encode_gate_outcome(outcome: &canon::fd3_payloads::Outcome) -> Result<Val
             Value::text(outcome.proposal_id.to_string())?,
         ),
         ("state".into(), Value::text(state.into())?),
+    ])
+}
+
+/// The reply to Ask again: the fresh card's proposal id.
+pub fn encode_gate_again(proposal: ProposalId) -> Result<Value> {
+    Value::object(vec![
+        ("schema".into(), Value::text("aukora-owner-again-v1".into())?),
+        ("proposal_id".into(), Value::text(proposal.to_string())?),
     ])
 }
 

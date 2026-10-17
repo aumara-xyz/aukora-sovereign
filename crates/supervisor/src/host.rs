@@ -131,7 +131,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         &config.shell_origin,
         &config.owner_origin,
     )?;
-    source.configure_owner_approval(state.node)?;
+    source.configure_owner_approval(state.node, &config.approved_release_root)?;
     let measured = RuntimeMeasurement {
         binary_sha256: source.binary_digest,
         shell_manifest_sha256: source.manifest_digest(),

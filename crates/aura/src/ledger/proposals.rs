@@ -3,7 +3,7 @@
 use super::*;
 use crate::storage::{
     self, DeclinedProposal, OperationCoverage, ProposalState, ProposalStatus, RecoveryWork,
-    StagedAuthorization,
+    StagedAuthorization, OWNER_DECLINED,
 };
 use canon::{
     authority::{LifecycleRecord, OwnerAuthorization, OwnerOperation},
@@ -141,20 +141,59 @@ impl LedgerTxn<'_> {
         type DeclineRow = (String, String, String, i64, i64, Option<String>);
         let row: Option<DeclineRow> = self.transaction.query_row("SELECT proposal,evidence_digest,target,epoch,sequence,previous_hash FROM authority_declines WHERE operation_digest=?1 ORDER BY sequence DESC LIMIT 1",[operation.to_string()],
             |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(sql)?;
-        row.map(|(proposal, evidence, target, epoch, sequence, previous)| {
-            Ok(DeclinedProposal {
-                proposal: ProposalId::from_hex(&proposal)?,
-                operation_digest: operation,
-                evidence_digest: Digest32::from_hex(&evidence)?,
-                target,
-                authority: AuthorityVersion {
-                    epoch: unsigned(epoch)?,
-                    sequence: unsigned(sequence)?,
-                    previous_hash: previous.map(|v| Digest32::from_hex(&v)).transpose()?,
-                },
-            })
-        })
-        .transpose()
+        let Some((proposal, evidence, target, epoch, sequence, previous)) = row else {
+            return Ok(None);
+        };
+        let declined = DeclinedProposal {
+            proposal: ProposalId::from_hex(&proposal)?,
+            operation_digest: operation,
+            evidence_digest: Digest32::from_hex(&evidence)?,
+            target,
+            authority: AuthorityVersion {
+                epoch: unsigned(epoch)?,
+                sequence: unsigned(sequence)?,
+                previous_hash: previous.map(|v| Digest32::from_hex(&v)).transpose()?,
+            },
+        };
+        // NODE.md O19: only the owner's explicit Decline is a decline. The latest terminal for these exact bytes
+        // decides: a card that ran out of time (closed, never answered) or was refused for another reason (an owner
+        // epoch change) leaves the same bytes free to be raised again.
+        let terminal = self.record_at(declined.authority)?;
+        if field(gate_payload(&terminal.body), "reason") != Some(OWNER_DECLINED) {
+            return Ok(None);
+        }
+        Ok(Some(declined))
+    }
+
+    /// The owner's standing Declines among the node's own requests (targets under `engine/` and the release): for each
+    /// target, its newest proposal when that proposal is one the owner declined, newest first. These are what the
+    /// owner may ask for again (NODE.md O19); a request raised since (pending, applied, expired) hides the older no.
+    pub fn owner_declines(&self, limit: usize) -> Result<Vec<(ProposalId, String)>> {
+        self.active()?;
+        let mut statement = self.transaction.prepare("SELECT d.proposal,d.target,d.operation_digest FROM authority_declines d JOIN authority_proposals p ON p.id=d.proposal \
+            WHERE p.status='refused' AND (d.target LIKE 'engine/%' OR d.target='release') \
+            AND p.rowid=(SELECT max(q.rowid) FROM authority_proposals q WHERE q.target=d.target) ORDER BY d.sequence DESC LIMIT ?1").map_err(sql)?;
+        let mut cursor = statement
+            .query([i64::try_from(limit).map_err(|_| refusal("limit"))?])
+            .map_err(sql)?;
+        let mut rows = Vec::new();
+        while let Some(row) = cursor.next().map_err(sql)? {
+            rows.push((
+                ProposalId::from_hex(&row.get::<_, String>(0).map_err(sql)?)?,
+                row.get::<_, String>(1).map_err(sql)?,
+                OperationDigest::from_hex(&row.get::<_, String>(2).map_err(sql)?)?,
+            ));
+        }
+        let mut result = Vec::new();
+        for (proposal, target, operation) in rows {
+            if self
+                .last_decline(operation)?
+                .is_some_and(|declined| declined.proposal == proposal)
+            {
+                result.push((proposal, target));
+            }
+        }
+        Ok(result)
     }
 
     pub fn decline(
@@ -172,6 +211,18 @@ impl LedgerTxn<'_> {
                 )
             {
                 return Err(refusal("decline-context"));
+            }
+            // The owner's own Decline ends any review the owner opened for it: a card shown and then declined must
+            // not wait for its review to run out (the live-review check below would refuse the decline).
+            if row.kind == canon::authority::LifecycleKind::GateRefuse
+                && field(gate_payload(&row.body), "reason") == Some(OWNER_DECLINED)
+            {
+                this.transaction
+                    .execute(
+                        "UPDATE authority_challenges SET spent=1 WHERE proposal=?1 AND spent=0",
+                        [proposal.to_string()],
+                    )
+                    .map_err(sql)?;
             }
             this.append_lifecycle(row)
         })

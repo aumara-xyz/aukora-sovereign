@@ -4,7 +4,8 @@
 use super::HostLedger;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use canon::{
-    authority::{AuthorityTxn, BaseDigest, OwnerAssertion, OwnerOperation},
+    alg::AlgorithmId,
+    authority::{AuthorityTxn, BaseDigest, FactKind, FactRecord, OwnerAssertion, OwnerOperation},
     codes,
     fd3_payloads::{Accepted, Outcome, OutcomeState, Propose, Read, ReadReply},
     frame::FrameId,
@@ -12,7 +13,7 @@ use canon::{
     Result,
 };
 use gate::{
-    proposal::{ProposalRequest, SuggestionOrder},
+    proposal::{EvidenceReference, ProposalRequest, SuggestionOrder},
     recovery::NoInjection,
     service::{scoped::ScopedGate, GateConfig},
     target::{ConfinedStore, TargetId, TargetSpec, TargetStore},
@@ -262,6 +263,84 @@ impl GateAdapter {
         })
     }
 
+    /// The owner's Decline of one card (NODE.md O19): a deliberate no, no passkey (it only narrows). Closing a card is
+    /// not this; an unanswered card only expires, and an expiry is never a decline.
+    pub fn decline(&self, scope: PrincipalScope, proposal: ProposalId) -> ServiceFuture<'_, Outcome> {
+        self.submit(move |gate, host| {
+            let outcome = host.scoped(scope, |txn| {
+                require_proposal_scope(txn, proposal, scope)?;
+                gate.decline(txn, proposal)
+            })?;
+            Ok(Outcome { proposal_id: outcome.proposal, state: OutcomeState::Refused })
+        })
+    }
+
+    /// The owner asks again for something they declined (NODE.md O19): a fresh proposal of the same bytes, raised
+    /// because the owner asked. Only the node's own requests (`engine/` targets and the release) can be asked for
+    /// again, and only while the owner's Decline is the latest word on those bytes. Returns the new proposal.
+    pub fn again(&self, scope: PrincipalScope, declined: ProposalId) -> ServiceFuture<'_, ProposalId> {
+        self.submit(move |gate, host| {
+            let target = host.scoped(scope, |txn| {
+                let stored = txn.proposal(&declined)?;
+                if txn.last_decline(stored.operation_digest)?.map(|row| row.proposal) != Some(declined) {
+                    return Err(refuse("not-declined"));
+                }
+                Ok(stored.target)
+            })?;
+            if target == "release" {
+                return host.release_again(scope, declined);
+            }
+            if !target.starts_with(crate::engine::TARGET_PREFIX) {
+                return Err(codes::GATE_UNSUPPORTED_OPERATION);
+            }
+            let bytes = host.scoped(scope, |txn| Ok(txn.proposal(&declined)?.new_bytes))?;
+            propose_again(gate, host, scope, declined, target, String::new(), bytes)
+        })
+    }
+
+    /// A request the owner made themselves (the model key typed on the owner's page): proposed like any other, and if
+    /// the owner declined these exact bytes before, typing them again is the owner asking again. A card already up for
+    /// the same bytes is that card; a card up for other bytes is refused `awaiting-other-approval` (nothing replaced).
+    pub fn propose_owner_requested(
+        &self,
+        scope: PrincipalScope,
+        target: &'static str,
+        note: String,
+        bytes: Vec<u8>,
+    ) -> ServiceFuture<'_, ProposalId> {
+        self.submit(move |gate, host| {
+            let pending = host.scoped(scope, |txn| {
+                Ok(txn
+                    .pending_proposals(10_001)?
+                    .into_iter()
+                    .find(|row| row.target == target)
+                    .map(|row| (row.proposal, row.new_bytes)))
+            })?;
+            match pending {
+                Some((id, held)) if held == bytes => return Ok(id),
+                Some(_) => return Err(refuse("awaiting-other-approval")),
+                None => {}
+            }
+            let first = propose_once(gate, host, scope, target.to_owned(), note.clone(), bytes.clone(), None);
+            match first {
+                Err(refusal) if refusal.reason == "declined-unchanged" || refusal.reason == "unchanged-decline" => {
+                    let declined = host.scoped(scope, |txn| {
+                        let base = gate.target_store().observe(&TargetId::new(target.to_owned())?)?.digest;
+                        let digest = proposal_digest(gate, target, base, &bytes)?;
+                        txn.last_decline(digest)?.map(|row| row.proposal).ok_or(refusal)
+                    })?;
+                    propose_again(gate, host, scope, declined, target.to_owned(), note, bytes)
+                }
+                other => other,
+            }
+        })
+    }
+
+    /// The owner's latest Declines among the node's own requests, for the "ask again" list.
+    pub fn owner_declines(&self, scope: PrincipalScope) -> ServiceFuture<'_, Vec<(ProposalId, String)>> {
+        self.submit(move |_, host| host.scoped(scope, |txn| txn.owner_declines(16)))
+    }
+
     /// Settle expired proposals now. The gate expires a pending proposal only inside `recover`, which otherwise runs
     /// once at start-up, and a target holds at most one live proposal; without this an unanswered ask keeps its
     /// target busy until the node restarts. Returns how many proposals recovery could not settle.
@@ -500,4 +579,293 @@ fn stored_outcome(
         S::Unknown => OutcomeState::Unknown,
     };
     Some(Outcome { proposal_id, state })
+}
+
+fn refuse(reason: &'static str) -> canon::Refusal {
+    canon::Refusal { organ: "gate", reason }
+}
+
+fn request(target: TargetId, base: BaseDigest, note: String, bytes: Vec<u8>, evidence: Option<EvidenceReference>) -> ProposalRequest {
+    ProposalRequest {
+        target,
+        base,
+        new_bytes: bytes,
+        model_note: note,
+        cell: None,
+        new_evidence: evidence,
+        suggestion: SuggestionOrder::Single,
+    }
+}
+
+fn proposal_digest(
+    gate: &ScopedGate<ConfinedStore>,
+    target: &str,
+    base: BaseDigest,
+    bytes: &[u8],
+) -> Result<canon::ids::OperationDigest> {
+    let probe = request(TargetId::new(target.to_owned())?, base, String::new(), bytes.to_vec(), None);
+    gate::proposal::request_digest(gate.config().node, &probe)
+}
+
+/// One proposal against whatever the target holds now, in its own transaction (a refusal rolls it back).
+fn propose_once(
+    gate: &mut ScopedGate<ConfinedStore>,
+    host: &HostLedger,
+    scope: PrincipalScope,
+    target: String,
+    note: String,
+    bytes: Vec<u8>,
+    evidence: Option<EvidenceReference>,
+) -> Result<ProposalId> {
+    let target = TargetId::new(target)?;
+    let base = gate.target_store().observe(&target)?.digest;
+    host.scoped(scope, |txn| {
+        gate.propose(txn, request(target, base, note, bytes, evidence), &mut NoInjection)
+            .map(|proposal| proposal.id)
+    })
+}
+
+/// The owner asked again for bytes they declined: an Aura fact records the request (`aukora-owner-again-v1`, naming
+/// the declined proposal), and the fresh proposal carries that fact as its new evidence, which is what lets the gate
+/// raise bytes the owner declined. Both commit together or not at all.
+fn propose_again(
+    gate: &mut ScopedGate<ConfinedStore>,
+    host: &HostLedger,
+    scope: PrincipalScope,
+    declined: ProposalId,
+    target: String,
+    note: String,
+    bytes: Vec<u8>,
+) -> Result<ProposalId> {
+    let target = TargetId::new(target)?;
+    let base = gate.target_store().observe(&target)?.digest;
+    host.scoped(scope, |txn| propose_again_in(txn, gate, declined, target, base, note, bytes))
+}
+
+pub(crate) fn propose_again_in<S: TargetStore>(
+    txn: &mut aura::LedgerTxn<'_>,
+    gate: &mut ScopedGate<S>,
+    declined: ProposalId,
+    target: TargetId,
+    base: BaseDigest,
+    note: String,
+    bytes: Vec<u8>,
+) -> Result<ProposalId> {
+    let stored = txn.proposal(&declined)?;
+    let context = txn.observation_context()?;
+    let fact = txn.append_fact(FactRecord {
+        v: 1,
+        algorithm: AlgorithmId::Sha256,
+        authority: context.authority,
+        at: context.at,
+        kind: FactKind::BootFacts,
+        actor: "supervisor".into(),
+        body: canon::json::Value::object(vec![
+            ("schema".into(), canon::json::Value::text(AGAIN_SCHEMA.to_owned())?),
+            ("declined".into(), canon::json::Value::text(declined.to_string())?),
+            ("operation".into(), canon::json::Value::text(stored.operation_digest.to_string())?),
+            ("target".into(), canon::json::Value::text(target.as_str().to_owned())?),
+        ])?,
+    })?;
+    let evidence = EvidenceReference { digest: fact.hash, source_record: fact.authority };
+    gate.propose(txn, request(target, base, note, bytes, Some(evidence)), &mut NoInjection)
+        .map(|proposal| proposal.id)
+}
+
+/// The Aura fact that records the owner asking again for something they declined.
+pub const AGAIN_SCHEMA: &str = "aukora-owner-again-v1";
+
+#[cfg(test)]
+mod tests {
+    //! NODE.md O19 against a real Aura ledger and the gate: closing a card (it expires) is not a decline; the owner's
+    //! Decline is, until the owner asks again.
+    use super::*;
+    use canon::alg::{PublicKey, Signature, Signatures};
+    use ed25519_dalek::{Signer, SigningKey};
+    use gate::target::TargetClass;
+
+    struct TestSigner(SigningKey);
+    impl aura::RecordSigner for TestSigner {
+        fn public_keys(&self) -> Result<Vec<PublicKey>> {
+            Ok(vec![PublicKey { v: 1, algorithm: AlgorithmId::Ed25519, bytes: self.0.verifying_key().to_bytes().to_vec() }])
+        }
+        fn sign_entry_hash(&self, hash: canon::digest::Digest32) -> Result<Signatures> {
+            Signatures::new(vec![Signature { v: 1, algorithm: AlgorithmId::Ed25519, bytes: self.0.sign(hash.as_bytes()).to_bytes().to_vec() }])
+        }
+    }
+
+    const PLUGIN: &str = "engine/plugin-set.json";
+    const ASK: &str = "door/ask-00.json";
+
+    struct Rig {
+        directory: std::path::PathBuf,
+        ledger: HostLedger,
+        gate: ScopedGate<ConfinedStore>,
+    }
+
+    impl Drop for Rig {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    fn rig(name: &str, lifetime_ms: u64) -> Rig {
+        let directory = std::env::temp_dir().join(format!("o19-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(directory.join("targets")).unwrap();
+        let directory = std::fs::canonicalize(directory).unwrap();
+        let ledger = HostLedger::open(
+            &directory.join("aura.sqlite3"),
+            Arc::new(TestSigner(SigningKey::from_bytes(&[5; 32]))),
+            Arc::new(crate::adapters::HostClock),
+        )
+        .unwrap();
+        let targets: Vec<TargetSpec> = [PLUGIN, ASK]
+            .into_iter()
+            .map(|id| TargetSpec {
+                id: TargetId::new(id.to_owned()).unwrap(),
+                class: TargetClass::Content,
+                risk: gate::RiskTier::Critical,
+                max_bytes: 65_536,
+            })
+            .collect();
+        let store = ConfinedStore::open(File::open(directory.join("targets")).unwrap(), targets.clone()).unwrap();
+        let gate = ScopedGate::new(
+            store,
+            GateConfig {
+                node: canon::ids::NodeId::from_bytes([7; 16]),
+                targets,
+                proposal_lifetime_ms: lifetime_ms,
+                ceremony_lifetime_ms: 300_000,
+            },
+        )
+        .unwrap();
+        Rig { directory, ledger, gate }
+    }
+
+    impl Rig {
+        fn propose(&mut self, target: &str, bytes: &[u8]) -> Result<ProposalId> {
+            let target = TargetId::new(target.to_owned())?;
+            let base = self.gate.target_store().observe(&target)?.digest;
+            let gate = &mut self.gate;
+            self.ledger.transaction(|txn| {
+                gate.propose(txn, request(target, base, String::new(), bytes.to_vec(), None), &mut NoInjection)
+                    .map(|proposal| proposal.id)
+            })
+        }
+
+        fn decline(&mut self, id: ProposalId) -> Result<gate::proposal::ProposalState> {
+            let gate = &mut self.gate;
+            self.ledger.transaction(|txn| gate.decline(txn, id).map(|outcome| outcome.state))
+        }
+
+        fn expire_all(&mut self) {
+            std::thread::sleep(std::time::Duration::from_millis(self.gate.config().proposal_lifetime_ms + 20));
+            let gate = &mut self.gate;
+            let blocked = self.ledger.transaction(|txn| Ok(gate.recover(txn, &mut NoInjection)?.blocked.len())).unwrap();
+            assert_eq!(blocked, 0);
+        }
+
+        fn status(&self, id: ProposalId) -> aura::storage::ProposalStatus {
+            self.ledger.transaction(|txn| Ok(txn.proposal(&id)?.status)).unwrap()
+        }
+
+        fn declines(&self) -> Vec<(ProposalId, String)> {
+            self.ledger.transaction(|txn| txn.owner_declines(16)).unwrap()
+        }
+
+        fn again(&mut self, declined: ProposalId, target: &str, bytes: &[u8]) -> Result<ProposalId> {
+            let target = TargetId::new(target.to_owned())?;
+            let base = self.gate.target_store().observe(&target)?.digest;
+            let gate = &mut self.gate;
+            self.ledger
+                .transaction(|txn| propose_again_in(txn, gate, declined, target, base, String::new(), bytes.to_vec()))
+        }
+    }
+
+    fn declined_refusal(result: Result<ProposalId>) -> bool {
+        matches!(result, Err(refusal) if matches!(refusal.reason, "declined-unchanged" | "unchanged-decline"))
+    }
+
+    #[test]
+    fn a_closed_card_that_ran_out_of_time_is_raised_again_with_the_same_bytes() {
+        let mut rig = rig("expiry", 1);
+        let set = br#"{"set":"a"}"#;
+        let first = rig.propose(PLUGIN, set).unwrap();
+        rig.expire_all();
+        assert_eq!(rig.status(first), aura::storage::ProposalStatus::Expired);
+        // Before O19 this was gate:declined-unchanged for ever.
+        let second = rig.propose(PLUGIN, set).unwrap();
+        assert_ne!(first, second);
+        assert!(rig.declines().is_empty(), "an expiry is never listed as a decline");
+    }
+
+    #[test]
+    fn the_owners_decline_holds_until_the_owner_asks_again() {
+        let mut rig = rig("decline", 600_000);
+        let set = br#"{"set":"a"}"#;
+        let first = rig.propose(PLUGIN, set).unwrap();
+        assert_eq!(rig.decline(first).unwrap(), gate::proposal::ProposalState::Refused);
+        assert_eq!(rig.status(first), aura::storage::ProposalStatus::Refused);
+        // A second Decline answers the settled outcome; nothing new is written.
+        assert_eq!(rig.decline(first).unwrap(), gate::proposal::ProposalState::Refused);
+        // The node's own re-proposal of the same bytes is refused: the owner said no.
+        assert!(declined_refusal(rig.propose(PLUGIN, set)));
+        // Other bytes are another request.
+        let other = rig.propose(PLUGIN, br#"{"set":"b"}"#).unwrap();
+        rig.decline(other).unwrap();
+        assert_eq!(rig.declines(), vec![(other, PLUGIN.to_owned())], "the newest request per target is listed");
+        // Ask again for the first set: a fresh card for the same bytes, carrying the owner's request as evidence.
+        let again = rig.again(first, PLUGIN, set).unwrap();
+        assert_eq!(rig.status(again), aura::storage::ProposalStatus::Pending);
+        let stored = rig.ledger.transaction(|txn| txn.proposal(&again)).unwrap();
+        assert!(stored.evidence_source.is_some() && stored.new_bytes == set);
+        assert!(rig.declines().is_empty(), "the request raised since hides the older no");
+        // Declining the fresh card is a no again; asking again once more works again.
+        rig.decline(again).unwrap();
+        assert!(declined_refusal(rig.propose(PLUGIN, set)));
+        assert_eq!(rig.declines(), vec![(again, PLUGIN.to_owned())]);
+        let third = rig.again(again, PLUGIN, set).unwrap();
+        assert_eq!(rig.status(third), aura::storage::ProposalStatus::Pending);
+    }
+
+    #[test]
+    fn a_card_asked_for_again_that_then_runs_out_of_time_frees_the_bytes() {
+        let mut rig = rig("again-expiry", 400);
+        let set = br#"{"set":"a"}"#;
+        let first = rig.propose(PLUGIN, set).unwrap();
+        rig.decline(first).unwrap();
+        rig.again(first, PLUGIN, set).unwrap();
+        rig.expire_all();
+        // The owner's latest word on these bytes is "ask again", then the card lapsed: the node may raise it.
+        rig.propose(PLUGIN, set).unwrap();
+    }
+
+    #[test]
+    fn a_declined_door_ask_refuses_that_call_and_the_next_call_gets_its_own_card() {
+        let mut rig = rig("door", 600_000);
+        let ask = |call: &str| {
+            let args = canon::json::Value::object(vec![("url".into(), canon::json::Value::text("https://example.com/".into()).unwrap())]).unwrap();
+            let digest = gate::door::call_digest("web_fetch", &canon::json::to_canonical(&args));
+            gate::door::record(&gate::door::Ask { call_id: call, class: "ask-net", tool: "web_fetch", digest_sha256: &digest, args: &args }).unwrap()
+        };
+        let first = rig.propose(ASK, &ask("call-1")).unwrap();
+        rig.decline(first).unwrap();
+        assert!(declined_refusal(rig.propose(ASK, &ask("call-1"))), "the same call stays declined");
+        let next = rig.propose(ASK, &ask("call-2")).unwrap();
+        assert_eq!(rig.status(next), aura::storage::ProposalStatus::Pending);
+        assert!(rig.declines().is_empty(), "door asks are not offered for asking again: the call itself is gone");
+    }
+
+    #[test]
+    fn the_owners_decline_is_found_by_its_bytes() {
+        // Only a gate.refuse terminal with reason owner-declined counts (aura::storage::OWNER_DECLINED).
+        let mut rig = rig("reason", 600_000);
+        let set = br#"{"set":"a"}"#;
+        let first = rig.propose(PLUGIN, set).unwrap();
+        let digest = rig.ledger.transaction(|txn| Ok(txn.proposal(&first)?.operation_digest)).unwrap();
+        rig.decline(first).unwrap();
+        let declined = rig.ledger.transaction(|txn| txn.last_decline(digest)).unwrap();
+        assert_eq!(declined.map(|row| row.proposal), Some(first));
+    }
 }

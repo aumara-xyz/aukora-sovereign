@@ -25,6 +25,10 @@ StartLimitBurst=6
 Type=exec
 User=aukora
 Group=aukora
+# An owner-approved upgrade (deploy/engine/NODE.md, O17): before each start, root makes the release the owner's floor
+# names current, if it is staged and is not current yet. '+' runs it as root (it reads the floor through the installed
+# binary as aukora); '-': it never stops the supervisor from starting on the release it has.
+ExecStartPre=-+/usr/bin/python3 -B -I /opt/aukora/current/deploy/upgrade/node_release.py follow
 ExecStart=/opt/aukora/current/bin/sovereign serve --config /etc/aukora/node.json
 Restart=on-failure
 RestartSec=3s

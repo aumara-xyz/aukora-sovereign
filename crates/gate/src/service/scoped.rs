@@ -7,6 +7,8 @@ mod recovery;
 mod release;
 mod review;
 
+pub use release::release_operation_digest;
+
 /// The caller commits each transition and supplies a new transaction for effects.
 pub struct ScopedGate<S> {
     targets: S,
@@ -255,6 +257,32 @@ impl<S: TargetStore> ScopedGate<S> {
         Ok(outcome(&proposal, ProposalState::Retired, receipt.hash))
     }
 
+    /// The owner's Decline (NODE.md O19): a deliberate no, recorded as a `gate.refuse` terminal whose reason is
+    /// `aura::storage::OWNER_DECLINED`. No passkey: it only narrows (nothing is applied), like revoking a standing
+    /// grant. It ends any review the owner opened for the card. Until the owner asks again (`Rerequest`, new
+    /// evidence), the same bytes are refused `declined-unchanged`. Closing a card is not this: an unanswered card only
+    /// expires, and an expiry is not a decline. A settled proposal answers its existing outcome.
+    pub fn decline(&mut self, txn: &mut LedgerTxn<'_>, id: ProposalId) -> Result<Outcome> {
+        let proposal = load(txn, id)?;
+        validate_content(self.config.node, &proposal)?;
+        if proposal.state.is_terminal() {
+            return terminal_outcome(txn, &proposal);
+        }
+        pending(txn, &proposal)?;
+        let at = now(txn)?;
+        let row = lifecycle(
+            txn,
+            &proposal,
+            LifecycleKind::GateRefuse,
+            Phase::Terminal,
+            at,
+            declined_body(&proposal)?,
+        )?;
+        let receipt = txn.decline(&id, row)?;
+        txn.release_reservation(&id)?;
+        Ok(outcome(&proposal, ProposalState::Refused, receipt.hash))
+    }
+
     fn spec(&self, target: &crate::target::TargetId) -> Result<&TargetSpec> {
         self.config
             .targets
@@ -317,6 +345,19 @@ impl<S: TargetStore> ScopedGate<S> {
         }
         Ok(())
     }
+}
+
+fn declined_body(proposal: &Proposal) -> Result<Value> {
+    let body = outcome_body(proposal, ProposalState::Refused, None, None)?;
+    let ValueView::Object(fields) = body.view() else {
+        return Err(crate::refuse("terminal-body"));
+    };
+    let mut fields = fields.to_vec();
+    fields.push((
+        "reason".into(),
+        Value::text(aura::storage::OWNER_DECLINED.to_owned())?,
+    ));
+    Value::object(fields)
 }
 
 fn now(txn: &mut LedgerTxn<'_>) -> Result<i64> {

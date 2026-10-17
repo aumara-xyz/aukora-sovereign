@@ -7,7 +7,8 @@ import { canonical, domainDigest, object, parseAuthorization, parseCanonical, pa
 import type { Authorization, JsonObject, JsonValue } from "./codec.js";
 import type { SupervisorApprovalActions } from "./index.js";
 
-export type ApprovalRoute = "/api/v1/approvals/review" | "/api/v1/approvals/assertion";
+export type ApprovalRoute = "/api/v1/approvals/review" | "/api/v1/approvals/assertion"
+  | "/api/v1/approvals/decline" | "/api/v1/approvals/again";
 export type ApprovalResponse = { readonly body: unknown; readonly relativeTimeoutMs?: number };
 export type ApprovalRequest = (route: ApprovalRoute, body: JsonObject, signal: AbortSignal) => Promise<ApprovalResponse>;
 export type ApprovalServiceOptions = {
@@ -156,6 +157,30 @@ export function createApprovalTransport(options: ApprovalServiceOptions = {}): S
       if (result.schema !== "aukora-owner-outcome-v1" || result.proposal_id !== id
         || result.state !== (action === "retire" ? "retired" : "applied")) refuse("effect-unconfirmed");
       checkAbort(signal);
+    },
+    // The owner's Decline: a deliberate no, no passkey. Closing the card is not this (NODE.md O19).
+    async decline(id, signal): Promise<void> {
+      proposal(id);
+      checkAbort(signal);
+      reviewed.delete(id);
+      const loaded = await post("/api/v1/approvals/decline", { proposal_id: id }, signal);
+      const result = responseObject(loaded.body);
+      keys(result, ["schema", "proposal_id", "state"]);
+      if (result.schema !== "aukora-owner-outcome-v1" || result.proposal_id !== id
+        || result.state !== "refused") refuse("effect-unconfirmed");
+      checkAbort(signal);
+    },
+    // Ask again for a declined card: the node raises a fresh card for the same bytes and names it.
+    async again(id, signal): Promise<string> {
+      proposal(id);
+      checkAbort(signal);
+      const loaded = await post("/api/v1/approvals/again", { proposal_id: id }, signal);
+      const result = responseObject(loaded.body);
+      keys(result, ["schema", "proposal_id"]);
+      if (result.schema !== "aukora-owner-again-v1" || typeof result.proposal_id !== "string") refuse("response");
+      proposal(result.proposal_id);
+      checkAbort(signal);
+      return result.proposal_id;
     },
   };
 }

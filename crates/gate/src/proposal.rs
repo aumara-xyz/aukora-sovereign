@@ -163,6 +163,12 @@ pub enum SuggestionOrder {
     RuleAfterReviewedBatch { batch: OperationId },
 }
 
+/// The operation digest the gate gives a request: the same node, target, base and bytes always give the same digest
+/// (the key a decline is recorded under).
+pub fn request_digest(node: NodeId, request: &ProposalRequest) -> crate::Result<OperationDigest> {
+    content_digest(node, request)
+}
+
 pub(crate) fn content_digest(
     node: NodeId,
     request: &ProposalRequest,

@@ -29,6 +29,10 @@ fn main() {
 fn run() -> canon::Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if arguments.first().is_some_and(|command| command == "release") {
+        // `release floor --config PATH`: which release the owner's floor approved (node_release.py follow, NODE.md O17).
+        if arguments.get(1).is_some_and(|command| command == "floor") {
+            return release::floor_cli(&arguments[2..]);
+        }
         return release::pointer::run(&arguments[1..]);
     }
     // The Rust door for the engine's crossings (engine/plugins/aukora-door): `door serve --socket PATH --policy FILE`.

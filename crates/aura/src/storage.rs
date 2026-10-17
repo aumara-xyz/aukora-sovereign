@@ -55,6 +55,10 @@ pub struct StagedAuthorization {
     pub card: Card,
 }
 
+/// The `reason` a `gate.refuse` terminal carries when the owner pressed Decline. Only such a terminal is a decline
+/// (`LedgerTxn::last_decline`): an expiry or a refusal for any other reason is not the owner's no (NODE.md O19).
+pub const OWNER_DECLINED: &str = "owner-declined";
+
 /// Declines survive retirement; only different evidence permits reconsideration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeclinedProposal {

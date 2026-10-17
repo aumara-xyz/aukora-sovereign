@@ -38,23 +38,7 @@ impl ReleaseFiles {
         // Deployment owns the one current-release symlink. Its resolved tree is immutable to this user.
         let resolved = std::fs::canonicalize(root).map_err(|_| refuse("release-directory"))?;
         let directory = trusted_directory(&resolved)?;
-        let bytes = read(&directory, "release.json", 4 * 1024 * 1024)?;
-        let release_digest = Digest32::sha256(&bytes);
-        let value = json::parse_strict(&bytes)?;
-        if value.canonical_bytes() != bytes || text(&value, "schema")? != "aukora-release-v1" {
-            return Err(refuse("release-manifest"));
-        }
-        let files = validate_manifest(&value)?;
-        let manifest = read(
-            &directory,
-            "www/release-manifest.json",
-            frontdoor::assets::MAX_MANIFEST_BYTES,
-        )?;
-        let manifest_digest = Digest32::sha256(&manifest);
-        verify_entry(files, "www/release-manifest.json", &manifest)?;
-        let executable = read(&directory, "bin/sovereign", 256 * 1024 * 1024)?;
-        verify_entry(files, "bin/sovereign", &executable)?;
-        let binary_digest = Digest32::sha256(&executable);
+        let tree = verify_tree(&directory)?;
         let running = std::env::current_exe().map_err(|_| refuse("running-executable"))?;
         let file: File = open(
             &running,
@@ -68,7 +52,7 @@ impl ReleaseFiles {
             || metadata.uid() != 0
             || metadata.mode() & 0o022 != 0
             || metadata.nlink() != 1
-            || metadata.len() != executable.len() as u64
+            || metadata.len() != tree.binary_len as u64
         {
             return Err(refuse("running-executable"));
         }
@@ -76,45 +60,17 @@ impl ReleaseFiles {
         file.take(256 * 1024 * 1024 + 1)
             .read_to_end(&mut running_bytes)
             .map_err(|_| refuse("running-executable"))?;
-        if running_bytes.len() != executable.len()
-            || Digest32::sha256(&running_bytes) != binary_digest
+        if running_bytes.len() != tree.binary_len
+            || Digest32::sha256(&running_bytes) != tree.binary_digest
         {
             return Err(refuse("running-release-mismatch"));
         }
-        let browser = json::parse_strict(&manifest)?;
-        let Some(ValueView::Array(assets)) = browser.get("assets").map(Value::view) else {
-            return Err(refuse("release-manifest"));
-        };
-        if !assets
-            .iter()
-            .any(|asset| text(asset, "path").ok() == Some("app/core/pentora.wasm"))
-        {
-            return Err(refuse("pentora-asset-missing"));
-        }
-        let pentora = read(
-            &directory,
-            "www/app/core/pentora.wasm",
-            frontdoor::assets::MAX_ASSET_BYTES,
-        )?;
-        verify_entry(files, "www/app/core/pentora.wasm", &pentora)?;
-        // Every browser manifest leaf must also occur in the installed release commitment.
-        for asset in assets {
-            let path = text(asset, "path")?;
-            let entry = files
-                .get(&format!("www/{path}"))
-                .ok_or(refuse("release-manifest"))?;
-            if entry.get("bytes") != asset.get("bytes")
-                || entry.get("sha256") != asset.get("sha256")
-            {
-                return Err(refuse("release-manifest"));
-            }
-        }
         Ok(Self {
             directory,
-            manifest,
-            manifest_digest,
-            release_digest,
-            binary_digest,
+            manifest: tree.manifest,
+            manifest_digest: tree.manifest_digest,
+            release_digest: tree.release_digest,
+            binary_digest: tree.binary_digest,
             floor_directory,
             ledger,
         })
@@ -257,6 +213,124 @@ impl ReleaseFiles {
     pub fn manifest_digest(&self) -> Digest32 {
         self.manifest_digest
     }
+}
+
+struct VerifiedTree {
+    manifest: Vec<u8>,
+    manifest_digest: Digest32,
+    release_digest: Digest32,
+    binary_digest: Digest32,
+    binary_len: usize,
+}
+
+/// Everything `ReleaseFiles::open` checks of a release tree except that it is the running binary: the manifest, the
+/// shell's browser manifest and every leaf it names, the supervisor binary and the Pentora cell.
+fn verify_tree(directory: &File) -> Result<VerifiedTree> {
+    let bytes = read(directory, "release.json", 4 * 1024 * 1024)?;
+    let release_digest = Digest32::sha256(&bytes);
+    let value = json::parse_strict(&bytes)?;
+    if value.canonical_bytes() != bytes || text(&value, "schema")? != "aukora-release-v1" {
+        return Err(refuse("release-manifest"));
+    }
+    let files = validate_manifest(&value)?;
+    let manifest = read(
+        directory,
+        "www/release-manifest.json",
+        frontdoor::assets::MAX_MANIFEST_BYTES,
+    )?;
+    let manifest_digest = Digest32::sha256(&manifest);
+    verify_entry(files, "www/release-manifest.json", &manifest)?;
+    let executable = read(directory, "bin/sovereign", 256 * 1024 * 1024)?;
+    verify_entry(files, "bin/sovereign", &executable)?;
+    let binary_digest = Digest32::sha256(&executable);
+    let browser = json::parse_strict(&manifest)?;
+    let Some(ValueView::Array(assets)) = browser.get("assets").map(Value::view) else {
+        return Err(refuse("release-manifest"));
+    };
+    if !assets
+        .iter()
+        .any(|asset| text(asset, "path").ok() == Some("app/core/pentora.wasm"))
+    {
+        return Err(refuse("pentora-asset-missing"));
+    }
+    let pentora = read(
+        directory,
+        "www/app/core/pentora.wasm",
+        frontdoor::assets::MAX_ASSET_BYTES,
+    )?;
+    verify_entry(files, "www/app/core/pentora.wasm", &pentora)?;
+    // Every browser manifest leaf must also occur in the installed release commitment.
+    for asset in assets {
+        let path = text(asset, "path")?;
+        let entry = files
+            .get(&format!("www/{path}"))
+            .ok_or(refuse("release-manifest"))?;
+        if entry.get("bytes") != asset.get("bytes")
+            || entry.get("sha256") != asset.get("sha256")
+        {
+            return Err(refuse("release-manifest"));
+        }
+    }
+    Ok(VerifiedTree {
+        manifest,
+        manifest_digest,
+        release_digest,
+        binary_digest,
+        binary_len: executable.len(),
+    })
+}
+
+/// The release the operator offered for an upgrade (`/opt/aukora/offered`, a root-made link to a staged release),
+/// verified as a whole tree exactly as the running one is, plus the staging tool's own `.verified` marker. Its
+/// release digest (the SHA-256 of `release.json`) is what the owner's card names. `None`: nothing is offered.
+pub(crate) fn verify_candidate(link: &Path) -> Result<Option<(PathBuf, Digest32)>> {
+    match std::fs::symlink_metadata(link) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(refuse("release-offer")),
+        Ok(metadata) if !metadata.file_type().is_symlink() || metadata.uid() != 0 => {
+            return Err(refuse("release-offer"))
+        }
+        Ok(_) => {}
+    }
+    let resolved = std::fs::canonicalize(link).map_err(|_| refuse("release-offer"))?;
+    let directory = trusted_directory(&resolved)?;
+    let tree = verify_tree(&directory)?;
+    let marker = read(&directory, ".verified", 65)?;
+    if marker != format!("{}\n", tree.release_digest).as_bytes() {
+        return Err(refuse("release-not-verified"));
+    }
+    Ok(Some((resolved, tree.release_digest)))
+}
+
+/// `sovereign release floor --config PATH`, run by the supervisor's root pre-start step as the service user while the
+/// supervisor is stopped (it takes the state lock): print the release digest the owner's floor names, after the floor
+/// is reconciled with Aura and its history checked, or refuse. The install's own starting floor is nobody's approval
+/// and prints nothing (exit 3). This is the only answer `node_release.py follow` switches on.
+pub(crate) fn floor_cli(arguments: &[std::ffi::OsString]) -> Result<()> {
+    let [flag, path] = arguments else {
+        return Err(refuse("release-floor-usage"));
+    };
+    if flag != "--config" {
+        return Err(refuse("release-floor-usage"));
+    }
+    let config = crate::config::NodeConfig::load(Path::new(path))?;
+    let state = crate::state::HostState::open(&config.state_root, &config.node)?;
+    let ledger = HostLedger::open(
+        &config.state_root.join("aura.sqlite3"),
+        state.signer.clone(),
+        Arc::new(crate::adapters::HostClock),
+    )?;
+    let mut floor = floor::service::FloorService::open(&config.state_root.join("floor"))?;
+    let current = ledger.transaction(|transaction| {
+        let current = floor.reconcile(transaction)?;
+        floor.probe_release_guard(transaction)?;
+        Ok(current)
+    })?;
+    if current.is_install_genesis() {
+        std::process::exit(3);
+    }
+    println!("{}", current.floor.digest);
+    Ok(())
 }
 
 fn require_release_order(published: &floor::Floor, order: &floor::ReleaseOrder) -> Result<()> {

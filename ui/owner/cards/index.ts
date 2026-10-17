@@ -13,6 +13,8 @@ import { renderBrowserAdvice } from "../passkey/browser.js";
 
 export interface SupervisorApprovalActions {
   submitAuthorization(proposalId: string, action: Authorization["op"], assertion: Uint8Array, signal: AbortSignal): Promise<void>;
+  decline(proposalId: string, signal: AbortSignal): Promise<void>;
+  again(proposalId: string, signal: AbortSignal): Promise<string>;
 }
 
 function failure(error: unknown): string {
@@ -23,6 +25,11 @@ function failure(error: unknown): string {
     return "This approval is no longer available.";
   }
   return "Approval unavailable. Review again to check its current state.";
+}
+
+/** A card that is no longer open (declined, expired, settled): the owner may ask for it again. */
+function closed(error: unknown): boolean {
+  return error instanceof Error && /:(?:not-pending|expired|declined-unchanged)$/.test(error.message);
 }
 
 function needsReview(error: unknown): boolean {
@@ -51,9 +58,14 @@ export class ApprovalCards implements ApprovalPaneService {
     retry.type = "button";
     retry.textContent = "Review again";
     retry.hidden = true;
+    const again = document.createElement("button");
+    again.type = "button";
+    again.className = "approval-again";
+    again.textContent = "Ask again";
+    again.hidden = true;
     status.setAttribute("role", "status");
     status.textContent = "Loading approval…";
-    review.append(stylesheet, status, retry);
+    review.append(stylesheet, status, retry, again);
     context.host.replaceChildren(review);
     let disposed = false;
     let started = false;
@@ -71,6 +83,17 @@ export class ApprovalCards implements ApprovalPaneService {
     if (context.signal.aborted) { dispose(); return dispose; }
     const showFailure = (error: unknown): void => {
       if (signal.aborted) return;
+      if (closed(error)) {
+        // Declined (or otherwise closed): nothing to approve here; the owner may ask for it again (O19).
+        review.replaceChildren(stylesheet, status, again);
+        status.setAttribute("role", "status");
+        status.classList.remove("owner-status");
+        status.textContent = "This request is closed. You declined it or it ran out of time.";
+        again.hidden = false;
+        again.disabled = false;
+        again.focus();
+        return;
+      }
       status.setAttribute("role", "alert");
       if (!renderBrowserAdvice(status, error)) {
         status.classList.remove("owner-status");
@@ -94,7 +117,8 @@ export class ApprovalCards implements ApprovalPaneService {
       started = true;
       retry.hidden = true;
       retry.disabled = true;
-      review.replaceChildren(stylesheet, status, retry);
+      review.replaceChildren(stylesheet, status, retry, again);
+      again.hidden = true;
       status.setAttribute("role", "status");
       status.classList.remove("owner-status");
       status.classList.toggle("approval-renewed", refresh);
@@ -133,9 +157,13 @@ export class ApprovalCards implements ApprovalPaneService {
         const passkeyCue = document.createElement("small");
         passkeyCue.textContent = "Touch ID / passkey";
         authorize.append(ownerIcon("owner"), actionLabel, passkeyCue);
+        const decline = document.createElement("button");
+        decline.type = "button";
+        decline.className = "approval-decline";
+        decline.textContent = "Decline";
         const controls = document.createElement("div");
         controls.className = "approval-actions";
-        controls.append(authorize);
+        controls.append(decline, authorize);
         review.append(cardView, renderAuthorization(document, auth), controls);
         if (refresh) {
           const message = document.createElement("span");
@@ -169,9 +197,44 @@ export class ApprovalCards implements ApprovalPaneService {
             } finally { ceremony.dispose(); }
           })().catch(recover);
         }, { signal });
+        decline.addEventListener("click", () => {
+          if (started || loading || signal.aborted) return;
+          started = true;
+          decline.disabled = true;
+          authorize.disabled = true;
+          status.textContent = "Declining…";
+          void (async () => {
+            await this.actions.decline(proposalId, signal);
+            checkAbort(signal);
+            // A deliberate no. It stays declined until the owner asks again, here or under Approvals.
+            review.replaceChildren(stylesheet, status, again);
+            status.textContent = "Declined. Nothing changes until you ask again.";
+            again.hidden = false;
+            again.disabled = false;
+          })().catch(error => { started = false; decline.disabled = false; authorize.disabled = false; showFailure(error); });
+        }, { signal });
       } finally { loading = false; retry.disabled = false; }
     };
     retry.addEventListener("click", () => { void load().catch(recover); }, { signal });
+    again.addEventListener("click", () => {
+      if (signal.aborted || again.disabled) return;
+      again.disabled = true;
+      status.setAttribute("role", "status");
+      status.textContent = "Asking again…";
+      void (async () => {
+        await this.actions.again(proposalId, signal);
+        checkAbort(signal);
+        status.textContent = "Asked again. The new card opens next.";
+        again.hidden = true;
+        context.complete();
+      })().catch(error => {
+        if (signal.aborted) return;
+        again.hidden = true;
+        status.setAttribute("role", "alert");
+        status.textContent = failure(error);
+        retry.hidden = false;
+      });
+    }, { signal });
     void load().catch(recover);
     return dispose;
   }

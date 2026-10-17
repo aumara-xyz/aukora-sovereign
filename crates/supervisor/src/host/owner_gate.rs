@@ -59,6 +59,14 @@ impl Host {
                 )?;
                 owner_origin::encode_gate_outcome(&outcome)?
             }
+            GateRequest::Decline { proposal } => {
+                let outcome = runtime.block_on(self.gate.decline(scope, proposal))?;
+                owner_origin::encode_gate_outcome(&outcome)?
+            }
+            GateRequest::Again { proposal } => {
+                let fresh = runtime.block_on(self.gate.again(scope, proposal))?;
+                owner_origin::encode_gate_again(fresh)?
+            }
         };
         if self.ledger.binding()? != BindingState::Bound(scope) {
             return Err(codes::AUMLOK_BINDING_REQUIRED);
@@ -89,7 +97,7 @@ fn owner_gate_timeout(value: &Value) -> Result<u64> {
     use canon::json::ValueView;
     let invalid = codes::FRONTDOOR_APPROVAL_REVIEW_INVALID;
     match value.get("schema").map(Value::view) {
-        Some(ValueView::Text("aukora-owner-outcome-v1")) => Ok(0),
+        Some(ValueView::Text("aukora-owner-outcome-v1" | "aukora-owner-again-v1")) => Ok(0),
         Some(ValueView::Text("aukora-owner-review-v1")) => {
             let Some(ValueView::Text(bytes)) = value.get("authorization").map(Value::view) else {
                 return Err(invalid);

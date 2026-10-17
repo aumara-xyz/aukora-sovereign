@@ -35,6 +35,14 @@ impl HostLedger {
             .approve(self, scope, proposal, assertion)
     }
 
+    pub(crate) fn release_again(
+        &self,
+        scope: PrincipalScope,
+        declined: ProposalId,
+    ) -> Result<ProposalId> {
+        self.release_approval_context()?.again(self, scope, declined)
+    }
+
     fn release_approval_context(&self) -> Result<crate::release::ReleaseApproval> {
         self.release_approval
             .lock()

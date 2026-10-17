@@ -63,9 +63,17 @@ impl ApprovalFeed {
                 ("expires_at_ms".into(), number(proposal.expires_at_ms)?),
             ])?);
         }
+        // The owner's standing Declines among the node's own requests: what the owner may ask for again (O19).
+        let declined = self
+            .ledger
+            .scoped(scope, |txn| txn.owner_declines(16))?
+            .into_iter()
+            .map(|(proposal, _)| Value::text(proposal.to_string()))
+            .collect::<Result<Vec<_>>>()?;
         let value = Value::object(vec![
             ("sequence".into(), number(update.sequence)?),
             ("proposals".into(), Value::array(proposals)?),
+            ("declined".into(), Value::array(declined)?),
         ])?;
         if self.ledger.binding()? != BindingState::Bound(scope) {
             channel.poller.clear();

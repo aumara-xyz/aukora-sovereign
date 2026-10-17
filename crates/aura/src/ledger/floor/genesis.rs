@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The first owner release uses a signed proposal only as ordering data.
+//! A release proposal from the supervisor is ordering data for the floor it starts from: the install's floor for the
+//! installed release (genesis), an owner's floor for the next release (an upgrade, NODE.md O17).
 
 use super::*;
 
@@ -9,16 +10,19 @@ pub(super) fn release_proposal_source(
     source: &AuthorityRecord,
     proposal: &crate::storage::ProposalState,
 ) -> Result<bool> {
-    let Some(install) = current else {
+    let Some(current) = current else {
         return Ok(false);
     };
-    if field_text(install, "schema")? != INSTALL_STATE || source.kind != Kind::GatePropose {
+    if source.kind != Kind::GatePropose {
         return Ok(false);
     }
-    let installed = member(install, "floor")?;
+    let genesis = field_text(current, "schema")? == INSTALL_STATE;
+    let installed = member(current, "floor")?;
     let floor = member(next, "floor")?;
     let payload = super::super::gate_payload(&source.body);
-    if hash(installed, "digest")? != hash(floor, "digest")?
+    // Genesis approves the installed release itself; an upgrade names another one.
+    let same = hash(installed, "digest")? == hash(floor, "digest")?;
+    if same != genesis
         || source.authority != proposal.authority
         || source.authority.epoch != positive(floor, "signer_epoch")?
         || source.authority.sequence != positive(floor, "ledger_seq")?
@@ -44,6 +48,6 @@ pub(super) fn release_proposal_source(
     {
         return Err(refusal("floor-ordering"));
     }
-    release_pointer(&proposal.new_bytes, hash(installed, "digest")?)?;
+    release_pointer(&proposal.new_bytes, hash(floor, "digest")?)?;
     Ok(true)
 }

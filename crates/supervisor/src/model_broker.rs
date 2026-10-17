@@ -179,27 +179,42 @@ pub enum KeyStage {
 impl ModelBroker {
     /// Hold the key the owner typed (memory only) and ask for the passkey unless this exact key is already approved.
     /// Entering a new key replaces the held one at once: until the owner approves it, the engine's calls are refused.
+    ///
+    /// The card comes first, the key second (SCOUT's sweep M5): a key whose card cannot be raised is not held, so it
+    /// never silently replaces a key that is waiting on its own card. Typing the owner's key is the owner's own request:
+    /// the same key again after its card ran out of time or was declined raises a fresh card (NODE.md O19), and the same
+    /// key while its card is still up is that card.
     pub async fn stage_key(&self, scope: PrincipalScope, key: String, now: u64) -> Result<KeyStage> {
         broker::keystore::validate_key(&key)?;
         let approval = KeyApproval::for_key(&key);
-        let ticket = self.keys.issue(now, 60_000)?;
-        self.keys.redeem(ticket.token(), key, now)?;
         let fingerprint = approval.fingerprint().to_owned();
         let approved = self.gate.approved_target(KEY_TARGET).await.ok().flatten();
         if approved.as_deref().and_then(KeyApproval::parse).is_some_and(|current| current == approval) {
+            self.hold(key, now)?;
             eprintln!("model-broker: the entered key is the approved one ({fingerprint})");
             self.sync_key(Some(&approval.key_sha256), now);
             return Ok(KeyStage::Active(fingerprint));
-        }
-        // A different key replaces the stored one at once; it is stored again only after the owner approves its card.
-        if self.key_file.remove().is_err() {
-            eprintln!("model-broker: the stored key could not be removed");
         }
         let note = format!(
             "Let the engine's model calls use the DeepSeek key you just entered: fingerprint {fingerprint} (the first 12 \
              hex digits of key_sha256). The key itself stays in the broker; this card holds only its SHA-256."
         );
-        self.gate.propose_model_target(scope, KEY_TARGET, note, approval.canonical_bytes()).await?;
+        if let Err(refusal) = self
+            .gate
+            .propose_owner_requested(scope, KEY_TARGET, note, approval.canonical_bytes())
+            .await
+        {
+            if refusal.reason == "awaiting-other-approval" {
+                eprintln!("model-broker: a key was entered while another key's card is up; not held ({fingerprint})");
+            }
+            return Err(refusal);
+        }
+        // The card is up: the new key replaces the held one, and the stored one is removed at once; the new key is
+        // stored only after the owner approves its card (keep_key), and nothing is stored for a declined card.
+        if self.key_file.remove().is_err() {
+            eprintln!("model-broker: the stored key could not be removed");
+        }
+        self.hold(key, now)?;
         eprintln!("model-broker: a key was entered; awaiting the owner's approval ({fingerprint})");
         Ok(KeyStage::AwaitingApproval(fingerprint))
     }
@@ -243,6 +258,12 @@ impl ModelBroker {
             }
             tokio::time::sleep(KEY_TICK).await;
         }
+    }
+
+    /// Hold the key in the broker's memory (it is used only while its SHA-256 is the approved one).
+    fn hold(&self, key: String, now: u64) -> Result<()> {
+        let ticket = self.keys.issue(now, 60_000)?;
+        self.keys.redeem(ticket.token(), key, now).map(|_| ())
     }
 
     /// Keep an approved, current budget with the configured terms; propose one when there is none, when the terms

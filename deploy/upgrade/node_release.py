@@ -36,6 +36,9 @@ ROOT = "/opt/aukora"
 RELEASES = ROOT + "/releases"
 CURRENT = ROOT + "/current"
 PREVIOUS = ROOT + "/previous"
+# A staged release the operator offers for an owner-approved upgrade (NODE.md O17): the running release raises the
+# card; `follow` (the supervisor's root pre-start) switches to it only once the owner's floor names it.
+OFFERED = ROOT + "/offered"
 CONFIG = "/etc/aukora"
 NODE_JSON = CONFIG + "/node.json"
 EGRESS = CONFIG + "/egress.json"
@@ -50,6 +53,7 @@ UNIT_DIR = "/etc/systemd/system"
 SERVICE = "aukora-sovereign.service"
 ENABLED = ("aukora-egress.service", "aukora-egress-verify.timer", SERVICE)
 SERVICE_USER = "aukora"
+FOLLOW_SECONDS = 30
 RELEASE_ID = re.compile(r"[0-9a-f]{12}-[0-9a-f]{12}\Z")
 HOSTS_BEGIN, HOSTS_END = "# BEGIN AUKORA EGRESS\n", "# END AUKORA EGRESS\n"
 PROBE_PATH = "/"
@@ -398,6 +402,102 @@ def restore_previous(previous_before):
             sync_directory(os.path.dirname(PREVIOUS))
 
 
+# ---- owner-approved upgrade (NODE.md O17) --------------------------------------------------------------------
+
+def staged_digest(rid):
+    """The release digest a staged release was verified as (its .verified marker), checked by verified_release."""
+    if not RELEASE_ID.match(rid):
+        core.refuse("node-release", "arguments")
+    marker = core.read_regular(os.path.join(RELEASES, rid, ".verified"), 128, "release").decode("ascii", "replace").strip()
+    if not core.is_hex(marker, 64):
+        core.refuse("node-release", "not-staged")
+    directory, manifest = verified_release(rid, marker)
+    return directory, manifest, marker
+
+
+def offer(rid):
+    """Offer a staged release to the owner. Nothing switches: the running release raises the upgrade card and keeps
+    serving until the owner approves it; the switch happens at the supervisor's next start (follow)."""
+    with switch_lock():
+        staged_digest(rid)
+        current = link_id(CURRENT)
+        if current is None:
+            core.refuse("node-release", "not-installed")
+        if current == rid:
+            core.refuse("node-release", "already-current")
+        point(OFFERED, "releases/" + rid)
+    return rid
+
+
+def withdraw():
+    """Take the offer back. A pending upgrade card is withdrawn by the running release (not a decline)."""
+    with switch_lock():
+        try:
+            os.unlink(OFFERED)
+        except FileNotFoundError:
+            return "none"
+        sync_directory(ROOT)
+    return "withdrawn"
+
+
+def approved_floor(binary):
+    """The release digest the owner's floor names, read by the installed binary as the service user (it holds the
+    supervisor's state lock, so this runs only while the supervisor is stopped). None: no owner floor yet, or it could
+    not be read; never a switch."""
+    try:
+        done = subprocess.run(["runuser", "-u", SERVICE_USER, "--", binary, "release", "floor", "--config", NODE_JSON],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=FOLLOW_SECONDS, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = done.stdout.decode("ascii", "replace").strip()
+    return found if done.returncode == 0 and core.is_hex(found, 64) else None
+
+
+def staged_with_digest(digest):
+    """The staged release whose release.json has this digest (its id ends in the digest's first 12 digits), if any."""
+    try:
+        names = sorted(os.listdir(RELEASES))
+    except OSError:
+        return None
+    for name in names:
+        if RELEASE_ID.match(name) and name.endswith("-" + digest[:12]):
+            try:
+                if staged_digest(name)[2] == digest:
+                    return name
+            except core.Refusal:
+                continue
+    return None
+
+
+def follow():
+    """The supervisor's root pre-start step (ExecStartPre=-+): if the owner's floor names a staged release other than
+    the current one (normally the offered release the owner just approved), make it current (previous = the old one),
+    record it as active and drop the offer. Anything else leaves the links alone. It never fails the start: the
+    supervisor then serves the release it served before (and refuses to, if the floor names another one)."""
+    with switch_lock():
+        current = link_id(CURRENT)
+        active = read_active()
+        if current is None or active is None or active["id"] != current:
+            return "unchanged"
+        floor = approved_floor(trusted_verifier(current, active))
+        if floor is None or floor == active["release"]:
+            return "unchanged"
+        target = staged_with_digest(floor)
+        if target is None:
+            return "approved-release-not-staged"
+        directory, manifest, digest = staged_digest(target)
+        point(PREVIOUS, "releases/" + current)
+        point(CURRENT, "releases/" + target)
+        write_active(target, manifest, digest, active["seq"], active["pointer_sha256"])
+        if os.path.lexists(OFFERED):
+            os.unlink(OFFERED)
+            sync_directory(ROOT)
+        if sync_units(directory):
+            system(["systemctl", "daemon-reload"], check=False)
+        return "switched to " + target
+
+
 # ---- claim and egress ----------------------------------------------------------------------------------------
 
 def claim(digest, delivered):
@@ -459,7 +559,8 @@ def egress(path):
 
 def status():
     active = read_active()
-    print(json.dumps({"current": link_id(CURRENT), "previous": link_id(PREVIOUS), "active": active,
+    print(json.dumps({"current": link_id(CURRENT), "previous": link_id(PREVIOUS), "offered": link_id(OFFERED),
+                      "active": active,
                       "instance": installation(node_config().get("node")),
                       "claim_delivered": os.path.lexists(DELIVERED)}, sort_keys=True))
 
@@ -514,6 +615,21 @@ def main(argv):
         result = switch(found["--id"], found["--release"], found["--pointer"], found["--assertion"], seconds)
         print(json.dumps({"result": result}, sort_keys=True))
         return 0 if result == "switched" else 3
+    elif command == "offer":
+        found = options(rest, {"--id": True})
+        if "--id" not in found:
+            core.refuse("node-release", "usage")
+        print(json.dumps({"offered": offer(found["--id"])}, sort_keys=True))
+    elif command == "withdraw":
+        options(rest, {})
+        print(json.dumps({"result": withdraw()}, sort_keys=True))
+    elif command == "follow":
+        options(rest, {})
+        try:
+            result = follow()
+        except (core.Refusal, OSError, subprocess.SubprocessError) as error:
+            result = "unchanged (" + type(error).__name__ + ")"
+        print("node-release follow: " + result, file=sys.stderr)
     elif command == "claim":
         found = options(rest, {"--digest": True, "--delivered": False})
         if ("--digest" in found) == ("--delivered" in found):

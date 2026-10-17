@@ -217,6 +217,8 @@ fn keep_through_hold(started: bool, running: bool, unreadable_for: Duration) -> 
 
 pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut proposed: Option<(Digest32, Instant)> = None;
+    // The set the owner explicitly declined (NODE.md O19): not raised again until the owner asks again (Approvals).
+    let mut declined: Option<Digest32> = None;
     let mut started_from: Option<Vec<u8>> = None;
     let mut said_failed = false;
     let mut unreadable_since: Option<Instant> = None;
@@ -264,8 +266,10 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
             unreadable_since = None;
         }
         // "running" is said (and served, proxy.rs) only once the unit is active, i.e. after the policy check passed.
+        let declined_now = declined.is_some() && decision.propose.as_deref().map(Digest32::sha256) == declined;
         engine.set_status(match decision.reason {
             "running" if !servable(&state) => "starting",
+            "awaiting-plugin-set-approval" if declined_now => "plugin-set-declined",
             reason => reason,
         });
         if let (Some(set), Some(scope)) = (decision.propose.as_ref(), bound) {
@@ -274,8 +278,17 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
             if due {
                 proposed = Some((digest, Instant::now()));
                 let note = "Let the engine load exactly these plugin packages (names and SHA-256 fingerprints)".to_owned();
-                if let Err(refusal) = host.engine_gate().propose_plugin_set(scope, note, set.clone()).await {
-                    eprintln!("engine: plugin-set proposal not raised: {}:{}", refusal.organ, refusal.reason);
+                match host.engine_gate().propose_plugin_set(scope, note, set.clone()).await {
+                    Ok(_) => declined = None,
+                    Err(refusal) if matches!(refusal.reason, "declined-unchanged" | "unchanged-decline") => {
+                        if declined != Some(digest) {
+                            eprintln!("engine: the owner declined this plugin set; it is raised again only when the owner asks again (Approvals)");
+                        }
+                        declined = Some(digest);
+                    }
+                    Err(refusal) => {
+                        eprintln!("engine: plugin-set proposal not raised: {}:{}", refusal.organ, refusal.reason)
+                    }
                 }
             }
         }
