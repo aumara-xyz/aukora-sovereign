@@ -152,10 +152,14 @@ mod tests {
     use gate::build::{Builder as Profile, Lock, Manifest, Network, Recipe, Source, Toolchain};
     use std::cell::RefCell;
 
+    /// A private (0700) folder whatever the umask: the build records rightly refuse a group-writable parent
+    /// (`build-records`), and a group-writable umask (002, as on the Linux test VM) made seven tests fail there.
     fn temp(name: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("aukora-build-flow-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         dir
     }
 
