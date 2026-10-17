@@ -46,6 +46,12 @@ def copy_owned(source, destination, uid):
             os.fchmod(target.fileno(), 0o600)
 
 
+def results_folder():
+    """Root's records, readable by the supervisor (the unit's UMask 0077 applies to the root steps too: set, not asked)."""
+    os.makedirs(PROBE_RESULTS, mode=0o755, exist_ok=True)
+    os.chmod(PROBE_RESULTS, 0o755)
+
+
 def probe_prepare(rid):
     """ExecStartPre=+ of the probe unit: the offered, staged release only; a fresh copy of what the candidate's start
     reads, owned by the unit's throwaway user, and the configuration in a root-owned folder. Never the live state."""
@@ -53,7 +59,7 @@ def probe_prepare(rid):
     if r.link_id(r.OFFERED) != rid:
         core.refuse("node-release", "probe-not-offered")
     r.staged_digest(rid)
-    os.makedirs(PROBE_RESULTS, mode=0o755, exist_ok=True)
+    results_folder()
     try:
         os.unlink(os.path.join(PROBE_RESULTS, rid + ".json"))
     except FileNotFoundError:
@@ -139,7 +145,7 @@ def probe_finish(rid, environment=None):
     said = journal_lines(environment.get("INVOCATION_ID", ""), environment.get("MAINPID", ""))
     passed = (environment.get("SERVICE_RESULT") == "success" and environment.get("EXIT_CODE") == "exited"
               and environment.get("EXIT_STATUS") == "0" and said == ["probe ok " + digest])
-    os.makedirs(PROBE_RESULTS, mode=0o755, exist_ok=True)
+    results_folder()
     core.atomic_write(os.path.join(PROBE_RESULTS, rid + ".json"),
                       core.canonical({"v": 1, "id": rid, "release": digest, "passed": passed,
                                       "result": str(environment.get("SERVICE_RESULT", ""))[:32],

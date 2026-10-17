@@ -279,6 +279,7 @@ class Upgrade(unittest.TestCase):
             self.assertTrue(release_probe.probe_finish(self.new[0], good))
             with open(os.path.join(release_probe.PROBE_RESULTS, self.new[0] + ".json"), "rb") as record:
                 self.assertTrue(json.loads(record.read())["passed"])
+            self.assertEqual(os.stat(release_probe.PROBE_RESULTS).st_mode & 0o777, 0o755, "the supervisor reads it")
             self.assertFalse(os.path.exists(os.path.join(release_probe.PROBE_CONFIG, self.new[0])), "config copy removed")
             # A timeout (systemd killed the whole cgroup) fails, whatever the candidate said.
             self.assertFalse(release_probe.probe_finish(self.new[0], {**good, "SERVICE_RESULT": "timeout", "EXIT_CODE": "killed"}))
