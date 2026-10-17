@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# The local OpenShell 0.1.4 gateway (docker compute driver) the engine sandbox runs under. Loopback only; its keys
-# live in /var/lib/aukora-openshell (root 0700). Settings: /etc/aukora/engine/openshell-gateway.toml (wall test,
-# finding 3). [GUESS] the --config spelling: use the wall-test VM's gateway command line if it differs.
+# The local OpenShell 0.1.4 gateway (docker compute driver) the engine sandbox runs under. Loopback only; its PKI
+# (made by engine_install.py with the gateway's own generate-certs) and its database live in /var/lib/aukora-openshell
+# (root 0700, the HOME below). Settings: /etc/aukora/engine/openshell-gateway.toml. The command line is the wall
+# test's (`openshell-gateway --config FILE`, the wall-test VM's start-gw.sh).
 [Unit]
 Description=AUKORA OpenShell gateway for the engine sandbox
 After=docker.service network-online.target aukora-engine-fence.service

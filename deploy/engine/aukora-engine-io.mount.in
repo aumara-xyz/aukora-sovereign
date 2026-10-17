@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Installed by engine_install.py as /etc/systemd/system/run-aukora\x2dengine-io.mount (a mount unit is named after its
+# path; the release's file names carry no backslash). The in-wall bridge's folder, a 1 MiB tmpfs on the HOST, so the
+# folder docker binds into the sandbox is the capped one and the engine cannot fill /run. (It was mounted by
+# engine-prestart.sh, inside the engine unit's private mount namespace, where docker never saw it: SCOUT's sweep, H1.)
+# The installer substitutes the engine's uid and the aukora group's gid.
+[Unit]
+Description=AUKORA engine bridge folder (1 MiB tmpfs)
+Before=aukora-engine.service
+
+[Mount]
+What=tmpfs
+Where=/run/aukora-engine/io
+Type=tmpfs
+Options=size=1m,nr_inodes=64,mode=2770,uid=@AUMA_UID@,gid=@AUKORA_GID@,nosuid,nodev,noexec
+
+[Install]
+WantedBy=multi-user.target

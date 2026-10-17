@@ -1,35 +1,46 @@
 {
   "v": 1,
-  "note": "Every artifact the engine installer fetches on the node, by exact URL and SHA-256. A null sha256 refuses the install (engine-pin-missing): fill it with `python3 deploy/engine/engine.py pin FILE` on the operator machine from a download you checked. The model pins are the files Kira 2 runs on the Mac today (~/aukora-memory/kira/models/*.sha256).",
+  "note": "Every artifact the engine installer fetches on the node, by exact URL and SHA-256 (and size). `operator:FILE` artifacts come from the stage folder; the rest are downloaded by root on the node. All filled on the node rehearsal of 2026-10-17 (NODE.md section 8 A); refill with `python3 deploy/engine/engine.py pin FILE` when a pin changes. The model pins are the files Kira 2 runs on the Mac (~/aukora-memory/kira/models/*.sha256), confirmed against Hugging Face's x-linked-etag.",
   "artifacts": {
     "node": {
       "url": "https://nodejs.org/dist/v24.11.1/node-v24.11.1-linux-x64.tar.xz",
-      "sha256": null,
-      "install": "/opt/aukora-engine/node"
+      "sha256": "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8",
+      "install": "/opt/aukora-engine/node",
+      "bytes": 30747116,
+      "how": "nodejs.org's own release; matched against its SHASUMS256.txt for v24.11.1 (node rehearsal 2026-10-17)"
     },
     "dsh": {
       "url": "operator:dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz",
-      "sha256": null,
+      "sha256": "c83f21a7f35b05a8bec90cc4daaa481b9d25b11cd1eb63f1ca4f4a0584bf4fe4",
       "install": "/opt/aukora-engine/dsh",
-      "how": "npm install --save-exact --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.5 in an empty folder on the rehearsal VM with the pinned node; tar the folder (package.json, package-lock.json, node_modules) with --sort=name --owner=0 --group=0 --mtime=@0. The wall test ran this exact graph (/opt/toy-boundary/engine/node_modules)."
+      "how": "In an empty folder named dsh (the lockfile records the folder name), with the pinned node first on PATH: npm install --save-exact --ignore-scripts --no-audit --no-fund @deepseek-ai/dsh@0.2.1-alpha.5; then tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -czf dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz package.json package-lock.json node_modules. Two runs gave these bytes; the package graph (613 packages) is the wall test's (/opt/toy-boundary/engine), name for name and version for version.",
+      "bytes": 164175874
     },
     "openshell": {
       "url": "operator:openshell-0.1.4-linux-x64.tar.gz",
-      "sha256": null,
+      "sha256": "f34fdc8e9d5164c8f3c2ec3cfe0fdc3a47e6f1e8b7c759d676397a7a79672e25",
       "install": "/usr/local/bin",
-      "how": "the openshell and openshell-gateway 0.1.4 binaries the wall test ran (docker compute driver)"
+      "how": "usr/bin/openshell and usr/bin/openshell-gateway from NVIDIA's openshell_0.1.4-1_amd64.deb (GitHub release v0.1.4, sha256 33045069ed26acb3d1550bf10297bf4eaf9e0dce4a8c19b0dab4564650daf921 per its openshell-checksums-sha256.txt; byte-identical to the binaries the wall test ran), in a folder openshell-0.1.4: tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - openshell-0.1.4 | gzip -n -9",
+      "bytes": 51867591
     },
     "sandbox_image": {
       "url": "operator:openshell-sandbox-image.tar",
-      "sha256": null,
+      "sha256": "8e98c5e1c3acc26b4d4438fa231daac2344e1df2a79205db1c88adc421e38ff9",
       "install": "docker load",
-      "how": "docker save of the sandbox image the wall test used (docker image inspect on that VM gives its id)"
+      "how": "docker save -o openshell-sandbox-image.tar node:24-bookworm ghcr.io/nvidia/openshell/sandbox:0.1.4 ghcr.io/nvidia/openshell/supervisor:0.1.4 on the wall-test VM (docker.io 29.1.3, containerd snapshotter): the sandbox's root image (sha256:14078204b6bb...) and the two images the docker driver runs beside it (sandbox sha256:ca00c094aeaa..., supervisor sha256:aa681d8264af...). Two saves gave these bytes. The first name is the image engine-run.sh starts.",
+      "bytes": 455607808,
+      "images": [
+        "node:24-bookworm",
+        "ghcr.io/nvidia/openshell/sandbox:0.1.4",
+        "ghcr.io/nvidia/openshell/supervisor:0.1.4"
+      ]
     },
     "llama": {
-      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10621/llama-b10621-bin-ubuntu-x64.zip",
-      "sha256": null,
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10621/llama-b10621-bin-ubuntu-x64.tar.gz",
+      "sha256": "91d7b03ddae498a39f28fdb85d84d2b4a0fd3838d10b4f897e0ef8975bb9b583",
       "install": "/opt/aukora-kira/llama",
-      "how": "the CPU build of the release the Mac runs (llama-server version 0.3.0, build 10621, commit c1d0e7a00)"
+      "how": "the CPU build of the release the Mac runs (llama-server version 0.3.0, build 10621, commit c1d0e7a00); the release ships a tar.gz, not a zip; the sha256 is GitHub's asset digest",
+      "bytes": 16291771
     },
     "embed_model": {
       "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
@@ -45,9 +56,10 @@
     },
     "rust": {
       "url": "operator:rust-1.99.1-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": null,
+      "sha256": "f967bb1fe90334d8f959c720d5a29e0b70c4bddde1425842927782e0ddfc266e",
       "install": "/opt/rust",
-      "how": "the read-only toolchain the wall test mounted at /opt/rust (rustup toolchain dir for 1.99.1, minimal profile, plus wasm32-unknown-unknown)"
+      "how": "RUSTUP_HOME=$PWD/rustup CARGO_HOME=$PWD/cargohome rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown --no-self-update; then, inside rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu: tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - . | gzip -n -9. The toolchain folder itself, so /opt/rust/bin/cargo and rustc run without rustup.",
+      "bytes": 241590643
     }
   }
 }

@@ -3,12 +3,18 @@
 
   python3 -B deploy/engine/engine.py pin FILE                 # sha256 and size of a downloaded or built artifact
   python3 -B deploy/engine/engine.py install NAME --stage DIR [--on nebius-vm] [--dry-run]
+  python3 -B deploy/engine/engine.py install NAME --stage-on-node [--on nebius-vm] [--dry-run]
 
 `install` adds the engine to a node that `spawn.sh create` installed: it pushes the stage folder (engine-plugins.tar
 and the operator artifacts the pins name) and runs the release's own engine_install.py as root on the node. The node
 name passes the deploy guard first, with the guard's `upgrade` admission (the engine changes an existing node, as an
 upgrade does): a node in deploy/EXISTING-NODES is refused before any host command, cloud call or state read. Only
-Nebius VM nodes: an LXD node shares its host's Caddy and has no Docker for OpenShell."""
+Nebius VM nodes: an LXD node shares its host's Caddy and has no Docker for OpenShell.
+
+`--stage-on-node` is for artifacts that never pass through the operator machine (about 1 GB, built on the artifact VM
+of runbook A and copied VM to VM, NODE.md section 8): the stage is already at /root/aukora-engine-stage on the node
+(root, 0700). Nothing is trusted for being there: the installer checks every artifact against the release's pins,
+exactly as for a pushed stage."""
 from __future__ import annotations
 
 import hashlib
@@ -52,9 +58,12 @@ def stage_files(stage):
 
 
 def install(argv):
-    if len(argv) < 3 or argv[1] != "--stage":
+    if len(argv) >= 2 and argv[1] == "--stage-on-node":
+        name, stage, rest = argv[0], None, argv[2:]
+    elif len(argv) >= 3 and argv[1] == "--stage":
+        name, stage, rest = argv[0], argv[2], argv[3:]
+    else:
         core.refuse("engine", "usage")
-    name, stage, rest = argv[0], argv[2], argv[3:]
     admission = guard.admit("upgrade", name)  # a listed node stops here, before anything else
     dry = "--dry-run" in rest
     backend = "nebius-vm"
@@ -62,10 +71,11 @@ def install(argv):
         backend = rest[rest.index("--on") + 1] if rest.index("--on") + 1 < len(rest) else ""
     if backend != "nebius-vm":
         core.refuse("engine", "vm-only")
-    names = stage_files(stage)
+    names = stage_files(stage) if stage is not None else None
     if dry:
-        print("would: push %s to %s:%s and run %s --stage %s as root" % (", ".join(names), name, NODE_STAGE,
-                                                                         NODE_TOOL, NODE_STAGE))
+        what = ("push %s to %s:%s" % (", ".join(names), name, NODE_STAGE) if names is not None
+                else "use the stage already at %s:%s" % (name, NODE_STAGE))
+        print("would: %s and run %s --stage %s as root" % (what, NODE_TOOL, NODE_STAGE))
         return 0
     import host  # noqa: E402  (only after the guard)
     import spawn  # noqa: E402
@@ -75,10 +85,16 @@ def install(argv):
         core.refuse("engine", "unknown-node")
     with host.Lock(root):
         node = vm.transport_for(plan.host, name, plan.node_id, plan.state)
-        node.run(["rm", "-rf", "--", NODE_STAGE], check=False)
-        node.run(["install", "-d", "-m", "0700", NODE_STAGE])
-        for item in names:
-            node.push(os.path.join(stage, item), NODE_STAGE + "/" + item)
+        if names is not None:
+            node.run(["rm", "-rf", "--", NODE_STAGE], check=False)
+            node.run(["install", "-d", "-m", "0700", NODE_STAGE])
+            for item in names:
+                node.push(os.path.join(stage, item), NODE_STAGE + "/" + item)
+        else:
+            # Root's own folder, not a link, holding the plugin archive: anything else is not a stage.
+            node.run(["test", "-d", NODE_STAGE, "-a", "!", "-L", NODE_STAGE, "-a", "-O", NODE_STAGE,
+                      "-a", "-f", NODE_STAGE + "/engine-plugins.tar"])
+            node.run(["chmod", "0700", NODE_STAGE])
         node.run(["python3", "-B", NODE_TOOL, "--stage", NODE_STAGE])
         node.run(["rm", "-rf", "--", NODE_STAGE], check=False)
     return 0

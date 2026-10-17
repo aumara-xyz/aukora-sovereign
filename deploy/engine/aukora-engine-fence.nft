@@ -5,7 +5,11 @@
 #    here. Together with the read-only /etc/resolv.conf inside the sandbox, a lookup inside the wall fails.
 # 2. Kira's model servers listen on loopback 8771 and 8772 inside their own network namespace (the units' PrivateNetwork);
 #    this rule is the second layer, for the host's loopback: only the kira user may connect to those ports there.
-# 3. The OpenShell gateway listens on loopback 690 (privileged, so only root can bind it): only root may connect.
+# 3. The OpenShell gateway listens on loopback 690 (privileged, so only root can bind it). Two local users may connect:
+#    root (the CLI in engine-run.sh, wall-check.sh) and 65534, the user OpenShell 0.1.4 runs each sandbox's supervisor
+#    container as, on the host network (`docker inspect`: NetworkMode host, User 65534:65534, OPENSHELL_ENDPOINT the
+#    gateway; node rehearsal 2026-10-17). Both still authenticate: the CLI with its mTLS client certificate, the
+#    supervisor with its sandbox-scoped JWT; the gateway refuses everyone else (allow_unauthenticated_users = false).
 table inet aukora_engine_fence
 delete table inet aukora_engine_fence
 table inet aukora_engine_fence {
@@ -19,6 +23,6 @@ table inet aukora_engine_fence {
 		type filter hook output priority -10; policy accept;
 		ip daddr 192.0.2.53 drop
 		oifname "lo" tcp dport { 8771, 8772 } meta skuid != "kira" reject
-		oifname "lo" tcp dport 690 meta skuid != 0 reject
+		oifname "lo" tcp dport 690 meta skuid != { 0, 65534 } reject
 	}
 }

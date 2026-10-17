@@ -29,13 +29,11 @@ import json
 import os
 import pwd
 import re
-import secrets
 import shutil
 import stat
 import subprocess
 import sys
 import tarfile
-import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, os.pardir, "spawn"))
@@ -47,10 +45,16 @@ KIRA_ROOT = "/opt/aukora-kira"
 CONFIG = "/etc/aukora"
 ENGINE_CONFIG = CONFIG + "/engine"
 CACHE = "/var/cache/aukora-engine"
-PACKAGES = ("docker.io", "nftables", "polkitd", "curl", "xz-utils", "unzip", "openssl")
+# libgomp1: the llama.cpp CPU build links it (ldd on the node rehearsal); the stock Ubuntu 24.04 image lacks it.
+PACKAGES = ("docker.io", "nftables", "polkitd", "curl", "xz-utils", "unzip", "openssl", "libgomp1")
 ENGINE_UNITS = ("aukora-engine-fence.service", "aukora-kira-embed.service", "aukora-kira-rerank.service",
-                "aukora-kira.service", "aukora-openshell-gateway.service")
+                "aukora-kira.service", "aukora-openshell-gateway.service", "run-aukora\\x2dengine-io.mount")
 ENGINE_LISTEN = "127.0.0.1:18081"
+OPENSHELL_HOME = "/var/lib/aukora-openshell"
+# The local gateway as the CLI knows it (engine-run.sh, wall-check.sh): mTLS, loopback, the privileged port.
+GATEWAY_NAME = "aukora"
+GATEWAY_ENDPOINT = "https://127.0.0.1:690"
+IO_MOUNT = "/etc/systemd/system/run-aukora\\x2dengine-io.mount"
 BROKER_SOCKET = "/run/aukora-broker/broker.sock"
 # The engine's model budget the supervisor proposes for the owner's passkey (deploy/engine/NODE.md section 7). The
 # owner sees and approves exactly these terms; changing them here (in a reviewed release) proposes them again.
@@ -103,6 +107,11 @@ def preconditions():
     ids = {t.get("id") for t in inventory.get("targets", [])}
     if not {"engine/plugin-set.json", "engine/model-key.json", "engine/model-budget.json"} <= ids:
         core.refuse("engine-install", "inventory-lacks-engine-target")  # an older node needs an owner-approved sync
+    # The model broker reaches DeepSeek as the service user, whose egress the node's firewall pins: without the
+    # provider in egress.json every engine call would end provider-unreachable (spawn.sh create --provider deepseek).
+    egress = core.validate_policy(core.read_regular(CONFIG + "/egress.json", 256 * 1024, "engine-install"))
+    if not any(p["host"] == "api.deepseek.com" and p["port"] == 443 for p in egress["providers"]):
+        core.refuse("engine-install", "egress-lacks-deepseek")
     caddyfile = core.read_regular("/etc/caddy/Caddyfile", 1 << 20, "engine-install").decode("utf-8", "replace")
     if caddyfile.count("# BEGIN AUKORA SOVEREIGN ") != 1:
         core.refuse("engine-install", "not-a-vm-node")  # an LXD host's shared Caddy is not ours to extend
@@ -299,31 +308,25 @@ def install_artifacts(artifacts, stage):
         found = [os.path.join(r, binary) for r, _, files in os.walk(scratch) if binary in files]
         if len(found) != 1:
             core.refuse("engine-install", "openshell-layout")
-        shutil.copyfile(found[0], "/usr/local/bin/" + binary)
-        os.chmod("/usr/local/bin/" + binary, 0o755)
+        # A new file renamed over the old: a re-run while the gateway runs must not write into a busy binary.
+        fresh = "/usr/local/bin/." + binary + ".new"
+        shutil.copyfile(found[0], fresh)
+        os.chmod(fresh, 0o755)
+        os.replace(fresh, "/usr/local/bin/" + binary)
     shutil.rmtree(scratch)
+    # One docker save holding the sandbox's root image and the two OpenShell images the docker driver runs beside
+    # it (sandbox runtime, supervisor; image_pull_policy = never). Every image the pin names must load; the first is
+    # the sandbox image engine-run.sh starts.
+    images = artifacts["sandbox_image"]["images"]
     loaded = run(["docker", "load", "--input", fetch("sandbox_image", artifacts["sandbox_image"], stage)]).stdout
-    match = re.search(rb"Loaded image(?: ID)?: (\S+)", loaded)
-    if match is None:
+    found = set(re.findall(rb"Loaded image(?: ID)?: (\S+)", loaded))
+    if not images or any(name.encode("ascii") not in found for name in images):
         core.refuse("engine-install", "sandbox-image")
-    image = match.group(1).decode("ascii")
-    llama = fetch("llama", artifacts["llama"], stage)
+    image = images[0]
+    # llama.cpp's release asset is a tar.gz whose libraries carry in-tree links (libllama.so.0 -> libllama.so.0.3.0)
+    # and llama-server finds them through RUNPATH $ORIGIN: the whole pinned archive is extracted, links kept inside.
     target = KIRA_ROOT + "/llama"
-    if os.path.lexists(target):
-        shutil.rmtree(target)
-    os.makedirs(target, mode=0o755)
-    target_fd = os.open(target, DIR_FLAGS)
-    try:
-        with zipfile.ZipFile(llama) as archive:
-            for member in archive.infolist():
-                name = os.path.basename(member.filename)
-                if member.is_dir() or not (name == "llama-server" or name.endswith(".so")):
-                    continue  # only the server and its shared libraries
-                # A zip "link" is written as a plain file holding its text; a repeated name refuses.
-                with archive.open(member) as source:
-                    _write_member(target_fd, name, source, 0o755)
-    finally:
-        os.close(target_fd)
+    safe_extract(fetch("llama", artifacts["llama"], stage), target, strip=1, links=True)
     if not os.path.isfile(target + "/llama-server"):
         core.refuse("engine-install", "llama-layout")
     owned_dir(KIRA_ROOT + "/models", 0o755)
@@ -365,7 +368,8 @@ def write_config(shell_host, uid, gid, image):
     owned_dir(ENGINE_CONFIG, 0o755)
     aukora_gid = grp.getgrnam("aukora").gr_gid
     policy = core.read_regular(release_file("engine/openshell-policy.yaml"), 64 * 1024, "engine-install")
-    core.atomic_write(ENGINE_CONFIG + "/openshell-policy.yaml", policy.replace(b"@AUMA_UID@", str(uid).encode()), 0o644)
+    policy = policy.replace(b"@AUMA_UID@", str(uid).encode()).replace(b"@AUMA_GID@", str(gid).encode())
+    core.atomic_write(ENGINE_CONFIG + "/openshell-policy.yaml", policy, 0o644)
     for name in ("openshell-gateway.toml", "resolv.conf"):
         core.atomic_write(ENGINE_CONFIG + "/" + name, core.read_regular(release_file("engine/" + name), 64 * 1024,
                                                                          "engine-install"), 0o644)
@@ -375,11 +379,6 @@ def write_config(shell_host, uid, gid, image):
     door = door.replace(b"@AUMA_UID@", str(uid).encode())
     json.loads(door)
     core.atomic_write(CONFIG + "/door-policy-v1.json", door, 0o640, (0, aukora_gid))
-    engine = core.canonical({
-        "v": 1, "plugin_root": ENGINE_ROOT + "/plugins", "control_dir": "/run/aukora-engine-ctl",
-        "web_socket": "/run/aukora-engine/io/web.sock", "launch_file": "/run/aukora-engine/io/launch-url",
-        "host": "engine." + shell_host, "listen": ENGINE_LISTEN, "session_hours": 12})
-    core.atomic_write(CONFIG + "/engine-v1.json", engine, 0o640, (0, aukora_gid))
     # The model broker: its socket (bind-mounted into the wall like the door's), the engine's uid as its only caller,
     # and the budget terms the supervisor proposes. The key is never in any file: the owner types it on the shell.
     model = core.canonical({"v": 1, "socket": BROKER_SOCKET, "peer_uids": [uid], "max_request_bytes": 8 << 20,
@@ -388,20 +387,51 @@ def write_config(shell_host, uid, gid, image):
     os.makedirs("/etc/polkit-1/rules.d", mode=0o755, exist_ok=True)
     core.atomic_write("/etc/polkit-1/rules.d/50-aukora-engine.rules",
                       core.read_regular(release_file("engine/aukora-engine.rules"), 4096, "engine-install"), 0o644)
+    mount = core.read_regular(release_file("engine/aukora-engine-io.mount.in"), 4096, "engine-install")
+    mount = mount.replace(b"@AUMA_UID@", str(uid).encode()).replace(b"@AUKORA_GID@", str(aukora_gid).encode())
+    core.atomic_write(IO_MOUNT, mount, 0o644)
     tmpfiles = core.read_regular(release_file("engine/aukora-engine.tmpfiles"), 4096, "engine-install")
     core.atomic_write("/etc/tmpfiles.d/aukora-engine.conf", tmpfiles.replace(b"@AUMA@", b"auma"), 0o644)
     run(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/aukora-engine.conf"])
     owned_dir("/var/lib/aukora-engine", 0o755)
     owned_dir("/var/lib/aukora-engine/work", 0o700, "auma", "auma")
     owned_dir("/var/lib/aukora-engine/home", 0o1770, "root", "auma")
-    # The gateway's JWT keys (wall test, finding 3): root's alone.
-    jwt = "/var/lib/aukora-openshell/jwt"
-    owned_dir("/var/lib/aukora-openshell", 0o700)
-    owned_dir(jwt, 0o700)
-    if not os.path.exists(jwt + "/signing.pem"):
-        run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", jwt + "/signing.pem"])
-        run(["openssl", "pkey", "-in", jwt + "/signing.pem", "-pubout", "-out", jwt + "/public.pem"])
-        core.atomic_write(jwt + "/kid", secrets.token_hex(8).encode("ascii"), 0o600)
+    configure_gateway_pki()
+
+
+def configure_gateway_pki():
+    """The gateway's own PKI (CA, server and client pairs, the sandbox-JWT key) made by its own generator, root's
+    alone; the CLI's copy of the client pair, registered as the gateway `aukora` (NODE.md O3: mTLS, not the wall
+    test's unauthenticated dev gateway). generate-certs keeps existing files, so a re-run changes nothing."""
+    owned_dir(OPENSHELL_HOME, 0o700)
+    tls = OPENSHELL_HOME + "/tls"
+    environment = dict(os.environ, HOME=OPENSHELL_HOME, OPENSHELL_TELEMETRY_ENABLED="false")
+    run(["/usr/local/bin/openshell-gateway", "generate-certs", "--output-dir", tls, "--server-san", "127.0.0.1"],
+        env=environment)
+    for path in ("ca.crt", "server/tls.crt", "server/tls.key", "client/tls.crt", "client/tls.key",
+                 "jwt/signing.pem", "jwt/public.pem", "jwt/kid"):
+        if not os.path.isfile(tls + "/" + path):
+            core.refuse("engine-install", "gateway-pki")
+    mtls = OPENSHELL_HOME + "/.config/openshell/gateways/" + GATEWAY_NAME + "/mtls"
+    for folder in (OPENSHELL_HOME + "/.config", OPENSHELL_HOME + "/.config/openshell",
+                   OPENSHELL_HOME + "/.config/openshell/gateways", os.path.dirname(mtls), mtls):
+        owned_dir(folder, 0o700)
+    for source, name in (("ca.crt", "ca.crt"), ("client/tls.crt", "tls.crt"), ("client/tls.key", "tls.key")):
+        core.atomic_write(mtls + "/" + name, core.read_regular(tls + "/" + source, 64 * 1024, "engine-install"), 0o600)
+    # Registration only writes the CLI's metadata; it warns that the gateway is not up yet, which is expected here.
+    if not os.path.isfile(os.path.dirname(mtls) + "/metadata.json"):  # a re-run keeps the registration
+        run(["/usr/local/bin/openshell", "gateway", "add", GATEWAY_ENDPOINT, "--local", "--name", GATEWAY_NAME],
+            env=environment)
+
+
+def write_engine_config(shell_host):
+    """engine-v1.json: what turns the engine on in the supervisor, and the marker preconditions() refuses a second
+    install on. Written last, after everything it depends on succeeded, so a failed run can simply be run again."""
+    engine = core.canonical({
+        "v": 1, "plugin_root": ENGINE_ROOT + "/plugins", "control_dir": "/run/aukora-engine-ctl",
+        "web_socket": "/run/aukora-engine/io/web.sock", "launch_file": "/run/aukora-engine/io/launch-url",
+        "host": "engine." + shell_host, "listen": ENGINE_LISTEN, "session_hours": 12})
+    core.atomic_write(CONFIG + "/engine-v1.json", engine, 0o640, (0, grp.getgrnam("aukora").gr_gid))
 
 
 def register_kira():
@@ -519,6 +549,7 @@ def main(argv):
     run(["systemctl", "daemon-reload"])
     run(["systemctl", "enable", "--now"] + [u for u in ENGINE_UNITS if u != "aukora-engine-fence.service"])
     configure_caddy(node["node"], shell_host)
+    write_engine_config(shell_host)
     # The supervisor reads the door policy and the engine configuration at start; the engine itself waits for it.
     run(["systemctl", "restart", "aukora-sovereign.service"])
     print(json.dumps({"engine_host": "engine." + shell_host, "engine_uid": uid, "sandbox_image": image,

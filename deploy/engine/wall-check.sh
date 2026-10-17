@@ -4,6 +4,8 @@
 # the DNS posture the wall test found missing (B03). Prints one line per probe and exits 1 if any fails.
 set -u
 . /etc/aukora/engine.env
+# The CLI reaches the local gateway as root's registered mTLS gateway `aukora` (engine_install.py), as engine-run.sh does.
+export OPENSHELL_TELEMETRY_ENABLED=false HOME=/var/lib/aukora-openshell OPENSHELL_GATEWAY=aukora
 NAME=auma-engine
 failed=0
 inside() { /usr/local/bin/openshell sandbox exec --name "$NAME" --no-tty -- "$@"; }
@@ -12,6 +14,7 @@ expect_ok() { label=$1; shift; if inside "$@" >/dev/null 2>&1; then echo "ok   $
 NODE=/engine/node/bin/node
 
 [ "$(inside id -u 2>/dev/null)" = "$AUMA_UID" ] && echo "ok   runs as auma ($AUMA_UID)" || { echo "FAIL runs as auma"; failed=1; }
+[ "$(inside id -g 2>/dev/null)" = "$AUMA_GID" ] && echo "ok   group auma ($AUMA_GID)" || { echo "FAIL group auma"; failed=1; }
 # DNS posture (closes B03): no name resolves, through libc, through node's resolver, or straight at Docker's resolver.
 expect_fail "getent hosts example.com fails" getent hosts example.com
 expect_fail "node dns.lookup fails" $NODE -e "require('dns').lookup('example.com',(e)=>process.exit(e?1:0))"
@@ -32,6 +35,7 @@ expect_fail "closure is read-only" sh -c 'echo x > /engine-home/profiles/aukora/
 expect_fail "home patch cannot be replaced" sh -c 'echo "[]" > /engine-home/x && mv -f /engine-home/x /engine-home/cordis.patch.yml'
 expect_fail "node_modules guard cannot be filled" mkdir /engine-home/node_modules/@deepseek-ai
 expect_fail "door socket folder is not writable" sh -c 'echo x > /run/aukora-door/x'
+expect_fail "bridge folder is capped (2 MiB refused)" sh -c 'head -c 2097152 /dev/zero > /run/aukora-engine-io/.cap; r=$?; rm -f /run/aukora-engine-io/.cap; exit $r'
 expect_fail "broker socket folder is not writable" sh -c 'echo x > /run/aukora-broker/x'
 expect_fail "DeepSeek is not reachable directly" $NODE -e "const s=require('net').connect(443,'api.deepseek.com');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)"
 # What must work: the door socket is reachable, the workspace is writable, the toolchain runs.

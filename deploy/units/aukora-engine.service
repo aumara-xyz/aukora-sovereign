@@ -7,6 +7,8 @@
 Description=AUKORA engine: the DeepSeek Harness inside OpenShell (Ring 1)
 After=docker.service aukora-openshell-gateway.service aukora-engine-fence.service aukora-kira.service aukora-sovereign.service
 Requires=aukora-openshell-gateway.service aukora-engine-fence.service
+# The bridge folder is a host tmpfs (run-aukora\x2dengine-io.mount, from deploy/engine/aukora-engine-io.mount.in).
+RequiresMountsFor=/run/aukora-engine/io
 # Stopping or restarting the supervisor stops the engine; it comes back only when the supervisor starts it again.
 PartOf=aukora-sovereign.service
 AssertPathExists=/etc/aukora/engine-v1.json
