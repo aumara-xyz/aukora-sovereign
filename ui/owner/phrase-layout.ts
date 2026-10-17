@@ -16,7 +16,9 @@ function bandContainer(anchor: HTMLElement, rows: readonly HTMLElement[]): HTMLE
   for (let index = 0; index < BANDS.length; index++) {
     const name = BANDS[index];
     const band = make("section", "", `phrase-band band-${name.toLowerCase()}`);
-    band.append(make("h3", name, "word-label"), rows[index * 2], rows[index * 2 + 1]);
+    const pair = make("div", "", "phrase-pair");
+    pair.append(rows[index * 2], rows[index * 2 + 1]);
+    band.append(make("h3", name, "word-label"), pair);
     bands.append(band);
   }
   result.append(anchor, bands);
@@ -37,7 +39,7 @@ export function renderPhrase(words: readonly string[], signal: AbortSignal): HTM
     box.setAttribute("aria-hidden", "true");
     boxes.append(box);
   }
-  anchor.append(make("h3", "ANCHOR", "word-label"), boxes);
+  anchor.append(make("h3", "WORD 1 · ANCHOR", "word-label"), boxes);
   const rows = words.slice(1).map((word, index) => {
     const row = make("div", "", "word-tile");
     const initial = make("span", word[0].toUpperCase(), "word-initial");
@@ -70,6 +72,7 @@ export function renderPhrase(words: readonly string[], signal: AbortSignal): HTM
 }
 
 export function phraseInputs(signal: AbortSignal): { element: HTMLElement; inputs: HTMLInputElement[] } {
+  checkAbort(signal);
   const inputs: HTMLInputElement[] = [];
   const rows = Array.from({ length: 7 }, (_, index) => {
     const label = make("label", `Word ${index + 1}`, "owner-input");
@@ -111,7 +114,152 @@ export function phraseInputs(signal: AbortSignal): { element: HTMLElement; input
   });
   const anchor = make("section", "", "phrase-anchor band-anchor");
   anchor.append(rows[0]);
-  return { element: bandContainer(anchor, rows.slice(1)), inputs };
+  const element = bandContainer(anchor, rows.slice(1));
+  element.classList.add("phrase-inputs");
+  return { element, inputs };
+}
+
+/** What was typed is compared as letters only: case, spaces, punctuation and look-alike forms never decide it. */
+export function normaliseWord(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[^a-z]/g, "");
+}
+
+export type PhraseForm = {
+  element: HTMLElement;
+  /** Every field, for clearing. */
+  all(): HTMLInputElement[];
+  /** The seven words as typed, normalised: the anchor from its six boxes, then the six words in order. */
+  values(): string[];
+  complete(): boolean;
+  /** Mark the anchor row or one of the six word rows (0 to 5) as not matching. */
+  flagAnchor(bad: boolean): void;
+  flagWord(index: number, bad: boolean): void;
+  focusAnchor(): void;
+  focusWord(index: number): void;
+  onChange(listener: () => void): void;
+};
+
+/** The words screen, blank: the anchor typed into its six gold boxes, and under them ROOT, UNITE and RISE with two rows each.
+ *  Each row carries the gold letter badge of its anchor letter, filled in as the anchor is typed. Words are visible as typed. */
+export function phraseForm(signal: AbortSignal): PhraseForm {
+  checkAbort(signal);
+  const listeners: Array<() => void> = [];
+  const changed = (): void => listeners.forEach(listener => listener());
+  const blockedInput = (field: HTMLInputElement, allowPaste: boolean): void => {
+    for (const event of ["drop", "copy", "cut", ...(allowPaste ? [] : ["paste"])] as const) {
+      field.addEventListener(event, action => action.preventDefault(), { signal });
+    }
+    field.addEventListener("beforeinput", event => {
+      if (["insertFromDrop", "deleteByCut", "insertReplacementText", ...(allowPaste ? [] : ["insertFromPaste"])].includes(event.inputType)) {
+        event.preventDefault();
+      }
+    }, { signal });
+  };
+  const plain = (field: HTMLInputElement, label: string): void => {
+    field.type = "text";
+    field.autocomplete = "off";
+    field.spellcheck = false;
+    field.setAttribute("autocapitalize", "off");
+    field.setAttribute("autocorrect", "off");
+    field.setAttribute("data-1p-ignore", "true");
+    field.setAttribute("aria-label", label);
+  };
+
+  const element = make("div", "", "phrase-composition phrase-form");
+  const anchor = make("section", "", "phrase-anchor band-anchor");
+  const row = make("div", "", "anchor-boxes");
+  const boxes = Array.from({ length: 6 }, (_, at) => {
+    const box = make("input", "", "anchor-box");
+    plain(box, `Letter ${at + 1} of the first word`);
+    box.maxLength = 6;
+    row.append(box);
+    return box;
+  });
+  anchor.append(row);
+
+  const badges: HTMLElement[] = [];
+  const inputs: HTMLInputElement[] = [];
+  const tiles: HTMLElement[] = [];
+  const hints: HTMLElement[] = [];
+  const bands = make("div", "", "phrase-bands");
+  for (let band = 0; band < BANDS.length; band++) {
+    const section = make("section", "", `phrase-band band-${BANDS[band].toLowerCase()}`);
+    const pair = make("div", "", "phrase-pair");
+    for (let side = 0; side < 2; side++) {
+      const at = band * 2 + side;
+      const tile = make("label", "", "word-tile entry-tile");
+      const badge = make("span", "", "word-initial");
+      badge.setAttribute("aria-hidden", "true");
+      const field = make("input");
+      plain(field, `Word ${at + 2}`);
+      field.maxLength = 64;
+      const hint = make("span", "", "word-hint");
+      hint.setAttribute("aria-hidden", "true");
+      tile.append(badge, field, hint);
+      pair.append(tile);
+      badges.push(badge);
+      inputs.push(field);
+      tiles.push(tile);
+      hints.push(hint);
+      blockedInput(field, false);
+      field.addEventListener("input", () => { field.removeAttribute("aria-invalid"); refresh(); changed(); }, { signal });
+    }
+    section.append(make("h3", BANDS[band], "word-label"), pair);
+    bands.append(section);
+  }
+  element.append(anchor, bands);
+
+  const letter = (at: number): string => normaliseWord(boxes[at].value).charAt(0);
+  function refresh(): void {
+    inputs.forEach((field, at) => {
+      const expected = letter(at);
+      badges[at].textContent = expected.toUpperCase();
+      const first = normaliseWord(field.value).charAt(0);
+      const off = expected !== "" && first !== "" && first !== expected;
+      tiles[at].toggleAttribute("data-off", off);
+      hints[at].textContent = off ? `needs ${expected.toUpperCase()}` : "";
+    });
+  }
+
+  boxes.forEach((box, at) => {
+    blockedInput(box, true);
+    box.addEventListener("input", () => {
+      box.removeAttribute("aria-invalid");
+      // Typing, or pasting the whole first word, fills the boxes from here on; each box keeps one letter.
+      const typed = normaliseWord(box.value);
+      let cursor = at;
+      for (const character of typed) { if (cursor < 6) boxes[cursor++].value = character; }
+      if (typed.length === 0) box.value = "";
+      anchor.querySelectorAll("[aria-invalid]").forEach(node => node.removeAttribute("aria-invalid"));
+      if (typed.length > 0) boxes[Math.min(cursor, 5)].focus();
+      refresh();
+      changed();
+    }, { signal });
+    box.addEventListener("keydown", event => {
+      if (event.key === "Backspace" && box.value === "" && at > 0) {
+        event.preventDefault();
+        boxes[at - 1].value = "";
+        boxes[at - 1].focus();
+        refresh();
+        changed();
+      } else if (event.key === "ArrowLeft" && at > 0) boxes[at - 1].focus();
+      else if (event.key === "ArrowRight" && at < 5) boxes[at + 1].focus();
+    }, { signal });
+    box.addEventListener("focus", () => box.select(), { signal });
+  });
+  refresh();
+
+  return {
+    element,
+    all: () => [...boxes, ...inputs],
+    values: () => [boxes.map((box, at) => letter(at)).join(""), ...inputs.map(field => normaliseWord(field.value))],
+    complete: () => boxes.every((_, at) => letter(at) !== "") && inputs.every(field => normaliseWord(field.value) !== ""),
+    flagAnchor(bad) { boxes.forEach(box => box.toggleAttribute("aria-invalid", bad)); if (bad) boxes.forEach(box => box.setAttribute("aria-invalid", "true")); },
+    flagWord(index, bad) { inputs[index].toggleAttribute("aria-invalid", bad); if (bad) inputs[index].setAttribute("aria-invalid", "true"); },
+    focusAnchor() { (boxes.find(box => box.value === "") ?? boxes[0]).focus(); },
+    focusWord(index) { inputs[index].focus(); },
+    onChange(listener) { listeners.push(listener); },
+  };
 }
 
 export function recoveryInput(signal: AbortSignal): {
@@ -119,8 +267,8 @@ export function recoveryInput(signal: AbortSignal): {
 } {
   checkAbort(signal);
   const maximum = 1_024;
-  const result = make("div", "", "owner-input");
-  const fileLabel = make("label", "Choose your Light recovery file", "owner-input");
+  const result = make("div", "", "owner-input owner-recovery");
+  const fileLabel = make("label", "Choose your recovery file", "owner-input");
   const file = make("input");
   file.type = "file";
   file.accept = ".json,application/json,text/plain";
@@ -131,9 +279,6 @@ export function recoveryInput(signal: AbortSignal): {
   paste.maxLength = maximum;
   paste.autocomplete = "off";
   paste.spellcheck = false;
-  Object.assign(paste.style, { width: "100%", font: "inherit", color: "var(--text)",
-    background: "var(--layer1)", border: "1px solid var(--border)", borderRadius: ".65rem",
-    padding: ".7rem .85rem", resize: "vertical" });
   paste.setAttribute("autocapitalize", "off");
   paste.setAttribute("autocorrect", "off");
   pasteLabel.append(paste);
@@ -172,7 +317,7 @@ export function phraseAcknowledgement(signal: AbortSignal, refresh = false): {
   const label = make("label", "", "phrase-tick");
   const tick = make("input");
   tick.type = "checkbox";
-  label.append(tick, make("span", "I know them by heart"));
+  label.append(tick, make("span", "I have written them down"));
   result.append(warning, label);
   return { element: result, checked: () => tick.checked,
     onChange(action) { tick.addEventListener("change", action, { signal }); } };

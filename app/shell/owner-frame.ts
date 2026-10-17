@@ -1,9 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { COPY } from '../design/index.js';
+import { COPY, icon } from '../design/index.js';
 
 export type OwnerRoute = '/passkey' | '/phrase' | '/phrase/refresh' | '/claim' | '/witness' | `/approval/${string}`;
 export type OwnerNotice = { kind: 'closed' | 'complete'; route?: OwnerRoute } | { kind: 'refusal'; code: string };
 const protocol = 'aukora.owner.v1';
+let dialogStyle: Promise<void> | null = null;
+
+function loadDialogStyle(): Promise<void> {
+  if (dialogStyle) return dialogStyle;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = new URL('./owner-dialog.css', import.meta.url).href;
+  dialogStyle = new Promise<void>((resolve, reject) => {
+    link.addEventListener('load', () => resolve(), { once: true });
+    link.addEventListener('error', reject, { once: true });
+    document.head.append(link);
+  }).catch(error => {
+    link.remove();
+    dialogStyle = null;
+    throw error;
+  });
+  return dialogStyle;
+}
 
 export function validOwnerRoute(route: string): route is OwnerRoute {
   return ['/passkey', '/phrase', '/phrase/refresh', '/claim', '/witness'].includes(route) || /^\/approval\/[0-9a-f]{32}$/.test(route);
@@ -47,7 +65,7 @@ export class OwnerFrame {
     this.#preparing = prepared.then(() => {}, () => {});
     let reference: string | void;
     try {
-      reference = await prepared;
+      [reference] = await Promise.all([prepared, loadDialogStyle()]);
       if (reference !== undefined && !/^[0-9a-f]{64}$/.test(reference)) throw new Error('shell:handoff-refused');
     } catch (error) {
       if (generation === this.#generation) this.close();
@@ -56,15 +74,12 @@ export class OwnerFrame {
     if (generation !== this.#generation) return;
     const dialog = document.createElement('dialog');
     dialog.className = 'owner-dialog';
-    dialog.setAttribute('aria-labelledby', 'owner-ceremony-title');
-    const bar = document.createElement('div');
-    bar.className = 'owner-toolbar';
-    const title = document.createElement('strong');
-    title.id = 'owner-ceremony-title';
-    title.textContent = COPY.ownerTitle as string;
+    dialog.setAttribute('aria-label', COPY.ownerTitle as string);
     const close = document.createElement('button');
     close.type = 'button';
-    close.textContent = COPY.ownerClose as string;
+    close.className = 'owner-close';
+    close.setAttribute('aria-label', COPY.ownerClose as string);
+    close.append(icon('close'));
     const frame = document.createElement('iframe');
     frame.className = 'owner-frame';
     frame.title = COPY.ownerFrame as string;
@@ -102,16 +117,18 @@ export class OwnerFrame {
     close.addEventListener('click', dismiss);
     dialog.addEventListener('cancel', dismiss);
     window.addEventListener('message', onMessage);
-    bar.append(title, close);
-    dialog.append(bar, frame);
+    dialog.append(frame, close);
     document.body.append(dialog);
     this.#dialog = dialog;
     this.#close = () => {
       window.removeEventListener('message', onMessage);
       close.removeEventListener('click', dismiss);
       dialog.removeEventListener('cancel', dismiss);
-      dialog.close();
-      dialog.remove();
+      // The stage fades out; it is gone for good once the fade ends.
+      dialog.classList.add('owner-leaving');
+      const gone = () => { dialog.close(); dialog.remove(); };
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) gone();
+      else setTimeout(gone, 760);
     };
     try { dialog.showModal(); frame.focus({ preventScroll: true }); }
     catch (error) { this.close(); throw error; }

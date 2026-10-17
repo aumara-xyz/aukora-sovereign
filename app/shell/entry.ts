@@ -24,6 +24,8 @@ const root = document.getElementById('aukora-shell');
 if (root) {
   try {
     const claim = takeClaim();
+    // A claim link opens on the stage, not on the app behind it: the app stays out of sight until the ceremony ends.
+    if (claim) document.body.dataset.claiming = '';
     const lifetime = new AbortController();
     const handoff = new ShellTransport();
     const transport = new ShellTransport();
@@ -75,6 +77,7 @@ if (root) {
       phraseRoute: () => bound ? '/phrase/refresh' : '/phrase',
       openApprovals: () => approvals?.reopen(),
       onOwnerNotice: notice => {
+        delete document.body.dataset.claiming;
         if (notice.kind === 'closed' && notice.route?.startsWith('/approval/')) {
           approvals?.forget(notice.route.slice('/approval/'.length));
         }
@@ -117,7 +120,7 @@ if (root) {
       void shell.dispose().finally(() => Promise.all(services.map(dispose => dispose())));
     }, { once: true });
     if (!claim) void activate().catch(showSessionError);
-    if (claim) void shell.openOwner('/claim', claim).catch(show);
+    if (claim) void shell.openOwner('/claim', claim).catch(error => { delete document.body.dataset.claiming; show(error); });
   }
   catch (error) {
     const refusal = document.createElement('p');

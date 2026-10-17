@@ -1,0 +1,77 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* The owner ceremony is a stage, not a dialog: full-bleed, deep, no card and no border. The ceremony itself
+   (trefoil, light, words) is drawn by the owner page inside the frame. */
+.owner-dialog, .owner-frame { color-scheme: dark; }
+
+.owner-dialog[open] {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  color: var(--spatial-text);
+  background: var(--canvas-deep, #080910);
+  animation: owner-stage-in 1.1s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.owner-dialog::backdrop { background: var(--canvas-deep, #080910); }
+.owner-dialog.owner-leaving[open] { pointer-events: none; animation: owner-stage-out .7s cubic-bezier(.4, 0, .2, 1) both; }
+
+.owner-dialog .owner-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* A quiet way out: no box, it only glows when asked, and arrives after the opening has settled. */
+:root body .owner-dialog .owner-close {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 50%;
+  color: var(--spatial-muted);
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: 0;
+  animation: owner-close-in 1.2s cubic-bezier(.16, 1, .3, 1) 2.6s both;
+  transition: color .5s ease, box-shadow .5s ease;
+}
+
+:root body .owner-dialog .owner-close:hover {
+  color: var(--spatial-mint);
+  background: transparent !important;
+  box-shadow: 0 0 22px color-mix(in srgb, var(--spatial-mint) 22%, transparent) !important;
+}
+
+:root body .owner-dialog .owner-close:focus-visible {
+  outline: 2px solid var(--spatial-mint);
+  outline-offset: 2px;
+}
+
+.owner-close svg { width: 18px; height: 18px; }
+
+@keyframes owner-stage-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes owner-stage-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes owner-close-in { from { opacity: 0; } to { opacity: .8; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .owner-dialog[open] { animation: owner-stage-in .5s linear both; }
+  .owner-dialog.owner-leaving[open] { animation-duration: .3s; }
+  :root body .owner-dialog .owner-close { animation: owner-close-in .5s linear 1s both; }
+}

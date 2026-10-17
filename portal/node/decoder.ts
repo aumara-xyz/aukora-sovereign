@@ -9,18 +9,28 @@ import { refuse } from "../bytes.js";
 
 type JsQr = (data: Uint8ClampedArray, width: number, height: number, options?: { inversionAttempts?: string }) => { data: string } | null;
 
+/** Each camera frame is tried at half size first (the browser's own averaging: four times less work, and it cancels sensor noise),
+ *  then at full size, which also tries the inverted picture. portal-v0 read this way, and a full-size pass alone costs several
+ *  hundred milliseconds on a phone, so frames that stay on screen for one second were missed. */
 export function jsQrDecoder(jsQR: JsQr): FrameDecoder {
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) refuse("camera-decoder-unavailable");
+  const full = document.createElement("canvas");
+  const half = document.createElement("canvas");
+  const fullContext = full.getContext("2d", { willReadFrequently: true });
+  const halfContext = half.getContext("2d", { willReadFrequently: true });
+  if (!fullContext || !halfContext) refuse("camera-decoder-unavailable");
   return async video => {
     const width = Math.min(video.videoWidth || 0, 1920);
     if (!width) return [];
-    canvas.width = width;
-    canvas.height = Math.round(width * video.videoHeight / video.videoWidth);
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const image = context.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(image.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
+    const height = Math.round(width * video.videoHeight / video.videoWidth);
+    half.width = width >> 1; half.height = height >> 1;
+    halfContext.drawImage(video, 0, 0, half.width, half.height);
+    const small = halfContext.getImageData(0, 0, half.width, half.height);
+    const quick = jsQR(small.data, half.width, half.height, { inversionAttempts: "dontInvert" });
+    if (quick) return [quick.data];
+    full.width = width; full.height = height;
+    fullContext.drawImage(video, 0, 0, width, height);
+    const image = fullContext.getImageData(0, 0, width, height);
+    const code = jsQR(image.data, width, height, { inversionAttempts: "attemptBoth" });
     return code ? [code.data] : [];
   };
 }

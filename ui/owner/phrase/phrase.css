@@ -1,9 +1,114 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-.phrase-pane { display: grid; gap: 1rem; max-width: 48rem; margin: auto; }
-.phrase-pane p { margin: 0; }
-.phrase-pane label { display: block; }
-.phrase-pane input[type="password"] { display: block; width: 100%; box-sizing: border-box; margin-top: .5rem; }
+.phrase-pane { display: grid; gap: 12px; width: 100%; min-width: 0; margin: 0; background: transparent; }
 .phrase-pane [hidden] { display: none; }
-.phrase-words { padding: 1rem; border: 1px solid currentColor; font-size: 1.2rem; overflow-wrap: anywhere; }
-.phrase-controls { display: flex; flex-wrap: wrap; gap: .75rem; }
+.phrase-pane p { margin: 0; }
+.phrase-pane .phrase-heading { display: grid; gap: 6px; }
+.phrase-pane .phrase-heading h2 { margin: 0; }
+.phrase-pane .phrase-kicker { color: var(--blue); font-size: 10px; font-weight: 600; letter-spacing: .17em; line-height: 1.4; }
+.phrase-pane .phrase-hint { color: var(--secondary); font-size: 12px; line-height: 1.4; }
+.phrase-pane .phrase-words { margin: 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent); border-radius: var(--spatial-radius, 14px); background: transparent; color: var(--gold); font-size: 16px; line-height: 1.7; overflow-wrap: anywhere; user-select: none; -webkit-user-select: none; }
+.phrase-pane .phrase-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.phrase-pane .phrase-controls button { min-height: 34px; padding: 7px 11px; font-size: 12px; }
+.phrase-pane .phrase-checkbox { display: flex; align-items: flex-start; gap: 8px; color: var(--secondary); font-size: 12px; line-height: 1.5; }
+.phrase-pane .phrase-checkbox input { flex: none; margin: 3px 0 0; accent-color: var(--gold); }
+.phrase-pane .phrase-legacy { color: var(--gold); }
+.phrase-pane .phrase-review:empty { display: none; }
 .phrase-pane pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.phrase-pane :is(h2, h3):focus { outline: none; box-shadow: none; }
+
+.phrase-composition.phrase-composition { display: grid; gap: 8px; min-width: 0; }
+.phrase-composition .phrase-anchor,
+.phrase-composition .phrase-band { display: grid; gap: 7px; min-width: 0; padding: 10px; border: 1px solid color-mix(in srgb, var(--band) 38%, transparent); border-radius: var(--spatial-radius, 14px); background: transparent; }
+.phrase-composition .word-label { margin: 0; color: var(--band); font-size: 10px; font-weight: 600; letter-spacing: .14em; line-height: 1.3; }
+.phrase-composition .word-label:focus { outline: none; box-shadow: none; }
+.phrase-composition .anchor-boxes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.phrase-composition .anchor-box { display: grid; place-items: center; min-width: 0; min-height: 42px; border: 1px solid color-mix(in srgb, var(--gold) 62%, transparent); border-radius: 8px; color: var(--gold); background: transparent; font-size: clamp(19px, 1.6vw, 25px); font-weight: 550; line-height: 1; }
+.phrase-composition .phrase-bands { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.phrase-composition .phrase-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.phrase-composition .word-tile { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 35px; padding: 5px 7px; border: 1px solid color-mix(in srgb, var(--band) 25%, transparent); border-radius: 8px; color: var(--text); background: transparent; }
+.phrase-composition .word-tile strong { flex: 1; min-width: 0; font-size: 14px; font-weight: 550; line-height: 1.2; white-space: nowrap; overflow-wrap: normal; word-break: normal; hyphens: none; }
+.phrase-composition .word-initial { display: grid; place-items: center; flex: 0 0 21px; height: 23px; border: 1px solid color-mix(in srgb, var(--gold) 62%, transparent); border-radius: 5px; color: var(--gold); background: transparent; font-size: 11px; font-weight: 550; }
+.phrase-composition .owner-input { gap: 5px; color: var(--band); font-size: 10px; letter-spacing: .06em; }
+.phrase-composition .phrase-entry { display: flex; align-items: stretch; gap: 4px; min-width: 0; }
+.phrase-composition .owner-input input { width: 100%; min-width: 0; min-height: 35px; padding: 6px 7px; border: 1px solid color-mix(in srgb, var(--band) 38%, transparent); border-radius: 8px; background: transparent; font-size: 13px; letter-spacing: 0; }
+.phrase-composition .phrase-show { --spatial-accent: var(--band); flex: none; min-width: 32px; min-height: 35px; padding: 5px; border: 1px solid color-mix(in srgb, var(--band) 38%, transparent); border-radius: 8px; background: transparent; color: var(--band); font-size: 9px; letter-spacing: 0; }
+.phrase-composition :is(input, button):is(:hover, :focus-visible, [aria-pressed="true"]):not(:disabled) { border-color: color-mix(in srgb, var(--band) 70%, transparent); background: transparent; box-shadow: 0 0 14px color-mix(in srgb, var(--band) 14%, transparent); }
+.phrase-composition :is(input, button):focus-visible { outline: 2px solid var(--band); outline-offset: 3px; }
+.phrase-composition input[aria-invalid="true"] { border-color: var(--failed); box-shadow: none; }
+.phrase-composition .phrase-secret { -webkit-text-security: disc; }
+.phrase-composition .phrase-secret.phrase-visible { -webkit-text-security: none; }
+.phrase-display { user-select: none; -webkit-user-select: none; }
+.band-anchor { --band: var(--gold); }
+.band-root { --band: var(--mint); }
+.band-unite { --band: var(--blue); }
+.band-rise { --band: var(--violet); }
+.phrase-strength { margin: 0; color: var(--secondary); font-size: 11px; line-height: 1.4; }
+.phrase-acknowledgement { display: grid; gap: 7px; }
+.phrase-acknowledgement .phrase-warning { margin: 0; color: var(--gold); font-size: 11px; line-height: 1.4; }
+.phrase-acknowledgement .phrase-tick { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; }
+.phrase-acknowledgement .phrase-tick input { width: 16px; height: 16px; accent-color: var(--gold); }
+.owner-recovery textarea { width: 100%; min-width: 0; max-height: 92px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent); border-radius: 10px; color: var(--text); background: transparent; font: inherit; resize: none; }
+.owner-recovery textarea:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+@media (max-height: 760px) {
+  .phrase-composition .phrase-anchor, .phrase-composition .phrase-band { gap: 5px; padding: 8px; }
+  .phrase-composition .anchor-box { min-height: 34px; }
+  .phrase-composition .word-tile { min-height: 31px; }
+}
+@media (prefers-reduced-motion: no-preference) { .phrase-composition :is(input, button) { transition: border-color 180ms ease, box-shadow 180ms ease; } }
+
+/* Ceremony words: larger, softer, a little room to breathe. The group outlines are the one place a touch more visible than a button. */
+.onboarding .phrase-composition { gap: 14px; }
+.onboarding .phrase-composition .phrase-bands { gap: 14px; }
+.onboarding .phrase-composition .phrase-anchor, .onboarding .phrase-composition .phrase-band { padding: 12px 14px 14px; gap: 8px; border: 1px solid color-mix(in srgb, var(--band) 52%, transparent); border-radius: 22px; }
+.onboarding .phrase-composition .word-label { font-size: 12px; letter-spacing: .24em; text-align: center; padding-left: .24em; }
+.onboarding .phrase-composition .anchor-boxes { gap: 8px; }
+.onboarding .phrase-composition .anchor-box { min-height: 54px; border-radius: 14px; font-size: 26px; font-weight: 300; border: var(--hair) solid color-mix(in srgb, var(--gold) 62%, transparent); }
+.onboarding .phrase-composition .phrase-pair { gap: 10px; }
+.onboarding .phrase-composition .word-tile { min-height: 48px; gap: 10px; padding: 6px 12px; border-radius: 14px; border: var(--hair) solid color-mix(in srgb, var(--band) 40%, transparent); }
+.onboarding .phrase-composition .word-tile strong { font-size: 19px; font-weight: 300; }
+.onboarding .phrase-composition .word-initial { flex-basis: 24px; height: 26px; font-size: 12px; border-radius: 8px; border: var(--hair) solid color-mix(in srgb, var(--gold) 55%, transparent); }
+@media (max-height: 820px) {
+  .onboarding .phrase-composition, .onboarding .phrase-composition .phrase-bands { gap: 10px; }
+  .onboarding .phrase-composition .phrase-anchor, .onboarding .phrase-composition .phrase-band { padding: 9px 12px 11px; gap: 6px; }
+  .onboarding .phrase-composition .anchor-box { min-height: 44px; font-size: 22px; }
+  .onboarding .phrase-composition .word-tile { min-height: 40px; }
+  .onboarding .phrase-composition .word-tile strong { font-size: 17px; }
+}
+@media (max-height: 700px) {
+  .onboarding .phrase-composition, .onboarding .phrase-composition .phrase-bands { gap: 8px; }
+  .onboarding .phrase-composition .phrase-anchor, .onboarding .phrase-composition .phrase-band { padding: 7px 10px 8px; gap: 4px; }
+  .onboarding .phrase-composition .anchor-box { min-height: 36px; font-size: 19px; }
+  .onboarding .phrase-composition .word-tile { min-height: 34px; }
+  .onboarding .phrase-composition .word-label { font-size: 11px; }
+}
+
+/* The blank words screen: the same boxes and groups, with inputs where the words were. */
+.phrase-form input { font: inherit; letter-spacing: 0; box-shadow: none; }
+.phrase-composition input.anchor-box { width: 100%; min-width: 0; padding: 0; text-align: center; text-transform: uppercase; color: var(--gold); caret-color: var(--gold);
+  background: transparent; font-size: 26px; font-weight: 300; transition: border-color .5s ease, box-shadow .5s ease; }
+.phrase-composition input.anchor-box:focus-visible { outline: none; border-color: color-mix(in srgb, var(--gold) 95%, transparent); box-shadow: 0 0 22px color-mix(in srgb, var(--gold) 20%, transparent); }
+.phrase-composition input[aria-invalid='true'] { border-color: var(--failed); }
+.phrase-composition .entry-tile { position: relative; cursor: text; }
+.phrase-composition .entry-tile input { flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text); font-size: 19px; font-weight: 300; text-align: center; }
+.phrase-composition .entry-tile input:is(:hover, :focus-visible):not(:disabled) { outline: none; box-shadow: none; border-color: transparent; background: transparent; }
+.phrase-composition .entry-tile:focus-within { border-color: color-mix(in srgb, var(--band) 85%, transparent); box-shadow: 0 0 22px color-mix(in srgb, var(--band) 16%, transparent); }
+.phrase-composition .entry-tile:has(input[aria-invalid='true']) { border-color: var(--failed); }
+.phrase-composition .entry-tile .word-initial { min-width: 24px; }
+.phrase-composition .entry-tile .word-hint { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--failed); font-size: 11px; font-weight: 300; pointer-events: none; opacity: 0; transition: opacity .4s ease; }
+.phrase-composition .entry-tile[data-off] .word-hint { opacity: .9; }
+.phrase-composition .entry-tile[data-off] .word-initial { border-color: var(--failed); color: var(--failed); }
+@media (max-height: 820px) { .phrase-composition input.anchor-box { font-size: 22px; } .phrase-composition .entry-tile input { font-size: 17px; } }
+@media (max-height: 700px) { .phrase-composition input.anchor-box { font-size: 19px; } }
+
+/* ROOT, UNITE and RISE run up the left of their group (reading bottom to top) over a heavier bar in the group's colour. */
+.onboarding .phrase-composition .phrase-band {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: stretch; column-gap: 10px; padding: 11px 12px 11px 10px;
+  border-left: 4px solid color-mix(in srgb, var(--band) 85%, transparent); border-radius: 16px;
+}
+.onboarding .phrase-composition .phrase-band .word-label {
+  display: flex; align-items: center; justify-content: center; margin: 0; padding: 0; writing-mode: vertical-rl; transform: rotate(180deg);
+  font-size: 11px; letter-spacing: .28em; text-align: center; color: var(--band);
+}
+.onboarding .phrase-composition .phrase-band .phrase-pair { align-self: center; }
+@media (max-height: 820px) { .onboarding .phrase-composition .phrase-band { padding: 8px 10px 8px 8px; } }
+@media (max-height: 700px) { .onboarding .phrase-composition .phrase-band { padding: 6px 8px 6px 6px; } .onboarding .phrase-composition .phrase-band .word-label { font-size: 10px; } }

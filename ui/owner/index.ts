@@ -19,9 +19,10 @@ if (root) {
   void (async () => {
     const claim = takeClaimFragment();
     const config = await configuration();
+    const intent = { sovereignId: false };
     const onboarding = createOnboarding(config, "");
-    const joining = createOnboarding(config, "", "enrol");
-    const claims = createClaimService({ ...config, mode: "host-token-v1", initialToken: claim,
+    const joining = createOnboarding(config, "", "enrol", intent);
+    const claims = createClaimService({ ...config, mode: "host-token-v1", initialToken: claim, intent,
       joining: context => joining({ ...context, route: { pane: "passkey" } }),
       signin: context => onboarding({ ...context, route: { pane: "passkey" } }) });
     const refresh = createLivePhraseService(config);

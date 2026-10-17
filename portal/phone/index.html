@@ -7,6 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <title>Pair this phone · AUKORA</title>
 <link rel="stylesheet" href="/portal/phone/phone.css">
+<link rel="stylesheet" href="/portal/feedback.css">
 <script src="/portal/vendor/jsQR.min.js"></script>
 <script type="module" src="/portal/phone/phone.js"></script>
 </head>
@@ -15,10 +16,12 @@
   <h1>Pair this phone</h1>
   <p class="pair-lead" id="lead">Opening the pairing…</p>
   <div class="pair-stage">
-    <canvas id="frame" class="pair-frame" aria-label="Signed optical exchange frames"></canvas>
+    <div id="tile" class="pair-tile"><canvas id="frame" class="pair-frame" aria-label="Signed optical exchange frames"></canvas></div>
     <video id="camera" class="pair-camera" muted playsinline aria-label="Local camera preview"></video>
   </div>
   <output id="phase" class="pair-phase" aria-live="polite"></output>
+  <div id="feedback" class="pair-feedback"></div>
+  <button id="sound" type="button" class="pair-sound">Sound on</button>
   <button id="start" type="button" class="pair-start" disabled>Start</button>
   <p class="pair-note">Co-presence is evidence. It shows two screens saw each other; it grants no permission.</p>
 </main>

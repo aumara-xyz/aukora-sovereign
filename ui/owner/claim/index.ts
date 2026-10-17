@@ -3,7 +3,8 @@ import type { OwnerDisposer, OwnerPane, OwnerPaneContext } from "../contracts.js
 import { claimBody, claimToken, httpsOrigin } from "./codec.js";
 import type { ClaimMode } from "./codec.js";
 import { consumeClaim } from "./transport.js";
-import { ownerIcon } from "../icons.js";
+import { brand } from "../brand.js";
+import { actionButton, iconTile } from "../primitives.js";
 import { renderBrowserAdvice } from "../passkey/browser.js";
 
 export interface ClaimConfiguration {
@@ -14,6 +15,8 @@ export interface ClaimConfiguration {
   // Trusted release composition continues inside the same owner frame.
   readonly joining: OwnerPane;
   readonly signin?: OwnerPane;
+  // "I already have a Sovereign ID": the onboarding pane reads this after the passkey.
+  readonly intent?: { sovereignId: boolean };
 }
 
 export interface ClaimService { mount(context: OwnerPaneContext): OwnerDisposer }
@@ -43,30 +46,60 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     let entering = false;
     let continuation: OwnerDisposer | undefined;
     const form = document.createElement("form");
-    form.className = "owner-claim onboarding";
-    const emblem = document.createElement("div");
-    emblem.className = "claim-emblem";
-    emblem.append(ownerIcon("owner"));
-    const title = document.createElement("h2");
-    title.textContent = "Claim your node";
-    title.tabIndex = -1;
+    form.className = "owner-claim";
+    const stage = document.createElement("div");
+    stage.className = "claim-stage";
+    // The opening portal is the primitives' PortalButton (tone mint): icon tile, title, one-line summary, "+" / "−".
+    const portal = document.createElement("section");
+    portal.className = "claim-portal ak-portal ak-tone-mint";
+    portal.dataset.open = "no";
+    const portalButton = document.createElement("button");
+    portalButton.type = "button";
+    portalButton.className = "claim-portal-button ak-portal__head";
+    portalButton.setAttribute("aria-expanded", "false");
+    portalButton.setAttribute("aria-controls", "claim-portal-content");
+    const portalCopy = document.createElement("span");
+    portalCopy.className = "ak-portal__copy";
+    const portalTitle = document.createElement("span");
+    portalTitle.className = "ak-portal__title";
+    portalTitle.textContent = "Exit the Matrix";
+    const portalSummary = document.createElement("span");
+    portalSummary.className = "ak-portal__summary";
+    portalSummary.textContent = "Claim your node";
+    portalCopy.append(portalTitle, portalSummary);
+    const portalEnd = document.createElement("span");
+    portalEnd.className = "ak-portal__end";
+    const depth = document.createElement("span");
+    depth.className = "ak-expander";
+    depth.textContent = "+";
+    depth.setAttribute("aria-hidden", "true");
+    portalEnd.append(depth);
+    portalButton.append(iconTile("door"), portalCopy, portalEnd);
+    const portalContent = document.createElement("div");
+    portalContent.id = "claim-portal-content";
+    portalContent.className = "claim-portal-content";
+    portalContent.inert = true;
+    portalContent.setAttribute("aria-hidden", "true");
+    const portalBody = document.createElement("div");
+    portalBody.className = "claim-portal-body ak-portal__body";
     const explanation = document.createElement("p");
     explanation.className = "owner-detail";
-    explanation.textContent = mode === "invite-v2"
-      ? "Use your claim link and private invite secret."
-      : "Open your node with its claim link.";
     const tokenLabel = document.createElement("label");
     tokenLabel.className = "owner-input";
-    tokenLabel.textContent = "Claim link";
+    tokenLabel.textContent = "Claim code or link";
     const token = document.createElement("input");
     token.type = "password";
     token.required = true;
     token.maxLength = 2048;
     token.autocomplete = "off";
     token.spellcheck = false;
+    token.placeholder = "Claim code or link";
+    token.setAttribute("autocapitalize", "off");
     token.value = initialToken;
     initialToken = "";
     tokenLabel.append(token);
+    // A claim link already carries the code: the field stays out of sight and the portal says so in one line.
+    const prefilled = token.value !== "";
     const secretLabel = document.createElement("label");
     secretLabel.className = "owner-input";
     secretLabel.textContent = "Invite secret";
@@ -77,34 +110,95 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
     secret.pattern = "[0-9a-f]{64}";
     secret.autocomplete = "off";
     secret.spellcheck = false;
+    secret.placeholder = "Invite secret";
+    secret.setAttribute("autocapitalize", "off");
     secretLabel.append(secret);
-    const submit = document.createElement("button");
+    const showDetail = (): void => {
+      tokenLabel.hidden = prefilled && !retyping;
+      explanation.textContent = !tokenLabel.hidden ? (mode === "invite-v2"
+        ? "Enter your claim link and private invite secret." : "Enter your claim code or link.") : "Using your claim link";
+      if (configuration.intent?.sovereignId) explanation.textContent += ". After your passkey, bring your Sovereign ID.";
+    };
+    let retyping = false;
     // The owner frame is sandboxed without allow-forms, so a form submission is dropped before any submit event fires;
     // the button and Enter call the handler directly (found on t2 at 5cacca0: "Claim node" did nothing).
-    submit.type = "button";
-    submit.className = "primary";
-    const submitLabel = document.createElement("span");
-    submitLabel.textContent = "Claim node";
-    submit.append(ownerIcon("owner"), submitLabel);
-    const resume = document.createElement("button");
-    resume.type = "button";
-    resume.className = "secondary";
-    resume.textContent = "Resume setup";
+    const begin = actionButton("Begin your journey", "mint");
+    const submit = begin.button;
+    submit.classList.add("primary");
+    const submitLabel = submit.querySelector<HTMLElement>(".ak-portal__title")!;
+    const signin = document.createElement("button");
+    signin.type = "button";
+    signin.className = "quiet-link";
+    signin.textContent = "Recover my account";
     const status = document.createElement("p");
     status.className = "owner-status";
     status.setAttribute("role", "status");
     renderBrowserAdvice(status);
     const next = document.createElement("section");
+    next.className = "claim-continuation";
+    next.hidden = true;
     const inputs = document.createElement("div");
     inputs.className = "owner-content";
     inputs.append(tokenLabel);
     if (mode === "invite-v2") inputs.append(secretLabel);
     const controls = document.createElement("div");
     controls.className = "owner-controls";
-    controls.append(submit, resume);
-    form.append(emblem, title, explanation, inputs, controls, status);
+    controls.append(begin.frame);
+    const foot = document.createElement("div");
+    foot.className = "claim-foot";
+    if (configuration.signin) foot.append(signin);
+    const sovereign = document.createElement("button");
+    sovereign.type = "button";
+    sovereign.className = "quiet-link";
+    sovereign.textContent = "I already have a Sovereign ID";
+    if (configuration.intent) foot.append(sovereign);
+    const textBlock = document.createElement("div");
+    textBlock.className = "owner-text";
+    textBlock.append(explanation);
+    portalBody.append(textBlock, inputs, controls);
+    portalContent.append(portalBody);
+    portal.append(portalButton, portalContent);
+    stage.append(portal, status);
+    form.append(stage, foot);
     context.host.replaceChildren(form, next);
-    title.focus({ preventScroll: true });
+    showDetail();
+    brand.show("hero");
+
+    function openPortal(open: boolean): void {
+      portal.dataset.open = open ? "yes" : "no";
+      depth.textContent = open ? "−" : "+";
+      portalButton.setAttribute("aria-expanded", String(open));
+      portalContent.setAttribute("aria-hidden", String(!open));
+      portalContent.inert = !open;
+      if (open) (tokenLabel.hidden ? submit : token).focus({ preventScroll: true });
+    }
+
+    sovereign.addEventListener("click", () => {
+      if (busy || entering || !configuration.intent) return;
+      configuration.intent.sovereignId = !configuration.intent.sovereignId;
+      sovereign.textContent = configuration.intent.sovereignId ? "Start with a new identity instead" : "I already have a Sovereign ID";
+      showDetail();
+      openPortal(true);
+    }, { signal: lifetime.signal });
+
+    portalButton.addEventListener("click", () => {
+      if (!busy && !entering) openPortal(portal.dataset.open !== "yes");
+    }, { signal: lifetime.signal });
+
+    async function dissolve(): Promise<void> {
+      form.classList.add("claim-leaving");
+      openPortal(false);
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      await new Promise<void>(resolve => {
+        const finish = () => {
+          clearTimeout(timer);
+          lifetime.signal.removeEventListener("abort", finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, 780);
+        lifetime.signal.addEventListener("abort", finish, { once: true });
+      });
+    }
 
     function dispose(): void {
       if (lifetime.signal.aborted) return;
@@ -112,6 +206,7 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
       token.value = "";
       secret.value = "";
       try { continuation?.(); } finally {
+        brand.hide();
         context.signal.removeEventListener("abort", dispose);
         context.host.replaceChildren();
       }
@@ -121,7 +216,9 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
       if (entering || lifetime.signal.aborted) return;
       entering = true;
       submit.disabled = true;
-      resume.disabled = true;
+      signin.disabled = true;
+      sovereign.disabled = true;
+      portalButton.disabled = true;
       token.value = "";
       secret.value = "";
       try {
@@ -129,21 +226,35 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
         const cleanup = await pane({ ...context, host: next, signal: lifetime.signal });
         if (typeof cleanup !== "function") throw new Error("invites:joining-adapter");
         if (lifetime.signal.aborted) cleanup();
-        else { continuation = cleanup; form.hidden = true; }
+        else {
+          continuation = cleanup;
+          await dissolve();
+          if (!lifetime.signal.aborted) {
+            form.hidden = true;
+            next.hidden = false;
+            next.querySelector<HTMLElement>("h2[tabindex]")?.focus({ preventScroll: true });
+          }
+        }
       } catch {
         if (!lifetime.signal.aborted) {
           status.textContent = claimed
-            ? "The claim opened a setup session. Joining is unavailable; you can retry without sending the secret again."
-            : "Joining could not resume. An authenticated setup session is required.";
+            ? "Setup opened. Retry without sending the claim again."
+            : "Sign-in is not available yet. Try again shortly.";
           if (claimed) submitLabel.textContent = "Continue setup";
           submit.disabled = false;
-          title.focus({ preventScroll: true });
+          form.classList.remove("claim-leaving");
+          openPortal(true);
         }
-      } finally { entering = false; resume.disabled = false; }
+      } finally {
+        entering = false;
+        signin.disabled = false;
+        sovereign.disabled = false;
+        portalButton.disabled = false;
+      }
     }
 
-    resume.addEventListener("click", () => {
-      if (!busy) void enterJoining();
+    signin.addEventListener("click", () => {
+      if (!busy && configuration.signin) void enterJoining(configuration.signin);
     }, { signal: lifetime.signal });
     const onSubmit = (event: Event) => {
       event.preventDefault();
@@ -154,15 +265,19 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
         frame(ownerOrigin, shellOrigin, context);
         body = claimBody(mode, claimToken(token.value, shellOrigin), secret.value);
       } catch {
-        status.textContent = "Use the claim link for this node and the exact invite secret. Nothing was sent.";
+        status.textContent = mode === "invite-v2" ? "Use this node’s claim link and exact invite secret."
+          : "Use this node’s exact claim code or link.";
         return;
       }
       token.value = "";
       secret.value = "";
       busy = true;
       submit.disabled = true;
-      resume.disabled = true;
-      status.textContent = "Claiming this node…";
+      signin.disabled = true;
+      sovereign.disabled = true;
+      portalButton.disabled = true;
+      status.textContent = "";
+      brand.working(true);
       void consumeClaim(body, lifetime.signal).then(async () => {
         if (lifetime.signal.aborted) return;
         claimed = true;
@@ -170,21 +285,26 @@ export function createClaimService(configuration: ClaimConfiguration): ClaimServ
         token.required = false;
         secret.disabled = true;
         secret.required = false;
-        status.textContent = mode === "invite-v2" ? "Setup opened. Continue joining."
-          : "Setup opened. Create your passkey.";
         await enterJoining();
       }).catch(async error => {
         if (!lifetime.signal.aborted) {
           if (error instanceof Error && error.message === "aumlok:claim-spent" && configuration.signin) {
-            status.textContent = "Sign in to continue.";
             await enterJoining(configuration.signin);
           } else if (!renderBrowserAdvice(status, error)) {
-            status.textContent = "The node has not confirmed this claim. It may have been consumed if the reply was interrupted. Re-enter the private claim details to retry.";
+            status.textContent = "That did not open. Check your claim link and try again.";
+            retyping = true;
+            showDetail();
           }
         }
       }).finally(() => {
         busy = false;
-        if (!lifetime.signal.aborted && !form.hidden) { submit.disabled = false; resume.disabled = false; }
+        brand.working(false);
+        if (!lifetime.signal.aborted && !form.hidden) {
+          submit.disabled = false;
+          signin.disabled = false;
+          sovereign.disabled = false;
+          portalButton.disabled = false;
+        }
       });
     };
     submit.addEventListener("click", onSubmit, { signal: lifetime.signal });

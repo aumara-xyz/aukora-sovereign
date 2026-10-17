@@ -7,11 +7,13 @@ body { margin: 0; min-height: 100dvh; background: #07131e; color: #edf8f6; font:
 .pair-lead, .pair-note { margin: 0; overflow-wrap: anywhere; }
 .pair-note { font-size: .8rem; opacity: .7; }
 .pair-stage { display: grid; gap: .75rem; justify-items: center; }
-.pair-frame { width: min(100%, 26rem); height: auto; image-rendering: pixelated; background: #fff; border-radius: .5rem; }
+.pair-tile { width: min(100%, 26rem); display: grid; justify-items: center; }
+.pair-frame { height: auto; image-rendering: pixelated; border-radius: .9rem; box-shadow: 0 0 40px rgba(106, 168, 255, .2); }
 .pair-camera { width: 6rem; height: auto; border-radius: .5rem; transform: scaleX(-1); opacity: .8; }
 .pair-phase { min-height: 1.5em; font-size: 1.1rem; }
 .pair-start { justify-self: center; min-width: 10rem; padding: .8rem 1.4rem; font: inherit; color: inherit; background: #0b7a5c; border: 1px solid #3fb08f; border-radius: .6rem; }
 .pair-start:disabled { opacity: .45; }
-.pair[data-stage="joining"] .pair-stage, .pair[data-stage="ready"] .pair-frame, .pair[data-stage="done"] .pair-stage { display: none; }
+.pair-sound { justify-self: center; padding: .3rem .8rem; font: inherit; font-size: .8rem; color: inherit; background: none; border: 1px solid #ffffff33; border-radius: .6rem; opacity: .7; }
+.pair[data-stage="joining"] .pair-stage, .pair[data-stage="ready"] .pair-tile, .pair[data-stage="done"] .pair-stage, .pair[data-stage="joining"] .pair-feedback, .pair[data-stage="ready"] .pair-feedback, .pair[data-stage="ready"] .pair-sound, .pair[data-stage="joining"] .pair-sound { display: none; }
 .pair[data-stage="done"] .pair-phase { color: #7fe0bf; }
 .pair[data-stage="failed"] .pair-phase { color: #f2b8a2; }

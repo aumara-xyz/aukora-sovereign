@@ -6,11 +6,16 @@ export function createView(host: HTMLElement) {
   const css = document.createElement("link");
   css.rel = "stylesheet";
   css.href = new URL("./phrase.css", import.meta.url).href;
+  const heading = document.createElement("div");
+  heading.className = "phrase-heading";
   const title = document.createElement("h2");
-  title.textContent = "Your seven-word phrase";
+  title.textContent = "AUMLOK";
+  heading.append(title);
   const explanation = document.createElement("p");
+  explanation.className = "phrase-hint";
   explanation.textContent = "Never type these words into an AI.";
   const entryLabel = document.createElement("label");
+  entryLabel.className = "owner-input";
   entryLabel.textContent = "Current seven-word phrase";
   const entry = document.createElement("input");
   entry.type = "password";
@@ -20,17 +25,20 @@ export function createView(host: HTMLElement) {
   entry.setAttribute("autocapitalize", "off");
   entryLabel.append(entry);
   const status = document.createElement("p");
+  status.className = "owner-status";
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
   const phrase = document.createElement("p");
   phrase.className = "phrase-words";
   phrase.hidden = true;
   const savedLabel = document.createElement("label");
+  savedLabel.className = "phrase-checkbox";
   const saved = document.createElement("input");
   saved.type = "checkbox";
   savedLabel.append(saved, " I have saved the replacement phrase.");
   savedLabel.hidden = true;
   const review = document.createElement("div");
+  review.className = "approval-review phrase-review";
   const controls = document.createElement("div");
   controls.className = "phrase-controls";
   const button = (text: string) => {
@@ -41,20 +49,21 @@ export function createView(host: HTMLElement) {
     controls.append(result);
     return result;
   };
-  const unlock = button("Unlock phrase locally");
-  const draw = button("Generate replacement phrase");
-  const prepare = button("Review phrase refresh");
+  const unlock = button("Unlock locally");
+  const draw = button("Rotate phrase");
+  const prepare = button("Review refresh");
   const approve = button("Approve with passkey");
-  const resume = button("Resume from owner service");
-  const backup = button("Download passkey-bound backup (v2)");
+  const resume = button("Resume refresh");
+  const backup = button("Passkey-bound backup · v2");
   const legacyLabel = document.createElement("label");
+  legacyLabel.className = "phrase-checkbox phrase-legacy";
   const legacy = document.createElement("input");
   legacy.type = "checkbox";
   legacyLabel.append(legacy, " I explicitly request a phrase-only v1 copy without passkey protection.");
   legacyLabel.hidden = true;
   const legacyDownload = button("Download phrase-only copy (v1)");
   const close = button("Finish");
-  panel.append(css, title, explanation, entryLabel, phrase, savedLabel, review,
+  panel.append(css, heading, explanation, entryLabel, phrase, savedLabel, review,
     legacyLabel, controls, status);
   host.replaceChildren(panel);
   return { document, panel, entry, entryLabel, status, phrase, saved, savedLabel, review,

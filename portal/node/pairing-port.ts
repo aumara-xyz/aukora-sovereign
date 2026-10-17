@@ -11,7 +11,7 @@
 import { BrowserCopresenceEngine } from "../engine.js";
 import { IndexedAttempts } from "../attempts.js";
 import { cameraSurface, type FrameDecoder } from "../optical.js";
-import { drawQr } from "../qr.js";
+import { drawQrLink } from "../qr.js";
 import { checkAbort, refuse, utf8 } from "../bytes.js";
 import type { PentoraExpansion } from "../bloom/index.js";
 import type { ContextExchange, PersonNostrKeys, PortalExchange, PortalObservation, PortalServices, ReceiptVerdict } from "../contracts.js";
@@ -77,7 +77,7 @@ class NodeExchange implements PortalExchange {
 }
 
 function drawLink(canvas: HTMLCanvasElement, url: string): void {
-  drawQr(canvas, utf8.encode(url));
+  drawQrLink(canvas, utf8.encode(url));   // the smallest code that holds the address, not the frames' version 40
   canvas.dataset.url = url;
 }
 

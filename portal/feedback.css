@@ -1,0 +1,24 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Pairing feedback shared by the owner's scene and the phone page (portal/feedback.ts). Colours fall back to plain values on the phone. */
+.fb-pulse { position: relative; }
+/* One ring of light the moment the other screen is first recognised. */
+.fb-pulse::after { content: ''; position: absolute; inset: -1%; border-radius: 22px; border: 2px solid color-mix(in srgb, var(--fb-blue, #6aa8ff) 80%, white); pointer-events: none; animation: fb-ring .9s ease-out both; }
+@keyframes fb-ring { from { opacity: .9; transform: scale(1); } to { opacity: 0; transform: scale(1.16); } }
+/* Searching, seen, exchanging, verified: a ring that fills while the screens hold steady, and the four steps beside it. */
+.fb { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.fb-ring { width: 34px; height: 34px; flex: none; transform: rotate(-90deg); }
+.fb-track { stroke: color-mix(in srgb, var(--fb-text, #edf8f6) 16%, transparent); stroke-width: 3; }
+.fb-arc { stroke: var(--fb-mint, #6ee7b7); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1.3s cubic-bezier(.16, 1, .3, 1); }
+.fb[data-state='searching'] .fb-arc { stroke-dashoffset: 75; }
+.fb[data-state='searching'] .fb-ring { animation: fb-spin 1.5s linear infinite; }
+@keyframes fb-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+.fb-steps { display: flex; gap: 14px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; letter-spacing: .04em; }
+.fb-steps li { color: var(--fb-muted, #8b97a6); transition: color .5s ease; }
+.fb-steps li[data-done='true'] { color: color-mix(in srgb, var(--fb-mint, #6ee7b7) 70%, var(--fb-text, #edf8f6)); }
+.fb-steps li[data-now='true'] { color: var(--fb-text, #edf8f6); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fb[data-state='searching'] .fb-ring { animation: none; }
+  .fb-arc { transition: none; }
+  .fb-pulse::after { animation: none; display: none; }
+}

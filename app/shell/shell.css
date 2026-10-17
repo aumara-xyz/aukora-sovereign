@@ -10,6 +10,8 @@
 [hidden] { display: none !important; }
 html, body, #aukora-shell, .shell { width: 100%; height: 100%; margin: 0; }
 body { color: var(--aukora-text); background: var(--dsw-specific-spatial-canvas); font: 14px var(--dsw-font-family); }
+#aukora-shell { transition: opacity 1s cubic-bezier(.16, 1, .3, 1); }
+body[data-claiming] #aukora-shell { opacity: 0; }
 button, select { font: inherit; }
 button:disabled { cursor: default; }
 .face-slot { position: absolute; inset: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }

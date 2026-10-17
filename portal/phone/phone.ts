@@ -12,14 +12,10 @@ import type { PortalExchange, PortalObservation } from "../contracts.js";
 import { contextNode, PairingClient, sleep, type PairingStatus } from "../node/client.js";
 import { deviceKey, PHONE_DEVICE_STORE } from "../node/device-key.js";
 import { frameDecoder } from "../node/decoder.js";
+import { chimes, exchangeFeedback, feedbackFor } from "../feedback.js";
 
-const PHASE: Record<PortalObservation["phase"], string> = {
-  FACE: "Face the screens toward each other.",
-  SEENYOU: "Seen you.",
-  HANDSHAKE: "Locking in.",
-  BLOOM: "Done here. Waiting for your node…",
-  REFUSED: "That did not verify. Face the screens toward each other and try again.",
-};
+const PHASE_BLOOM = "Done here. Waiting for your node…";
+const REFUSED = "That did not verify. Face the screens toward each other and try again.";
 const ENDED: Record<string, string> = {
   "copresence:join-used": "This code was already used. Show a new one on your computer and scan it again.",
   "copresence:join-invalid": "This code is not known to your node. Show a new one on your computer and scan it again.",
@@ -40,6 +36,23 @@ const phase = element<HTMLOutputElement>("phase");
 const start = element<HTMLButtonElement>("start");
 const frame = element<HTMLCanvasElement>("frame");
 const video = element<HTMLVideoElement>("camera");
+const tile = element<HTMLElement>("tile");
+const feedback = exchangeFeedback();
+element<HTMLElement>("feedback").append(feedback.element);
+const sound = chimes();
+const soundButton = element<HTMLButtonElement>("sound");
+const paintSound = (): void => { soundButton.textContent = sound.muted ? "Sound off" : "Sound on"; };
+paintSound();
+soundButton.addEventListener("click", () => { sound.mute(!sound.muted); paintSound(); });
+let recognised = false;
+let lastPhase: PortalObservation["phase"] = "FACE";
+function show(phaseNow: PortalObservation["phase"]): void {
+  lastPhase = phaseNow;
+  // The phone's own BLOOM only means this side is done; the node still has to say yes.
+  const state = phaseNow === "BLOOM" ? { state: "exchanging" as const, fill: 0.9, message: PHASE_BLOOM } : feedbackFor(phaseNow, recognised);
+  feedback.show(state.state, state.fill, state.message);
+  phase.textContent = state.message;
+}
 const client = new PairingClient();
 const life = new AbortController();
 
@@ -92,9 +105,13 @@ async function main(): Promise<void> {
   start.addEventListener("click", () => {
     if (running && !running.ended) return;
     start.disabled = true;
+    sound.unlock();
+    recognised = false;
+    feedback.reset();
     const run = { controller: new AbortController(), exchange: null as PortalExchange | null, attempt: "", ended: false };
     running = run;
-    stage("exchange", PHASE.FACE);
+    stage("exchange", "");
+    show("FACE");
     void (async () => {
       try {
         run.attempt = await attempts.reserve("optical", run.controller.signal);
@@ -106,13 +123,16 @@ async function main(): Promise<void> {
           if (observation.phase === "REFUSED") {
             void finish(run, "refused");
             optical.clear();
-            stage("failed", PHASE.REFUSED);
+            stage("failed", REFUSED);
             start.disabled = false;
             return;
           }
-          phase.textContent = PHASE[observation.phase];
+          show(observation.phase);
         });
-        await optical.scan(bytes => { void run.exchange?.receive(bytes); }, run.controller.signal);
+        await optical.scan(bytes => {
+          if (!recognised) { recognised = true; feedback.pulse(tile); sound.seen(); show(lastPhase); }   // the other screen, first read
+          void run.exchange?.receive(bytes);
+        }, run.controller.signal);
       } catch (error) {
         void finish(run, run.controller.signal.aborted ? "cancelled" : "refused");
         optical.clear();
@@ -132,6 +152,8 @@ async function main(): Promise<void> {
     if (status.state === "spent" && status.verdict) {
       lead.textContent = "This phone is paired with your node.";
       stage("done", "Verified by your node.");
+      feedback.show("verified", 1, "Verified by your node.");
+      sound.locked();
       start.hidden = true;
       // Keep showing the last frames a moment so the computer can finish reading them.
       await sleep(3000, life.signal);

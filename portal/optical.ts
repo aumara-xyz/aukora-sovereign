@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { OpticalSurface } from "./contracts.js";
 import { checkAbort, refuse, utf8 } from "./bytes.js";
-import { drawQr } from "./qr.js";
+import { drawQrFrame } from "./qr.js";
 import { drawRelationshipBloom, type PentoraExpansion } from "./bloom/index.js";
 
 export type FrameDecoder = (source: HTMLVideoElement) => Promise<readonly string[]>;
@@ -20,7 +20,7 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
   if (!bloomCanvas) canvas.after(relationship);
   relationship.hidden = true;
   return {
-    showFrame(bytes) { drawQr(canvas, bytes); },
+    showFrame(bytes) { drawQrFrame(canvas, bytes); },
     async showBloom(keys, signal) {
       bloomRequest?.abort();
       const request = new AbortController();
@@ -42,7 +42,7 @@ export function cameraSurface(canvas: HTMLCanvasElement, video: HTMLVideoElement
     async scan(consume, signal) {
       checkAbort(signal);
       const decoder = decode ?? nativeQrDecoder();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } } });
       let stopped = false, timer: ReturnType<typeof setTimeout> | undefined;
       const stop = (): void => {
         if (stopped) return;

@@ -1,0 +1,98 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* The opening: the trefoil above (drawn by brand.ts), one portal button, a quiet way back at the very bottom.
+   The portal is the primitives' PortalButton (primitives.css); only its travelling mint, blue and violet edge is added here. */
+.owner-claim {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  padding: clamp(240px, 42vh, 400px) 0 0;
+  text-align: center;
+}
+
+.claim-stage { width: min(100%, 410px); align-self: start; }
+
+/* The one button that glows: a bar of light turning slowly round the edge through mint, blue and violet, with the same light
+   blurred behind it as a halo. It should feel like stepping out of the Matrix. */
+.claim-portal {
+  --portal-angle: 0deg;
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  min-width: 0;
+  border: 2px solid transparent;
+  background: conic-gradient(from var(--portal-angle), var(--mint), var(--blue), var(--violet), var(--mint)) border-box;
+  box-shadow: 0 0 56px color-mix(in srgb, var(--mint) 20%, transparent);
+}
+/* Behind the content: the halo, then an opaque fill over its inside, so only the edge and the glow outside carry the colour. */
+.claim-portal::after { content: ""; position: absolute; z-index: -1; inset: 0; border-radius: calc(var(--ak-portal-radius, 14px) - 2px); background: rgb(23, 27, 36); }
+.claim-portal::before {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  inset: -3px;
+  border-radius: inherit;
+  background: conic-gradient(from var(--portal-angle), var(--mint), var(--blue), var(--violet), var(--mint));
+  filter: blur(20px);
+  opacity: .8;
+}
+.claim-portal:hover, .claim-portal[data-open="yes"] { border-color: transparent; box-shadow: 0 0 64px color-mix(in srgb, var(--violet) 18%, transparent); }
+/* Centred text, the same primitive shape: the icon stays at the left and the opener at the right. */
+.claim-portal .ak-portal__copy { align-items: center; text-align: center; }
+.claim-portal .ak-portal__head { padding-inline: 16px; }
+.claim-portal .ak-portal__end { min-width: 30px; justify-content: flex-end; }
+
+.claim-portal-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .9s var(--owner-ease), opacity .7s ease;
+}
+
+.claim-portal[data-open="yes"] .claim-portal-content { grid-template-rows: 1fr; opacity: 1; transition-delay: 0s, .25s; }
+.claim-portal-body { min-height: 0; overflow: hidden; align-items: center; text-align: center; animation: none; padding-block: 0; }
+/* Closed, the body takes no space at all (it used to keep the primitive's 18px bottom padding, so the head sat 20px high in its frame). */
+.claim-portal[data-open="yes"] .claim-portal-body { padding-block: 6px 18px; transition: padding .9s var(--owner-ease); }
+.claim-portal-body .owner-detail { margin: 6px 0 0; color: var(--secondary); font-size: 14px; font-weight: 300; line-height: 1.6; }
+.claim-portal-body .owner-content { margin-top: 18px; width: 100%; }
+.claim-portal-body .owner-controls { display: flex; flex-direction: column; align-items: center; margin: 20px 0 4px; width: 100%; }
+.claim-portal-body .owner-content > .owner-input input {
+  width: 100%; min-height: 48px; padding: 10px 18px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--gold) 38%, transparent);
+  background: transparent; color: var(--text); font-size: 15px; font-weight: 300; text-align: center;
+}
+.claim-portal-body .owner-content > .owner-input { font-size: 0; }
+
+.owner-claim .owner-status { margin: 18px 0 0; min-height: 0; color: var(--gold); font-size: 14px; text-align: center; }
+.owner-claim .owner-status:empty { display: none; }
+
+.claim-foot { align-self: end; display: flex; flex-direction: column; align-items: center; gap: 2px; padding-bottom: 26px; }
+.claim-leaving { pointer-events: none; animation: owner-leave .8s cubic-bezier(.4, 0, .2, 1) both; }
+
+@keyframes claim-halo { 0%, 100% { opacity: .6; } 50% { opacity: .95; } }
+@property --portal-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes claim-portal-turn { to { --portal-angle: 360deg; } }
+@keyframes claim-portal-glow {
+  0%, 100% { box-shadow: 0 0 46px color-mix(in srgb, var(--mint) 12%, transparent); }
+  33% { box-shadow: 0 0 52px color-mix(in srgb, var(--blue) 14%, transparent); }
+  66% { box-shadow: 0 0 52px color-mix(in srgb, var(--violet) 15%, transparent); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The portal arrives last, after the trefoil and the name; its edge then travels slowly through mint, blue and violet. */
+  .claim-portal { animation: owner-rise-slow 1.6s var(--owner-ease) 2.3s both; }
+  .claim-portal[data-open="no"] { animation: owner-rise-slow 1.6s var(--owner-ease) 2.3s both, claim-portal-turn 14s linear 2.3s infinite, claim-portal-glow 12s ease-in-out 3.9s infinite; }
+  .claim-portal[data-open="yes"] { animation: claim-portal-turn 22s linear infinite; }
+  /* The halo is a pseudo-element: an unregistered-inheritance angle does not pass down, so it turns on its own clock. */
+  .claim-portal::before { animation: claim-portal-turn 14s linear 2.3s infinite, claim-halo 6s ease-in-out 2.3s infinite; }
+  .claim-foot { animation: owner-fade 1.6s ease 3.4s both; }
+}
+
+@media (max-height: 800px) {
+  .owner-claim { padding-top: clamp(190px, 38vh, 300px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claim-portal-content { transition: none; }
+  .claim-leaving { animation: owner-leave .4s linear both; }
+}
