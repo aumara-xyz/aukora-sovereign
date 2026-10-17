@@ -32,8 +32,13 @@ expect_fail "closure is read-only" sh -c 'echo x > /engine-home/profiles/aukora/
 expect_fail "home patch cannot be replaced" sh -c 'echo "[]" > /engine-home/x && mv -f /engine-home/x /engine-home/cordis.patch.yml'
 expect_fail "node_modules guard cannot be filled" mkdir /engine-home/node_modules/@deepseek-ai
 expect_fail "door socket folder is not writable" sh -c 'echo x > /run/aukora-door/x'
+expect_fail "broker socket folder is not writable" sh -c 'echo x > /run/aukora-broker/x'
+expect_fail "DeepSeek is not reachable directly" $NODE -e "const s=require('net').connect(443,'api.deepseek.com');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)"
 # What must work: the door socket is reachable, the workspace is writable, the toolchain runs.
 expect_ok "door socket reachable" $NODE -e "const s=require('net').connect('/run/aukora-door/door.sock');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1))"
+# The model path through the in-wall bridge: the broker answers (a refusal is an answer; a 2xx/4xx JSON body proves
+# the hop), and nothing in the wall holds a key: the bridge's placeholder is all the harness has.
+expect_ok "model bridge reaches the broker" $NODE -e "fetch('http://127.0.0.1:3081/v1/models').then(r=>process.exit(r.status===404?0:1),()=>process.exit(1))"
 expect_ok "workspace writable" sh -c 'echo ok > /work/.wall-check && rm /work/.wall-check'
 expect_ok "toolchain runs" /opt/rust/bin/cargo --version
 [ "$failed" = 0 ] && echo "wall ok"

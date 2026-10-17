@@ -2,6 +2,7 @@
 //! Broker contracts. Paid dispatch and persistence remain unimplemented in wave 0.
 #![forbid(unsafe_code)]
 
+pub mod engine_link;
 pub mod grant;
 pub mod identity;
 pub mod intake;

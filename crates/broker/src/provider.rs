@@ -54,7 +54,7 @@ pub enum ModelSource {
 pub const MAX_PROVIDER_BYTES: usize = 1_048_576;
 pub const PROVIDER_DEADLINE_MS: u64 = 120_000;
 const MAX_REQUEST_BYTES: usize = 65_536;
-const SECRET_WINDOW: usize = 12;
+pub(crate) const SECRET_WINDOW: usize = 12;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderReply {
@@ -469,12 +469,12 @@ fn dollar_microusd(decimal: &str) -> Option<u64> {
         .filter(|v| *v <= crate::grant::MAX_SAFE)
 }
 
-struct EchoGuard {
+pub(crate) struct EchoGuard {
     fragments: Zeroizing<Vec<[u8; SECRET_WINDOW]>>,
 }
 
 impl EchoGuard {
-    fn new(key: &str) -> Self {
+    pub(crate) fn new(key: &str) -> Self {
         let mut fragments = Zeroizing::new(Vec::new());
         let mut add = |bytes: &[u8]| {
             for window in bytes.windows(SECRET_WINDOW) {
@@ -509,7 +509,7 @@ impl EchoGuard {
         Self { fragments }
     }
 
-    fn check(&self, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn check(&self, bytes: &[u8]) -> Result<()> {
         if bytes.windows(SECRET_WINDOW).any(|window| {
             let mut candidate = [0; SECRET_WINDOW];
             candidate.copy_from_slice(window);

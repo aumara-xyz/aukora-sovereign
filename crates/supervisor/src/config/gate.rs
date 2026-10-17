@@ -98,6 +98,12 @@ impl NodeConfig {
         self.optional_host_text("engine-v1.json")
     }
 
+    /// The engine's model broker (`model-broker-v1.json`, deploy/engine/NODE.md section 7), read like the door policy.
+    /// Absent means this node has no model path for the engine.
+    pub fn model_broker_config_text(&self) -> Result<Option<String>> {
+        self.optional_host_text("model-broker-v1.json")
+    }
+
     /// A root-owned file in the config directory that may be absent; read like `gate-targets-v1.json`.
     fn optional_host_text(&self, name: &'static str) -> Result<Option<String>> {
         let directory = disk::open_host_directory(&self.directory)?;

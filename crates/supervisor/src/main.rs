@@ -13,6 +13,7 @@ pub mod faces;
 mod health;
 mod host;
 mod identity;
+mod model_broker;
 mod release;
 mod state;
 mod web;

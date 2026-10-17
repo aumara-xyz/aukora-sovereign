@@ -59,6 +59,7 @@ pub struct Host {
     runtime_refusal: Mutex<Option<canon::Refusal>>,
     handoffs: Mutex<frontdoor::fd4::ShellHandoffs>,
     engine: Option<Arc<crate::engine::Engine>>,
+    model_broker: Option<Arc<crate::model_broker::ModelBroker>>,
 }
 struct Assets {
     source: ReleaseFiles,
@@ -160,11 +161,22 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
             eprintln!("supervisor: release proposal not raised at start-up: {}:{}", refusal.organ, refusal.reason);
         }
     }
+    // One key inbox: the key the owner enters for the engine's model path is the broker's key.
+    let keys = Arc::new(broker::keystore::KeyInbox::new());
     let broker = Arc::new(crate::adapters::BrokerAdapter::new(
         ledger.clone(),
-        Arc::new(broker::keystore::KeyInbox::new()),
+        keys.clone(),
         Arc::new(broker::intake::ModelSlot::new()),
     ));
+    // The engine's model path (deploy/engine/NODE.md section 7), when this node has `model-broker-v1.json`.
+    state.subdirectory("model-broker")?;
+    let model_broker = crate::model_broker::start_in_node(
+        &config,
+        config.state_root.join("model-broker"),
+        ledger.clone(),
+        gate.clone(),
+        keys,
+    );
     // Recovery refusal remains in the broker adapter and cannot take down owner ingress.
     let _recovery = broker.recover();
     let health = Arc::new(crate::health::HealthCollector::new(
@@ -261,6 +273,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         runtime_refusal: Mutex::new(None),
         handoffs: Mutex::new(frontdoor::fd4::ShellHandoffs::default()),
         engine: engine.clone(),
+        model_broker,
     });
     if let Some(engine) = engine {
         crate::engine::run(host.clone(), engine);
@@ -529,6 +542,12 @@ impl Host {
         let request = admission.request();
         if request.role() == HostRole::Shell && request.method() == Method::Get && request.path() == "/engine/open" {
             return self.engine_open(request);
+        }
+        if request.role() == HostRole::Shell && request.method() == Method::Get && request.path() == "/engine/model-key" {
+            return self.model_key_page();
+        }
+        if request.role() == HostRole::Shell && request.path() == "/api/engine/model-key" {
+            return self.model_key_entry(request);
         }
         if !request.path().starts_with("/api/") {
             return self.asset(request, admission.owner_navigation());

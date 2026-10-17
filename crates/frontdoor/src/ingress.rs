@@ -274,6 +274,15 @@ fn require_route(role: HostRole, method: Method, path: &str) -> Result<()> {
             Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
         };
     }
+    // The owner hands the engine's model key to the broker from the shell (deploy/engine/NODE.md section 7); the
+    // supervisor requires the bound shell session and the owner's passkey approves the key's digest.
+    if role == HostRole::Shell && path == "/api/engine/model-key" {
+        return if method == Method::Post {
+            Ok(())
+        } else {
+            Err(codes::FRONTDOOR_UNKNOWN_ROUTE)
+        };
+    }
     if role == HostRole::Shell && path == crate::api::service_reads::PATH {
         return crate::api::service_reads::resolve(role, method, path);
     }

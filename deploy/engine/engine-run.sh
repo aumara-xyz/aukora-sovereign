@@ -12,6 +12,7 @@
 #   /var/lib/aukora-engine/work -> /work                   rw  the workspace (wall test)
 #   /var/lib/aukora-engine/home -> /engine-home            rw  harness home: sticky, root-owned skeleton
 #   /run/aukora-door            -> /run/aukora-door        rw  the door socket (folder 0711 aukora: not engine-writable)
+#   /run/aukora-broker          -> /run/aukora-broker      rw  the model broker's socket (the same shape; NODE.md section 7)
 #   /run/aukora-engine/io       -> /run/aukora-engine-io   rw  1 MiB tmpfs: web socket + launch line
 #   /etc/aukora/engine/resolv.conf -> /etc/resolv.conf     ro  the DNS posture: no resolver
 # Never mounted: /etc/aukora (except that one file), /var/lib/aukora*, the Kira socket, the docker socket, /root.
@@ -33,6 +34,7 @@ create() {
         --mount type=bind,source=/var/lib/aukora-engine/work,target=/work \
         --mount type=bind,source=/var/lib/aukora-engine/home,target=/engine-home \
         --mount type=bind,source=/run/aukora-door,target=/run/aukora-door \
+        --mount type=bind,source=/run/aukora-broker,target=/run/aukora-broker \
         --mount type=bind,source=/run/aukora-engine/io,target=/run/aukora-engine-io \
         --mount type=bind,source=/etc/aukora/engine/resolv.conf,target=/etc/resolv.conf,readonly \
         -- /engine/node/bin/node /engine/aukora/entry.mjs "$ENGINE_HOST"
@@ -52,6 +54,7 @@ verify() {
                 "[[:space:]]*run_as_group:[[:space:]]*\"$AUMA_UID\"([[:space:]]+#.*)?" \
                 '[[:space:]]*network_policies:[[:space:]]*\{\}([[:space:]]+#.*)?' \
                 '[[:space:]]*-[[:space:]]*/run/aukora-door([[:space:]]+#.*)?' \
+                '[[:space:]]*-[[:space:]]*/run/aukora-broker([[:space:]]+#.*)?' \
                 '[[:space:]]*-[[:space:]]*/engine-home([[:space:]]+#.*)?'; do
         printf '%s\n' "$effective" | grep -qxE -- "$want" || { echo "engine-run: effective policy lacks: $want" >&2; exit 1; }
     done

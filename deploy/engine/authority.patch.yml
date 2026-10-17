@@ -44,3 +44,21 @@
 - id: ui-settings-models
   config:
     credentialOnboarding: false
+
+# 4. The model path (NODE.md section 7). The DeepSeek adapter talks to the in-wall bridge (entry.mjs), which pipes to
+#    the model broker outside the wall; the broker holds the owner's key and the owner-approved budget. The adapter's
+#    own key is a placeholder (DEEPSEEK_API_KEY in entry.mjs). Images go inline (the broker serves no Files API), so
+#    the inline budget stays under the broker's request limit (8 MiB).
+- id: llm-deepseek
+  config:
+    baseURL: http://127.0.0.1:3081
+    apiKeyEnv: DEEPSEEK_API_KEY
+    maxInlineRequestImageBytes: 4194304
+    filesApiTimeoutMs: 5000
+
+# 5. The harness's request extensions that would upload the session log and the plugin inventory to the provider:
+#    off. (The broker also removes any `dsh_*` member before a request leaves the node.)
+- id: session-log-deepseek
+  disabled: true
+- id: plugin-package-inventory-deepseek
+  disabled: true

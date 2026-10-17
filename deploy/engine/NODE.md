@@ -13,15 +13,16 @@ Marks: **RAN** = executed for this branch (on the Mac unless stated); **LINUX** 
 | Process | User | Listens / holds | Reaches |
 |---|---|---|---|
 | Caddy | caddy | :443 for `<shell>`, `owner.<shell>`, `engine.<shell>` | 127.0.0.1:18080 (frontdoor), 127.0.0.1:18081 (engine origin) |
-| `sovereign serve` (supervisor, gate, AUMLOK, Aura, frontdoor, broker, **door**, **engine controller**, **engine origin**) | aukora | 18080, 18081, `/run/aukora-door/door.sock` | Kira socket (group kira-clients), engine web socket, `systemctl start/stop aukora-engine.service` (polkit, that unit only) |
+| `sovereign serve` (supervisor, gate, AUMLOK, Aura, frontdoor, broker, **door**, **engine controller**, **engine origin**, **model broker**) | aukora | 18080, 18081, `/run/aukora-door/door.sock`, `/run/aukora-broker/broker.sock` | Kira socket (group kira-clients), engine web socket, `systemctl start/stop aukora-engine.service` (polkit, that unit only) |
 | `sovereign kira serve` | kira | `/run/aukora-kira/kira.sock` (0660, dir 2750 kira:kira-clients) | llama servers on 127.0.0.1:8771/8772 |
 | llama-server ×2 (embed, rerank) | kira | 127.0.0.1:8771, :8772 (nft: only uid kira may connect) | nothing (IPAddressDeny=any) |
 | openshell-gateway | root (hardened unit; only CAP_NET_BIND_SERVICE) | 127.0.0.1:690 (privileged: no other user can bind it; the fence lets only root connect) | docker |
-| the engine: `node entry.mjs` → `dsh --profile aukora` | **auma** (uid ≠ root, aukora, kira), inside the sandbox | 127.0.0.1:3080 *inside* the sandbox; `/run/aukora-engine-io/web.sock` (bridge) | the door socket; nothing else (no network, no resolver) |
+| the engine: `node entry.mjs` → `dsh --profile aukora` | **auma** (uid ≠ root, aukora, kira), inside the sandbox | 127.0.0.1:3080 and :3081 (model bridge) *inside* the sandbox; `/run/aukora-engine-io/web.sock` (bridge) | the door socket and the broker socket; nothing else (no network, no resolver) |
 
 Keys: the owner's passkey stays on the owner's device; the node's signing keys, Aura, the gate, the claim digest and the
 Kira agent keys are in Ring 3 state (`/var/lib/aukora`, `/var/lib/aukora-kira`), never mounted into the sandbox. The
-engine holds no Kira token (the door holds the non-owner one), no model key (section 7) and no owner session.
+engine holds no Kira token (the door holds the non-owner one), no model key (the broker holds it, section 7) and no
+owner session.
 
 ## 2. When the engine runs (the supervisor decides, outside the wall)
 
@@ -63,13 +64,14 @@ Hot reload and creator mode are never loaded and never approvable (`floor::plugi
 
 ## 4. The wall (Ring 1)
 
-The OpenShell policy is the wall test's, verbatim (`openshell-policy.yaml`), plus three NODE lines, each marked there:
-`/engine-home` (the harness home), `/run/aukora-engine-io` (bridge socket + launch line) and the resolver posture.
+The OpenShell policy is the wall test's, verbatim (`openshell-policy.yaml`), plus four NODE lines, each marked there:
+`/engine-home` (the harness home), `/run/aukora-engine-io` (bridge socket + launch line), `/run/aukora-broker` (the
+model broker socket, section 7) and the resolver posture.
 `run_as_user` is the engine user's uid; `network_policies: {}`; Landlock `hard_requirement`.
 
 Mounts (`engine-run.sh`): `/opt/aukora-engine` → `/engine` ro (node, pinned harness, in-wall scripts);
 `/opt/rust` ro; `/var/lib/aukora-engine/work` → `/work` rw; `/var/lib/aukora-engine/home` → `/engine-home` rw;
-`/run/aukora-door` rw (folder 0711 aukora, so not engine-writable); `/run/aukora-engine/io` (1 MiB tmpfs) rw;
+`/run/aukora-door` rw (folder 0711 aukora, so not engine-writable); `/run/aukora-broker` rw (the same); `/run/aukora-engine/io` (1 MiB tmpfs) rw;
 `/etc/aukora/engine/resolv.conf` → `/etc/resolv.conf` ro. Never: `/etc/aukora`, `/var/lib/aukora*`, the Kira socket,
 the docker socket.
 
@@ -139,21 +141,68 @@ overlay. The wall test ran the door as its own user (`aukora-door`); in the node
 aukora), because owner asks need the gate in the same process. Both keep the property the test relied on: the engine's
 uid is neither the door's nor root, and the door's state and policy are not mounted. Decision D3.
 
-## 7. The model (the gap)
+## 7. The model: the broker path
 
-There is no broker path to the harness: the broker (`crates/broker`) serves the Rust guest over FD 3 and exposes no
-endpoint the harness can call, and the harness's DeepSeek adapter wants an HTTPS base URL. With `network_policies: {}`
-the engine has no route to any provider. **So the default node has no model in the engine**: the UI, the door, Kira
-through the door and the workspace all work; a chat turn fails at the provider. Per the coordinator, the engine never
-receives an OpenRouter key file. Two ways forward, decision D2:
+The engine has no network and no key. Its DeepSeek adapter (`@deepseek-ai/dsh-llm-deepseek-api-key` 0.2.1-alpha.5)
+speaks the **Anthropic Messages API** (not OpenAI chat-completions: `POST <baseURL>/v1/messages`, always streaming
+SSE, `x-api-key`, `anthropic-version: 2023-06-01`; read from the installed package's `serialize()`, `parseSse()`,
+`translate()`). The path, built in this branch:
 
-- **Broker path (the plan)**: a broker listener on a unix socket bind-mounted like the door (`/run/aukora-broker`), an
-  OpenAI/Anthropic-compatible surface, the key in the broker, per-call receipts; the harness's adapter pointed at it
-  through a tiny in-wall TCP-to-unix bridge (same shape as `entry.mjs`'s bridge, reversed). Not built.
-- **TEMPORARY, only if Peter says so**: an OpenShell provider for `api.deepseek.com:443` (OpenShell substitutes the
-  credential at its proxy, so the key stays in the gateway) plus a `network_policies` entry for that host and the node
-  binary. It is an egress hole and a third-party exfiltration channel; GUESS on the provider CLI. Not wired by the
-  installer; the policy file would change and `engine-run.sh verify` would have to accept it.
+```
+harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes only)
+  --unix--> /run/aukora-broker/broker.sock (bind-mounted, folder 0711 aukora)
+  --> broker::engine_link inside `sovereign serve` (user aukora) --https--> api.deepseek.com/anthropic/v1/messages
+```
+
+- **Wiring.** `authority.patch.yml` row 4 points the adapter's `baseURL` at the bridge and keeps its own key a
+  placeholder (`DEEPSEEK_API_KEY=aukora-broker-holds-the-key`, entry.mjs). The OpenShell policy keeps
+  `network_policies: {}`; the broker socket is AF_UNIX through a read-write mount, like the door's.
+- **Peer.** `SO_PEERCRED` uid must be the engine's (`model-broker-v1.json` `peer_uids`); anything else is 403 before
+  the body is read. Without kernel peer credentials (not Linux) the link does not start.
+- **Key** (`KeyInbox`, memory only). The owner types it at `https://<shell>/engine/model-key` (a self-contained page
+  served by the supervisor, script and style pinned by hash in its CSP); `POST /api/engine/model-key` needs the bound
+  owner's shell session (frontdoor: same origin, JSON). The broker holds the key and proposes
+  `engine/model-key.json` = `{key_sha256, kind, provider, v}`: the card shows the digest only; the page shows its
+  first 12 hex digits (the fingerprint) to compare. A call uses the key only while its SHA-256 equals the approved
+  one. Re-entering the approved key after a restart activates it without a new card; entering a different key
+  pauses the engine's calls until the owner approves it. The key is never in a file, the gate, Aura, a log or a reply.
+- **Budget.** `model-broker-v1.json` holds the terms (models, prices per million tokens, total and per-call cap in
+  µUSD, call count, `valid_days`). The supervisor proposes them as `engine/model-budget.json` (with an expiry) and
+  spends only against the bytes the owner's passkey applied; changed terms, or one day before expiry, propose again.
+  Each approved budget (by its SHA-256) is its own cap. Spend is kept in `/var/lib/aukora/model-broker/spend-v1.jsonl`
+  (0600): a call reserves its worst case (input bounded by the request's bytes, output by `max_tokens`) before it is
+  sent, and `max_tokens` is lowered so that worst case fits the per-call cap and what is left of the total; it
+  settles at the reported cost (input, cache hits, cache writes, output). A call whose usage is incomplete, or that
+  was cut, is charged its reservation; one that never settled (a crash) is charged in full at the next start.
+- **Request.** Parsed and rebuilt (what was checked is what is sent): JSON object, only the members the adapter
+  writes (`model stream messages max_tokens thinking output_config system temperature stop_sequences tools top_p
+  top_k`), `stream: true`, model on the approved list, at most 8 MiB. The harness's upload extensions (`dsh_*`: the
+  session log, the plugin inventory) are removed (and switched off in the overlay, row 5). Upstream gets only
+  `x-api-key`, `content-type`, `accept`, `anthropic-version` and the one allowed beta
+  (`mid-conversation-tool-changes-2026-07-01`); the harness's user id, session id and user agent stay behind. The
+  Files API is not served (404): the adapter then sends images inline (row 4 caps that at 4 MiB).
+- **Reply.** Streamed through unchanged. The link watches `message_start`/`message_delta`/`message_stop`/`error` for
+  usage and the end, holds back the last 11 bytes of every chunk until the next is checked against every 12-byte
+  window of the key (plain, without `sk-`, base64, hex; `EchoGuard`), settles, appends the receipt, and only then
+  releases the held tail. A key echo cuts the stream; a broken stream ends with an SSE `error` event.
+- **Receipt.** One Aura `broker.settle` **fact** per call that reached the provider (`aukora-engine-model-receipt-v1`:
+  request id, model, reported model, budget SHA-256, outcome, usage, reserved/charged µUSD, cost-unknown, request
+  SHA-256 and sizes, times). Refusals before sending cost nothing and are only journaled (`model-broker:`). If a
+  receipt cannot be written, the call's tail is withheld and the link admits nothing more until the node restarts.
+- **Refusals** are Anthropic-style errors the adapter classifies: 401 no key / key not approved (`AUTH`), 402 no
+  budget / expired / spent / per-call cap / call count (`QUOTA`), 400/413 bad, oversized or disallowed (`INVALID_REQUEST`),
+  429 busy, 502/503 provider unreachable or receipts unavailable. A provider error passes its status and message only
+  if the message carries nothing of the key.
+
+RAN (Mac): `cargo test -p broker engine_link` against a fake DeepSeek on loopback (fake keys): streaming with
+thinking, text and a tool call byte-for-byte, the stripped headers and members, the output cap, the receipt and the
+spend; refusals for no key, unapproved key, no or expired budget, disallowed model, oversized, non-streaming, unknown
+member, wrong peer; a spent budget and a used-up call count; the key echoed in an error, split across two stream
+chunks, and in base64; an incomplete stream; a reservation that never settled. LINUX: the socket, `SO_PEERCRED`,
+the bridge inside the wall, the composition with rows 4 and 5, DeepSeek itself.
+
+The TEMPORARY alternative (an OpenShell provider plus a `network_policies` hole for `api.deepseek.com`) is not
+needed and not wired.
 
 ## 8. Runbook: spawn a node and run the ceremony
 
@@ -195,10 +244,17 @@ then `python3 -B -I deploy/engine/build_plugins.py --dsh <DSH install> --faces e
 5. Journal: `engine: running`. `systemctl status aukora-engine` active; on the node `deploy/engine/wall-check.sh`
    must print `wall ok` (DNS probes included).
 6. Open `https://<shell>/engine/open` in the signed-in browser: the Spatial face loads on `engine.<shell>`.
-7. Crossings: ask Auma for a `web_fetch` of an allowlisted host: a door ask card appears on the owner origin (the
+7. The model key and budget (section 7): open `https://<shell>/engine/model-key` in the signed-in browser and type
+   **your own** DeepSeek key (nobody else enters, prints or stores it; it is never written to a file). The page
+   shows a fingerprint (12 hex digits). On the approvals, two critical cards: `engine/model-key.json` (its
+   `key_sha256` must begin with that fingerprint) and `engine/model-budget.json` (the terms from
+   `model-broker-v1.json`). Passkey both. Journal: `model-broker: call … completed …` on Auma's first turn; a call
+   before both approvals is refused in the engine's chat with the reason. After any supervisor restart the key is
+   gone (memory only): enter the same key again; it activates without a new card.
+8. Crossings: ask Auma for a `web_fetch` of an allowlisted host: a door ask card appears on the owner origin (the
    starter slider asks for `net` without a grant); approve; the repeated call runs. `kira_remember` / `kira_recall` go through
    the door with the non-owner token (`kira_quarantine_source` is refused).
-8. Negative checks: change one byte in `/opt/aukora-engine/plugins/aukora-door/lib/index.js` → within 5 s the engine
+9. Negative checks: change one byte in `/opt/aukora-engine/plugins/aukora-door/lib/index.js` → within 5 s the engine
    stops (`authority-plugin-changed`) and a new card appears; restore the byte (or approve, deliberately not) → it
    starts again. Revoke the owner session or re-bind → `https://engine.<shell>` answers 403 at once.
 
@@ -215,14 +271,14 @@ condition is lost.
 
 ## 9. What is built, stubbed, Linux-only
 
-Built and tested here (RAN): `floor::plugins` (a changed authority package is now a blocked assembly with the package
+Built and tested here (RAN): the model broker's engine link (section 7, fake provider), its config, the key card bytes; `floor::plugins` (a changed authority package is now a blocked assembly with the package
 pending, not an error); `engine_plugins` (bootstrap set, one candidate set, hash-while-copy closure); the engine module
 (config, controller decision, closure CLI, fingerprint CLI, tickets/sessions, proxy with its fake-harness test); the
 `/engine/open` route; gate `approved_target` / `propose_plugin_set` and the guest refusal of `engine/`; Kira
 `--group-socket`; `build_plugins.py` (reproducible), the profile, the authority overlay (composed and booted with the
 real harness on the Mac); the release now ships `deploy/engine`; the inventory gains `engine/plugin-set.json`.
 
-LINUX (written, not run): `engine_install.py`, `engine.py install`, `engine-prestart.sh`, `engine-run.sh`,
+LINUX (written, not run): the model broker's socket, peer check and in-wall bridge, `engine_install.py`, `engine.py install`, `engine-prestart.sh`, `engine-run.sh`,
 `wall-check.sh`, all units, the polkit rule, tmpfiles, the nft fence, `systemctl` from the supervisor, the sticky-home
 protections, the Kira units, Caddy's engine block.
 
@@ -231,7 +287,7 @@ GUESS: the `openshell sandbox create` mount/policy/image flags, the gateway's `-
 download URLs (the SHA-256 pins are what count), and that disabling the listed harness rows leaves the rest booting
 on Linux as it did on the Mac.
 
-Not built: the broker path (section 7); the face's own owner-approval surfaces pointing at the owner origin;
+Not built: the face's own owner-approval surfaces pointing at the owner origin;
 `door/standing-grants.json` as a gate target (the slider runs on the starter, no grants); an inventory sync for nodes
 installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`); WebSocket forwarding.
 
@@ -247,4 +303,11 @@ installed before this branch (they refuse `engine-install: inventory-lacks-engin
 - **O4** `deploy/engine/*` is in the release (so the owner's release approval covers it) but not in `checks/run.py`'s
   `DEPLOY_PINS`; pin `engine_install.py` and `engine.py` once reviewed.
 - **O5** The plugin-set pin in `ProtectedState` (floor schema change + Aura migration) instead of the audit file.
-- **O6** Re-run `cargo test -p supervisor door` on the node (the SO_PEERCRED path is Linux-only), as the wall test asked.
+- **O6** Re-run `cargo test -p supervisor door` and `cargo test -p broker engine_link` on the node (the SO_PEERCRED
+  path is Linux-only), as the wall test asked.
+- **O7** The model key is memory only (the `KeyInbox`; disk persistence was reserved for later): every supervisor
+  restart needs the owner to enter it again. Persisting it (a 0600 file in the broker's state, as the archive's
+  keystore did) is Peter's call.
+- **O8** The budget's prices in `engine_install.py` (`MODEL_BUDGET`) are placeholders above DeepSeek's published
+  prices, and the model names are the harness's catalog (`deepseek-flash`, `deepseek-v4-pro`), not checked against
+  the live API. Set both before the first node; the owner approves whatever terms the file holds.

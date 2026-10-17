@@ -10,6 +10,7 @@ Installs, every artifact checked against deploy/engine/engine-pins.json before u
               model files; the plugin packages from the stage (engine-plugins.tar, fingerprinted by the supervisor and
               approved by the owner before any is loaded)
   config      /etc/aukora/engine-v1.json (engine origin), door-policy-v1.json (the door inside the node),
+              model-broker-v1.json (the engine's model path: socket, engine uid, budget terms; never a key),
               /etc/aukora/engine/{openshell-policy.yaml, openshell-gateway.toml, resolv.conf}, engine.env,
               docker daemon.json (the DNS posture), the polkit rule, tmpfiles
   Kira        agents: auma (the door's non-owner token, /etc/aukora/door-kira.token, aukora 0600) and owner (root's
@@ -20,7 +21,7 @@ configuration. It never starts the engine: the supervisor does, after the owner'
 
 The stage folder holds engine-plugins.tar and the operator artifacts named `operator:<file>` in the pins. Refuses
 on a node that has no engine-capable release, already has an engine, is not a VM node, or whose inventory lacks the
-engine/plugin-set.json target."""
+engine/plugin-set.json, engine/model-key.json and engine/model-budget.json targets."""
 from __future__ import annotations
 
 import grp
@@ -50,6 +51,17 @@ PACKAGES = ("docker.io", "nftables", "polkitd", "curl", "xz-utils", "unzip", "op
 ENGINE_UNITS = ("aukora-engine-fence.service", "aukora-kira-embed.service", "aukora-kira-rerank.service",
                 "aukora-kira.service", "aukora-openshell-gateway.service")
 ENGINE_LISTEN = "127.0.0.1:18081"
+BROKER_SOCKET = "/run/aukora-broker/broker.sock"
+# The engine's model budget the supervisor proposes for the owner's passkey (deploy/engine/NODE.md section 7). The
+# owner sees and approves exactly these terms; changing them here (in a reviewed release) proposes them again.
+# [PETER] The prices are placeholders set ABOVE DeepSeek's published per-million-token prices (so the budget errs
+# toward stopping early); replace them with the current prices of the models listed before the first node.
+MODEL_BUDGET = {
+    "models": ["deepseek-flash", "deepseek-v4-pro"],
+    "prices": {"cache_read_microusd_per_mtok": 100000, "input_microusd_per_mtok": 1000000,
+               "output_microusd_per_mtok": 4000000},
+    "total_cap_microusd": 20000000, "per_request_cap_microusd": 1000000, "max_requests": 5000, "valid_days": 30,
+}
 STAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\Z")
 
 
@@ -88,7 +100,8 @@ def preconditions():
         core.refuse("engine-install", "engine-exists")
     inventory = core.parse_json(core.read_regular(CONFIG + "/gate-targets-v1.json", 64 * 1024, "engine-install"),
                                 "engine-install", 64 * 1024)
-    if not any(t.get("id") == "engine/plugin-set.json" for t in inventory.get("targets", [])):
+    ids = {t.get("id") for t in inventory.get("targets", [])}
+    if not {"engine/plugin-set.json", "engine/model-key.json", "engine/model-budget.json"} <= ids:
         core.refuse("engine-install", "inventory-lacks-engine-target")  # an older node needs an owner-approved sync
     caddyfile = core.read_regular("/etc/caddy/Caddyfile", 1 << 20, "engine-install").decode("utf-8", "replace")
     if caddyfile.count("# BEGIN AUKORA SOVEREIGN ") != 1:
@@ -367,6 +380,11 @@ def write_config(shell_host, uid, gid, image):
         "web_socket": "/run/aukora-engine/io/web.sock", "launch_file": "/run/aukora-engine/io/launch-url",
         "host": "engine." + shell_host, "listen": ENGINE_LISTEN, "session_hours": 12})
     core.atomic_write(CONFIG + "/engine-v1.json", engine, 0o640, (0, aukora_gid))
+    # The model broker: its socket (bind-mounted into the wall like the door's), the engine's uid as its only caller,
+    # and the budget terms the supervisor proposes. The key is never in any file: the owner types it on the shell.
+    model = core.canonical({"v": 1, "socket": BROKER_SOCKET, "peer_uids": [uid], "max_request_bytes": 8 << 20,
+                            "budget": MODEL_BUDGET})
+    core.atomic_write(CONFIG + "/model-broker-v1.json", model, 0o640, (0, aukora_gid))
     os.makedirs("/etc/polkit-1/rules.d", mode=0o755, exist_ok=True)
     core.atomic_write("/etc/polkit-1/rules.d/50-aukora-engine.rules",
                       core.read_regular(release_file("engine/aukora-engine.rules"), 4096, "engine-install"), 0o644)

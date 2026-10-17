@@ -185,6 +185,27 @@ impl GateAdapter {
         self.propose_reserved(scope, crate::engine_plugins::PLUGIN_SET_TARGET.to_owned(), note, set)
     }
 
+    /// Open the owner's review of the engine's model key (`engine/model-key.json`, its SHA-256 only) or model budget
+    /// (`engine/model-budget.json`). Bytes the broker would not read never become a proposal. Only the supervisor's
+    /// model broker reaches this; the guest's `propose` refuses `engine/`.
+    pub fn propose_model_target(
+        &self,
+        scope: PrincipalScope,
+        target: &'static str,
+        note: String,
+        bytes: Vec<u8>,
+    ) -> ServiceFuture<'_, ProposalId> {
+        let valid = match target {
+            crate::model_broker::KEY_TARGET => broker::engine_link::budget::KeyApproval::parse(&bytes).is_some(),
+            crate::model_broker::BUDGET_TARGET => broker::engine_link::budget::Budget::parse(&bytes).is_ok(),
+            _ => false,
+        };
+        if !valid {
+            return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
+        }
+        self.propose_reserved(scope, target.to_owned(), note, bytes)
+    }
+
     /// The bytes an owner-approved target holds now, checked against the digest the gate observes for it. `None`
     /// before the first applied proposal (or when the target is not in this node's inventory).
     pub fn approved_target(&self, target: &'static str) -> ServiceFuture<'_, Option<Vec<u8>>> {

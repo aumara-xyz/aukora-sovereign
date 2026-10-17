@@ -5,6 +5,8 @@
 #                  the engine can add its own files but cannot replace the root-owned profile, plugin closure,
 #                  node_modules guard or cordis.patch.yml inside it (NODE.md, "The harness home").
 #   /run/aukora-engine-io  where the in-wall bridge puts the web socket and the launch line for the supervisor.
+#   /run/aukora-broker  the model broker's socket, bind-mounted like the door's (folder 0711 aukora: not
+#                  engine-writable). AF_UNIX, filesystem-mediated: no network policy changes (NODE.md section 7).
 #   /etc/resolv.conf is replaced by a read-only file naming 127.0.0.1 (nothing listens there): the DNS posture that
 #                  closes the wall test's one residual (B03). Not a policy key; it is a read-only bind (engine-run.sh),
 #                  and the host fence drops port 53 from the sandbox network (aukora-engine-fence.nft).
@@ -29,6 +31,7 @@ filesystem_policy:
     - /run/aukora-door   # the ONLY crossing point: the door unix socket, bind-mounted (the directory is not engine-writable)
     - /engine-home       # NODE: the harness home (see above)
     - /run/aukora-engine-io  # NODE: web socket + launch line, read by the supervisor
+    - /run/aukora-broker     # NODE: the model broker's socket (the engine's only way to a model)
     - /dev/null
     - /dev/zero
     - /dev/urandom
@@ -39,4 +42,4 @@ landlock:
 process:
   run_as_user: "@AUMA_UID@"         # auma, unprivileged, != root, != the door's user
   run_as_group: "@AUMA_UID@"
-network_policies: {}                # deny-by-default: no egress; the door socket is AF_UNIX, filesystem-mediated
+network_policies: {}                # deny-by-default: no egress; the door and broker sockets are AF_UNIX, filesystem-mediated
