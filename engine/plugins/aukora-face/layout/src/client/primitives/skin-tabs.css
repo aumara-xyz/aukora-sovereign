@@ -1,0 +1,13 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/*
+ * ONE COLOUR PER RIGHT-HAND TAB (Peter, 2026-10-17): everything under the triangle (Apps) is mint, under the square
+ * (System) blue, under the circle (Yours) violet. Threads belong to no tab: mint. The tab panels are AppFrame's own
+ * (`role="tabpanel"`, labelled by `<id>-apps|system|yours`), so these selectors are the face's, not the harness's.
+ * The System launchers also pass tone="blue" themselves; a launcher never picks its own colour otherwise.
+ */
+[role='tabpanel'][aria-labelledby$='-apps'] { --ak-tone: var(--ak-mint); }
+[role='tabpanel'][aria-labelledby$='-system'] { --ak-tone: var(--ak-blue); }
+[role='tabpanel'][aria-labelledby$='-yours'] { --ak-tone: var(--ak-violet); }
+[role='tree'][aria-label] { --ak-tone: var(--ak-mint); }
+/* The settings pages open from the square: blue. */
+[data-settings-surface] { --ak-tone: var(--ak-blue); }

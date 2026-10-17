@@ -4,6 +4,8 @@
 import './primitives.css'
 // The face's skin: the same look on surfaces it does not render itself (Prime's copied menus and thread rows).
 import './skin-face.css'
+// One colour per right-hand tab: triangle mint, square blue, circle violet; threads mint.
+import './skin-tabs.css'
 
 export {
   AppHeader, AppSurface, DetailSection, FieldTable, Footnote, IconTile, Lead, LevelScale, LockedAction, Meter, Mono,
