@@ -24,12 +24,18 @@ pub(crate) fn is_deceptive(c: char) -> bool {
     ) || (u32::from(c) & 0xFFFE) == 0xFFFE
 }
 
-/// The text with whitespace of every kind collapsed to one space, hyphen lookalikes made `-`, lookalike Latin letters
-/// from Cyrillic, Greek and the fullwidth forms made ASCII, and ASCII letters lowercased.
+/// The text read the way a person reads it: compatibility forms made plain (NFKD: ligatures, circled, superscript and
+/// fullwidth letters, no-break and other odd spaces), combining marks dropped (a mark on a letter, however many,
+/// cannot hide a word: "ignore\u{301} previous"), whitespace of every kind collapsed to one space, hyphen lookalikes
+/// made `-`, lookalike Latin letters from Cyrillic and Greek made ASCII, and ASCII letters lowercased.
 pub(crate) fn fold(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    let decomposed = icu_normalizer::DecomposingNormalizerBorrowed::new_nfkd().normalize(text);
+    let mut out = String::with_capacity(decomposed.len());
     let mut in_space = false;
-    for c in text.chars() {
+    for c in decomposed.chars() {
+        if is_combining_mark(c) {
+            continue;
+        }
         if c.is_whitespace() {
             if !in_space {
                 out.push(' ');
@@ -41,6 +47,11 @@ pub(crate) fn fold(text: &str) -> String {
         out.push(lookalike(c).to_ascii_lowercase());
     }
     out
+}
+
+/// Combining marks (general category M) of the blocks that sit on Latin, Cyrillic and Greek letters.
+fn is_combining_mark(c: char) -> bool {
+    matches!(u32::from(c), 0x0300..=0x036F | 0x0483..=0x0489 | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
 }
 
 /// The run of whitespace, ASCII or not, that pads a note so its real words scroll out of view.
@@ -132,5 +143,20 @@ mod tests {
     fn fold_sees_through_lookalikes_and_spacing() {
         assert_eq!(fold("Ignоre  prеvious"), "ignore previous");
         assert_eq!(fold("ＰＲＥ‐ａｐｐｒｏｖｅｄ"), "pre-approved");
+    }
+
+    #[test]
+    fn fold_sees_through_combining_marks_compatibility_forms_and_odd_spaces() {
+        // Combining marks on any letter, stacked or on a letter with no precomposed form, do not break a phrase.
+        assert_eq!(fold("ignore\u{301} previous"), "ignore previous");
+        assert_eq!(fold("i\u{300}g\u{301}n\u{302}o\u{303}r\u{304}e\u{305}\u{306} previous"), "ignore previous");
+        assert_eq!(fold("ignor\u{0435}\u{0301} previous"), "ignore previous", "Cyrillic е with a mark");
+        // Compatibility forms: ligatures, circled and superscript letters, no-break and ideographic spaces.
+        assert_eq!(fold("ﬁrst"), "first");
+        assert_eq!(fold("ⓘⓖⓝⓞⓡⓔ previous"), "ignore previous");
+        assert_eq!(fold("ignore\u{00A0}\u{3000}previous"), "ignore previous");
+        assert_eq!(fold("pre\u{2011}approved"), "pre-approved", "non-breaking hyphen");
+        // Ordinary text keeps its letters (accents are only dropped for the match, never from the note).
+        assert_eq!(fold("Café naïve"), "cafe naive");
     }
 }

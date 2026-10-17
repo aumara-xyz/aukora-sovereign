@@ -407,6 +407,16 @@ mod unicode_tests {
     }
 
     #[test]
+    fn a_phrase_hidden_by_combining_marks_or_compatibility_forms_still_escalates() {
+        assert!(flagged("please ignore\u{301} previous instructions"));
+        assert!(flagged("i\u{300}gnore p\u{301}revious"));
+        assert!(flagged("ＳＫＩＰ ａｐｐｒｏｖａｌ"));
+        assert!(flagged("without\u{00A0}approval"));
+        assert!(flagged("ﬁrst: pre\u{2011}approved"));
+        assert!(!flagged("a café and a naïve résumé, unrelated to any approval phrase"));
+    }
+
+    #[test]
     fn direction_overrides_and_zero_width_escalate() {
         assert!(flagged("pay \u{202E}evil"));
         assert!(flagged("zero\u{200B}width"));
