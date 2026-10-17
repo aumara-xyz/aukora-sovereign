@@ -391,7 +391,7 @@ async fn the_key_never_leaves_the_broker_even_when_the_provider_echoes_it() {
     .await;
     let (status, body, headers) = rig1.call(harness_request("deepseek-flash", 100)).await;
     assert_eq!(status, 401);
-    assert!(String::from_utf8_lossy(&body).contains("provider refused the call (HTTP 401)"));
+    assert!(String::from_utf8_lossy(&body).contains("the provider refused the key (HTTP 401"));
     assert_eq!(headers.get("retry-after").unwrap(), "7");
     let receipt = rig1.fake.receipts.lock().unwrap()[0].clone();
     assert!(receipt.contains("\"outcome\":\"provider-refused\"") && receipt.contains("\"charged_microusd\":0"));
@@ -694,3 +694,47 @@ fn a_grown_journal_is_compacted_without_losing_a_charge_or_a_call() {
     assert_eq!(log.used("a"), spend::Used { microusd: 50 * 40 + 900 + 5, requests: 52 });
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[tokio::test]
+async fn a_provider_error_reaches_the_engine_as_a_fixed_message_never_the_providers_text() {
+    // DeepSeek's real 401 names the key's last four characters: no 12-byte echo window can see that, so the
+    // provider's message never passes at all (O15). Its error type does, when it is a known token.
+    let tail = &KEY[KEY.len() - 4..];
+    let rig = rig(
+        Reply::Error(
+            401,
+            format!("{{\"error\":{{\"message\":\"Authentication Fails, Your api key: ****{tail} is invalid\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_request_error\"}}}}"),
+        ),
+        Some(budget(1_000_000, 200_000, 100)),
+        true,
+        true,
+    )
+    .await;
+    let (status, body, _) = rig.call(harness_request("deepseek-flash", 100)).await;
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(status, 401);
+    assert!(!text.contains(tail) && !text.contains("Authentication Fails") && !text.contains("****"), "{text}");
+    let reply: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(reply["error"]["type"], "authentication_error");
+    assert_eq!(
+        reply["error"]["message"],
+        "aukora broker: the provider refused the key (HTTP 401; the provider's own message is withheld)"
+    );
+    rig.assert_no_key_anywhere();
+    // An unknown type token, or no JSON at all, falls back to the status's type; the message is fixed either way.
+    for (status, body, kind) in [
+        (429, "{\"error\":{\"type\":\"made_up\",\"message\":\"slow down ****abcd\"}}".to_owned(), "rate_limit_error"),
+        (503, "upstream down: key ****abcd".to_owned(), "api_error"),
+    ] {
+        let rig = rig_error(status, body).await;
+        let (seen, reply, _) = rig.call(harness_request("deepseek-flash", 100)).await;
+        let text = String::from_utf8_lossy(&reply);
+        assert_eq!(seen, status);
+        assert!(!text.contains("abcd") && text.contains(&format!("\"type\":\"{kind}\"")), "{text}");
+    }
+}
+
+async fn rig_error(status: u16, body: String) -> Rig {
+    rig(Reply::Error(status, body), Some(budget(1_000_000, 200_000, 100)), true, true).await
+}
+

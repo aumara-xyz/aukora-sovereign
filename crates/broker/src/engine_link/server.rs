@@ -25,7 +25,6 @@ use zeroize::Zeroizing;
 type Body = BoxBody<Bytes, Infallible>;
 const MAX_CONNECTIONS: usize = 32;
 const MAX_ERROR_BODY: usize = 64 * 1024;
-const MAX_ERROR_MESSAGE: usize = 2048;
 
 /// Bind the socket: an existing live socket or any other file there refuses; a stale socket is replaced. The
 /// folder must not be writable by others. With a uid check the socket is opened to every local user after the
@@ -272,7 +271,7 @@ async fn send(
             }
         }
         error.truncate(MAX_ERROR_BODY);
-        let (error_type, message) = provider_error(&error, status, &link, &meter);
+        let (error_type, message) = provider_error(&error, status);
         settle(&link, &call, &meter, Outcome::ProviderRefused(status)).await;
         let status = if (400..=599).contains(&status) { status } else { 502 };
         let mut reply = json_response(status, &error_body(&error_type, &message));
@@ -485,8 +484,10 @@ fn receipt(call: &Call, meter: &Meter, outcome: Outcome, charged: u64, unknown: 
     Value::object(vec![("body".into(), body), ("schema".into(), text("aukora-engine-model-receipt-v1")?)])
 }
 
-/// The provider's own error type and message, if both are plain and carry nothing of the key; else a generic one.
-fn provider_error(bytes: &[u8], status: u16, link: &Link, meter: &Meter) -> (String, String) {
+/// A provider's refusal, as the engine sees it: the provider's error TYPE when it is one of the known tokens (else one
+/// from the status), and a FIXED message per status. The provider's own message never passes: DeepSeek's 401 names
+/// the last characters of the key ("****abcd"), which no echo window could catch (NODE.md O15).
+fn provider_error(bytes: &[u8], status: u16) -> (String, String) {
     let fallback = match status {
         401 | 403 => "authentication_error",
         402 => "billing_error",
@@ -494,12 +495,6 @@ fn provider_error(bytes: &[u8], status: u16, link: &Link, meter: &Meter) -> (Str
         400 | 404 | 413 | 422 => "invalid_request_error",
         _ => "api_error",
     };
-    let generic = (fallback.to_owned(), format!("aukora broker: the provider refused the call (HTTP {status})"));
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else { return generic };
-    let error = value.get("error");
-    let kind = error.and_then(|e| e.get("type")).and_then(serde_json::Value::as_str).unwrap_or(fallback);
-    let message = error.and_then(|e| e.get("message")).and_then(serde_json::Value::as_str).unwrap_or("");
-    let plain = |s: &str| s.chars().all(|c| !c.is_control() || c == ' ');
     let known = [
         "authentication_error",
         "permission_error",
@@ -511,16 +506,20 @@ fn provider_error(bytes: &[u8], status: u16, link: &Link, meter: &Meter) -> (Str
         "api_error",
         "overloaded_error",
     ];
-    if message.is_empty()
-        || message.len() > MAX_ERROR_MESSAGE
-        || !plain(message)
-        || meter.guard_rejects(message.as_bytes())
-        || link.keys.reject_echo(message.as_bytes()).is_err()
-    {
-        return generic;
-    }
-    let kind = if known.contains(&kind) { kind } else { fallback };
-    (kind.to_owned(), format!("provider (HTTP {status}): {message}"))
+    let kind = serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|value| value.get("error")?.get("type")?.as_str().map(str::to_owned))
+        .filter(|kind| known.contains(&kind.as_str()))
+        .unwrap_or_else(|| fallback.to_owned());
+    let message = match status {
+        401 | 403 => "the provider refused the key",
+        402 => "the provider account has no balance",
+        429 => "the provider is rate limiting; try again later",
+        400 | 404 | 413 | 422 => "the provider refused the request",
+        500..=599 => "the provider failed",
+        _ => "the provider refused the call",
+    };
+    (kind, format!("aukora broker: {message} (HTTP {status}; the provider's own message is withheld)"))
 }
 
 fn error_body(error_type: &str, message: &str) -> Vec<u8> {
