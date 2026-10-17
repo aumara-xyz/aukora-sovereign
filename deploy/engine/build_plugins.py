@@ -192,6 +192,19 @@ def build_bundle(dsh, face_names, foundation_name, out):
                    for name in [foundation_name] + face_names)
     text += '\n# THE FACE (deploy/engine/build_plugins.py): each face is its own approved package, loaded by name.\n- insert:\n' + rows
     main.write_text(text)
+    # web_search has no executor at the door (crates/supervisor/DOOR.md): mounted, it would sit in Auma's catalog and
+    # fail every call. Every preset that mounts the web tools keeps web_fetch and loses web_search (`search: false`,
+    # dsh-tool-web 0.2.1-alpha.5's switch); a preset whose tool-web row is not the pinned shape stops the build.
+    rows = found = 0
+    for preset in sorted((dst / 'presets').glob('*.yml')) if (dst / 'presets').is_dir() else []:
+        body = preset.read_text()
+        rows += len(re.findall(r'^ +- id: tool-web$', body, flags=re.M))
+        body, count = re.subn(r"^( +)- id: tool-web\n( +)name: '@deepseek-ai/dsh-tool-web'\n( +)config:\n( +)fetch: true\n",
+                              lambda m: m.group(0) + m.group(4) + 'search: false\n', body, flags=re.M)
+        found += count
+        preset.write_text(body)
+    if rows == 0 or found != rows:
+        fail('web-bundle-drift: %d tool-web rows in the presets, %d in the pinned shape' % (rows, found))
     (dst / 'package.json').write_text(json.dumps({
         'name': '@aukora/face-bundle', 'version': '0.0.0', 'private': True,
         'dsh': {'bundle': {'patch': patches}},

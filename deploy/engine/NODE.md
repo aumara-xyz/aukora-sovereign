@@ -561,3 +561,8 @@ change; it would need an executor). Section 6 said `"standing": {}` "turns on th
 grants cleared nothing; section 9 said the door ran "asks, grants, refusals" on the node, when only asks and refusals
 ran: both corrected. Section 9's "Not built" line about `door/standing-grants.json` is superseded by P3 (left as is
 for the owner-lifecycle branch, which edits that paragraph).
+
+**P6. `web_search` is not mounted.** It had no executor at the door, so it sat in Auma's catalog and failed every
+call (`no-executor`). `build_plugins.py` now writes `search: false` into dsh-tool-web's row in every preset that
+mounts it (standard, ptc, cordis; minimal mounts none) and stops on any other shape; `web_fetch` stays. NODE: the
+bundle rebuilt from the node's pinned harness differs from the staged one by exactly those three lines.
