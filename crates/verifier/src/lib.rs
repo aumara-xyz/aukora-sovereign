@@ -494,7 +494,11 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
             retained_rows: None,
             checkpoint: None,
         })?;
-        if prefix.integrity().signatures != Scope::Checked
+        if let Some(first) = prefix.findings().first().filter(|_| prefix.failed()) {
+            // A prefix that is itself forged, rewritten or not rows is that failure, as the Python twin's walk of it
+            // raises it: an earlier file that does not verify under the pinned key is not merely unchecked.
+            report.finding(prefix.verdict(), first.code, first.sequence, first.exact_location);
+        } else if prefix.integrity().signatures != Scope::Checked
             || prefix.integrity().chain != Scope::Checked
             || prefix.rows() == 0
         {
@@ -507,17 +511,20 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
         } else {
             let prior = self::rows(bytes).map_err(|(_, code)| code)?;
             for (index, old) in prior.iter().enumerate() {
-                if rows.get(index).is_none_or(|now| old.value != now.value) {
-                    report.finding(
-                        Verdict::Rewritten,
-                        refusal("retained-prefix-differs"),
-                        Some(index as u64 + 1),
-                        true,
-                    );
-                    break;
-                }
+                // The Python twin's names: an earlier file longer than the tail, or a row that is not the same row.
+                let code = match rows.get(index) {
+                    None => "shorter-than-checkpoint",
+                    Some(now) if old.value != now.value => "retained-row-mismatch",
+                    Some(_) => continue,
+                };
+                report.finding(Verdict::Rewritten, refusal(code), Some(index as u64 + 1), true);
+                break;
             }
         }
+    }
+    // Both heads or neither, as the Python twin and both CLIs require: an earlier head alone proves no consistency.
+    if inputs.retained.is_some() != inputs.presented.is_some() {
+        return Err(refusal("observation-pair"));
     }
     let retained = inputs.retained.map(consistency::retained).transpose()?;
     let checkpoint = inputs.checkpoint.map(consistency::retained).transpose()?;
@@ -547,14 +554,14 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
         if presented.size != rows.len() as u64 {
             report.finding(
                 Verdict::Rewritten,
-                refusal("presented-size"),
+                refusal("presented-head-mismatch"),
                 Some(presented.size.min(rows.len() as u64) + 1),
                 true,
             );
         } else if presented.root != consistency::root(&hashes) {
             report.finding(
                 Verdict::Rewritten,
-                refusal("presented-root"),
+                refusal("presented-head-mismatch"),
                 Some(presented.size),
                 false,
             );
@@ -582,7 +589,7 @@ fn chain_with(inputs: ChainInputs<'_>, extras: Extras) -> Result<(VerificationRe
                     }
                     consistency::ConsistencyVerdict::ObservationConflict => report.finding(
                         Verdict::Rewritten,
-                        refusal("consistency-conflict"),
+                        refusal("consistency-prefix-mismatch"),
                         Some(retained.size),
                         false,
                     ),

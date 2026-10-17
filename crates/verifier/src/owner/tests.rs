@@ -437,6 +437,69 @@ fn a_consume_with_no_base_is_no_approval_of_an_apply() {
     assert_eq!(report.findings()[0].sequence, Some(4));
 }
 
+fn lines(rows: &[String]) -> Vec<u8> {
+    rows.iter().flat_map(|row| row.bytes().chain(*b"\n")).collect()
+}
+
+fn chain_with_prefix(rows: &[String], prefix: &[String]) -> VerificationReport {
+    let (node, rows, prefix) = (node_hex(), lines(rows), lines(prefix));
+    verify_chain(ChainInputs {
+        pinned_key: node.as_bytes(),
+        rows: &rows,
+        retained: None,
+        presented: None,
+        retained_rows: Some(&prefix),
+        checkpoint: None,
+    })
+    .expect("the rows are admitted")
+}
+
+#[test]
+fn a_retained_prefix_that_does_not_verify_is_forged_not_merely_unchecked() {
+    let rows = ledger(NEW).rows;
+    let mut forged = rows[..2].to_vec();
+    let start = forged[0].find(r#""sig":""#).expect("a signature") + r#""sig":""#.len();
+    forged[0].replace_range(start..start + 88, &format!("{}==", "A".repeat(86)));
+    let report = chain_with_prefix(&rows, &forged);
+    assert_eq!((report.verdict(), codes(&report)), (Verdict::Forged, vec!["signature"]));
+    assert_eq!(report.findings()[0].sequence, Some(1));
+    let honest = chain_with_prefix(&rows, &rows[..2]);
+    assert!(
+        !codes(&honest).iter().any(|code| ["signature", "invalid-retained-prefix", "retained-row-mismatch"].contains(code)),
+        "an honest prefix is no finding about the prefix: {:?}",
+        codes(&honest)
+    );
+}
+
+#[test]
+fn a_retained_prefix_names_a_changed_row_and_a_missing_tail_as_the_python_twin_does() {
+    let rows = ledger(NEW).rows;
+    let changed = chain_with_prefix(&ledger(&"33".repeat(32)).rows, &rows);
+    assert_eq!((changed.verdict(), codes(&changed)), (Verdict::Rewritten, vec!["retained-row-mismatch"]));
+    assert_eq!(changed.findings()[0].sequence, Some(3));
+    let shorter = chain_with_prefix(&rows[..3], &rows);
+    let missing = shorter.findings().iter().find(|finding| finding.code.reason == "shorter-than-checkpoint");
+    assert_eq!((shorter.verdict(), missing.map(|finding| finding.sequence)), (Verdict::Rewritten, Some(Some(4))));
+}
+
+#[test]
+fn an_earlier_head_without_a_presented_head_is_no_observation() {
+    let ledger = ledger(NEW);
+    let (node, rows) = (node_hex(), lines(&ledger.rows));
+    let inputs = |retained, presented| ChainInputs {
+        pinned_key: node.as_bytes(),
+        rows: &rows,
+        retained,
+        presented,
+        retained_rows: None,
+        checkpoint: None,
+    };
+    for (retained, presented) in [(Some(ledger.head.as_bytes()), None), (None, Some(ledger.head.as_bytes()))] {
+        let refusal = verify_chain(inputs(retained, presented)).expect_err("the pair is required");
+        assert_eq!(refusal.reason, "observation-pair");
+    }
+}
+
 #[test]
 fn an_apply_with_no_operation_id_is_rewritten() {
     let report = unapproved(vec![fact(), propose(), apply_to("", TARGET)]);

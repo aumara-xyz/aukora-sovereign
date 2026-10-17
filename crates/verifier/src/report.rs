@@ -192,8 +192,7 @@ impl VerificationReport {
                     finding.code.reason,
                     "shorter-than-checkpoint"
                         | "checkpoint-mismatch"
-                        | "presented-size"
-                        | "presented-root"
+                        | "presented-head-mismatch"
                         | "bundle-tail-size"
                         | "bundle-head"
                 )

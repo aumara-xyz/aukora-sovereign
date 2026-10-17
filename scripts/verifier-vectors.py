@@ -845,6 +845,25 @@ class Replay:
         self.export_case(work, file, "one-assertion-cannot-approve-two-permission-grants", two,
                          export_v2(two, [owner_entry(3, auth, OWNER_D, OWNER_D), owner_entry(5, auth, OWNER_D, OWNER_D)]), owner, refused)
 
+    def prefix_rule(self, work, file, document):
+        """An earlier rows file (`--prefix`) is held to the same walk as the rows: one that does not verify under the pinned
+        key is FORGED at its row, and one longer than the tail is a shorter tail, in both engines (the pinned vectors
+        carry neither case)."""
+        key = {"source": "original", "pointer": "/publicKey"}
+        forged = "A" * 86 + "=="
+        cases = [
+            ({"id": "prefix-that-does-not-verify-is-forged-not-unchecked", "mode": "chain", "fixture": "aura-4", "edits": [],
+              "retained_rows": {"source": "original", "pointer": "/rows", "slice": [0, 2],
+                                "edits": [{"op": "replace", "pointer": "/0/sig", "value": forged}]}, "pinned_key": key},
+             {"verdict": "FORGED", "exit": 2, "sequence": 1, "exact_location": True, "codes": ["verifier:signature"]}),
+            ({"id": "prefix-longer-than-the-tail-is-a-shorter-tail", "mode": "chain", "fixture": "aura-4", "checkpoint": None,
+              "edits": [{"op": "remove", "pointer": "/rows/3"}],
+              "retained_rows": {"source": "original", "pointer": "/rows"}, "pinned_key": key},
+             {"verdict": "REWRITTEN", "exit": 2, "sequence": 4, "exact_location": True, "codes": ["verifier:shorter-than-checkpoint"]}),
+        ]
+        for case, expected in cases:
+            self.chain_or_bundle(work, file, document, case, expected)
+
     def operator_inputs(self, work, file, document):
         for case in document["cases"]:
             variants = case.get("argument_variants") or [case.get("args")]
@@ -923,6 +942,7 @@ def main():
             document = json.loads((VECTORS / f"{name}.json").read_text())
             {"admission-regressions-v1": replay.admission, "regressions-v1": replay.regressions,
              "consistency-regressions-v1": replay.consistency, "operator-inputs-v1": replay.operator_inputs}[name](work, name, document)
+        replay.prefix_rule(work, "prefix-rule", json.loads((VECTORS / "regressions-v1.json").read_text()))
         replay.owner_rule(work, "owner-rule")
         replay.owner_rule_v2(work, "owner-rule-v2")
     if arguments.write_known:
