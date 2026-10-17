@@ -47,6 +47,8 @@ struct Segment {
     file: File,
     ids: HashSet<String>,
     bytes: u64,
+    /// A failed append could not be cut back: nothing more is appended until it can be (`cutback`).
+    dirty: bool,
 }
 
 fn load(dir: &Path, number: u64) -> Result<Segment> {
@@ -62,7 +64,7 @@ fn load(dir: &Path, number: u64) -> Result<Segment> {
         bytes += 1;
     }
     let ids = text.lines().filter(|line| !line.is_empty()).map(str::to_owned).collect();
-    Ok(Segment { number, file, ids, bytes })
+    Ok(Segment { number, file, ids, bytes, dirty: false })
 }
 
 /// The consumed call ids.
@@ -127,12 +129,14 @@ impl Ledger {
             }
         }
         let Some(current) = segments.last_mut() else { return Err(refuse()) };
+        if !super::cutback::ready(&current.file, current.bytes, &mut current.dirty) {
+            return Err(refuse());
+        }
         let line = format!("{id}\n");
-        if current.file.write_all(line.as_bytes()).and_then(|()| current.file.sync_data()).is_err() {
-            // Take back a torn write so the next id does not glue onto it; if that fails the ledger cannot be trusted.
-            if current.file.set_len(current.bytes).is_err() {
-                return Err(refuse());
-            }
+        if super::cutback::append(&mut current.file, line.as_bytes()).is_err() {
+            // Take back a torn write so the next id does not glue onto it; if that fails, nothing more is appended
+            // (and every call is refused) until it can be cut back.
+            super::cutback::failed(&current.file, current.bytes, &mut current.dirty);
             return Err(refuse());
         }
         current.bytes += line.len() as u64;
@@ -155,7 +159,8 @@ impl Ledger {
 
 /// The record of crossings that asked for an owner approval, for the approval path to pick up.
 pub struct AskLog {
-    inner: Mutex<(File, u64)>,
+    /// The file, its last acknowledged length, and whether a failed append is still to be cut back.
+    inner: Mutex<(File, u64, bool)>,
     max_bytes: u64,
 }
 
@@ -167,20 +172,20 @@ impl AskLog {
     pub(super) fn open_with(path: &Path, max_bytes: u64) -> Result<Self> {
         let file = open_append(path)?;
         let bytes = file.metadata().map_err(|_| refuse())?.len();
-        Ok(Self { inner: Mutex::new((file, bytes)), max_bytes })
+        Ok(Self { inner: Mutex::new((file, bytes, false)), max_bytes })
     }
 
     /// Append one JSON line and make it durable. An error means the ask was not recorded (also when the log is full).
     pub fn record(&self, line: &str) -> Result<()> {
         debug_assert!(!line.contains('\n'));
         let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let (file, bytes) = &mut *guard;
+        let (file, bytes, dirty) = &mut *guard;
         let needed = line.len() as u64 + 1;
-        if *bytes + needed > self.max_bytes {
+        if *bytes + needed > self.max_bytes || !super::cutback::ready(file, *bytes, dirty) {
             return Err(refuse());
         }
-        if file.write_all(line.as_bytes()).and_then(|()| file.write_all(b"\n")).and_then(|()| file.sync_data()).is_err() {
-            let _ = file.set_len(*bytes);
+        if super::cutback::append(file, format!("{line}\n").as_bytes()).is_err() {
+            super::cutback::failed(file, *bytes, dirty);
             return Err(refuse());
         }
         *bytes += needed;
@@ -213,6 +218,51 @@ mod tests {
         assert!(!reopened.consume("call-1").unwrap());
         assert!(!reopened.consume("call-2").unwrap());
         assert!(reopened.consume("call-3").unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_append_that_cannot_be_cut_back_stops_every_id_until_it_can() {
+        use super::super::cutback::fault;
+        let dir = temp("cut-back");
+        let ledger = Ledger::open(&dir).unwrap();
+        assert!(ledger.consume("call-1").unwrap());
+        // An append writes half a line and fails, and the cut-back fails too (a failing disk).
+        fault::tear_next_append();
+        fault::refuse_cuts(true);
+        assert!(ledger.consume("call-2").is_err());
+        let torn = std::fs::read(dir.join("consumed.0.log")).unwrap();
+        assert!(!torn.ends_with(b"\n"), "the disk holds a torn line");
+        // The disk works again but the cut has not been done: nothing is appended, so nothing glues onto the torn line.
+        for n in 3..6 {
+            assert!(ledger.consume(&format!("call-{n}")).is_err(), "refused while the file cannot be cut back");
+        }
+        assert_eq!(std::fs::read(dir.join("consumed.0.log")).unwrap(), torn);
+        // The cut works: the torn line goes and the ledger carries on, cleanly.
+        fault::refuse_cuts(false);
+        assert!(ledger.consume("call-6").unwrap());
+        assert_eq!(std::fs::read_to_string(dir.join("consumed.0.log")).unwrap(), "call-1\ncall-6\n");
+        drop(ledger);
+        let reopened = Ledger::open(&dir).unwrap();
+        assert!(!reopened.consume("call-1").unwrap() && !reopened.consume("call-6").unwrap());
+        assert!(reopened.consume("call-2").unwrap(), "the refused call was never recorded, so its id is still unspent");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_asks_log_is_cut_back_or_refuses_in_the_same_way() {
+        use super::super::cutback::fault;
+        let dir = temp("asks-cut-back");
+        let path = dir.join("asks.jsonl");
+        let log = AskLog::open(&path).unwrap();
+        log.record("{\"n\":1}").unwrap();
+        fault::tear_next_append();
+        fault::refuse_cuts(true);
+        assert!(log.record("{\"n\":2}").is_err());
+        assert!(log.record("{\"n\":3}").is_err(), "refused while the log cannot be cut back");
+        fault::refuse_cuts(false);
+        log.record("{\"n\":4}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"n\":1}\n{\"n\":4}\n");
         let _ = std::fs::remove_dir_all(dir);
     }
 

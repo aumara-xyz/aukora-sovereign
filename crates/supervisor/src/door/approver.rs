@@ -77,6 +77,8 @@ pub struct ApprovalLog {
 struct Inner {
     file: File,
     bytes: u64,
+    /// A failed append could not be cut back: nothing more is appended until it can be (`cutback`).
+    dirty: bool,
     /// Call digest to (request handle, when it was raised).
     open: HashMap<String, (String, u64)>,
 }
@@ -116,7 +118,7 @@ impl ApprovalLog {
                 _ => {}
             }
         }
-        Ok(Self { inner: Mutex::new(Inner { file, bytes, open }), max_bytes, max_open })
+        Ok(Self { inner: Mutex::new(Inner { file, bytes, dirty: false, open }), max_bytes, max_open })
     }
 
     /// The open request for this call digest, if any: its handle and when it was raised.
@@ -181,8 +183,11 @@ impl ApprovalLog {
         if inner.bytes + needed > self.max_bytes {
             return Err("approvals-full");
         }
-        if inner.file.write_all(line.as_bytes()).and_then(|()| inner.file.sync_data()).is_err() {
-            let _ = inner.file.set_len(inner.bytes);
+        if !super::cutback::ready(&inner.file, inner.bytes, &mut inner.dirty) {
+            return Err("door-state");
+        }
+        if super::cutback::append(&mut inner.file, line.as_bytes()).is_err() {
+            super::cutback::failed(&inner.file, inner.bytes, &mut inner.dirty);
             return Err("door-state");
         }
         inner.bytes += needed;
@@ -371,6 +376,32 @@ mod tests {
         assert_eq!(log.get("d1"), Some(("h1".to_owned(), 10)));
         assert_eq!((log.get("d2"), log.get("d3")), (None, None));
         assert_eq!(log.open_count(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_append_that_cannot_be_cut_back_cannot_reopen_a_spent_approval() {
+        use super::super::cutback::fault;
+        let dir = temp("cut-back");
+        let path = dir.join("approvals.jsonl");
+        let log = ApprovalLog::open(&path).unwrap();
+        log.begin("d1", "h1", 10).unwrap();
+        // Recording that the approval was spent tears and cannot be cut back: the spend is refused.
+        fault::tear_next_append();
+        fault::refuse_cuts(true);
+        assert!(log.finish("d1", "h1", "used").is_err());
+        // Nothing else is appended meanwhile (a new line would glue onto the torn one and a restart could not read it).
+        assert!(log.begin("d2", "h2", 11).is_err());
+        let torn = std::fs::read(&path).unwrap();
+        fault::refuse_cuts(false);
+        assert_ne!(std::fs::read(&path).unwrap().last(), Some(&b'\n'), "{torn:?}");
+        log.begin("d2", "h2", 11).unwrap();
+        assert!(log.finish("d1", "h1", "used").is_ok());
+        drop(log);
+        // After a restart the spent approval stays spent and the log reads cleanly.
+        let again = ApprovalLog::open(&path).unwrap();
+        assert_eq!((again.get("d1"), again.get("d2")), (None, Some(("h2".to_owned(), 11))));
+        assert!(std::fs::read_to_string(&path).unwrap().lines().all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok()));
         let _ = std::fs::remove_dir_all(dir);
     }
 
