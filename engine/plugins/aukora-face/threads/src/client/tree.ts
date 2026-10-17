@@ -36,6 +36,30 @@ export type SessionPendingInteractionStatus = 'approval' | 'plan-review' | 'ques
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { indexSubagentDescendants, type SubagentDescendantSummary } from './subagent-lineage.ts'
 
+/**
+ * The Session the main view shows. DSH 0.2.1-alpha.5 removed `SessionListState.current`; the selection is the listed
+ * Session holding a `mainView` reference (the same rule `ui-layout/src/client/DocumentTitle.tsx` reads).
+ * @param list - sessions list snapshot.
+ * @returns the main view's Session, or undefined when none is shown.
+ */
+export function currentOf(list: SessionListState): SessionId | undefined {
+  return Object.values(list.byId).find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
+}
+
+/**
+ * The Sessions whose finish still needs acknowledging. DSH 0.2.1-alpha.5 removed `SessionSummary.completed`; the fact is
+ * `completionUnread` on the unified Session status (`useSessionStatus`), which the harness's own sidebar reads.
+ * @param statuses - the unified Session status snapshot.
+ * @returns the ids to show the green "done" reminder for.
+ */
+export function completedSessionsOf(
+  statuses: ReadonlyMap<SessionId, { readonly completionUnread: boolean }>,
+): ReadonlySet<SessionId> {
+  const ids = new Set<SessionId>()
+  for (const [id, status] of statuses) if (status.completionUnread) ids.add(id)
+  return ids
+}
+
 /** Group key for Sessions outside every Workspace. */
 export const UNGROUPED_KEY = ''
 
@@ -232,7 +256,7 @@ function groupByWorkspace(
       const summary = list.byId[id]
       if (summary === undefined) continue // account may lead the list pull; the row appears when the summary lands
       accounted.add(id)
-      if (!sessionVisible(summary, list.current, archived)) continue
+      if (!sessionVisible(summary, currentOf(list), archived)) continue
       members.push(summary)
     }
     groups.push(buildGroup(
@@ -243,7 +267,7 @@ function groupByWorkspace(
   const stray = list.ids
     .map(id => list.byId[id])
     .filter((s): s is SessionSummary =>
-      s !== undefined && !accounted.has(s.id) && sessionVisible(s, list.current, archived))
+      s !== undefined && !accounted.has(s.id) && sessionVisible(s, currentOf(list), archived))
   if (stray.length > 0) {
     groups.push(buildGroup(
       UNGROUPED_KEY,
@@ -263,6 +287,7 @@ function sessionNode(
   descendants: ReadonlyMap<SessionId, SubagentDescendantSummary>,
   workspace: string,
   pending?: PendingInteractions,
+  completed?: ReadonlySet<SessionId>,
 ): SessionNode {
   const pendingInteraction = pendingStatusOf(pending, s.id)
   return {
@@ -272,7 +297,7 @@ function sessionNode(
     workspace,
     running: s.running,
     runningSubagentCount: descendants.has(s.id) ? descendants.get(s.id)?.runningCount ?? 0 : null,
-    completed: s.completed === true,
+    completed: completed?.has(s.id) === true,
     updatedAt: s.updatedAt,
     ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
   }
@@ -298,13 +323,14 @@ export function deriveGroups(
   archivedSessionIds: readonly SessionId[],
   view: TreeView,
   pending?: PendingInteractions,
+  completed?: ReadonlySet<SessionId>,
 ): GroupNode[] {
   const archived = new Set(archivedSessionIds)
   const expandedGroups = new Set(view.expandedGroups)
   const descendants = indexSubagentDescendants(list.byId)
-  const currentGroup = list.current === undefined
+  const currentGroup = currentOf(list) === undefined
     ? undefined
-    : (workspaces.find(w => w.sessionIds.includes(list.current as SessionId))?.workspaceId as string | undefined)
+    : (workspaces.find(w => w.sessionIds.includes(currentOf(list) as SessionId))?.workspaceId as string | undefined)
         ?? UNGROUPED_KEY
   const groups: GroupNode[] = []
   for (const g of groupByWorkspace(list, workspaces, archived, view.ungroupedOrder)) {
@@ -318,7 +344,7 @@ export function deriveGroups(
       sessionCount: g.sessions.length,
       expanded,
       containsCurrent: g.key === currentGroup,
-      sessions: expanded ? g.sessions.map(session => sessionNode(session, descendants, g.label, pending)) : [],
+      sessions: expanded ? g.sessions.map(session => sessionNode(session, descendants, g.label, pending, completed)) : [],
     })
   }
   return groups
@@ -341,13 +367,14 @@ export function deriveFlat(
   workspaces: readonly WorkspaceView[] = [],
   archiveView: 'active' | 'archived' = 'active',
   pending?: PendingInteractions,
+  completed?: ReadonlySet<SessionId>,
 ): SessionNode[] {
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)
   const rows: SessionSummary[] = []
   for (const id of list.ids) {
     const s = list.byId[id]
-    if (s === undefined || !sessionVisible(s, list.current, archived, archiveView)) continue
+    if (s === undefined || !sessionVisible(s, currentOf(list), archived, archiveView)) continue
     rows.push(s)
   }
   rows.sort(byRecency)
@@ -362,6 +389,7 @@ export function deriveFlat(
     descendants,
     workspaceBySession.get(session.id) ?? workspaceLabel(session.cwd),
     pending,
+    completed,
   ))
 }
 
@@ -396,6 +424,7 @@ export function deriveSearchResults(
   limit: number,
   archiveView: 'active' | 'archived' = 'active',
   pending?: PendingInteractions,
+  completed?: ReadonlySet<SessionId>,
 ): SearchResultSet {
   const q = query.trim().toLowerCase()
   if (q === '') return { items: [], hasMore: false }
@@ -421,7 +450,7 @@ export function deriveSearchResults(
     // Blank placeholders never match a query (their canonical title displays
     // localized, so matching it would tie search to one language).
     if (summary === undefined || summary.blank
-      || !sessionVisible(summary, list.current, archived, archiveView)) continue
+      || !sessionVisible(summary, currentOf(list), archived, archiveView)) continue
     if (
       sessionTitle(summary).toLowerCase().includes(q)
       || labelOf(summary).toLowerCase().includes(q)
@@ -442,7 +471,7 @@ export function deriveSearchResults(
   for (const item of content.items) {
     const summary = list.byId[item.sessionId]
     if (summary !== undefined && !summary.blank
-      && sessionVisible(summary, list.current, archived, archiveView)) include(summary)
+      && sessionVisible(summary, currentOf(list), archived, archiveView)) include(summary)
   }
 
   return {
@@ -457,7 +486,7 @@ export function deriveSearchResults(
         ...(pendingStatusOf(pending, summary.id) === undefined
           ? {}
           : { pendingInteraction: pendingStatusOf(pending, summary.id)! }),
-        completed: summary.completed === true,
+        completed: completed?.has(summary.id) === true,
         ...match === undefined ? {} : { snippet: match.snippet },
       }
     }),

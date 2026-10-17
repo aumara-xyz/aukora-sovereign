@@ -1,6 +1,7 @@
 /** Creation and filter controls beside the expanded AUKORA brand. */
 import clsx from 'clsx'
-import { IconPlusOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconPlusOutline16 } from './icons.tsx'
 import type { ThreadListHeaderActionsProps } from './contract/slots.ts'
 import { ThreadArchiveIcon, ThreadPinIcon, ThreadUnreadIcon } from './ThreadIcons.tsx'
 import css from './ThreadListHeaderActions.module.css'

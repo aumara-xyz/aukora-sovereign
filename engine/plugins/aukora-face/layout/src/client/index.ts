@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PanelActions, PanelInfo } from './service.ts'
 import type {
@@ -123,7 +124,6 @@ export function apply(ctx: ClientContext): void {
   installComposerControls(ctx)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-layout: dictionaries')
 
-  const layout = new LayoutController()
   // THE CONVERSATION IS THE ONLY PANEL. Upstream occupants — the right column
   // among them — render Session content only while no global panel is selected,
   // and they read that through this root hook. A frame that declares `rightbar`
@@ -134,6 +134,7 @@ export function apply(ctx: ClientContext): void {
     getSnapshot: () => CONVERSATION_PANEL,
     subscribe: () => () => {},
   }
+  const layout = new LayoutController(panelInfo)
   // ── THE FIRST RUN, REGISTERED WHERE THE SHELL SHOWS SURFACES ────────────────────────────────────────────────
   // **A FRIEND INSTALLS AUKORA AND TALKS TO THEIR OWN AUMA; THIS IS THE SCREEN BETWEEN THOSE TWO THINGS.** It sorts
   // before every other surface (`order: 5`) because on a machine nobody has set up, it is the only one that makes
@@ -192,7 +193,7 @@ export function apply(ctx: ClientContext): void {
         // **NOT AN INDEX-ONLY FIX.** In this goal's step (0) I fixed a build-breaking line in another lane's file with
         // `git apply --cached`, and learned that is a LOAN: their next commit, made from a working copy that still
         // held the old line, silently reverted it. This is fixed in the working copy, where it will survive.
-        return { openThread: (sessionId: SessionId) => { ctx.sessions.open(sessionId) } }
+        return { openThread: (sessionId: SessionId) => { ctx.uiWorkspace.openSession(sessionId) } }
       },
     }, AppFrame)
     return () => {

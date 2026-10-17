@@ -17,6 +17,9 @@
       "path": "../ui-session"
     },
     {
+      "path": "../ui-workspace"
+    },
+    {
       "path": "../ui-renderer"
     },
     {
@@ -26,13 +29,10 @@
       "path": "../../../vendor/cordis"
     },
     {
-      "path": "../../runtime-diagnostics/invariants"
-    },
-    {
       "path": "../../host/webserver"
     },
     {
-      "path": "../locale"
+      "path": "../locale/tsconfig.client.json"
     },
     {
       "path": "../ui-layout"

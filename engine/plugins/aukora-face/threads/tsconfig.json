@@ -17,7 +17,7 @@
     { "path": "../../api/workspace-controller/tsconfig.client.json" },
     { "path": "../../api/session-controller/tsconfig.client.json" },
     {
-      "path": "../locale"
+      "path": "../locale/tsconfig.client.json"
     },
     {
       "path": "../../../vendor/cordis"
@@ -35,10 +35,7 @@
       "path": "../aukora-face-sidebar"
     },
     {
-      "path": "../ui-conversation"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
+      "path": "../ui-conversation/tsconfig.client.json"
     }
   ]
 }

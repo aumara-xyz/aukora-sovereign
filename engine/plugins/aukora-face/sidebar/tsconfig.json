@@ -18,9 +18,6 @@
     },
     {
       "path": "../aukora-face-layout"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     }
   ]
 }

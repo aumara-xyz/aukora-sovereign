@@ -1,7 +1,8 @@
 /** Rename, reminder, and durable archive actions for the open Session header. */
 import { useRef, useState } from 'react'
 import clsx from 'clsx'
-import { Button, IconEditOutline16, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEditOutline16 } from './icons.tsx'
 import type { PropsHooks, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ThreadHeaderActionsInjected } from './contract/slots.ts'
 import { ThreadArchiveIcon, ThreadPinIcon, ThreadUnreadIcon } from './ThreadIcons.tsx'

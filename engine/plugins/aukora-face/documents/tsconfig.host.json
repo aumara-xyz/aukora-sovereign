@@ -8,12 +8,10 @@
   "files": [
     "src/documents-route.ts",
     "src/documents-reader.ts",
-    "src/index.ts",
-    "src/invariant.ts"
+    "src/index.ts"
   ],
   "references": [
     { "path": "../../../vendor/cordis" },
-    { "path": "../../host/webserver" },
-    { "path": "../../runtime-diagnostics/invariants" }
+    { "path": "../../host/webserver" }
   ]
 }

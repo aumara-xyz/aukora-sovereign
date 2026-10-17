@@ -13,7 +13,7 @@
  * answers, refusal names included.
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { auraCoherenceProjectionDefinition } from './aura/projection.ts'
 import type {} from '@deepseek-ai/dsh-session-projection'
@@ -134,16 +134,19 @@ function refusalDocument(code: string, reason: string): object {
 }
 
 
-/** Durable settings namespace for product-wide GUI onboarding facts. */
-const ONBOARDING_SETTINGS_NAMESPACE = 'ui-onboarding'
-
-interface OnboardingSettings {
+// DSH 0.2.1-alpha.5: settings namespaces are plugin Config schemas (`ctx.settings.register(namespace, schema)` is
+// gone). The product-wide GUI onboarding fact moves from the durable `ui-onboarding` namespace to this plugin's own
+// Config, exactly as the harness's own ui-settings-general declares it, and the settings service is told this
+// plugin's page is presented by the face (`configure({ auto: false })`).
+/** Runtime preferences projected to the browser. */
+export interface Config {
   /** Last version acknowledged by the current product welcome step. */
-  welcomeNoticeVersion?: string
+  welcomeNoticeVersion: Volatile<string | undefined>
 }
 
-const OnboardingSettingsSchema: z<OnboardingSettings> = z.object({
-  welcomeNoticeVersion: z.string(),
+/** Live welcome preference. */
+export const Config = z.object({
+  welcomeNoticeVersion: z.string().volatile(),
 })
 
 /**
@@ -186,12 +189,7 @@ export function apply(ctx: Context): void {
   ctx.inject(['sessionProjections'], (projectionCtx) => {
     projectionCtx.sessionProjections.register(auraCoherenceProjectionDefinition)
   })
-  ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.register(
-      ONBOARDING_SETTINGS_NAMESPACE,
-      OnboardingSettingsSchema,
-    )
-  })
+  ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
   // Optional on purpose: a composition with no web server still gets the projection and
   // the settings namespace, rather than withholding the whole face over a route.
   ctx.inject(['webServer', 'connection'], (webCtx) => {

@@ -34,19 +34,16 @@
       "path": "../../../vendor/cordis"
     },
     {
-      "path": "../locale"
+      "path": "../locale/tsconfig.host.json"
     },
     {
       "path": "../ui-slots"
     },
     {
-      "path": "../ui-theme"
+      "path": "../ui-theme/tsconfig.host.json"
     },
     {
       "path": "../ui-primitives"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     },
     {
       "path": "../../host/webserver"

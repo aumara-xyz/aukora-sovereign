@@ -11,8 +11,7 @@
     "src/aura/aggregate.ts",
     "src/aura/projection.ts",
     "src/aura/types.ts",
-    "src/index.ts",
-    "src/invariant.ts"
+    "src/index.ts"
   ],
   "references": [
     { "path": "../../../vendor/cordis" },
@@ -21,7 +20,6 @@
     { "path": "../../core/session" },
     { "path": "../../interaction/permission-presets" },
     { "path": "../../interaction/user-approval" },
-    { "path": "../../runtime-diagnostics/invariants" },
     { "path": "../../sandbox/sandbox-policy" },
     { "path": "../../session/session-projection" },
     { "path": "../../settings/settings" }

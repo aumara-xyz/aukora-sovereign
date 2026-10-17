@@ -33,7 +33,9 @@ export function SettingsOnboarding(props: SettingsOnboardingComponentProps) {
   const steps = useOnboardingSteps(snapshot => snapshot)
   const hero = useSessions((state) => {
     if (state.phase !== 'ready') return 'undecided'
-    return state.current === undefined || state.byId[state.current]?.blank === true
+    // DSH 0.2.1-alpha.5 removed `SessionListState.current`; the selection is the Session holding a `mainView` reference.
+    const current = Object.values(state.byId).find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
+    return current === undefined || state.byId[current]?.blank === true
       ? 'active'
       : 'inactive'
   })

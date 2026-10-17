@@ -444,10 +444,11 @@ function Portal({
  * @returns the always-mounted Aura Coherence surface.
  */
 export function AuraCoherenceSurface(props: AuraCoherenceSurfaceComponentProps) {
-  const { activeSurface, closeSurface, t, useSessions, useSessionPendingInteraction } = props
+  const { activeSurface, closeSurface, t, useSessions, useSessionStatus } = props
   const active = activeSurface === 'aura-coherence'
   const sessions = useSessions(state => state)
-  const currentSessionId = sessions.current
+  // DSH 0.2.1-alpha.5 removed `SessionListState.current`; the selection is the Session holding a `mainView` reference.
+  const currentSessionId = Object.values(sessions.byId).find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
   const currentSession = currentSessionId === undefined ? undefined : sessions.byId[currentSessionId]
   const currentTitle = currentSession?.displayTitle
   const currentProjection = currentSession?.projectionValues?.auraCoherence
@@ -473,8 +474,9 @@ export function AuraCoherenceSurface(props: AuraCoherenceSurfaceComponentProps) 
     return next
   }, [active, entries])
   const activityHeads = useMemo(() => auraActivityHeadsOf(entries), [entries])
-  const pendingInteractions = useSessionPendingInteraction(state => state)
-  const pending = sessions.ids.some(id => pendingInteractions.get(id) !== undefined)
+  // `useSessionPendingInteraction` was folded into `useSessionStatus` (its `pendingInteraction` member).
+  const sessionStatuses = useSessionStatus(state => state)
+  const pending = sessions.ids.some(id => sessionStatuses.get(id)?.pendingInteraction !== undefined)
   const svgPrefix = useId().replace(/:/g, '')
   const standing = useMemo(() => systemStandingOf(projection), [projection])
   const ternary = useMemo(() => auraTernaryOf(projection.channelSources.persistent), [projection])

@@ -4,3 +4,5 @@ node_modules/
 .aukora/
 /app/release/
 /app/.release-build/
+/engine/plugins/*/lib/
+/engine/plugins/*/*/lib/

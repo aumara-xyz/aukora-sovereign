@@ -19,7 +19,8 @@ import { BoundSession } from './auma-live-session.ts'
  * click, not that she could not be moved at all.
  */
 export function AumaLiveSurface(props: StockAppSurfaceProps) {
-  const selected = props.useSessions(state => state.current)
+  // DSH 0.2.1-alpha.5 removed `SessionListState.current`; the selection is the Session holding a `mainView` reference.
+  const selected = props.useSessions(state => Object.values(state.byId).find(session => (session.retainedBy.mainView ?? 0) > 0)?.id)
   // ONE binding for the life of the mount. The ref is created once, and `useState` exists only so that an
   // explicit follow re-renders: that is the one event that legitimately changes the address.
   const bound = useRef<BoundSession | null>(null)

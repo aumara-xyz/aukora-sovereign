@@ -32,6 +32,7 @@
     "src/client/SettingsRoot.tsx",
     "src/client/chrome.tsx",
     "src/client/escape.ts",
+    "src/client/icons.tsx",
     "src/client/index.ts",
     "src/client/locales.ts",
     "src/client/settings-document-store.ts",
@@ -42,13 +43,12 @@
     { "path": "./tsconfig.host.json" },
     { "path": "../../../vendor/cordis" },
     { "path": "../../api/remotes/tsconfig.client.json" },
-    { "path": "../../runtime-diagnostics/invariants" },
     { "path": "../../settings/settings" },
-    { "path": "../locale" },
+    { "path": "../locale/tsconfig.client.json" },
     { "path": "../store" },
     { "path": "../aukora-face-layout" },
     { "path": "../ui-primitives" },
-    { "path": "../ui-settings" },
+    { "path": "../ui-settings/tsconfig.client.json" },
     { "path": "../ui-slots" }
   ]
 }

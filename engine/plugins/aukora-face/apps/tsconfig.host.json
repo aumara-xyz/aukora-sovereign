@@ -51,7 +51,6 @@
     "src/embedded-assets.ts",
     "src/index.ts",
     "src/status-facts.ts",
-    "src/invariant.ts",
     "src/vendor-paths.ts"
   ],
   "references": [
@@ -65,7 +64,6 @@
     { "path": "../../session/session-projection" },
     { "path": "../../session-query/session-query" },
     { "path": "../../subprocess/subprocess" },
-    { "path": "../../web/web" },
-    { "path": "../../runtime-diagnostics/invariants" }
+    { "path": "../../web/web" }
   ]
 }

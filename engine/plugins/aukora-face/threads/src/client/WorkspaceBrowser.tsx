@@ -11,9 +11,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconCloseFill14, IconPersonalizationOutline16,
-  IconPlusOutline16, IconProjectAddOutline16, IconSearchOutline16, Menu, Modal, Tooltip,
+  Button, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, IconPersonalizationOutline16, IconPlusOutline16, IconProjectAddOutline16, IconSearchOutline16 } from './icons.tsx'
 import type {
   SessionListState, SessionSearchResultItem,
 } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -21,7 +21,7 @@ import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
-import { deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
+import { completedSessionsOf, currentOf, deriveFlat, deriveGroups, deriveSearchResults, UNGROUPED_KEY } from './tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
 import { WorkspacePickFlow } from './WorkspacePicker.tsx'
@@ -214,7 +214,7 @@ function workspaceGroupHalf(e: { clientY: number; currentTarget: HTMLElement }):
 
 type SessionTreeProps = Pick<
   WorkspaceBrowserProps,
-  'useSessions' | 'startSession' | 'open' | 'forkSession'
+  'useSessions' | 'useSessionStatus' | 'startSession' | 'open' | 'forkSession'
   | 'insertWorkspaceBefore' | 'insertSessionBefore' | 't'
 > & {
   /** Host account home for POSIX hover-path abbreviation. */
@@ -250,14 +250,16 @@ type SessionTreeProps = Pick<
 
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
 function SessionTree({
-  useSessions, startSession, open, forkSession, workspaces, archivedSessionIds,
+  useSessions, useSessionStatus, startSession, open, forkSession, workspaces, archivedSessionIds,
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onSessionUnarchive,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
   sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, home, t,
 }: SessionTreeProps) {
   const list = useSessions(s => s)
-  const current = list.current
+  const statuses = useSessionStatus(s => s)
+  const completed = useMemo(() => completedSessionsOf(statuses), [statuses])
+  const current = currentOf(list)
   const [expandedSessionGroups, setExpandedSessionGroups] = useState<string[]>([])
   // Transient drag marker state; the selected mode owns the resulting order.
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -327,8 +329,8 @@ function SessionTree({
       ...(sessionOrderByAccount[UNGROUPED_KEY] === undefined
         ? {}
         : { ungroupedOrder: sessionOrderByAccount[UNGROUPED_KEY] }),
-    }),
-    [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount],
+    }, undefined, completed),
+    [list, orderedWorkspaces, archivedSessionIds, expandedGroups, sessionOrderByAccount, completed],
   )
   const now = Date.now()
   const commitSessionDrag = (activeDrag: DragState, over: NonNullable<DragState['over']>): void => {
@@ -549,13 +551,14 @@ function SessionTree({
 
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
-  useSessions, open, forkSession, onSessionRename, onSessionArchive, onSessionUnarchive,
+  useSessions, useSessionStatus, open, forkSession, onSessionRename, onSessionArchive, onSessionUnarchive,
   archivedSessionIds, workspaces,
   pinnedSessionIds, unreadSessionIds, filters, orderBy, sessionOrderByAccount,
   sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
 }: Pick<
   SessionTreeProps,
   | 'useSessions'
+  | 'useSessionStatus'
   | 'open'
   | 'forkSession'
   | 'onSessionRename'
@@ -575,13 +578,15 @@ function FlatList({
   filters: { pinned: boolean; unread: boolean; archived: boolean }
 }) {
   const list = useSessions(s => s)
+  const statuses = useSessionStatus(s => s)
+  const completed = useMemo(() => completedSessionsOf(statuses), [statuses])
   const activeRows = useMemo(
-    () => deriveFlat(list, archivedSessionIds, workspaces, 'active'),
-    [list, archivedSessionIds, workspaces],
+    () => deriveFlat(list, archivedSessionIds, workspaces, 'active', undefined, completed),
+    [list, archivedSessionIds, workspaces, completed],
   )
   const archivedRows = useMemo(
-    () => deriveFlat(list, archivedSessionIds, workspaces, 'archived'),
-    [list, archivedSessionIds, workspaces],
+    () => deriveFlat(list, archivedSessionIds, workspaces, 'archived', undefined, completed),
+    [list, archivedSessionIds, workspaces, completed],
   )
   const sessionIds = useMemo(() => activeRows.map(row => row.id), [activeRows])
   const previousOrderBy = useRef(orderBy)
@@ -658,7 +663,7 @@ function FlatList({
             <SessionNodeItem
               key={node.id}
               node={node}
-              currentId={list.current}
+              currentId={currentOf(list)}
               now={now}
               onOpen={open}
               onRename={onSessionRename}
@@ -708,6 +713,7 @@ interface RemoteSearchState {
 /** Flat search body: local metadata matches plus the current Host result page. */
 function SearchResults({
   useSessions,
+  useSessionStatus,
   open,
   workspaces,
   archivedSessionIds,
@@ -718,7 +724,7 @@ function SearchResults({
   remote,
   resultLimit,
   t,
-}: Pick<SessionTreeProps, 'useSessions' | 'open' | 't'> & {
+}: Pick<SessionTreeProps, 'useSessions' | 'useSessionStatus' | 'open' | 't'> & {
   workspaces: readonly WorkspaceView[]
   archivedSessionIds: readonly SessionNode['id'][]
   pinnedSessionIds: readonly string[]
@@ -729,6 +735,8 @@ function SearchResults({
   resultLimit: number
 }) {
   const list = useSessions(s => s)
+  const statuses = useSessionStatus(s => s)
+  const completed = useMemo(() => completedSessionsOf(statuses), [statuses])
   const currentRemote = remote.query === query
     ? remote
     : { query, status: 'loading' as const, items: [], hasMore: false }
@@ -741,6 +749,8 @@ function SearchResults({
       currentRemote,
       resultLimit,
       filters.archived ? 'archived' : 'active',
+      undefined,
+      completed,
     )
     const pinned = new Set(pinnedSessionIds)
     const unread = new Set(unreadSessionIds)
@@ -764,7 +774,7 @@ function SearchResults({
             <SearchResultItem
               key={result.id}
               result={result}
-              currentId={list.current}
+              currentId={currentOf(list)}
               onOpen={open}
               archived={filters.archived}
               t={t}
@@ -802,6 +812,7 @@ export function WorkspaceBrowser({
   wide,
   expandSidebar,
   useSessions,
+  useSessionStatus,
   useWorkspaces,
   useStore,
   actions,
@@ -843,7 +854,7 @@ export function WorkspaceBrowser({
   const allSessionIds = useSessions(state => state.ids)
   const sessionPhase = useSessions(state => state.phase)
   const currentBlankSessionId = useSessions((state) => {
-    const current = state.current
+    const current = currentOf(state)
     return current !== undefined && state.byId[current]?.blank === true ? current : undefined
   })
   const presentedGroupBy = flatThreads ? 'flat' : groupBy
@@ -1250,6 +1261,7 @@ export function WorkspaceBrowser({
           ? (
             <SearchResults
               useSessions={useSessions}
+              useSessionStatus={useSessionStatus}
               open={openSession}
               workspaces={workspaces}
               archivedSessionIds={archivedSessionIds}
@@ -1265,7 +1277,7 @@ export function WorkspaceBrowser({
           : presentedGroupBy === 'flat'
             ? (
               <FlatList
-                useSessions={useSessions} open={openSession} forkSession={forkSession}
+                useSessions={useSessions} useSessionStatus={useSessionStatus} open={openSession} forkSession={forkSession}
                 onSessionRename={onSessionRename} onSessionArchive={onSessionArchive}
                 onSessionUnarchive={onSessionUnarchive}
                 archivedSessionIds={archivedSessionIds}
@@ -1284,6 +1296,7 @@ export function WorkspaceBrowser({
             : (
               <SessionTree
                 useSessions={useSessions}
+                useSessionStatus={useSessionStatus}
                 onSessionRename={onSessionRename}
                 onSessionArchive={onSessionArchive}
                 onSessionUnarchive={onSessionUnarchive}

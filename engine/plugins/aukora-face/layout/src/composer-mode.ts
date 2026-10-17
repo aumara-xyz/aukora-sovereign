@@ -2,11 +2,33 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
-import { requiredConfinement } from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from './composer-mode-types.ts'
+
+/**
+ * Require the deployment boundary before a mode change is accepted. This is Prime's `requiredConfinement`
+ * (added to `@deepseek-ai/dsh-sandbox` by Prime's `patches/mandatory-agent-confinement.patch.json`; upstream
+ * DSH 0.2.1-alpha.5 does not export it), reduced to the two guards this file used: the `aukoraConfinement`
+ * provider must exist, and the policy must be a confined mode with a workspace root.
+ * @param ctx - scope that may carry the `aukoraConfinement` provider.
+ * @param policy - the resolved sandbox policy for the requested mode.
+ */
+function requiredConfinement(ctx: Context, policy: unknown): void {
+  const provider = ctx.get('aukoraConfinement') as { confine?: unknown } | undefined
+  if (provider === undefined || typeof provider.confine !== 'function') {
+    throw new Error('AUKORA_CONFINEMENT_REQUIRED: required native confinement is unavailable')
+  }
+  if (policy === null || typeof policy !== 'object' || Array.isArray(policy)) {
+    throw new Error('AUKORA_CONFINEMENT_POLICY: a resolved confined policy is required')
+  }
+  const input = policy as { mode?: unknown; workspaceRoot?: unknown }
+  if ((input.mode !== 'read-only' && input.mode !== 'workspace-write')
+    || typeof input.workspaceRoot !== 'string' || input.workspaceRoot.length === 0) {
+    throw new Error('AUKORA_CONFINEMENT_POLICY: read-only or workspace-write with a workspaceRoot is required')
+  }
+}
 
 /** Registers a read-only projection and a sandbox-only command. Installation never changes session state. */
 export function installComposerMode(ctx: Context): void {

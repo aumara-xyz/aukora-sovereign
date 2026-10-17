@@ -3,7 +3,7 @@
  * remains in the root entry store; the controller forwards feature gestures
  * into that store's declared actions.
  */
-import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
+import type { BoundActions, HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { createLayoutStore, SurfacePresentation } from './stores.ts'
 
@@ -29,6 +29,12 @@ export type PanelActions = BoundActions<ReturnType<typeof createLayoutStore>>
 
 /** Cross-plugin layout actions available as `ctx.layout`. */
 export interface ILayout {
+  /**
+   * The selected central panel as an observable source. DSH 0.2.1-alpha.5's `ILayout` carries it, and the right
+   * Sidebar reads it (`layout.panelInfo`) to decide whether Session details may show; this shell has one panel, so
+   * it is permanently the Conversation.
+   */
+  readonly panelInfo: HostObservable<PanelInfo>
   /** Select a center surface, an optional target, and its focused-canvas behavior. */
   openSurface(id: string, target?: string, presentation?: SurfacePresentation): void
   /** Return the center lane to its empty app canvas. */
@@ -92,6 +98,9 @@ export interface ILayout {
 /** `ctx.layout` controller backed by the mounted root entry's store actions. */
 export class LayoutController implements ILayout {
   #panels: PanelActions | undefined
+
+  /** @param panelInfo - the shell's constant central-panel source (the Conversation, always). */
+  constructor(readonly panelInfo: HostObservable<PanelInfo>) {}
 
   /** Pending navigation, aborted when a later one begins or the owner unloads. */
   #navigation = new AbortController()

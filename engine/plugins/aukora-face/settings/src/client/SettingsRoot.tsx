@@ -3,7 +3,7 @@
  * its active id plus the section selected from the System menu.
  */
 import { useCallback, useEffect, useId } from 'react'
-import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutline16 } from './icons.tsx'
 import { isEditableTarget } from './escape.ts'
 import type { SettingsRootComponentProps, SettingsSectionRow } from './shell-contract.ts'
 import css from './SettingsRoot.module.css'

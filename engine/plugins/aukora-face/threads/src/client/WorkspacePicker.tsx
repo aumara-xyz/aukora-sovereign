@@ -11,8 +11,9 @@
 import type { ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Button, IconFolderClose16, IconPlusOutline16, Menu, Modal, type MenuEntry,
+  Button, Menu, Modal, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFolderClose16, IconPlusOutline16 } from './icons.tsx'
 import type {
   WorkspaceId, WorkspaceSnapshot as WorkspaceListState, WorkspaceView,
 } from '@deepseek-ai/dsh-api-workspace-controller/client'

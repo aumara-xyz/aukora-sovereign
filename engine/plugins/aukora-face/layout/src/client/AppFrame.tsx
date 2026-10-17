@@ -18,6 +18,19 @@ import { AUMA_LIVE_SURFACE, AUMA_MINDS_PATH, AUMA_STATUS_PATH, aumaStatusOf, lan
 import { waitingAgeText, waitingOf } from './waiting.ts'
 import { ConversationOpener } from './conversation-opener.ts'
 
+/**
+ * The Session the main view shows. DSH 0.2.1-alpha.5 removed `SessionListState.current` (the Session Controller no
+ * longer owns a selection; "navigation belongs to view owners"). The harness's own frame reads the selection the way
+ * `ui-layout/src/client/DocumentTitle.tsx` does: the listed Session that holds a `mainView` reference.
+ * @param sessions - the live Session list snapshot.
+ * @returns the main view's Session, or undefined when none is shown.
+ */
+function mainViewSessionOf(
+  sessions: { readonly byId: Readonly<Record<string, { readonly id: SessionId; readonly retainedBy: { readonly mainView?: number } }>> },
+): SessionId | undefined {
+  return Object.values(sessions.byId).find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
+}
+
 /** Full composed props of the root shell. */
 export type AppFrameProps =
   & PropsRuntime<'root'>
@@ -181,11 +194,11 @@ export function AppFrame({
   openThread,
 }: AppFrameProps) {
   const state = useStore(value => value)
-  const currentSession = useSessions(sessions => sessions.current)
+  const currentSession = useSessions(sessions => mainViewSessionOf(sessions))
   // THE NAME OF THE THREAD THE CORNER NAMES, LIVE: `displayTitle` is the session's human-facing label (durable
   // title, project basename, then id), so a thread the host has not titled yet is still named rather than blank.
   const currentThreadTitle = useSessions((sessions) => {
-    const current = sessions.current
+    const current = mainViewSessionOf(sessions)
     return current === undefined ? undefined : sessions.byId[current]?.displayTitle
   })
   // HOW MANY LANES ARE RUNNING, from the live session store — the same fact the board reads, counted here by the
@@ -233,11 +246,11 @@ export function AppFrame({
   // WHETHER THE CURRENT SESSION IS BLANK: a blank session is what the page opens for itself, so the conversation
   // opener below does not treat a switch to one as a person choosing a thread.
   const currentBlank = useSessions((sessions) => {
-    const current = sessions.current
+    const current = mainViewSessionOf(sessions)
     return current === undefined ? undefined : sessions.byId[current]?.blank
   })
   const detailsSession = useSessions((sessions) => {
-    const current = sessions.current
+    const current = mainViewSessionOf(sessions)
     return current !== undefined && sessions.byId[current]?.blank === false ? current : undefined
   })
   const [menuTab, setMenuTab] = useState<MenuTab>('system')

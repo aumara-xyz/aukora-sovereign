@@ -1,7 +1,6 @@
 import { clientBundle } from '../tsdown.client.ts'
 
-export default clientBundle('@aukora/face-apps', [
+export default clientBundle(import.meta.dirname, [
   'lib/types/index.js',
-  'lib/types/invariant.js',
   'lib/types/auma-canvas-tool.js',
 ])

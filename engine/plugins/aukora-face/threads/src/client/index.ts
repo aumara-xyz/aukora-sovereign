@@ -127,14 +127,22 @@ export function apply(ctx: ClientContext): void {
     searchResultLimit: ctx.sessions.searchResultLimit,
     renameSession: async (sessionId, title) => {
       // Row → session-face hop: rename is a per-session verb (ISession), not
-      // a list-service verb; the binding resolves any listed session.
-      const session = ctx.sessions.binding(sessionId)?.session
-      if (session === undefined) throw new Error(`unknown session "${sessionId}"`)
-      const result = await session.rename(title)
+      // a list-service verb. DSH 0.2.1-alpha.5: `binding()` only borrows an
+      // already-retained Session, so the rename holds one reference through the call.
+      const result = await ctx.sessions.using(
+        sessionId,
+        { source: 'workspaceOperation' },
+        reference => reference.binding.session.rename(title),
+      )
       if (!result.ok) throw new Error(result.error.message)
     },
     forkSession: (sessionId) => {
-      uiWorkspaceService.forkSession(sessionId).catch(() => {
+      // DSH 0.2.1-alpha.5: `forkSession` no longer navigates. The thread browser's fork opens the child unless a
+      // later navigation superseded it, as it did before.
+      const navigation = ctx.layout.beginNavigation()
+      uiWorkspaceService.forkSession(sessionId).then((childId) => {
+        if (!navigation.aborted) uiWorkspaceService.openSession(childId)
+      }).catch(() => {
         // Fork or child-rename failure keeps the current selection.
       })
     },
@@ -193,9 +201,11 @@ export function apply(ctx: ClientContext): void {
         hooks: { threadView },
         threadActions,
         renameThread: async (sessionId, title) => {
-          const session = ctx.sessions.binding(sessionId)?.session
-          if (session === undefined) throw new Error(`unknown session "${sessionId}"`)
-          const result = await session.rename(title)
+          const result = await ctx.sessions.using(
+            sessionId,
+            { source: 'workspaceOperation' },
+            reference => reference.binding.session.rename(title),
+          )
           if (!result.ok) throw new Error(result.error.message)
         },
         archiveThread: async (sessionId) => {

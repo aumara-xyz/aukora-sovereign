@@ -8,6 +8,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type {} from '@aukora/face-layout/client'
 import { MemoryMenu } from './MemoryMenu.tsx'
 import { MemorySurface } from './MemorySurface.tsx'
@@ -55,7 +56,7 @@ export function apply(ctx: ClientContext): void {
     // what would have caught it, which is why the arm exists.)
     inject: (): { readonly openSource: (sessionId: string) => void } => ({
       openSource: (sessionId: string) => {
-        ctx.sessions.open(sessionId as Parameters<typeof ctx.sessions.open>[0])
+        ctx.uiWorkspace.openSession(sessionId as Parameters<typeof ctx.uiWorkspace.openSession>[0])
       },
     }),
   }, MemorySurface))

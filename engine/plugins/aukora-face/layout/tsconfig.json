@@ -8,7 +8,6 @@
   "files": [
     "src/composer-mode-types.ts",
     "src/client/ComposerControls.tsx",
-    "src/invariant.ts",
     "src/client/AppFrame.tsx",
     "src/client/ApprovalsMenu.tsx",
     "src/client/ApprovalsSurface.tsx",
@@ -43,7 +42,7 @@
       "path": "../../api/remotes/tsconfig.client.json"
     },
     {
-      "path": "../ui-conversation"
+      "path": "../ui-conversation/tsconfig.client.json"
     },
     {
       "path": "../../session/session-projection"
@@ -58,19 +57,19 @@
       "path": "../../../vendor/cordis"
     },
     {
-      "path": "../locale"
+      "path": "../locale/tsconfig.client.json"
     },
     {
       "path": "../ui-slots"
     },
     {
-      "path": "../ui-theme"
+      "path": "../ui-theme/tsconfig.client.json"
+    },
+    {
+      "path": "../ui-workspace"
     },
     {
       "path": "../ui-primitives"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     }
   ]
 }

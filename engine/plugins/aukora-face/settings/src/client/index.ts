@@ -65,7 +65,7 @@ const NS = 'settings'
 export const inject = [
   'slots', 'locale', 'connection',
   'remote',
-  'remote.settings', 'settingsScope', 'layout',
+  'remote.settings', 'configForms', 'layout',
 ]
 
 /**
@@ -84,7 +84,7 @@ export function apply(ctx: ClientContext): void {
   // The action follows the shared describe mirror, whose owning plugin
   // already refreshes it on document commits and reconnects.
   const documentController = connection.isLoopback
-    ? new SettingsDocumentStore(ctx, ctx.settingsScope.describe())
+    ? new SettingsDocumentStore(ctx, ctx.configForms.describe())
     : undefined
   const documentInjected = documentController === undefined
     ? undefined
