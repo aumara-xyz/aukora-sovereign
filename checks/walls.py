@@ -19,6 +19,15 @@ SYS_CRATES = {"libc", "nix", "rustix", "landlock", "seccompiler", "memfd", "caps
 NO_SYS = {"guest", "canon"}
 # Crates that run programs or build tools at run time: only for the units allowed to spawn processes.
 PROC_CRATES = {"rustc_version", "cc", "cmake", "pkg-config", "jobserver", "signal-hook-registry", "duct", "subprocess"}
+# Browser bindings: only the owner WASM, and web-sys only with exactly these features (a feature such as Request or
+# WebSocket would give the code a way out that no source scan names).
+BROWSER_CRATES = {"web-sys", "js-sys", "wasm-bindgen", "wasm-bindgen-futures"}
+BROWSER_ALLOW = {"aumlok"}
+WEB_SYS_FEATURES = {"Window", "Location", "Navigator", "CredentialsContainer", "CredentialRequestOptions",
+                    "PublicKeyCredentialRequestOptions", "PublicKeyCredentialDescriptor", "PublicKeyCredentialType",
+                    "UserVerificationRequirement", "PublicKeyCredential", "Credential", "AuthenticatorResponse",
+                    "AuthenticatorAssertionResponse", "AuthenticationExtensionsClientInputs",
+                    "AuthenticationExtensionsClientOutputs"}
 CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
 
 NET = (r"\b(ToSocketAddrs|to_socket_addrs|lookup_host)\b|std::net::(?!(IpAddr|Ipv[46]Addr|SocketAddr(V[46])?|AddrParseError)\b)|std::os::unix::(net|\*)|\bUnix(Stream|Listener|Datagram)\b|TcpStream|TcpListener|UdpSocket|"
@@ -43,6 +52,12 @@ JS_BAD = (r"(?<![\w$.])eval\s*\(|(?<![\w$.])Function\s*\(|\bnew\s+Function\b|\bs
           r"\bdangerouslySetInnerHTML\b|\b(set|parse)HTMLUnsafe\b|\bDOMParser\b|\bsetAttribute\s*\(\s*[\"'`]on")
 HTML_BAD = (r"<script(?![^>]*\bsrc\s*=)(?![^>]*\btype\s*=\s*[\"']application/json[\"'])[^>]*>|<script[^>]*\bsrc\s*=[^>]*>\s*[^<\s]|"
             r"\son[a-z]+\s*=|(href|src|action|formaction|xlink:href)\s*=\s*[\"']?\s*javascript:")
+# The owner WASM (aumlok) holds the phrase and the root secret. Rust that reaches the browser may not evaluate a string,
+# build a function, take the global object, glob-import the bindings or name a network-capable web-sys type; a web-sys
+# feature that would unlock one is refused by dep_findings (WEB_SYS_FEATURES). `extern { .. }` imports are wall-abi.
+BROWSER_RS = (r"\bjs_sys::(eval|global)\b|\b(js_sys|web_sys)::\*|\bFunction::new_(no_args|with_args)\b|"
+              r"\bweb_sys::(Request|Response|Headers|WebSocket|XmlHttpRequest|EventSource|Worker|SharedWorker|ServiceWorker|"
+              r"RtcPeerConnection|BroadcastChannel|MessageChannel|FormData|Blob)\w*|\b(fetch_with_\w+|send_beacon\w*)\b")
 ABI = r"\bextern\s*(\"\"\s*)?\{|\bglobal_asm\b|\basm\s*!|#!?\[\s*(link|link_name)\b|\bextern\s+crate\b|\buse\s+(::)?(std|core|alloc)\s+as\b"
 SCANNED = r"\.(rs|ts|tsx|js|jsx|mjs|cjs|html|htm|svg)$"
 # Preview-only shims (the simulated passkey, the simulated second device, the stand-in node, the /__diag event log, the camera
@@ -134,7 +149,8 @@ def file_findings(path, text):
         # Peter, 2026-10-17: unit tests (#[cfg(test)] modules) are allowed; nothing gates a merge on them.
         for rule, pattern, allowed in (("wall-smuggle", SMUGGLE, set()),
                                        ("wall-network", NET, ALLOW["net"]), ("wall-exec", PROC, ALLOW["proc"]),
-                                       ("wall-unsafe", UNSAFE, ALLOW["unsafe"]), ("wall-lint", LINT_OFF, set()), ("wall-abi", ABI, {"launcher"})):
+                                       ("wall-unsafe", UNSAFE, ALLOW["unsafe"]), ("wall-lint", LINT_OFF, set()), ("wall-abi", ABI, {"launcher"}),
+                                       ("wall-browser", BROWSER_RS, set())):
             if unit not in allowed and re.search(pattern, code):
                 found.append((rule, path))
         picture = {"gate": PICTURE, "frontdoor": PICTURE_STRICT, "launcher": PICTURE_STRICT}.get(unit)
@@ -156,6 +172,10 @@ def dep_findings(unit, dep):
         found.append(("wall-exec", f"{unit} depends on {name}"))
     if name in SYS_CRATES and unit in NO_SYS:
         found.append(("wall-sys", f"{unit} depends on {name}"))
+    if name in BROWSER_CRATES and unit not in BROWSER_ALLOW:
+        found.append(("wall-browser", f"{unit} depends on {name}"))
+    if name == "web-sys" and set(dep.get("features", [])) != WEB_SYS_FEATURES:
+        found.append(("wall-browser", f"{unit}'s web-sys features differ from the pinned set in checks/walls.py"))
     return found
 
 

@@ -37,5 +37,42 @@ class BrowserWall(unittest.TestCase):
                 self.assertEqual(browser("engine/plugins/x/a.tsx", sample), [])
 
 
+class OwnerWasmWall(unittest.TestCase):
+    def rust(self, code):
+        return [rule for rule, _ in walls.file_findings("crates/aumlok/src/x.rs", code) if rule == "wall-browser"]
+
+    def test_eval_functions_global_and_network_types_are_seen(self):
+        for code in ("fn f() { let _ = js_sys::eval(\"1\"); }",
+                     "fn f() { let _ = js_sys::Function::new_no_args(\"x\"); }",
+                     "use js_sys::{Reflect, global};",
+                     "fn f() { let _ = js_sys::global(); }",
+                     "use web_sys::*;",
+                     "use js_sys::*;",
+                     "fn f() { let _ = web_sys::WebSocket::new(\"x\"); }",
+                     "use web_sys::{Request, Window};",
+                     "fn f(w: Window) { let _ = w.fetch_with_str(\"x\"); }",
+                     "fn f(n: Navigator) { let _ = n.send_beacon_with_opt_str(\"x\", None); }"):
+            with self.subTest(code=code):
+                self.assertEqual(self.rust(code), ["wall-browser"])
+
+    def test_what_aumlok_uses_today_is_not_flagged(self):
+        code = ('use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array}; use wasm_bindgen::{JsCast, JsValue};\n'
+                'use web_sys::{CredentialRequestOptions, PublicKeyCredential, UserVerificationRequirement};\n'
+                'fn f() { let _ = web_sys::window(); let _ = js_sys::Date::now(); }')
+        self.assertEqual(self.rust(code), [])
+
+    def test_strings_and_comments_do_not_trip_it(self):
+        self.assertEqual(self.rust('// js_sys::eval\nfn f() { let _ = "web_sys::WebSocket"; }'), [])
+
+    def test_browser_crates_are_the_owner_wasm_only_and_web_sys_features_are_pinned(self):
+        dep = {"name": "web-sys", "features": sorted(walls.WEB_SYS_FEATURES)}
+        self.assertEqual(walls.dep_findings("aumlok", {**dep, "source": walls.CRATES_IO}), [])
+        self.assertEqual([r for r, _ in walls.dep_findings("canon", {**dep, "source": walls.CRATES_IO})], ["wall-browser"])
+        wider = {**dep, "features": dep["features"] + ["WebSocket"], "source": walls.CRATES_IO}
+        self.assertEqual([r for r, _ in walls.dep_findings("aumlok", wider)], ["wall-browser"])
+        self.assertEqual([r for r, _ in walls.dep_findings("aumlok", {"name": "js-sys", "features": [], "source": walls.CRATES_IO})], [])
+        self.assertEqual([r for r, _ in walls.dep_findings("kira", {"name": "wasm-bindgen", "features": [], "source": walls.CRATES_IO})], ["wall-browser"])
+
+
 if __name__ == "__main__":
     unittest.main()
