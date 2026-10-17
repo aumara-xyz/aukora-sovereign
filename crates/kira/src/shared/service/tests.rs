@@ -562,7 +562,6 @@ fn a_stale_resume_is_refused_when_it_names_the_head_it_read() {
     // Two sessions read v1. The first writes v2 against it; the second, still holding v1, is refused and v2 stays.
     let v2 = resume("v2 step 9", Some(&v1));
     assert_eq!(v2["ok"], true, "{v2}");
-    assert_eq!(v2["result"]["previous_head"], v1.as_str());
     let v2 = v2["result"]["id"].as_str().unwrap().to_owned();
     assert_eq!(resume("v1b step 6", Some(&v1))["error"], "kira:resume-stale");
     assert_eq!(head(&claude).as_deref(), Some(v2.as_str()), "the newer handoff must stay the head");
@@ -572,16 +571,73 @@ fn a_stale_resume_is_refused_when_it_names_the_head_it_read() {
     let mut unslotted = note("no slot here", "builders");
     unslotted["expected_head"] = json!(v2);
     assert_eq!(call(&f.state, &claude, "remember", unslotted)["error"], "kira:expected-head-needs-slot");
-    // Without expected_head a write is unguarded (as before) but names what it shadowed.
+    // A slot write that does not say what it read is refused, empty slot or not: a stale session cannot replace a newer
+    // handoff by leaving the field off (Grok review part 4). The head is still v3.
     let unguarded = resume("unguarded", None);
-    assert_eq!(unguarded["ok"], true);
-    assert!(unguarded["result"]["previous_head"].is_string());
+    assert_eq!(unguarded["error"], "kira:expected-head-required");
+    let v3 = head(&claude).unwrap();
+    assert_eq!(call(&f.state, &claude, "get", json!({"id": v3}))["result"]["text"], "v3 step 10");
+    let mut first = note("first handoff", "builders");
+    (first["slot"], first["lane"], first["form"]) = (json!("resume:grok"), json!("experience"), json!("snapshot"));
+    assert_eq!(call(&f.state, &grok, "remember", first)["error"], "kira:expected-head-required", "even for a slot that is still empty");
     // The owner's own slot is guarded the same way.
     let mut own = note("brief one", "builders");
     (own["slot"], own["lane"], own["capture"]) = (json!("aukora:resume"), json!("resume"), json!("owner-typed"));
     own["expected_head"] = json!("none");
     assert_eq!(call(&f.state, &owner, "remember", own.clone())["ok"], true);
     assert_eq!(call(&f.state, &owner, "remember", own)["error"], "kira:resume-stale");
+}
+
+/// Grok review part 3: a slot head the caller cannot read must be indistinguishable from no head, and no id of it comes back.
+#[test]
+fn a_hidden_slot_head_is_neither_distinguishable_nor_returned() {
+    let f = fixture();
+    let (owner, grok) = (f.owner.clone(), f.grok.clone());
+    // The owner writes grok's handoff slot, so grok cannot read its head (a handoff is its author's and the owner's).
+    let mut owners = note("the owner's note in grok's slot", "builders");
+    (owners["slot"], owners["lane"], owners["capture"], owners["expected_head"]) =
+        (json!("resume:grok"), json!("resume"), json!("owner-typed"), json!("none"));
+    let hidden = call(&f.state, &owner, "remember", owners)["result"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(call(&f.state, &grok, "get", json!({"id": "resume:grok"}))["error"], "kira:not-found");
+    let write = |token: &str, slot: &str, expected: Value| {
+        let mut n = note("a handoff", "builders");
+        (n["slot"], n["lane"], n["form"], n["expected_head"]) = (json!(slot), json!("experience"), json!("snapshot"), expected);
+        call(&f.state, token, "remember", n)
+    };
+    // Grok's own slot holds a head it cannot read: "none" is accepted exactly as for an empty slot, and nothing returns
+    // the hidden id.
+    let accepted = write(&grok, "resume:grok", json!("none"));
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    assert!(!accepted.to_string().contains(&hidden), "the hidden head's id must not come back: {accepted}");
+    // A slot the caller may not write is refused the same way whether it is empty or occupied.
+    let occupied = write(&grok, "aukora:self", json!("none"));
+    let empty = write(&grok, "aukora:resume", json!("none"));
+    let guess = write(&grok, "resume:claude", json!(hidden));
+    assert_eq!((occupied["error"].clone(), empty["error"].clone(), guess["error"].clone()), (json!("kira:slot-refused"), json!("kira:slot-refused"), json!("kira:slot-refused")));
+    let mut seeded = note("I am Auma", "builders");
+    (seeded["slot"], seeded["lane"], seeded["capture"], seeded["expected_head"]) = (json!("aukora:self"), json!("self"), json!("owner-typed"), json!("none"));
+    call(&f.state, &owner, "remember", seeded);
+    assert_eq!(write(&grok, "aukora:self", json!("none"))["error"], "kira:slot-refused", "occupied and empty read alike");
+}
+
+/// Grok review part 3: `found` must be recomputed from what survives the final filtering.
+#[test]
+fn found_does_not_stand_after_the_note_that_justified_it_is_gone() {
+    let f = fixture();
+    let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
+    let mut backed = note("The figurine is on the left shelf", "builders");
+    backed["capture"] = json!("owner-typed");
+    let backed = call(&f.state, &owner, "remember", backed)["result"]["id"].as_str().unwrap().to_owned();
+    remember_id(&f, &claude, "The figurine was dusted on the shelf last week");
+    let quiet = recall_across(&f, &grok, "where is the figurine on the shelf", || {}).unwrap();
+    assert_eq!(quiet["status"], "found", "{quiet}");
+    // While the reranker would run, the owner supersedes the backed note. One unverified lead is left.
+    let after = recall_across(&f, &grok, "where is the figurine on the shelf", || {
+        assert_eq!(call(&f.state, &owner, "supersede", json!({"target": backed}))["ok"], true);
+    })
+    .unwrap();
+    assert_eq!((after["status"].clone(), after["reason"].clone()), (json!("undetermined"), json!("similar-note-unverified")), "{after}");
+    assert!(after["items"].as_array().unwrap().iter().all(|i| i["id"] != backed.as_str() && i["evidence"] == "unverified"));
 }
 
 /// Argon RT-4 (b, c, d): a hidden note could be probed through citations, replacements and the list cursor.
@@ -731,6 +787,7 @@ fn get_reads_a_slot_by_name_with_the_same_read_checks() {
     let slotted = |text: &str, slot: &str, privacy: &str| {
         let mut n = note(text, privacy);
         n["slot"] = json!(slot);
+        n["expected_head"] = json!("none");
         n
     };
     // Nobody wrote the slots yet.
@@ -747,6 +804,7 @@ fn get_reads_a_slot_by_name_with_the_same_read_checks() {
     own["capture"] = json!("owner-typed");
     call(&f.state, &owner, "remember", own.clone());
     own["text"] = json!("I am Auma, flagship agent of AUKORA.");
+    own["expected_head"] = call(&f.state, &owner, "get", json!({"id": "aukora:self"}))["result"]["id"].clone();
     let head = call(&f.state, &owner, "remember", own)["result"]["id"].clone();
     let got = call(&f.state, &grok, "get", json!({"id": "aukora:self"}));
     assert_eq!((got["result"]["id"].clone(), got["result"]["text"].clone()), (head, json!("I am Auma, flagship agent of AUKORA.")));

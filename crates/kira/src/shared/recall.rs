@@ -76,6 +76,8 @@ pub struct RecallItem {
     /// What the note stands on: `owner-review`, `owner-words`, `archive-import` (an owner-run import), `corroborated`
     /// (roots by at least two different authors) or `unverified` (a note nobody reviewed or corroborated).
     pub evidence: &'static str,
+    /// The statement cleared the relevance floor (an answer, as against a note that only rides along).
+    pub relevant: bool,
     /// "superseded", "quarantined", "expired" or "not-yet-valid" when shown as history after the current items: none of
     /// these is live memory. A quarantined item's text is empty.
     pub correction: Option<String>,

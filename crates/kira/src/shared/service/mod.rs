@@ -17,7 +17,7 @@
 use super::hybrid::query_vector;
 use super::llama::{HttpEmbedder, HttpReranker};
 use super::note::{
-    readable_slot, slot_readable_by, valid_agent_name, Capture, Form, Lane, NoteDraft, Privacy, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND,
+    may_write_slot, readable_slot, slot_readable_by, valid_agent_name, Capture, Form, Lane, NoteDraft, Privacy, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND,
     SUPERSEDE_KIND,
 };
 use super::hybrid::Prepared;
@@ -560,8 +560,7 @@ impl State {
         // so a commitment lane, which takes only the owner's own words, refuses a note that cites the web.
         self.sources_readable(caller, &p.sources)?;
         let capture = if self.cites_web(&p.sources)? { Capture::WebDerived } else { claimed };
-        self.check_head(&p)?;
-        let previous_head = p.slot.as_deref().and_then(|slot| self.store.slot(slot).ok().flatten()).map(|n| hex(n.event.id.as_bytes()));
+        self.check_head(caller, &p)?;
         if p.text.len() > MAX_STATEMENT {
             return Err(refuse("statement-too-long"));
         }
@@ -587,12 +586,7 @@ impl State {
         if let Some(wake) = &self.wake {
             let _ = wake.send(());
         }
-        let mut shown = view(&self.store, caller, &note);
-        if note.meta.slot.is_some() {
-            // What this write now shadows, so a writer that did not guard it can still see it replaced something.
-            shown["previous_head"] = json!(previous_head);
-        }
-        Ok(shown)
+        Ok(view(&self.store, caller, &note))
     }
 
     /// One note by id, or the head of a slot (`aukora:self`, `aukora:resume`, `resume:<agent>`): the newest live note
@@ -618,14 +612,24 @@ impl State {
         Ok(())
     }
 
-    /// A guarded slot write (`expected_head`) against the slot's live head, under the same lock the append runs under.
-    fn check_head(&self, p: &RememberParams) -> Result<()> {
-        let Some(expected) = p.expected_head.as_deref() else { return Ok(()) };
-        let Some(slot) = p.slot.as_deref() else { return Err(refuse("expected-head-needs-slot")) };
+    /// Every slot write names the head it replaces (`expected_head`: the head's note id, or `none` for a slot the writer saw
+    /// empty), checked against the slot's live head under the same lock the append runs under. A write that omits it
+    /// is refused (`expected-head-required`), so a session that went stale can never replace a newer handoff by
+    /// simply not saying what it read. A caller who may not write the slot is refused before the head is looked at
+    /// (`slot-refused`), and a head the caller may not read counts as no head: neither the refusals nor any id tell it
+    /// that a note it cannot read is there.
+    fn check_head(&self, caller: &Caller, p: &RememberParams) -> Result<()> {
+        let Some(slot) = p.slot.as_deref() else {
+            return if p.expected_head.is_some() { Err(refuse("expected-head-needs-slot")) } else { Ok(()) };
+        };
+        if !may_write_slot(slot, &caller.name, caller.owner) {
+            return Err(refuse("slot-refused"));
+        }
+        let expected = p.expected_head.as_deref().ok_or_else(|| refuse("expected-head-required"))?;
         if expected != "none" && !is_hex64(expected) {
             return Err(refuse("id-invalid"));
         }
-        let head = self.store.slot(slot)?.map(|n| hex(n.event.id.as_bytes()));
+        let head = self.store.slot(slot)?.filter(|n| visible(caller, n)).map(|n| hex(n.event.id.as_bytes()));
         match head.as_deref() {
             None if expected == "none" => Ok(()),
             Some(head) if head == expected => Ok(()),
@@ -807,7 +811,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
     }
     let caller = Caller { name: caller.name.clone(), pubkey: caller.pubkey.clone(), owner: record.owner, scopes: record.scopes };
     let mut status = outcome.status.clone();
-    let (mut items, mut live, mut changed) = (Vec::new(), 0usize, false);
+    let (mut items, mut live, mut changed, mut justified) = (Vec::new(), 0usize, false, false);
     let mut states: BTreeMap<String, usize> = BTreeMap::new();
     for item in &outcome.items {
         match s.store.get(&item.id) {
@@ -818,6 +822,9 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                     continue;
                 }
                 live += usize::from(item.correction.is_none());
+                // `found` stands on a note that cleared the relevance floor AND stands on something; it must still be
+                // in the answer after the filtering above.
+                justified |= item.correction.is_none() && item.relevant && item.evidence != "unverified";
                 let correction = if note.quarantined { Some("quarantined") } else { item.correction.as_deref() };
                 let mut shown = if note.quarantined { stub(&note) } else { note_json(&s.store, &caller, &note, Some(item.evidence)) };
                 shown["score"] = json!(item.score);
@@ -842,6 +849,11 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
     }
     if status == RecallStatus::Found && changed && live == 0 {
         status = RecallStatus::Undetermined("note-changed");
+    }
+    // The note that justified `found` may be gone (superseded, expired or quarantined while the reranker ran): what is
+    // left is a lead, not an answer.
+    if status == RecallStatus::Found && live > 0 && !justified {
+        status = RecallStatus::Undetermined("similar-note-unverified");
     }
     // Only withheld notes matched: from this caller's view nothing was found.
     if matches!(status, RecallStatus::Found | RecallStatus::Undetermined("similar-note-unverified")) && items.is_empty() {

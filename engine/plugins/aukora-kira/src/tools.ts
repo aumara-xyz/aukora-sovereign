@@ -116,7 +116,7 @@ export interface RememberInput {
   valid_to?: number
   /**
    * For a slot write: the id of the slot's note the writer last read (`KiraController.slotHead`), or `'none'` for a
-   * slot it saw empty. Kira refuses the write with `kira:resume-stale` when a newer note has taken the slot since.
+   * slot it saw empty. Kira refuses a slot write without it (`kira:expected-head-required`) and one whose head is no longer that note (`kira:resume-stale`).
    * (The engine's own slot writes are closed at the door; this is for the session wrapper that writes the handoff.)
    */
   expected_head?: string
@@ -259,7 +259,7 @@ export function createKiraTools(): DshToolDefinition[] {
           },
           expected_head: {
             type: 'string',
-            description: 'Slot writes only: the id of the slot note you last read, or "none" for an empty slot. A newer note in the slot refuses the write (kira:resume-stale).',
+            description: 'Required for any slot write: the id of the slot note you last read, or "none" for an empty slot. A newer note in the slot refuses the write (kira:resume-stale).',
           },
         },
         required: ['text', 'subject', 'scope', 'lane', 'form', 'privacy', 'capture'],

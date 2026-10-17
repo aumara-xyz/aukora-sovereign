@@ -463,6 +463,7 @@ impl Cand {
             score,
             roots,
             evidence: evidence.wire(),
+            relevant: false,
             correction: correction.map(str::to_owned),
             current_id: if correction == Some("superseded") { self.note.current_id.clone() } else { None },
         }
@@ -842,7 +843,9 @@ impl Prepared {
                 let also_by_captures = also_by_ids.iter().map(|id| g.captures.get(id).map_or("unknown", |c| c.wire()).to_owned()).collect();
                 // The statement is only as trustworthy as its least trusted copy.
                 let worst = g.captures.values().copied().min_by_key(|c| c.trust()).unwrap_or(g.keep.note.meta.capture);
-                (lane, exempt, g.relevant, g.keep.item_with(g.score, also_by, also_by_ids, also_by_captures, worst, g.roots.len(), g.evidence, None))
+                let mut item = g.keep.item_with(g.score, also_by, also_by_ids, also_by_captures, worst, g.roots.len(), g.evidence, None);
+                item.relevant = g.relevant;
+                (lane, exempt, g.relevant, item)
             })
             .collect();
         ordered.sort_by(|a, b| a.0.cmp(&b.0).then(b.3.score.total_cmp(&a.3.score)).then_with(|| a.3.id.cmp(&b.3.id)));
