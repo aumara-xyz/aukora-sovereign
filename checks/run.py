@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import drift  # noqa: E402
 import walls  # noqa: E402
 
 # Crates whose compiler wall lands with an in-flight piece of work (removed as soon as it merges).
@@ -937,6 +938,14 @@ try:
 except (OSError, UnicodeError, ValueError) as error:
     fail("coverage", str(error))
 check_source_pins("coverage", COVERAGE_PINS, COVERAGE_PINS)
+
+# 13b. The stranger's verifier holds some facts twice (the Rust crate, the Python twin, the wrapper beside the crate):
+#      they may not drift apart (checks/drift.py).
+try:
+    for detail in drift.findings(ROOT):
+        fail("verifier-drift", detail)
+except (OSError, UnicodeError, ValueError, SyntaxError) as error:
+    fail("verifier-drift", str(error))
 
 # 14. Row 82: pin the launcher, including the closed profiles, syscall policy and compiler policy.
 launcher_inventory = [p for p in files if p.startswith("crates/launcher/src/")]

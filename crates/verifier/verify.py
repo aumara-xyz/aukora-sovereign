@@ -23,8 +23,8 @@ def export_version(schema: str):
     return _IMPLEMENTATION.export_version(schema)
 
 
-def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None):
-    return _IMPLEMENTATION.verify_bundle(bundle, pinned_key=pinned_key, checkpoint=checkpoint)
+def verify_bundle(bundle: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
+    return _IMPLEMENTATION.verify_bundle(bundle, pinned_key=pinned_key, checkpoint=checkpoint, owner_key=owner_key)
 
 
 def verify_chain(rows: bytes, *, pinned_key: bytes, retained=None,
@@ -38,8 +38,9 @@ def verify_consistency(retained: bytes, presented: bytes):
     return _IMPLEMENTATION.verify_consistency(retained, presented)
 
 
-def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=None):
-    return _IMPLEMENTATION.verify_witness(bundle, event, pinned_key=pinned_key, checkpoint=checkpoint)
+def verify_witness(bundle: bytes, event: bytes, *, pinned_key=None, checkpoint=None, owner_key=None):
+    return _IMPLEMENTATION.verify_witness(bundle, event, pinned_key=pinned_key, checkpoint=checkpoint,
+                                          owner_key=owner_key)
 
 
 def main(arguments):
