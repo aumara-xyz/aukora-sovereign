@@ -71,13 +71,15 @@ BROKER_SOCKET = "/run/aukora-broker/broker.sock"
 # The engine's model budget the supervisor proposes for the owner's passkey (deploy/engine/NODE.md section 7). The
 # owner sees and approves exactly these terms. They are written to model-broker-v1.json at install only: a release
 # that changes them here does not reach an installed node until that file is refreshed (node sweep, node-1).
-# [PETER] The prices are placeholders set ABOVE DeepSeek's published per-million-token prices (so the budget errs
-# toward stopping early); replace them with the current prices of the models listed before the first node.
+# O8 (closed by Peter, 2026-10-17): the real spending limit is his DeepSeek balance, so the terms are generous and never
+# the reason a call stops: $1000 in all, $2 a call, a year, a million calls. The mechanism stays (every call is still
+# reserved, capped and receipted). The prices are placeholders set ABOVE DeepSeek's published per-million-token
+# prices, so the meter errs toward over-counting, which at these caps does not matter.
 MODEL_BUDGET = {
     "models": ["deepseek-flash", "deepseek-v4-pro"],
     "prices": {"cache_read_microusd_per_mtok": 100000, "input_microusd_per_mtok": 1000000,
                "output_microusd_per_mtok": 4000000},
-    "total_cap_microusd": 20000000, "per_request_cap_microusd": 1000000, "max_requests": 5000, "valid_days": 30,
+    "total_cap_microusd": 1000000000, "per_request_cap_microusd": 2000000, "max_requests": 1000000, "valid_days": 365,
 }
 STAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\Z")
 

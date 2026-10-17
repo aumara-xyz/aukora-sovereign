@@ -36,6 +36,8 @@ const TICK: Duration = Duration::from_secs(30);
 const KEY_TICK: Duration = Duration::from_secs(10);
 const PROPOSE_AGAIN: Duration = Duration::from_secs(600);
 const DAY_MS: u64 = 86_400_000;
+/// The longest a budget may run: a year (+1 for a leap year). Peter holds the real limit as the provider balance (O8).
+const MAX_VALID_DAYS: u64 = 366;
 
 fn refuse(reason: &'static str) -> Refusal {
     Refusal { organ: "supervisor", reason }
@@ -97,13 +99,19 @@ impl BrokerConfig {
             || config.max_request_bytes.is_some_and(|n| !(64 * 1024..=32 << 20).contains(&n))
             // One day is never "current": a budget is renewed a day before it ends (`keep_budget`), so it would be
             // proposed again every tick.
-            || !(2..=31).contains(&config.budget.valid_days)
+            || !(2..=MAX_VALID_DAYS).contains(&config.budget.valid_days)
             || config.budget.terms(1).check().is_err()
         {
             return Err(refuse("model-broker-config"));
         }
         Ok(config)
     }
+}
+
+/// Millionths of a dollar as dollars and cents, rounded up (a card never shows less than the cap).
+fn dollars(microusd: u64) -> String {
+    let cents = microusd.div_ceil(10_000);
+    format!("{}.{:02}", cents / 100, cents % 100)
 }
 
 /// What the link reads and writes on the node.
@@ -261,10 +269,12 @@ impl ModelBroker {
             let terms = self.config.budget.terms(now.saturating_add(self.config.budget.valid_days * DAY_MS));
             let Ok(bytes) = terms.canonical_bytes() else { continue };
             let note = format!(
-                "Let the engine spend on DeepSeek: at most {} in all and {} per call, {} calls, models {}, for {} days \
-                 (amounts in millionths of a US dollar; prices per million tokens)",
+                "Let the engine spend on DeepSeek: at most {} (${}) in all and {} (${}) per call, {} calls, models {}, for \
+                 {} days (amounts in millionths of a US dollar; prices per million tokens)",
                 terms.total_cap_microusd,
+                dollars(terms.total_cap_microusd),
                 terms.per_request_cap_microusd,
+                dollars(terms.per_request_cap_microusd),
                 terms.max_requests,
                 terms.models.join(", "),
                 self.config.budget.valid_days
@@ -334,8 +344,8 @@ mod tests {
         format!(
             "{{\"v\":1,\"socket\":\"/run/aukora-broker/broker.sock\",\"peer_uids\":[1001]{extra},\"budget\":{{\
              \"models\":[\"deepseek-flash\",\"deepseek-v4-pro\"],\"prices\":{{\"cache_read_microusd_per_mtok\":100000,\
-             \"input_microusd_per_mtok\":1000000,\"output_microusd_per_mtok\":4000000}},\"total_cap_microusd\":20000000,\
-             \"per_request_cap_microusd\":1000000,\"max_requests\":5000,\"valid_days\":30}}}}"
+             \"input_microusd_per_mtok\":1000000,\"output_microusd_per_mtok\":4000000}},\"total_cap_microusd\":1000000000,\
+             \"per_request_cap_microusd\":2000000,\"max_requests\":1000000,\"valid_days\":365}}}}"
         )
     }
 
@@ -350,16 +360,17 @@ mod tests {
         assert!(BrokerConfig::parse(&text("").replace("[1001]", "[0]"), 999).is_err());
         assert!(BrokerConfig::parse(&text("").replace("[1001]", "[]"), 999).is_err());
         assert!(BrokerConfig::parse(&text(",\"extra\":1"), 999).is_err());
-        assert!(BrokerConfig::parse(&text("").replace("\"valid_days\":30", "\"valid_days\":90"), 999).is_err());
+        assert!(BrokerConfig::parse(&text("").replace("\"valid_days\":365", "\"valid_days\":367"), 999).is_err(), "a year at most");
+        assert!(BrokerConfig::parse(&text("").replace("\"valid_days\":365", "\"valid_days\":0"), 999).is_err());
         assert!(
-            BrokerConfig::parse(&text("").replace("\"valid_days\":30", "\"valid_days\":1"), 999).is_err(),
+            BrokerConfig::parse(&text("").replace("\"valid_days\":365", "\"valid_days\":1"), 999).is_err(),
             "a one-day budget is never current, so its renewal would be proposed every tick"
         );
-        assert!(BrokerConfig::parse(&text("").replace("\"valid_days\":30", "\"valid_days\":2"), 999).is_ok());
+        assert!(BrokerConfig::parse(&text("").replace("\"valid_days\":365", "\"valid_days\":2"), 999).is_ok());
         assert!(BrokerConfig::parse(&text("").replace("/run/aukora-broker/broker.sock", "broker.sock"), 999).is_err());
         assert!(BrokerConfig::parse(&text(",\"max_request_bytes\":100"), 999).is_err());
         assert!(BrokerConfig::parse(&text(",\"max_request_bytes\":8388608"), 999).is_ok());
-        assert!(BrokerConfig::parse(&text("").replace("1000000,\"max", "30000000,\"max"), 999).is_err(), "per call above the total");
+        assert!(BrokerConfig::parse(&text("").replace("2000000,\"max", "2000000000,\"max"), 999).is_err(), "per call above the total");
     }
 
     #[test]
@@ -391,5 +402,25 @@ mod tests {
         assert!(restarted.key_sha256().unwrap().is_none() && std::fs::read_dir(&dir).unwrap().next().is_none());
         assert_eq!(reconcile(&restarted, &file, Some(&card(key)), 5), Step::Idle, "nothing stored any more");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cards_show_dollars_and_the_shipped_defaults_are_generous_but_inside_the_checks() {
+        assert_eq!(dollars(1_000_000_000), "1000.00");
+        assert_eq!(dollars(2_000_000), "2.00");
+        assert_eq!(dollars(1), "0.01");
+        assert_eq!(dollars(0), "0.00");
+        // The installer's MODEL_BUDGET (deploy/engine/engine_install.py) is what the node ships: $1000, $2 a call, a year.
+        let installer = include_str!("../../../deploy/engine/engine_install.py");
+        for term in [
+            "\"total_cap_microusd\": 1000000000",
+            "\"per_request_cap_microusd\": 2000000",
+            "\"max_requests\": 1000000",
+            "\"valid_days\": 365",
+        ] {
+            assert!(installer.contains(term), "{term}");
+        }
+        let config = BrokerConfig::parse(&text(""), 999).unwrap();
+        assert_eq!((config.budget.total_cap_microusd, config.budget.per_request_cap_microusd, config.budget.valid_days), (1_000_000_000, 2_000_000, 365));
     }
 }

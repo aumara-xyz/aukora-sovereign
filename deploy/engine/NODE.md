@@ -428,10 +428,16 @@ the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated
   `/var/lib/aukora/model-key/model-key` and loaded at start only if its SHA-256 matches the approved card (section 7,
   Key). Residual: the file is a secret at rest on the node's disk, readable by the `aukora` user and root, like the
   node's signing key beside it; a disk image of the node carries it.
-- **O8** The budget's prices in `engine_install.py` (`MODEL_BUDGET`) are placeholders above DeepSeek's published
-  prices, and the model names are the harness's catalog (`deepseek-flash`, `deepseek-v4-pro`), not checked against
-  the live API (NODE: the harness asked for `deepseek-flash`; DeepSeek answered 401 to the fake key before judging
-  the name). Set both before the first node; the owner approves whatever terms the file holds.
+- **O8** CLOSED (Peter, 2026-10-17: he controls the spend through his DeepSeek balance). The shipped terms
+  (`engine_install.py` `MODEL_BUDGET` -> `/etc/aukora/model-broker-v1.json`) no longer stop a call: $1000 in all
+  (1000000000 µUSD), $2 a call, 1000000 calls, 365 days (the supervisor accepts up to 366). The mechanism is unchanged:
+  every call is still reserved against the cap, receipted, and refused outside the owner-approved terms. The card shows
+  dollars beside the micro-dollar amounts. The prices stay placeholders above DeepSeek's published prices (the meter
+  over-counts; harmless at these caps). The model names are the harness's catalog (`deepseek-flash`, `deepseek-v4-pro`),
+  not checked against the live API (the harness asked for `deepseek-flash`; DeepSeek answered 401 to the fake key
+  before judging the name). `engine_install.py` writes the file once: a node installed with the older terms keeps
+  them until `/etc/aukora/model-broker-v1.json` is rewritten with the new `budget` and the supervisor restarted; it then
+  proposes the new terms on a card (changed terms propose again).
 - **O16** Nebius: the tenant's public IPv4 quota is 3 (pilot, the wall-test VM and an unassigned 2026-10-09 address
   held it; the rehearsal took the wall-test VM's address). The node's VM needs one. Note only, no code.
 - **O17** (NEW, Peter's call) A bound node cannot take a new release. `ReleaseApproval::ensure_proposal` and
