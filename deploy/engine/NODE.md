@@ -174,8 +174,10 @@ the engine). Models: llama.cpp b10621 CPU build, the two GGUF files pinned by SH
 
 The door: the in-node door (`sovereign serve` reads `door-policy-v1.json`), so `ask` becomes a real gate proposal. The
 policy is the wall test's, verbatim, except: `memory` is `allow` with the Kira socket and token (the wall test had no
-Kira), `socket` is set (in-node form), `state_dir` is under the supervisor's state, and `"standing": {}` turns on the
-starter slider ("only risky things", pinned). One exception to the slider (O14): a policy `allow` of exactly
+Kira), `socket` is set (in-node form), `state_dir` is under the supervisor's state, and `"standing"` turns on the
+starter slider ("only risky things", pinned). Until node/pre-launch that section was `{}` with no grants, so the slider
+cleared nothing and every net and memory call was a card, exactly as `ask` would have been; it now carries the starter
+grant terms, which clear only once the owner's one card approves them (section 12, P3). One exception to the slider (O14): a policy `allow` of exactly
 `kira_get {"id": "aukora:self" | "aukora:resume"}` (Auma's own slots, read by `@aukora/kira` at every session start)
 runs without a card; every other memory call is the slider's. The door's allowlisted `net.hosts` are pinned in the
 node's egress like the provider (`engine.py egress`, O10): the door resolves them from `/etc/hosts`, the sandbox still
@@ -394,7 +396,8 @@ NODE (ran on the rehearsal node): `engine_install.py` via `engine.py install --s
 polkit rule (the supervisor starts and stops the engine), tmpfiles, the bridge tmpfs mount, the nft fence (a non-root,
 non-65534 user is refused at :690; only kira reaches 8771/8772), the mTLS gateway, the sticky-home protections, the
 Kira units with the pinned models, Caddy's engine block, the model broker's socket and peer check behind the in-wall
-bridge (a call reached DeepSeek), the door in the supervisor (asks, grants, refusals), the engine origin's ticket
+bridge (a call reached DeepSeek), the door in the supervisor (asks and refusals on the starter slider with no
+grants: standing grants did not run on the node before section 12, P3), the engine origin's ticket
 flow. On Linux under umask 002: `cargo test -p supervisor door` (108), `-p broker engine_link` (12),
 `-p supervisor engine` (25), `-p supervisor build::` (24), `tests/deploy` (6): all pass (O6).
 
@@ -551,3 +554,10 @@ and Auma's own model-generated notes, none for the first page; after the first p
 note until the owner clears the taint on `/engine/door` (P4); one for any other host, plugin, schedule, terminal or
 web-derived note. A node installed before this branch lacks the target in its inventory: the proposal is refused
 (`door: starter grants not proposed`) and everything asks, as before.
+
+**P5. Contradictions.** `fs-outside` is always denied, and now in code as well as words: the door refuses a policy
+that says `ask` or `allow` for it, and DOOR.md no longer lists it among what `trusted` can clear (Peter's call to
+change; it would need an executor). Section 6 said `"standing": {}` "turns on the starter slider", which with no
+grants cleared nothing; section 9 said the door ran "asks, grants, refusals" on the node, when only asks and refusals
+ran: both corrected. Section 9's "Not built" line about `door/standing-grants.json` is superseded by P3 (left as is
+for the owner-lifecycle branch, which edits that paragraph).

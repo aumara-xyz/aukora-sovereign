@@ -60,7 +60,8 @@ file).
    - Refusals the engine can see: `approvals-unbound` (node not claimed), `approvals-not-installed` (no `door/` targets
      in the inventory), `approvals-busy` (eight asks already open), `ask-too-large` (record over 12 KiB), `approvals-full`.
 7. **Executors** (only `net` and `memory` have one; a policy cannot `allow` any other class, and `fs-outside` is
-   always denied):
+   always denied: a policy that says `ask` or `allow` for it is refused at load, and no grant or slider setting
+   reaches it, since the door would run nothing. Changing that is Peter's decision, and would need an executor):
    - `net`, `web_fetch`: the URL must be https (http only if the policy says so), carry no user info, name an
      allowlisted host exactly and use a listed web port (80, 443, 8080, 8443 only). The door resolves the name itself
      on a blocking thread under the policy deadline, refuses any private, loopback, link-local, CGNAT, multicast,
@@ -155,10 +156,11 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
 - The composer shows the setting as "Risk 1-4": `ask` (1), `risky` (2, the default and the shipped starter), `limits` (3)
   and `trusted` (4). `ask`: every call asks. `risky`: net and memory (the routine classes) clear inside a live grant;
   every other class asks. `limits`: any grantable class clears inside a live grant and today's per-class and per-grant
-  counts, then asks again. `trusted`: any grantable class (net, memory, mcp, delegate, fs-outside within the granted
-  prefixes) clears inside a live grant with NO daily count; the grant's own scope, its window (seven days at most) and
+  counts, then asks again. `trusted`: any grantable class (net, memory; mcp and delegate have no executor, so on this door a
+  clear of theirs is still refused) clears inside a live grant with NO daily count; the grant's own scope, its window (seven days at most) and
   its revocation are the only bounds, and every clear is still written to `autoclear.jsonl`. `plugin`, `persist`,
-  `shell-interactive` and `unknown` can never be granted and ask under every setting, `trusted` included.
+  `shell-interactive` and `unknown` can never be granted and ask under every setting, `trusted` included; `fs-outside`
+  never reaches the slider (always denied, above).
 - Moving to a higher number is a loosening. The setting lives in the slider policy file (`"setting":"trusted"`, a new
   value there only: the permission codec `PermissionBody` and its pinned vectors keep their three spellings and refuse
   `trusted`), which is the critical gate target `door/slider-policy.json`, so loosening takes the owner's passkey like any

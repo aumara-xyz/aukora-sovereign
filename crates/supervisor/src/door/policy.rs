@@ -217,6 +217,11 @@ impl Policy {
             if action == Action::Allow && !has_executor {
                 return Err(refuse());
             }
+            // Outside the workspace is always denied (DOOR.md, Peter's call to change): a policy cannot even ask about
+            // it, and no grant or slider setting can reach it, because the door never runs it.
+            if class == Class::FsOutside && action != Action::Deny {
+                return Err(refuse());
+            }
             classes.insert(class, action);
         }
         let net = raw

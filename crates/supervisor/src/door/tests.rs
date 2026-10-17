@@ -114,8 +114,16 @@ fn outside_the_workspace_is_denied_and_a_policy_cannot_allow_it() {
     let (door, dir) = door("fs", "\"fs-outside\":\"deny\"", "");
     let (_, decision) = door.judge(Peer::Uid(1001), &line("call-1", "read", "{\"file_path\":\"/etc/passwd\"}", "fs-outside"));
     assert_eq!(denied(&decision), "fs-outside-denied");
-    let text = policy_text(&dir.join("state2"), "{\"mode\":\"peercred\",\"uids\":[1001]}", "\"fs-outside\":\"allow\"", "");
-    assert!(Policy::parse(&text).is_err());
+    for action in ["allow", "ask"] {
+        let classes = format!("\"fs-outside\":\"{action}\"");
+        let text = policy_text(&dir.join("state2"), "{\"mode\":\"peercred\",\"uids\":[1001]}", &classes, "");
+        assert!(Policy::parse(&text).is_err(), "{action}");
+    }
+    // Not listed is deny too, and a trusted slider with a grant for the path changes nothing: the door has no executor.
+    let (unlisted, dir2) = self::door("fs-unlisted", "\"net\":\"deny\"", "");
+    let (_, decision) = unlisted.judge(Peer::Uid(1001), &line("call-2", "read", "{\"file_path\":\"/srv/shared/x\"}", "fs-outside"));
+    assert_eq!(denied(&decision), "fs-outside-denied");
+    let _ = std::fs::remove_dir_all(dir2);
     let _ = std::fs::remove_dir_all(dir);
 }
 
