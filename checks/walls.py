@@ -118,8 +118,7 @@ def unit_of(path):
 def file_findings(path, text):
     """Every wall a file breaks, as (rule, path) pairs."""
     low, unit, found = path.lower(), unit_of(path), []
-    if re.search(TEST_PATH, low) and not low.startswith("tests/e2e/"):
-        found.append(("no-test-suites", path))
+    # Test folders and files are allowed (Peter, 2026-10-17); TEST_PATH stays defined for other tools.
     if not re.search(SCANNED, low):
         return found
     if low.endswith(".rs"):
