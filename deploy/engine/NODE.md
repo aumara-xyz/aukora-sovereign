@@ -31,7 +31,12 @@ owner session.
 `crates/supervisor/src/engine/control.rs`, every 5 s, in this order (each is a stop reason in the journal):
 
 1. `awaiting-owner-binding`: the node has no owner yet (claim + passkey not done).
-2. `awaiting-release-approval`: the installed release is not the one the owner approved (the release floor).
+2. `awaiting-release-approval`: the running release is not one the owner's passkey approved: the floor names another
+   release, or only the install's own starting floor (`is_install_genesis`), which lets the shell serve before the
+   first card but is nobody's approval (O11). So the release card comes first, then the plugin set. A floor that
+   cannot be read now (`floor:locked`, I/O) is neither answer: the read is retried within the tick, nothing starts on
+   it (`release-unreadable`), and an engine this run started is kept for at most 30 s of it, then stopped. The floor
+   store itself waits about a second for a lock another reader holds before it refuses.
 3. `door-not-configured`: no `/etc/aukora/door-policy-v1.json`.
 4. `awaiting-plugin-set-approval`: the owner has approved no plugin set. The controller raises one critical proposal for
    `engine/plugin-set.json` holding every staged package by name and fingerprint, the door marked `authority`. One card.
@@ -120,7 +125,12 @@ Flow: the owner, signed in on the shell, opens `https://<shell>/engine/open`. Th
 checks the bound shell session against the ledger's binding and the release floor, mints a one-time ticket (60 s,
 single use) and redirects to `https://engine.<shell>/.aukora/enter/<ticket>`. The engine origin
 (`engine/proxy.rs`, listener 18081) redeems it for `__Host-aukora-engine` (12 h, `Secure; HttpOnly; SameSite=Strict`),
-and on every request re-checks that scope against the ledger and the release floor. It forwards an allowlist of
+and on every request re-checks that scope against the ledger, the release floor (an unreadable floor answers 503
+and keeps the session; a withdrawn approval answers 403 and ends it) and the **shell session** that minted the ticket
+(O12): the ticket and the session name its store digest, the session never outlives it (expiry = min(12 h, the shell
+session's end)), and an expired, revoked or re-epoched shell session ends every engine session minted from it with
+403 at once. The shell's sign-out is `POST /api/session/end` (same-origin JSON, bound shell session; there was none
+before; no button in the shell yet). It forwards an allowlist of
 headers (never the browser's cookies) plus the harness's own cookie, which it obtained by exchanging the launch
 token the harness printed inside the wall; the browser never sees the token or that cookie. Replies lose every
 `Set-Cookie` and CORS header and gain `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `no-referrer` (the
@@ -128,8 +138,19 @@ single-valued ones replace the harness's own, so it cannot cancel them). Caddy a
 names `token`; a path segment that decodes to `.`, `..`, a separator or another escape is refused. The ticket is spent
 only by a top-level navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`), and no service worker can be
 installed on the engine origin (its script request, `Service-Worker: script`, is refused), so no engine page can watch
-the owner's next navigation for a ticket. A clock that cannot be read refuses. WebSocket upgrades are not forwarded
-(the terminal is off).
+the owner's next navigation for a ticket. A clock that cannot be read refuses.
+
+**WebSocket (O9, `engine/socket.rs`).** The harness client's live connection (`/api/remote.mux`) is the one upgrade
+forwarded, with the same admission plus: `GET`, a version-13 handshake with a well-formed key, a path on the allowlist
+(the web terminal's is refused even if a composition re-enabled it), and an `Origin` that is exactly
+`https://engine.<shell>`. Extension and subprotocol offers are admitted and never forwarded (Chrome offers
+permessage-deflate on every socket), so nothing is negotiated. The harness must answer 101 first (its own cookie, the
+browser's key); its `Sec-WebSocket-Accept` goes to the browser, which checks it. Frames are relayed one by one, each
+header checked before its bytes pass: RSV clear, known opcodes, control frames whole and at most 125 bytes, browser
+frames masked and harness frames not, fragments in order, a message at most 1 MiB up and 16 MiB down; a violation
+ends the socket. Every 5 s the session is re-checked; sign-out, a binding or release change, an engine that stopped, or
+a minute without a frame (the harness pings every 2 s) closes it (1008/1001) at a frame boundary. At most 16 sockets.
+NODE: the Spatial face's chat runs over it (O9 in section 10).
 RAN: unit tests with a fake harness on a unix socket (cookie isolation, exchange, re-exchange after a harness restart,
 header stripping); the real harness's exchange (303 + `dsh-auth-*` cookie; 401 without it; 401 on a wrong Host).
 
@@ -150,7 +171,11 @@ the engine). Models: llama.cpp b10621 CPU build, the two GGUF files pinned by SH
 The door: the in-node door (`sovereign serve` reads `door-policy-v1.json`), so `ask` becomes a real gate proposal. The
 policy is the wall test's, verbatim, except: `memory` is `allow` with the Kira socket and token (the wall test had no
 Kira), `socket` is set (in-node form), `state_dir` is under the supervisor's state, and `"standing": {}` turns on the
-starter slider ("only risky things", pinned). `peers.uids` is the engine uid; workspace root `/work` matches the
+starter slider ("only risky things", pinned). One exception to the slider (O14): a policy `allow` of exactly
+`kira_get {"id": "aukora:self" | "aukora:resume"}` (Auma's own slots, read by `@aukora/kira` at every session start)
+runs without a card; every other memory call is the slider's. The door's allowlisted `net.hosts` are pinned in the
+node's egress like the provider (`engine.py egress`, O10): the door resolves them from `/etc/hosts`, the sandbox still
+has no resolver. `peers.uids` is the engine uid; workspace root `/work` matches the
 overlay. The wall test ran the door as its own user (`aukora-door`); in the node it runs in the supervisor (user
 aukora), because owner asks need the gate in the same process. Both keep the property the test relied on: the engine's
 uid is neither the door's nor root, and the door's state and policy are not mounted. Decision D3.
@@ -213,8 +238,9 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   receipt cannot be written, the call's tail is withheld and the link admits nothing more until the node restarts.
 - **Refusals** are Anthropic-style errors the adapter classifies: 401 no key / key not approved (`AUTH`), 402 no
   budget / expired / spent / per-call cap / call count (`QUOTA`), 400/413 bad, oversized or disallowed (`INVALID_REQUEST`),
-  429 busy, 502/503 provider unreachable or receipts unavailable. A provider error passes its status and message only
-  if the message carries nothing of the key.
+  429 busy, 502/503 provider unreachable or receipts unavailable. A provider error passes its status and its error
+  type (when it is a known token) with a FIXED message per status; the provider's own message never passes (O15:
+  DeepSeek's 401 names the key's last four characters, which no 12-byte echo window can see).
 
 RAN (Mac): `cargo test -p broker engine_link` against a fake DeepSeek on loopback (fake keys): streaming with
 thinking, text and a tool call byte-for-byte, the stripped headers and members, the output cap, the receipt and the
@@ -283,7 +309,10 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
    `~ubuntu/.ssh/authorized_keys`, copy `~/art/stage/*` from the artifact VM to the node's private address, then on the
    node `sudo install -d -m 0700 /root/aukora-engine-stage` and `sudo install -m 0600` each file into it; remove the key.
    On the Mac: `python3 -B deploy/engine/engine.py install NAME --stage-on-node --dry-run`, then without `--dry-run`
-   (about 5 minutes). It enables the fences, docker, the gateway (mTLS, its own PKI), the bridge tmpfs, the model
+   (about 5 minutes). It first pins the door's allowlisted `net.hosts` in the node's egress (resolved on the Mac, a
+   new egress epoch through the node's `node_release.py egress`; O10; `engine.py egress NAME` does that alone for a
+   node installed before it). It needs `AUKORA_SSH_KEY_FILE`, `AUKORA_NEBIUS_PARENT_ID` and `AUKORA_SPAWN_STATE` as
+   spawn does. Then it enables the fences, docker, the gateway (mTLS, its own PKI), the bridge tmpfs, the model
    servers, Kira, extends Caddy with the engine host and restarts the supervisor. The engine does not start.
 4. On the node, as root: `sh /opt/aukora/current/deploy/units/check-units.sh` (NODE: `units ok`);
    `systemctl is-active aukora-kira aukora-openshell-gateway 'run-aukora\x2dengine-io.mount'`;
@@ -291,12 +320,13 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
 
 **D. The ceremony (the owner, with the passkey device).**
 1. Open the claim link from `CLAIM` (`https://<shell>/#claim=…`); the operator then deletes the file.
-2. Bind: create the passkey on the owner origin, as today. Journal: `engine: awaiting-plugin-set-approval`
-   (NODE: the installed release is the floor's starting release, so the engine waits on the plugin set first;
-   `door-not-configured` never appears).
+2. Bind: create the passkey on the owner origin, as today. Journal: `engine: awaiting-release-approval` (NODE, since
+   O11; before it the install's starting floor counted as approval and the engine waited on the plugin set first).
+   `https://<shell>/engine/open` answers `supervisor:release-not-approved` until the release card is approved.
 3. Cards pop up one after another (also under Approvals): the release ("Approve the installed release as the owner's
    release floor", `release_sha256` = the release id from C1), `engine/model-budget.json` (the terms from
-   `model-broker-v1.json`; proposed at start, before any key) and the plugin set. Approve the release.
+   `model-broker-v1.json`; proposed at start, before any key) and, once the release is approved, the plugin set.
+   Approve the release. Journal: `engine: awaiting-plugin-set-approval`; the engine is still inactive (NODE).
 4. Approve the plugin set: the critical card for `engine/plugin-set.json`; its `new_sha256` must equal the sha256 of
    the fingerprint's set line from B. Passkey.
 5. Journal: `engine: running`, said only once the unit is active, i.e. after `engine-run.sh verify` passed. On the
@@ -305,23 +335,35 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
 7. The model key and budget: open `https://<shell>/engine/model-key`, type **your own** DeepSeek key (nobody else
    enters, prints or stores it; never in a file). The page shows a fingerprint (12 hex digits); the
    `engine/model-key.json` card's `key_sha256` must begin with it; approve it and the budget card. A new chat needs a
-   workspace first (New Chat, Choose workspace, Add workspace, Open: `/work`). Journal on Auma's first turn:
+   workspace first (New Chat, Choose workspace, Add workspace, Open: `/work`; a harness home that already has one opens
+   on it). Journal on Auma's first turn:
    `model-broker: call … completed …` (NODE with a fake key: `provider-refused`, the harness recorded DeepSeek's own
    HTTP 401 "Authentication Fails": engine, bridge, broker and provider all reached). After a supervisor restart the
    key is gone (memory only): enter the same key again; the page says it is already approved (NODE).
-   **Not yet usable for chat: the engine origin does not forward WebSocket upgrades (501) and the harness client's
-   live connection is a WebSocket, so replies and history never show in the UI (O9).**
+   The reply renders in the chat and the session history loads after a reload (NODE since O9, with the fake key:
+   "This turn failed · API key is invalid · AUTH"). The harness's preview notice is acknowledged by the overlay
+   (row 3): its own Continue cannot persist inside the wall.
 8. Crossings: a `web_fetch` of an allowlisted host raises a door ask card (`door/ask-NN.json`: tool, class, call
-   digest); approve; the repeated call runs once (NODE: the door then failed `resolve-failed`, O10). `kira_remember` /
-   `kira_recall` go through the door with the non-owner token after an ask card each (the starter slider asks for
-   memory too; NODE: remembered, recalled with the real embed and rerank models); `kira_quarantine_source` is refused
-   `owner-only`. A host off the allowlist is refused `host-not-allowed` without a card.
+   digest); approve; the repeated call runs once and returns the page (NODE since O10: example.com's HTML).
+   `kira_remember` / `kira_recall` go through the door with the non-owner token after an ask card each (the starter
+   slider asks for memory too; NODE: remembered, recalled with the real embed and rerank models); `kira_get` of
+   `aukora:self` / `aukora:resume` runs without a card (O14); `kira_quarantine_source` is refused `owner-only`. A host off the allowlist is refused `host-not-allowed` without a card.
 9. Negative checks: append a byte to `/opt/aukora-engine/plugins/aukora-door/lib/index.js` → within 5 s the engine
    stops (`authority-plugin-changed`; NODE: 1 s, sandbox removed) and a plugin-set card appears with the approved set
    as its base; restore the byte (or approve, deliberately not) → it starts again (NODE: 4 s). On the engine origin:
-   no or a forged cookie 401, a ticket by fetch or a spent ticket 403, `?token=` 404, an upgrade 501, a service worker
-   403 (NODE). Re-bind or a release change → 403 (the engine session is checked against the binding and the floor,
-   not against the shell session: O12).
+   no or a forged cookie 401, a ticket by fetch or a spent ticket 403, `?token=` 404, a service worker 403 (NODE); an
+   upgrade to any path but `/api/remote.mux`, or from another Origin, is refused (unit tests). Signing out of the shell
+   (`POST /api/session/end`) → the engine origin answers 403 at once and an open engine WebSocket closes 1008 within
+   5 s (NODE, O12); re-bind or a release change → 403 as well.
+
+**Redeploying a bound node (not an upgrade).** There is no owner-approved upgrade path for a bound node yet (O17): a
+switched release leaves the floor on the old one, and the shell and the owner origin then refuse to serve. The
+rehearsal therefore re-ran genesis on the same VM for each new release, as root: stop the supervisor; MOVE (never
+delete) `/var/lib/aukora` to `/root/rehearsal-N-state` with copies of `/var/lib/aukora-release`, `claim.sha256` and
+`egress.json`; remove `claim-delivered`; `node_release.stage` the new release, point `previous` and `current`,
+`write_active(rid, manifest, digest, 0, None)`, `apply_units`; a new claim commitment (`node_release.py claim
+--digest`, the secret made on the Mac, the link in a 0600 file); start the supervisor; walk D1-D7; `claim --delivered`.
+Kira's state, the engine install, `/etc/aukora` and Caddy stay. Only for a disposable test node.
 
 **Stop / roll back.** `systemctl stop aukora-sovereign` stops the engine too (`PartOf`). Remove `/etc/aukora/engine-v1.json`
 and restart the supervisor to run the node without an engine. Upgrades: a new release changes the binary, so the floor
@@ -356,7 +398,8 @@ RAN on the wall-test VM, not the node: the DNS control (the same probe resolves 
 
 Not built: the face's own owner-approval surfaces pointing at the owner origin;
 `door/standing-grants.json` as a gate target (the slider runs on the starter, no grants); an inventory sync for nodes
-installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`); WebSocket forwarding.
+installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`); an upgrade path for a
+bound node (O17).
 
 ## 10. Open items
 
@@ -373,25 +416,52 @@ the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated
   prices, and the model names are the harness's catalog (`deepseek-flash`, `deepseek-v4-pro`), not checked against
   the live API (NODE: the harness asked for `deepseek-flash`; DeepSeek answered 401 to the fake key before judging
   the name). Set both before the first node; the owner approves whatever terms the file holds.
-- **O9** WebSocket forwarding (BLOCKS THE PRODUCT TEST). The engine origin answers an upgrade 501; the harness web
-  client's live connection is a WebSocket ("connection lost, retry #N"), so a sent message reaches the model but
-  neither the reply nor the session history ever shows ("Loading history…"). Build the forwarding (same session and
-  ticket checks, per-message limits) before an owner can talk to Auma in the browser.
-- **O10** The door's net hosts are not in the node's egress policy: the service user's firewall admits only pinned
-  relays and providers and no resolver, so an approved `web_fetch` of an allowlisted host ends `resolve-failed`.
-  The door's `net.hosts` need pinned addresses (an egress entry per host, or the door resolving through pinned
-  `/etc/hosts` entries) in the same reviewed policy.
-- **O11** The release floor: the installed release counted as approved before the owner's release card (the engine
-  waited on the plugin set, not the release); and `release_approved()` is false on any error reading the floor, so a
-  transient `floor:locked` stopped a running engine for 5 s and would end engine-origin sessions (403). Decide whether
-  the first start needs the owner's release card, and keep "cannot read now" apart from "not approved".
-- **O12** The engine-origin session (12 h) is checked against the binding and the release floor, not against the
-  owner's shell session: signing out of the shell does not end it. Tie it to the shell session, or say so.
-- **O13** Cards: every string on a card shows `\u0020` for spaces, and the budget and model-key cards carry a false
-  "NOTE repeats words to pressure you … APPROVE-spam pattern" warning (their own notes repeat "deepseek", "the", "key").
-- **O14** The Kira plugin's session start reads `aukora:self` with `kira_get`, which the starter slider turns into an
-  owner card on every new session; the `@aukora/kira` row's slots may want a standing grant, or none at start.
-- **O15** DeepSeek's 401 names the last four characters of the key ("****xxxx"); the broker's echo guard scans 12-byte
-  windows, so those four reach the engine. Small; redact the provider's message or widen the guard.
 - **O16** Nebius: the tenant's public IPv4 quota is 3 (pilot, the wall-test VM and an unassigned 2026-10-09 address
-  held it; the rehearsal took the wall-test VM's address). The node's VM needs one.
+  held it; the rehearsal took the wall-test VM's address). The node's VM needs one. Note only, no code.
+- **O17** (NEW, Peter's call) A bound node cannot take a new release. `ReleaseApproval::ensure_proposal` and
+  `approve` handle only the install's starting floor; `ReleaseFiles::advance_approved` (floor ⇒ a newer release) has
+  no caller; and `with_release` refuses to serve the shell AND the owner origin while the floor names another release,
+  so after `node_release.py switch` the owner cannot even reach the card. The rehearsal redeployed by re-running
+  genesis (section 8, "Redeploying a bound node"). Needs: a proposal from the floor's release to the running one,
+  the owner origin served from the approved (previous) release until it is approved, then `advance_approved`.
+- **O18** (NEW, small) A browser that lost its shell session gets no visible way to sign in: the shell hides
+  `frontdoor:session-required` and the AUMLOK face's "Sign in" did not render (blank face) on the rehearsal; the walk
+  posted the face's `/passkey` navigation itself. Also no sign-out button for `POST /api/session/end`.
+
+Closed by the blockers branch (node/blockers, 2026-10-17), each verified LIVE on the rehearsal node (`aukora-rehearsal`,
+re-run genesis three times: releases 424b87a…-82ada51f, 28b6fc8…-a35e16a7, 6a64be9…-ea0195a3; software passkey,
+fake DeepSeek key, headless Chrome through the SSH tunnel; shots in `~/aukora-memory/review/node-blockers-2026-10-17-shots/`):
+
+| Item | Fix | Live evidence |
+|---|---|---|
+| **O9** WebSocket | `engine/socket.rs`: the one upgrade (`/api/remote.mux`) forwarded under the session's admission, exact Origin, frames checked; permessage-deflate offers admitted, never forwarded; the overlay acknowledges the harness's preview notice (its Continue cannot persist in the wall and the modal covered the composer) | CDP: `HandshakeResponseReceived 101 Switching Protocols`, frames both ways, no "connection lost, retry"; chat "Hello Auma, please reply with one short sentence." → the turn renders "This turn failed · API key is invalid · AUTH" (`o9-chat-reply-rendered.png`); after a reload the session's history loads (no "Loading history…"); journal `model-broker: call … provider-refused model=deepseek-flash … charged=0`. Sign-out in another tab closed the open socket 1008 3.9 s later |
+| **O10** door egress | `engine.py egress` / `install`: door `net.hosts` pinned like the provider (egress epoch 3: `api.deepseek.com`, `example.com`); installer refuses without them | from inside the wall: `web_fetch https://example.com/` → `ask-net` → card `door/ask-00.json` approved → repeat → `decision: allow`, 67 ms, body `<!doctype html>… Example Domain`; `wikipedia.org` → `host-not-allowed`, no card; `wall-check.sh` → `wall ok` after the egress change |
+| **O11** release floor | start only on an owner-approved floor naming the running release; Unknown ≠ NotApproved (retry, hold ≤ 30 s, never start); the store waits ~1 s for a held lock; 503 not 403 on Unknown | each genesis: `awaiting-owner-binding` → bind → `awaiting-release-approval` (engine `inactive`, `/engine/open` → `supervisor:release-not-approved`) → release card → `awaiting-plugin-set-approval` → plugin set → `starting`, `running`. Root held `floor.lock` 12 s: `the release floor cannot be read now; the running engine is kept`, engine stayed `active`; held 45 s: kept, then `release-unreadable` at +31 s (stopped), `starting`/`running` when released. Release 1 still showed `floor:locked` on `GET /api/approvals`; none since the store wait |
+| **O12** shell session | tickets and engine sessions bound to the shell session's digest, ≤ its life; re-checked per request and every 5 s on a socket; `POST /api/session/end`; ended sessions answer 403 | engine origin 200 → shell `POST /api/session/end` → `{"ended":true}` → engine origin `403 This engine session ended: you signed out of your node…`; open WebSocket closed 1008 |
+| **O13** cards | spaces render as spaces; repeat warning only for pressure words or a word hammered 3× within 6 words | model-key and budget cards: plain spaces, no warning row (`o13-model-key-card.png`); the repeat rule matches every Prime vector (test) |
+| **O14** own slots | a policy allow of `kira_get` `aukora:self`/`aukora:resume` skips the slider | inside the wall: both reached Kira at once (`kira:not-found`, no card); `resume:grok` and `kira_recall` → `ask-memory` |
+| **O15** provider errors | fixed message per status, the provider's text never passes | inside the wall, fake key: `401 {"error":{"message":"aukora broker: the provider refused the key (HTTP 401; the provider's own message is withheld)","type":"authentication_error"}}` |
+
+Tests (Linux, the node, umask 002): `cargo test -p supervisor -p broker -p gate -p floor -p frontdoor` (sovereign
+170 + 1 ignored, broker 13, gate 17, floor 7, frontdoor 4), `tests/deploy` (8); `scripts/check.sh` CONSTRUCTION GREEN
+on the node (the Mac stayed under its disk floor).
+
+## 11. Resource use (the rehearsal node, 4 vCPU / 16 GiB / 80 GiB)
+
+Idle, engine running (10:12 UTC) and around a chat turn (11:15; with the fake key the turn ends at DeepSeek's 401,
+so no generation load was measured):
+
+| | idle | chat turn |
+|---|---|---|
+| RAM used (`free -m`, of 15 992 MiB; page cache excluded) | 1 590 MiB | 1 705 MiB |
+| load average (1 min) | 0.47 | 0.37 |
+| sandbox container / its supervisor container (`docker stats`) | 213 MiB / 16 MiB | 296 MiB / 15 MiB |
+| aukora-sovereign | 29 MiB | 50 MiB |
+| aukora-kira-embed / -rerank (llama-server) | 303 MiB / 140 MiB | same |
+| aukora-openshell-gateway | 136 MiB | 147 MiB |
+| aukora-kira / aukora-engine (unit, outside the container) / docker | 2 / 16 / 59 MiB | same |
+| disk: `/opt/aukora-engine` 1.1 GB, `/opt/rust` 692 MB, docker images 1.76 GB, `/opt/aukora` 47 MB per release, `/var/lib/aukora*` < 15 MB | 12 GB of 77 GB used (incl. ~2 GB of the rehearsal's own build caches) | |
+
+So the node idles at about 1.6 GiB and about 12 GB of disk. A cheaper node is plausible (8 GiB, 2 vCPU, a 40 GB disk);
+4 GiB would be the floor and leaves little for a real turn's tool work (cargo inside the wall), which this rehearsal
+could not measure without a real key.
