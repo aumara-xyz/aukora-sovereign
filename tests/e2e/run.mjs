@@ -210,7 +210,7 @@ class Context {
       this.verifierIdentity = actualDigest;
     }
     // A ledger holding an owner approval is verified only with the v2 export and the independently pinned owner key.
-    if (expected === 'VERIFIED' || expected === 'UNCHECKED') this.require('verifier-owner-key', typeof ownerKey === 'string');
+    if (expected === 'VERIFIED') this.require('verifier-owner-key', typeof ownerKey === 'string');
     const paths = [bundle, key, checkpoint, ...(ownerKey === undefined ? [] : [ownerKey])].map(relativeFile);
     for (const path of paths) this.require('verifier-input-regular', (await lstat(path)).isFile());
     let checkpointDigest;
@@ -244,18 +244,7 @@ class Context {
         this.same(`verifier-${name}`, report.observations?.[name], true);
       }
       this.same('verifier-owner_signatures', report.owner_signatures, true);
-    } else {
-      this.require('verifier-refused', Number.isInteger(result.code) && result.code !== 0);
-      if (expected === 'UNCHECKED') {
-        // Until the node's export and this verifier link spend grants and memory permissions to their assertions, a ledger
-        // holding one is UNCHECKED for that reason alone: every other check, including every owner assertion, passed.
-        this.require('verifier-unlinked-owner-rows', Array.isArray(report.findings) && report.findings.length > 0
-          && report.findings.every(finding => finding?.code === 'verifier:owner-provenance'));
-        for (const name of ['signatures', 'chain', 'tree_root']) this.same(`verifier-${name}`, report.integrity?.[name], true);
-        for (const name of ['pinned_identity', 'covering_checkpoint']) this.same(`verifier-${name}`, report.observations?.[name], true);
-        this.same('verifier-owner_signatures', report.owner_signatures, true);
-      }
-    }
+    } else this.require('verifier-refused', Number.isInteger(result.code) && result.code !== 0);
     return report;
   }
 

@@ -256,11 +256,7 @@ export async function m3(c) {
   const key = await c.text("m3-pinned-key", "Relative path to the independently pinned node public key file");
   const checkpoint = await c.text("m3-checkpoint", "Relative path to the owner-retained covering checkpoint file");
   const ownerKey = await c.text("m3-owner-key", "Relative path to the independently pinned owner passkey public key file (uncompressed P-256 SEC1, lowercase hex); the bundle must be the v2 export with its retained owner assertions");
-  // The node holds the M2 spend grant, which the verifier cannot yet link to its assertion (crates/verifier UNLINKED_OWNER_KINDS):
-  // UNCHECKED for that reason alone until the grant-linking follow-up lands, then VERIFIED again. Today the node's v2 export
-  // itself refuses a ledger holding a grant (crates/aura export/owner/grant_link_tests.rs), so this step is reached only
-  // after the export is fixed.
-  await c.verifier(bundle, key, checkpoint, "UNCHECKED", undefined, ownerKey);
+  await c.verifier(bundle, key, checkpoint, "VERIFIED", undefined, ownerKey);
   await c.witness("m3-forged-receipt-twin", "In a separate disposable export copy, forge an apply receipt or alter signed theme bytes while preserving valid JSON and the original signatures. Keep the genuine independently pinned key and covering checkpoint. Do not modify live Aura data or either trust anchor. The runner will invoke the actual cold verifier on the forged copy.");
   const forgedBundle = await c.text("m3-forged-bundle", "Relative path to the forged disposable bundle copy");
   c.different("m3-forged-copy", forgedBundle, bundle);
