@@ -132,3 +132,32 @@ fn unchanged_head_does_not_hide_external_or_local_side_table_changes() -> Result
     assert_eq!(host.verified.next()?, head);
     Ok(())
 }
+
+#[test]
+fn a_commit_in_progress_delays_the_copy_instead_of_refusing_it() -> Result<()> {
+    let db = Database::new();
+    let signer = Node(SigningKey::from_bytes(&[21; 32]));
+    let clock = Clock;
+    let services = TransactionServices {
+        signer: &signer,
+        clock: &clock,
+    };
+    let mut host = Ledger::open(&db.0)?;
+    append(&mut host, services).expect("append host");
+    // Another connection holds the write lock (as a commit does) for a moment. The copy waits on the source
+    // connection's busy handler (rusqlite's default 5 s busy timeout) instead of failing with snapshot-busy.
+    let path = db.0.clone();
+    let (locked, wait) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        locked.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        connection.execute_batch("COMMIT").unwrap();
+    });
+    wait.recv().unwrap();
+    let version = Ledger::read_snapshot(&db.0, services, |snapshot| snapshot.current_version())?;
+    writer.join().unwrap();
+    assert_eq!(version.sequence, 2);
+    Ok(())
+}
