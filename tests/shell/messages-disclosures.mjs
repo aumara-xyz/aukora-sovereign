@@ -55,10 +55,15 @@ test('nothing the face shows, and nothing the operator guide says, claims the se
   for (const text of sources) assert.doesNotMatch(text, /seven|7[- ]word|phrase/i);
   const guide = readFileSync(join(root, 'deploy/MESSAGING.md'), 'utf8');
   assert.match(guide, /the seven-word phrase does not derive, back up or restore\s+it\./);
-  // Every sentence of the guide that mentions the phrase and a recovery verb must negate that verb.
+  // Every sentence of the guide that mentions the phrase must negate each recovery verb it uses, verb by verb: remove the
+  // one negated list ("does not derive, back up or restore it") and no recovery verb may remain.
+  const verbs = /deriv|back(?:s|ed|ing)?[\s-]*up|backup|restor|recover|regenerat|rebuild|retriev/i;
   for (const sentence of guide.split(/(?<=\.)\s/)) {
-    if (/seven|phrase/i.test(sentence) && /deriv|back(?:s|ed)? up|restor|recover/i.test(sentence)) {
-      assert.match(sentence, /\bdoes not (?:derive|back up|restore|recover)\b/i, sentence);
-    }
+    if (!/seven|phrase|words/i.test(sentence) || !verbs.test(sentence)) continue;
+    const rest = sentence.replace(/\bdoes not (?:(?:derive|back up|restore|recover)(?:,\s*|\s+or\s+|\s+and\s+)?)+(?:it\b)?/i, '');
+    assert.doesNotMatch(rest, verbs, sentence);
   }
+  // The check itself catches a claim hidden behind an unrelated negation.
+  const claim = 'The seven-word phrase does not derive a password, and you can restore the key from it.';
+  assert.match(claim.replace(/\bdoes not (?:(?:derive|back up|restore|recover)(?:,\s*|\s+or\s+|\s+and\s+)?)+(?:it\b)?/i, ''), verbs);
 });

@@ -319,12 +319,15 @@ fn status_read_admitted(method: &http::Method, headers: &http::HeaderMap) -> boo
     method == http::Method::GET && same_origin
 }
 
-/// Whether `target` (path and query, as admitted) falls in the supervisor's `/.aukora` namespace without being exactly
-/// one of its routes. Case and percent-encoded dots are folded first, so the harness never gets a spelling of it.
+/// Whether `target` (path and query, as admitted) falls in the supervisor's `/.aukora` namespace without being one of
+/// its own routes: the exact key status, or an entry link (`ENTER_PREFIX`, redeemed below). The first segment is
+/// percent-decoded once (as `admit_target` already did to refuse double encoding) and case-folded, so no spelling of
+/// the namespace (`.AUKORA`, `%2eaukora`, `.%61ukora`) is ever relayed to the harness.
 fn reserved_unhandled(target: &str) -> bool {
-    let folded = target.to_ascii_lowercase().replace("%2e", ".");
-    let reserved = folded == "/.aukora" || folded.starts_with("/.aukora/") || folded.starts_with("/.aukora?");
-    reserved && target != MODEL_KEY_STATUS
+    let path = target.split('?').next().unwrap_or_default();
+    let first = path.strip_prefix('/').unwrap_or(path).split('/').next().unwrap_or_default();
+    let reserved = decode_segment(first).is_none_or(|decoded| decoded.eq_ignore_ascii_case(b".aukora"));
+    reserved && target != MODEL_KEY_STATUS && !target.starts_with(ENTER_PREFIX)
 }
 
 fn status_reply(status: Option<Result<crate::model_broker::KeyStatus>>) -> Response<Body> {
@@ -737,9 +740,13 @@ mod tests {
         // The route is the proxy's own: a path the harness would otherwise be asked for, never relayed.
         assert_eq!(admit_target(&"/.aukora/model-key".parse::<http::Uri>().unwrap()).as_deref(), Some(MODEL_KEY_STATUS));
         assert!(!reserved_unhandled(MODEL_KEY_STATUS));
-        // Anything else in the supervisor's namespace is refused, never relayed (query included).
+        // The supervisor's own entry link still reaches the redeem branch (the engine opens through it).
+        let enter = format!("{ENTER_PREFIX}{}", "A".repeat(43));
+        assert!(!reserved_unhandled(&admit_target(&enter.parse::<http::Uri>().unwrap()).unwrap()));
+        // Anything else in the supervisor's namespace is refused, never relayed (query included, any spelling).
         for uri in ["/.aukora/model-key?x=1", "/.aukora/model-key/", "/.aukora/other", "/.aukora", "/.AUKORA/model-key",
-            "/%2eaukora/model-key", "/%2Eaukora/model-key?a=b", "/.aukora?x"] {
+            "/%2eaukora/model-key", "/%2Eaukora/model-key?a=b", "/.aukora?x", "/.%61ukora/model-key",
+            "/.%41UKORA/enter/x", "/%2E%61%75%6b%6f%72%61/model-key"] {
             let target = admit_target(&uri.parse::<http::Uri>().unwrap()).unwrap();
             assert!(reserved_unhandled(&target), "{uri}");
         }

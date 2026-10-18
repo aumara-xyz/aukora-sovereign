@@ -463,6 +463,24 @@ fn stranger_is_only_counted_and_owner_session_is_required() -> Result<()> {
         .query_row("SELECT count(*) FROM messaging_refused_envelope", [], |r| r.get(0))
         .unwrap();
     assert_eq!(kept, 1);
+    // Only refusals that cannot clear are remembered; the cap bounds the table.
+    use crate::ingress::{remembered, REFUSED_ENVELOPE_CAP};
+    for reason in [RefusalReason::Stranger, RefusalReason::Signature, RefusalReason::Recipient] {
+        assert!(remembered(reason), "{reason:?}");
+    }
+    for reason in [RefusalReason::Payload, RefusalReason::StaleContact, RefusalReason::Envelope, RefusalReason::Replay] {
+        assert!(!remembered(reason), "{reason:?}");
+    }
+    for n in 0..REFUSED_ENVELOPE_CAP + 5 {
+        let mut id = [0xee; 32];
+        id[..8].copy_from_slice(&n.to_be_bytes());
+        crate::ingress::remember_refused(&b.db, &id)?;
+    }
+    let kept: i64 = b
+        .db
+        .query_row("SELECT count(*) FROM messaging_refused_envelope", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, REFUSED_ENVELOPE_CAP);
     Ok(())
 }
 

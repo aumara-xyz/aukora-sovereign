@@ -229,6 +229,27 @@ fn append_refusal_attempt<T: AuthorityTxn + ?Sized>(
     })
 }
 
+/// How many refused envelope ids are kept (32 bytes each); see `remembered`.
+pub(crate) const REFUSED_ENVELOPE_CAP: i64 = 4096;
+
+/// A refusal that is final for these exact wrap bytes: not an approved contact (the sender sends again once both owners
+/// approved each other), a bad signature, or a wrap for another recipient. Payload, envelope and stale-contact refusals
+/// can clear (clock skew, a contact approval still syncing, a local store error) and are retried on the next poll.
+pub(crate) const fn remembered(reason: RefusalReason) -> bool {
+    matches!(reason, RefusalReason::Stranger | RefusalReason::Signature | RefusalReason::Recipient)
+}
+
+/// Keep one refused envelope id, unless the table already holds `REFUSED_ENVELOPE_CAP`.
+pub(crate) fn remember_refused(db: &Connection, envelope: &[u8; 32]) -> Result<()> {
+    db.execute(
+        "INSERT OR IGNORE INTO messaging_refused_envelope SELECT ?1
+         WHERE (SELECT count(*) FROM messaging_refused_envelope) < ?2",
+        params![envelope.as_slice(), REFUSED_ENVELOPE_CAP],
+    )
+    .map(|_| ())
+    .map_err(|_| refuse("store-write"))
+}
+
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS messaging_seen(
@@ -416,12 +437,12 @@ impl Messaging {
                     )
                     .map_err(|_| refuse("store-write"))?;
                 // Durable with the pending attempt: recovery counts this attempt once, and no later snapshot recounts it.
-                transaction
-                    .execute(
-                        "INSERT OR IGNORE INTO messaging_refused_envelope VALUES(?1)",
-                        [envelope.id.as_bytes().as_slice()],
-                    )
-                    .map_err(|_| refuse("store-write"))?;
+                // Only reasons that can never clear for these bytes are remembered: a payload refused for clock skew or a
+                // contact approval that is catching up stays retryable on the next poll. Bounded: past the cap a wrap is
+                // simply counted again on a later poll, never dropped.
+                if remembered(reason) {
+                    remember_refused(&transaction, envelope.id.as_bytes())?;
+                }
                 transaction.commit().map_err(|_| refuse("store-commit"))?;
                 let counted = append_refusal_attempt(txn, observation, attempt, prior)?;
                 self.db
