@@ -11,6 +11,7 @@ mod recall_race;
 mod slot_capture;
 mod pending_proposals;
 mod recall_wording;
+mod corrected_history;
 
 struct Fixture {
     dir: PathBuf,

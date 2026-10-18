@@ -102,7 +102,7 @@ pub(super) fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote,
         "privacy": m.privacy.wire(), "capture": m.capture.wire(), "scope": m.scope, "epoch": m.epoch,
         "sources": sources, "slot": m.slot, "valid_from": m.valid_from, "valid_to": m.valid_to,
         "roots": roots, "superseded_by": note.superseded_by, "current_id": current, "quarantined": note.quarantined,
-        "validity": validity(&note.meta, now()), "proposals": proposals_visible(store, caller, note)?,
+        "validity": crate::shared::hybrid::retired(note, now()).unwrap_or("current"), "proposals": proposals_visible(store, caller, note)?,
         "evidence": evidence, "state": lifecycle(store, caller, note, evidence)?,
         // A note that cites nothing the reader can see is, to that reader, a root of its own: nothing in the store
         // supports it but its author's word.
@@ -114,7 +114,8 @@ pub(super) fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote,
 pub(super) fn stub(note: &StoredNote) -> Value {
     json!({
         "id": hex(note.event.id.as_bytes()), "author": hex(note.event.pubkey.as_bytes()),
-        "created_at": note.event.created_at, "statement_hash": hex(&note.meta.statement_hash), "correction": "quarantined",
+        "created_at": note.event.created_at, "statement_hash": hex(&note.meta.statement_hash),
+        "correction": "quarantined", "validity": "quarantined",
     })
 }
 

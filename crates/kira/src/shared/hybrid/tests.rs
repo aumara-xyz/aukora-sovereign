@@ -130,12 +130,32 @@ fn query(text: &str, caller: &str) -> RecallQuery {
         budget_chars: 0,
         include_local: false,
         include_web: false,
+        include_history: false,
         now: 0,
     }
 }
 
 fn chars(items: &[RecallItem]) -> usize {
     items.iter().map(|i| i.text.chars().count()).sum()
+}
+
+#[test]
+fn opted_in_history_hides_an_unreadable_current_id_in_the_store_result() {
+    let a = key();
+    let mut s = store_with(&[("author", &a, false)]);
+    let old = vnote(&mut s, &a, "The retired atlas was on the desk", 1);
+    let new = put_private(&mut s, &a, "The atlas is in the vault", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, Privacy::Local, 2);
+    let tags = vec![vec!["supersedes".into(), old.clone()], vec!["replacement".into(), new]];
+    s.record(Event::sign(&a, 3, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
+    let mut q = query("retired atlas", "other");
+    assert!(s.recall(&q, None, None).unwrap().items.is_empty());
+    q.include_history = true;
+    let history = s.recall(&q, None, None).unwrap();
+    assert_eq!(history.status, RecallStatus::Empty);
+    assert_eq!(history.items.len(), 1);
+    assert_eq!(history.items[0].id, old);
+    assert_eq!(history.items[0].correction.as_deref(), Some("superseded"));
+    assert_eq!(history.items[0].current_id, None);
 }
 
 #[test]

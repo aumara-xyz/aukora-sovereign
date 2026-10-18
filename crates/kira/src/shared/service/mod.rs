@@ -424,6 +424,9 @@ struct RecallParams {
     /// Also search `web-derived` notes (left out by default).
     #[serde(default)]
     include_web: bool,
+    /// Also show retired matches without a returned live replacement.
+    #[serde(default)]
+    include_history: bool,
 }
 
 #[derive(Deserialize)]
@@ -778,6 +781,7 @@ fn recall_gather(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Resu
             budget_chars: p.budget_chars.unwrap_or(DEFAULT_BUDGET).min(MAX_BUDGET),
             include_local: caller.owner,
             include_web: p.include_web,
+            include_history: p.include_history,
             now: now(),
         };
         (query, s.embedder.clone(), s.reranker.clone())

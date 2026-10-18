@@ -34,6 +34,8 @@ pub struct RecallQuery {
     /// Whether `web-derived` notes may take part. Automatic recall leaves them out (spec v0.3 §2: tainted material is
     /// excluded unless the caller asks for it); a caller that asks gets them, labelled by their capture.
     pub include_web: bool,
+    /// Also return retired matches without a returned live replacement. Linked history remains automatic.
+    pub include_history: bool,
     /// The time notes are judged against for `valid_from` / `valid_to` (unix seconds). 0 means the system clock.
     pub now: u64,
 }
@@ -94,7 +96,7 @@ pub struct RecallItem {
     /// "superseded", "quarantined", "expired" or "not-yet-valid" when shown as history after the current items: none of
     /// these is live memory. A quarantined item's text is empty.
     pub correction: Option<String>,
-    /// For a superseded item, the id of the note that stands where it did (always among the live items returned).
+    /// For a superseded item, the id of the readable note that stands where it did (normally among the live items).
     pub current_id: Option<String>,
 }
 

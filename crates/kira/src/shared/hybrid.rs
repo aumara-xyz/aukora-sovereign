@@ -127,10 +127,14 @@ fn query_digest(q: &RecallQuery, epoch: u32, budget: usize) -> Result<String> {
         ("scopes", serde_json::to_string(&scopes)),
         ("text", serde_json::to_string(&q.text)),
     ];
-    // Only a query that asks for web material names it, so the digest of every other query is unchanged.
-    if q.include_web {
-        fields.insert(5, ("include_web", serde_json::to_string(&true)));
+    // Only opt-in queries name these flags, so the digest of every default query is unchanged.
+    if q.include_history {
+        fields.push(("include_history", serde_json::to_string(&true)));
     }
+    if q.include_web {
+        fields.push(("include_web", serde_json::to_string(&true)));
+    }
+    fields.sort_by_key(|(key, _)| *key);
     let mut canonical = String::from("{");
     for (i, (key, value)) in fields.into_iter().enumerate() {
         if i > 0 {
@@ -158,7 +162,7 @@ pub fn validity(meta: &NoteMeta, at: u64) -> &'static str {
 }
 
 /// Why a note is not live memory, if it is not: the label it is shown under as history.
-fn retired(note: &StoredNote, at: u64) -> Option<&'static str> {
+pub(crate) fn retired(note: &StoredNote, at: u64) -> Option<&'static str> {
     if note.quarantined {
         Some("quarantined")
     } else if note.superseded_by.is_some() {
@@ -575,9 +579,10 @@ pub struct Prepared {
     budget: usize,
     query_digest: String,
     live: Vec<Cand>,
-    /// Superseded and quarantined notes that match the question: shown only as history of a returned current note
-    /// (superseded) or as a stub (quarantined), after the current items.
+    /// Retired matches, after current items; by default superseded notes need a returned replacement.
+    /// Quarantined notes are always stubs.
     history: Vec<Cand>,
+    include_history: bool,
     integrity: bool,
     embedder_down: bool,
     index_bad: bool,
@@ -728,6 +733,15 @@ impl SharedStore {
             }
         }
         history.truncate(MAX_HISTORY_CANDIDATES);
+        if q.include_history {
+            for c in &mut history {
+                if let Some(id) = c.note.current_id.as_deref() {
+                    if !self.get(id)?.is_some_and(|n| loader.readable(&n)) {
+                        c.note.current_id = None;
+                    }
+                }
+            }
+        }
         let readable = |n: &StoredNote| loader.readable(n);
         for c in live.iter_mut().chain(history.iter_mut()) {
             c.root_authors = corroborating_authors(self, &c.note, now, &readable)?;
@@ -740,6 +754,7 @@ impl SharedStore {
             query_digest,
             live,
             history,
+            include_history: q.include_history,
             integrity: loader.integrity,
             embedder_down,
             index_bad,
@@ -782,7 +797,7 @@ impl Prepared {
     /// Recall's second phase, without the store: rerank (a model call), dedupe, reserved lanes and the budget.
     pub fn finish(self, rr: Option<&dyn Reranker>) -> RecallOutcome {
         let Prepared {
-            text, caller, budget, query_digest, mut live, history, integrity, embedder_down, index_bad, dense, embed_model, indexed, total,
+            text, caller, budget, query_digest, mut live, history, include_history, integrity, embedder_down, index_bad, dense, embed_model, indexed, total,
         } = self;
         // Rerank the top live candidates.
         let mut reranker_down = false;
@@ -923,12 +938,12 @@ impl Prepared {
             }
         }
 
-        // History comes after the current items, with what is left of the budget: a superseded note only beside the
-        // note that stands for it (which must itself be among the items), a quarantined one only as a stub.
+        // History comes after the current items, with what is left of the budget: by default a superseded note only
+        // beside its returned replacement; include_history also admits other retired matches. Quarantine stays a stub.
         let shown: BTreeSet<&str> = items.iter().flat_map(|i| std::iter::once(i.id.as_str()).chain(i.also_by_ids.iter().map(String::as_str))).collect();
         let mut past: Vec<RecallItem> = history
             .iter()
-            .filter(|c| c.past != Some("superseded") || c.note.current_id.as_deref().is_some_and(|id| shown.contains(id)))
+            .filter(|c| include_history || c.past != Some("superseded") || c.note.current_id.as_deref().is_some_and(|id| shown.contains(id)))
             .map(|c| c.item(c.fused as f32, Vec::new(), Vec::new(), c.roots.len(), c.provenance(), c.past))
             .collect();
         past.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
@@ -960,7 +975,7 @@ impl Prepared {
         } else {
             RecallStatus::Empty
         };
-        if status == RecallStatus::Empty {
+        if status == RecallStatus::Empty && !include_history {
             items.clear();
         }
         RecallOutcome {

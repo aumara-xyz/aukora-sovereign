@@ -8,6 +8,34 @@ fn usage() -> Refusal {
     refuse("usage")
 }
 
+const HELP: &str = "Usage: sovereign kira <command> [options]
+
+Commands:
+  serve                Run the shared memory service
+  register NAME        Register an agent (--scopes a,b, --owner)
+  token NAME           Issue a token (--rotate replaces earlier tokens)
+  revoke NAME          Revoke an agent and its tokens
+  import [FILE]        Import the epoch-1 archive
+  mcp                  Serve MCP tools over stdin/stdout
+
+Options:
+  --state DIR          State directory (default ~/aukora-memory/kira)
+  --socket PATH        Service socket (default STATE/kira.sock)
+  --token-file PATH    Agent token file for mcp or token output
+  --owner-token-file PATH  Owner token for register, token, revoke or import
+  --peer-uids a,b      Allowed peer uids for serve (Linux only)
+  --peer-gids a,b      Allowed peer gids for serve (Linux only)
+  --group-socket       Use a group-accessible socket for serve
+  -h, --help           Show this help
+
+MCP recall arguments:
+  include_history     Add visible retired matches after live results (default false).
+                      Default recall still includes history linked to a returned live note.
+                      History has a validity label and a current_id when readable.
+                      History alone leaves status empty; it is never a current answer.
+  Example: {\"query\":\"where is the lamp\",\"include_history\":true}
+";
+
 /// `sovereign kira <serve | register NAME | token NAME [--rotate] | revoke NAME | import [FILE] | mcp>` with
 /// `--state DIR`, `--socket PATH`, `--token-file PATH`, `--owner-token-file PATH`, `--scopes a,b` and `--owner`.
 /// `serve` also takes `--peer-uids 1001,1002` and `--peer-gids 2000`: on Linux only those peers are admitted
@@ -26,6 +54,10 @@ fn usage() -> Refusal {
 /// of the same user could revoke the owner or plant notes signed `epoch1-import`.) This is a procedural gate, not isolation: a process of the same user that
 /// can read the owner's token file can still mint (same-uid trust; separate uids are Phase N).
 pub fn cli(arguments: &[OsString]) -> Result<()> {
+    if arguments.len() == 1 && arguments.first().is_some_and(|flag| flag == "--help" || flag == "-h") {
+        print!("{HELP}");
+        return Ok(());
+    }
     let (mut words, mut state, mut socket, mut token_file, mut scopes, mut owner) = (vec![], None, None, None, None, false);
     let mut owner_token_file: Option<PathBuf> = None;
     let (mut rotate, mut group_socket) = (false, false);
