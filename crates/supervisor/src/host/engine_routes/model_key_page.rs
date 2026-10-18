@@ -59,8 +59,8 @@ const BODY: &str = concat!(
     "<span class=\"ak-portal__title\" id=\"s1\">Your DeepSeek API key</span><span class=\"ak-portal__summary\">Typed \
      here, on your node's own page. Never shown again.</span></span><span class=\"ak-portal__end\">",
     "<span class=\"ak-pill ak-tone-mint\">Step 1</span></span></div>",
-    "<form id=\"f\" class=\"ak-portal__body\" autocomplete=\"off\"><label class=\"ak-label\" for=\"key\">API key</label>",
-    "<input id=\"key\" class=\"key-field\" type=\"password\" name=\"deepseek-key\" autocomplete=\"off\" autocapitalize=\"off\" \
+    "<form id=\"f\" class=\"ak-portal__body\" method=\"post\" autocomplete=\"off\"><label class=\"ak-label\" for=\"key\">API key</label>",
+    "<input id=\"key\" class=\"key-field\" type=\"password\" autocomplete=\"off\" autocapitalize=\"off\" \
      autocorrect=\"off\" spellcheck=\"false\" placeholder=\"sk-…\" minlength=\"16\" maxlength=\"4096\" required>",
     "<div class=\"ak-actionrow\"><button class=\"ak-action ak-tone-mint\" type=\"submit\" id=\"send\">Hand it to your \
      node</button><span class=\"ak-action__note\">A new key takes over as soon as its card is up. While it waits for \
@@ -161,6 +161,18 @@ mod tests {
             assert!(page.contains(attribute), "{attribute}");
         }
         assert!(!page.contains("sk-0") && !page.contains(" value=\""), "the field starts empty");
+        // Even a native submit (script blocked or failed) carries no key: the field has no name, the form posts (never a
+        // GET with the key in the address), CSP form-action 'none' blocks it, and the shell refuses any query string.
+        let input = &page[page.find("<input").unwrap()..];
+        let input = &input[..input.find('>').unwrap()];
+        assert!(!input.contains("name="), "no named field, so a native submit has nothing to send: {input}");
+        assert_eq!(page.matches("<form ").count(), 1);
+        assert!(page.contains("<form id=\"f\" class=\"ak-portal__body\" method=\"post\""));
+        assert!(SCRIPT.contains("preventDefault()"));
+        assert!(frontdoor::ingress::validate_path("/engine/model-key").is_ok());
+        for path in ["/engine/model-key?deepseek-key=sk-123", "/engine/model-key?", "/engine/model-key#x"] {
+            assert!(frontdoor::ingress::validate_path(path).is_err(), "{path}");
+        }
         // The primitives are the face's file, verbatim, and the glyph placeholder was filled in.
         assert!(page.contains(PRIMITIVES) && PRIMITIVES.contains(".ak-portal__head"));
         assert_eq!(PRIMITIVES, include_str!("../../../../../ui/owner/primitives.css"), "the owner origin's copy is the same");

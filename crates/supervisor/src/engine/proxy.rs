@@ -219,6 +219,11 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
     }
     let upgrade = socket::asks_upgrade(request.headers());
     let Some(target) = admit_target(request.uri()) else { return text(StatusCode::NOT_FOUND, "not found\n") };
+    // `/.aukora/*` is the supervisor's own namespace on this origin: only the exact routes it answers exist, and nothing
+    // else under it (a query, another name, an encoded dot) is ever relayed to the harness.
+    if reserved_unhandled(&target) {
+        return text(StatusCode::NOT_FOUND, "not found\n");
+    }
     if upgrade {
         if let Err(reason) = socket::admit_upgrade(request.method(), request.headers(), &target, &engine.config.host) {
             eprintln!("engine: WebSocket upgrade refused: {reason:?}");
@@ -305,12 +310,21 @@ async fn model_key_status(host: &Host, method: &http::Method, headers: &http::He
     status_reply(host.model_key_status().await)
 }
 
-/// A read for the page itself: a GET from the engine origin's own script (`Sec-Fetch-Site: same-origin`, or no fetch
-/// metadata at all). A sibling origin's request carries the SameSite=Strict cookie too, but is refused here.
+/// A read for the page itself: a GET from the engine origin's own script, with exactly one `Sec-Fetch-Site:
+/// same-origin`. Missing fetch metadata fails closed, as frontdoor ingress does; a sibling origin's request carries the
+/// SameSite=Strict cookie too, but is refused here.
 fn status_read_admitted(method: &http::Method, headers: &http::HeaderMap) -> bool {
     let mut sites = headers.get_all("sec-fetch-site").iter();
-    let same_origin = sites.next().is_none_or(|site| site.as_bytes() == b"same-origin") && sites.next().is_none();
+    let same_origin = sites.next().is_some_and(|site| site.as_bytes() == b"same-origin") && sites.next().is_none();
     method == http::Method::GET && same_origin
+}
+
+/// Whether `target` (path and query, as admitted) falls in the supervisor's `/.aukora` namespace without being exactly
+/// one of its routes. Case and percent-encoded dots are folded first, so the harness never gets a spelling of it.
+fn reserved_unhandled(target: &str) -> bool {
+    let folded = target.to_ascii_lowercase().replace("%2e", ".");
+    let reserved = folded == "/.aukora" || folded.starts_with("/.aukora/") || folded.starts_with("/.aukora?");
+    reserved && target != MODEL_KEY_STATUS
 }
 
 fn status_reply(status: Option<Result<crate::model_broker::KeyStatus>>) -> Response<Body> {
@@ -702,7 +716,7 @@ mod tests {
             headers
         };
         assert!(status_read_admitted(&http::Method::GET, &headers(Some("same-origin"))));
-        assert!(status_read_admitted(&http::Method::GET, &headers(None)));
+        assert!(!status_read_admitted(&http::Method::GET, &headers(None)), "no fetch metadata fails closed");
         for site in ["same-site", "cross-site", "none"] {
             assert!(!status_read_admitted(&http::Method::GET, &headers(Some(site))), "{site}");
         }
@@ -722,5 +736,15 @@ mod tests {
         assert_eq!(status_reply(Some(Err(refuse("x")))).status(), StatusCode::SERVICE_UNAVAILABLE);
         // The route is the proxy's own: a path the harness would otherwise be asked for, never relayed.
         assert_eq!(admit_target(&"/.aukora/model-key".parse::<http::Uri>().unwrap()).as_deref(), Some(MODEL_KEY_STATUS));
+        assert!(!reserved_unhandled(MODEL_KEY_STATUS));
+        // Anything else in the supervisor's namespace is refused, never relayed (query included).
+        for uri in ["/.aukora/model-key?x=1", "/.aukora/model-key/", "/.aukora/other", "/.aukora", "/.AUKORA/model-key",
+            "/%2eaukora/model-key", "/%2Eaukora/model-key?a=b", "/.aukora?x"] {
+            let target = admit_target(&uri.parse::<http::Uri>().unwrap()).unwrap();
+            assert!(reserved_unhandled(&target), "{uri}");
+        }
+        for uri in ["/", "/aukora/model-key", "/x/.aukora/model-key", "/.aukoraX"] {
+            assert!(!reserved_unhandled(&admit_target(&uri.parse::<http::Uri>().unwrap()).unwrap()), "{uri}");
+        }
     }
 }
