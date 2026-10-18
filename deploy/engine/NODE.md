@@ -243,18 +243,23 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   script inline and pinned by hash in its CSP, the field masked, never autofilled, cleared before the request leaves).
   **Settings → Models** in the app reaches it: the harness's own Models section is off (overlay row 3: its key form would
   store the key in the engine) and the face's section shows one DeepSeek row whose Edit opens that shell page in a new
-  tab (`engine.<shell>` → `<shell>`; the engine origin never holds a field for the key). The row's dot reads
+  tab (`engine.<shell>` → `<shell>`; the face's page holds no field for the key). The row's dot reads
   `GET https://engine.<shell>/.aukora/model-key`, answered by the engine proxy itself after its usual admission (the
   owner's engine session, re-checked against binding, shell session and release floor; GET, `Sec-Fetch-Site:
-  same-origin`); the engine never sees it. Reply: `{"state": "none" | "awaiting-approval" | "not-approved" |
+  same-origin`); the engine process never sees the request, though engine-served script on that origin can read the
+  reply like the face does. Reply: `{"state": "none" | "awaiting-approval" | "not-approved" |
   "approved"}` and nothing else: no character of the key (O15 keeps even its last four out of the engine), never its
-  digest or fingerprint. The key page also tells the owner to check the address bar: an engine page could imitate it,
-  not its address. `POST /api/engine/model-key` needs the bound
+  digest or fingerprint. **Residual risk (DOT F1):** engine-served script can draw a fake status or a lookalike key
+  form on `engine.<shell>`, and a key typed into that form is the engine's; it cannot change the key or its approval.
+  No browser rule prevents that imitation; the key page names its exact address and tells the owner never to type
+  the key on a page whose address starts with `engine.` (advice, not an enforced barrier). `POST /api/engine/model-key` needs the bound
   owner's shell session (frontdoor: same origin, JSON). The broker holds the key and proposes
   `engine/model-key.json` = `{key_sha256, kind, provider, v}`: the card shows the digest only; the page shows its
   first 12 hex digits (the fingerprint) to compare. A call uses the key only while its SHA-256 equals the approved
-  one. Entering a different key pauses the engine's calls until the owner approves it. The key is never in the
-  gate, Aura, a log or a reply, and never inside the wall. **At rest (O7):** once the owner's passkey has approved the
+  one. Entering a different key takes over as soon as its card is up: from then the engine's calls are refused (not
+  queued) until a key is approved, and declining the card does not bring the old key back (enter a key again). The
+  key is never in the gate, Aura, a log or a reply, and never inside the wall; the journal names key events only,
+  without the key's fingerprint (the fingerprint is on the owner's card and the key page, for comparing). **At rest (O7):** once the owner's passkey has approved the
   card, the supervisor keeps the key in `/var/lib/aukora/model-key/model-key` (`broker::keyfile`: the folder 0700
   and the file 0600, both the supervisor's own; a regular file, one link, opened without following symlinks;
   written beside itself, synced, renamed in, the folder synced). At start it is loaded only if its SHA-256 equals the

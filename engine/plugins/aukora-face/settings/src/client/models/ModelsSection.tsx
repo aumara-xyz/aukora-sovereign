@@ -5,7 +5,7 @@
  * (`ui-settings-models`, switched off by the authority overlay, deploy/engine/authority.patch.yml row 3), whose key
  * form would store the key in the engine. Same place, same words at the top, one provider row: DeepSeek, its dot
  * showing the model broker's real standing, and Edit, which opens the node's own key page on the shell origin in a new
- * tab. See `model-key.ts` for why the key never touches this origin.
+ * tab. See `model-key.ts` for why the legitimate key entry never touches this origin, and what that does not cover.
  */
 import { useEffect, useState } from 'react'
 import { IconTile, isPreviewComposition, StatusPill } from '@aukora/face-layout/client'
@@ -73,9 +73,9 @@ const OUT = (
 
 export function ModelsSection(_props: PropsRuntime<'settings.section'>) {
   const standing = useStanding()
-  const view = rowView(standing)
   const href = keyPageHref(globalThis.location)
   const shell = shellOrigin(globalThis.location).replace(/^https?:\/\//, '')
+  const view = rowView(standing, shell)
   return (
     <div className={css.section} data-models-section="sovereign">
       <h2>Models</h2>
@@ -98,7 +98,7 @@ export function ModelsSection(_props: PropsRuntime<'settings.section'>) {
                     title={`${shell}/engine/model-key`}>
                     {view.action}{OUT}
                   </a>
-                  <span className="ak-action__note">Opens your node&apos;s own key page; the key never enters the engine.</span>
+                  <span className="ak-action__note">{view.note}</span>
                 </div>
               </div>
               )
@@ -106,8 +106,8 @@ export function ModelsSection(_props: PropsRuntime<'settings.section'>) {
         </li>
       </ul>
       <p className={css.note}>
-        Your key is typed on your node&apos;s own page and kept by its model broker, outside the engine; your passkey
-        approves each new key. More providers come through your node&apos;s broker later.
+        Your key is typed on your node&apos;s own key page and kept by its model broker, outside the engine; your
+        passkey approves each new key. More providers come through your node&apos;s broker later.
       </p>
     </div>
   )

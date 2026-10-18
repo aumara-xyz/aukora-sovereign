@@ -236,7 +236,7 @@ impl ModelBroker {
         let approved = self.gate.approved_target(KEY_TARGET).await.ok().flatten();
         if approved.as_deref().and_then(KeyApproval::parse).is_some_and(|current| current == approval) {
             self.hold(key, now)?;
-            eprintln!("model-broker: the entered key is the approved one ({fingerprint})");
+            eprintln!("model-broker: the entered key is the approved one");
             self.sync_key(Some(&approval.key_sha256), now);
             return Ok(KeyStage::Active(fingerprint));
         }
@@ -250,7 +250,7 @@ impl ModelBroker {
             .await
         {
             if refusal.reason == "awaiting-other-approval" {
-                eprintln!("model-broker: a key was entered while another key's card is up; not held ({fingerprint})");
+                eprintln!("model-broker: a key was entered while another key's card is up; not held");
             }
             return Err(refusal);
         }
@@ -265,7 +265,7 @@ impl ModelBroker {
                 eprintln!("model-broker: the stored key could not be removed");
             }
         }
-        eprintln!("model-broker: a key was entered; awaiting the owner's approval ({fingerprint})");
+        eprintln!("model-broker: a key was entered; awaiting the owner's approval");
         Ok(KeyStage::AwaitingApproval(fingerprint))
     }
 

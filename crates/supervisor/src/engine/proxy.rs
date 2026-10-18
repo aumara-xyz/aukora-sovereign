@@ -293,8 +293,9 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
 }
 
 /// The Models row's read of the owner's DeepSeek key (NODE.md section 7): answered here, by the supervisor, for an
-/// admitted engine session (the owner's bound scope, re-checked above). The engine never sees this request or its
-/// reply. The reply is `{"state"}` only: never the key, any character of it, its digest or its fingerprint (O15).
+/// admitted engine session (the owner's bound scope, re-checked above). The engine process never sees this request;
+/// engine-served script on this origin can read the reply (and could draw any status it likes), so the reply is
+/// `{"state"}` only: never the key, any character of it, its digest or its fingerprint (O15). A GET changes nothing.
 pub const MODEL_KEY_STATUS: &str = "/.aukora/model-key";
 
 async fn model_key_status(host: &Host, method: &http::Method, headers: &http::HeaderMap) -> Response<Body> {

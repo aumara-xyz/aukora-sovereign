@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The owner's DeepSeek key page on the SHELL origin (`GET https://<shell>/engine/model-key`, NODE.md section 7): the one
-//! place the key is typed. The Models row of the Spatial face (engine origin) only links here; the engine origin never
-//! holds a field for the key, so nothing the engine serves can read it as it is typed.
+//! place the key is meant to be typed. The Models row of the Spatial face (engine origin) only links here, and engine
+//! script cannot read this origin. What that does not cover: the engine can draw a lookalike form of its own on
+//! engine.<shell>, and a key typed there is the engine's. The browser cannot stop that; the owner's address-bar check
+//! can, so the page names its exact address and asks for it (advice, not an enforced barrier).
 //!
 //! One self-contained page: the primitives (`primitives.css`, verbatim, SPATIAL-DESIGN-RULES rule 10) and the page's
 //! own style and script are inline and pinned by hash in a strict CSP (no other source, no inline handler, no frame
@@ -46,9 +48,10 @@ const BODY: &str = concat!(
     "<path d=\"M8 11V8a4 4 0 0 1 8 0v3\"/></svg>Outside the engine</span></div></header>",
     "<p class=\"ak-lead\">Your key goes to your node's broker, outside the wall. Auma's engine never sees it; it can only \
      ask the broker to make a call. Your passkey approves the key next.</p>",
-    // The one check only the owner can make: a page the engine serves could imitate this one, but not its address.
-    "<p class=\"address\" id=\"address\">Check the address bar: it should show your node's own address. Never type \
-     your key on a page whose address starts with engine.</p>",
+    // The one check only the owner can make: a page the engine serves could imitate this one, but not its address. The
+    // script fills in this page's own host (the address to learn); without it the line still reads.
+    "<p class=\"address\" id=\"address\">Check the address bar: your key page is always <b id=\"host\">your node's \
+     own address</b>. Never type your key on a page whose address starts with engine.</p>",
     // Step 1: the one field.
     "<section class=\"ak-portal ak-tone-mint\" data-open=\"yes\" aria-labelledby=\"s1\">",
     "<div class=\"ak-portal__head\"><span class=\"ak-icon-tile\"><svg GLYPH><path d=\"M12 3c.6 4.8 3.2 7.4 8 8-4.8.6-7.4 \
@@ -60,8 +63,9 @@ const BODY: &str = concat!(
     "<input id=\"key\" class=\"key-field\" type=\"password\" name=\"deepseek-key\" autocomplete=\"off\" autocapitalize=\"off\" \
      autocorrect=\"off\" spellcheck=\"false\" placeholder=\"sk-…\" minlength=\"16\" maxlength=\"4096\" required>",
     "<div class=\"ak-actionrow\"><button class=\"ak-action ak-tone-mint\" type=\"submit\" id=\"send\">Hand it to your \
-     node</button><span class=\"ak-action__note\">A new key replaces the one in use once its card is up; Auma's calls \
-     wait for your passkey.</span></div><p id=\"out\" role=\"status\" aria-live=\"polite\"></p></form></section>",
+     node</button><span class=\"ak-action__note\">A new key takes over as soon as its card is up. While it waits for \
+     approval, Auma can't reach the model. If you decline it, enter a key again.</span></div>\
+     <p id=\"out\" role=\"status\" aria-live=\"polite\"></p></form></section>",
     // Step 2: the passkey.
     "<section class=\"ak-portal ak-tone-blue\" id=\"step2\" data-open=\"no\" aria-labelledby=\"s2\">",
     "<div class=\"ak-portal__head\"><span class=\"ak-icon-tile\"><svg GLYPH><circle cx=\"12\" cy=\"12\" r=\"8\"/>",
@@ -110,8 +114,8 @@ out.dataset.tone};const plain={'frontdoor:session-required':'Sign in to your nod
 'That is not a DeepSeek API key (it begins with sk-).','gate:awaiting-other-approval':'Another key is waiting for your \
 passkey: approve or decline that card first.'};const step2=(fingerprint,active)=>{$('step2').dataset.open='yes';\
 $('s2body').hidden=false;$('fp').textContent=fingerprint.match(/.{4}/g).join(' ');$('approve').hidden=active;\
-$('s2sum').textContent=active?'Already approved: Auma can use this key now.':'Your card is up: compare the \
-fingerprint, then approve.';$('s2pill').textContent=active?'Approved':'Waiting for you'};form.addEventListener(\
+$('s2sum').textContent=active?'Already approved: this is the key your node uses.':'Your card is up: compare \
+the fingerprint, then approve.';$('s2pill').textContent=active?'Approved':'Waiting for you'};form.addEventListener(\
 'submit',async(e)=>{e.preventDefault();const key=input.value.trim();input.value='';if(!key){return}send.disabled=true;\
 say('Handing it to your node…');try{const r=await fetch('/api/engine/model-key',{method:'POST',headers:\
 {'content-type':'application/json'},body:JSON.stringify({key}),credentials:'same-origin',cache:'no-store',\
@@ -119,8 +123,9 @@ redirect:'error'});const j=await r.json();if(!r.ok){const code=typeof j.error===
 say(plain[code]||('Your node refused it: '+code),'bad');return}if(typeof j.fingerprint!=='string'||\
 !/^[0-9a-f]{12}$/.test(j.fingerprint)){say('Your node gave an answer this page does not read.','bad');return}\
 const active=j.state==='active';step2(j.fingerprint,active);say(active?'Your node already holds this key, approved.':\
-'Your node holds the key. Next: your passkey.',active?undefined:'gold')}catch(_){say('Your node did not answer.','bad')}\
-finally{send.disabled=false}});if(location.hash==='#from=models'){$('back').addEventListener('click',(e)=>{\
+'Your node holds the key. Until you approve it, Auma can’t reach the model.',active?undefined:'gold')}catch(_){\
+say('Your node did not answer.','bad')}finally{send.disabled=false}});$('host').textContent=location.origin+\
+'/engine/model-key';if(location.hash==='#from=models'){$('back').addEventListener('click',(e)=>{\
 e.preventDefault();window.close();setTimeout(()=>location.assign('/engine/open'),300)})}";
 
 #[cfg(test)]
@@ -144,8 +149,12 @@ mod tests {
         assert!(!page.contains(" onclick=") && !page.contains(" onsubmit=") && !page.contains(" onload="), "no inline handler");
         assert!(!page.contains("src=") && !page.contains("<link") && !page.contains("<iframe"));
         // The address check, said once and calmly.
-        assert!(page.contains("Check the address bar: it should show your node's own address. Never type your key on a \
-                               page whose address starts with engine."));
+        assert!(page.contains("Check the address bar: your key page is always <b id=\"host\">your node's own address</b>. \
+                               Never type your key on a page whose address starts with engine."));
+        assert!(SCRIPT.contains("$('host').textContent=location.origin+'/engine/model-key'"), "the exact address, as text");
+        // A new key's card refuses calls until it is approved; declining does not restore the old key. Say so.
+        assert!(page.contains("While it waits for approval, Auma can't reach the model. If you decline it, enter a key again."));
+        assert!(!page.contains("wait for your passkey") && !SCRIPT.contains("Auma can use this key now"));
         // The one field: masked, never autofilled, never spell-checked; nothing on the page is a key.
         assert_eq!(page.matches("<input").count(), 1);
         for attribute in ["type=\"password\"", "autocomplete=\"off\"", "spellcheck=\"false\"", "autocapitalize=\"off\""] {

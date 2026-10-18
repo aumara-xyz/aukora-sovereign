@@ -5,7 +5,10 @@
  *
  * This page runs on the engine origin (`engine.<shell>`), where everything is engine-served script. So it never holds a
  * field for the key: Edit opens the node's own key page on the SHELL origin (`https://<shell>/engine/model-key`) in a
- * new tab, and the key goes from there to the model broker outside the wall. What comes back here is only the
+ * new tab, and the key goes from there to the model broker outside the wall. What this does NOT do: stop the engine
+ * from drawing a lookalike status or a lookalike key form of its own on this origin (it can read the state below
+ * like any script here). It cannot change the key or its approval; a key typed into a lookalike is another matter,
+ * which is why the key page tells the owner to check the address bar. What comes back here is only the
  * broker's standing, read from `GET /.aukora/model-key`, which the supervisor's engine proxy answers itself (the engine
  * never sees the request): `{state}` and nothing else. No character of the key, its digest or its fingerprint ever
  * reaches this engine-served script (NODE.md O15 keeps even the provider's last-four out of the engine).
@@ -69,29 +72,36 @@ export function keyPageHref(place: { readonly protocol: string; readonly host: s
 
 export type Tone = 'mint' | 'blue' | 'violet' | 'gold' | 'red' | 'muted'
 
-/** What the DeepSeek row shows for a standing: the dot's tone, the pill, the one-line summary, the action's words. */
+/** What the DeepSeek row shows for a standing: the dot's tone, the pill, the one-line summary, the action's words, and
+ * the line under the action (what a change means for Auma, said plainly). */
 export interface RowView {
   readonly tone: Tone
   readonly pill: string
   readonly summary: string
   readonly action: string
+  readonly note: string
   /** False when there is nothing to open (no node behind this page). */
   readonly actionable: boolean
 }
 
-export function rowView(standing: ModelKeyStanding): RowView {
+/** A new key takes over as soon as its card is up; until a key is approved, model calls are refused (not queued). */
+export const WAITING_NOTE = "While your new key waits for approval, Auma can't reach the model. If you decline it, enter a key again."
+export const NOT_APPROVED_NOTE = "Auma can't reach the model until a key is approved. The old key doesn't come back by itself: enter a key again."
+
+export function rowView(standing: ModelKeyStanding, shell = 'your node'): RowView {
+  const opens = `Opens your key page at ${shell}. Type your key only there.`
   switch (standing.state) {
     case 'none':
-      return { tone: 'muted', pill: 'No key', summary: 'Auma has no DeepSeek key yet', action: 'Add your DeepSeek key', actionable: true }
+      return { tone: 'muted', pill: 'No key', summary: 'Auma has no DeepSeek key yet', action: 'Add your DeepSeek key', note: opens, actionable: true }
     case 'awaiting-approval':
-      return { tone: 'gold', pill: 'Waiting for you', summary: 'Approve its card with your passkey', action: 'Edit', actionable: true }
+      return { tone: 'gold', pill: 'Waiting for you', summary: "Auma can't reach the model until you approve", action: 'Edit', note: WAITING_NOTE, actionable: true }
     case 'not-approved':
-      return { tone: 'red', pill: 'Not approved', summary: 'Declined or ran out of time: enter it again', action: 'Edit', actionable: true }
+      return { tone: 'red', pill: 'Not approved', summary: "Auma can't reach the model: enter a key again", action: 'Edit', note: NOT_APPROVED_NOTE, actionable: true }
     case 'approved':
-      return { tone: 'mint', pill: 'Approved', summary: 'Held by your node, outside the engine', action: 'Edit', actionable: true }
+      return { tone: 'mint', pill: 'Approved', summary: 'Held by your node, outside the engine', action: 'Edit', note: `${opens} A new key stops Auma's model calls until you approve it.`, actionable: true }
     case 'unavailable':
-      return { tone: 'muted', pill: 'Not on this node', summary: 'No model broker answers here', action: 'Edit', actionable: false }
+      return { tone: 'muted', pill: 'Not on this node', summary: 'No model broker answers here', action: 'Edit', note: '', actionable: false }
     case 'unknown':
-      return { tone: 'muted', pill: 'Reading…', summary: 'Asking your node', action: 'Edit', actionable: true }
+      return { tone: 'muted', pill: 'Reading…', summary: 'Asking your node', action: 'Edit', note: opens, actionable: true }
   }
 }

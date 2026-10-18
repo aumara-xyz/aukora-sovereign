@@ -3,7 +3,7 @@
 //   node --test engine/plugins/aukora-face/settings/test/*.test.ts      (Node 24: types are stripped)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { keyPageHref, parseStanding, rowView, shellOrigin } from '../src/client/models/model-key.ts'
+import { keyPageHref, NOT_APPROVED_NOTE, parseStanding, rowView, shellOrigin, WAITING_NOTE } from '../src/client/models/model-key.ts'
 
 test('the broker standing is read strictly: state only, never a character of the key', () => {
   assert.deepEqual(parseStanding(200, { state: 'none' }), { state: 'none' })
@@ -48,4 +48,14 @@ test('the row is honest about each standing and shows no part of the key', () =>
   assert.equal(approved.action, 'Edit')
   assert.equal(rowView({ state: 'unavailable' }).actionable, false)
   assert.notEqual(rowView({ state: 'unknown' }).tone, 'mint', 'nothing read is never shown as approved')
+  // A key waiting for approval, or declined, means refused calls (not a queue), and the old key does not come back.
+  assert.equal(rowView({ state: 'awaiting-approval' }).note, WAITING_NOTE)
+  assert.match(WAITING_NOTE, /can't reach the model/)
+  assert.match(WAITING_NOTE, /If you decline it, enter a key again/)
+  assert.equal(rowView({ state: 'not-approved' }).note, NOT_APPROVED_NOTE)
+  assert.match(NOT_APPROVED_NOTE, /doesn't come back by itself/)
+  for (const state of ['none', 'awaiting-approval', 'not-approved', 'approved', 'unknown'] as const) {
+    assert.doesNotMatch(rowView({ state }, 'n1.example.net').note + rowView({ state }).summary, /\bwait for your passkey\b|never enters the engine/)
+  }
+  assert.match(rowView({ state: 'none' }, 'n1.example.net').note, /n1\.example\.net/, 'the exact key-page host is named')
 })
