@@ -53,6 +53,7 @@ fn answer_after_gathering_at(f: &Fixture, gather_at: u64) -> Value {
         budget_chars: DEFAULT_BUDGET,
         include_local: true,
         include_web: false,
+        include_history: false,
         now: gather_at,
     };
     let prepared = lock(&f.state).store.recall_prepare(&query, None).unwrap();
