@@ -4,7 +4,7 @@ import type {
 } from "../contracts.js";
 import { domainDigest, parseAuthorization, parseCard, refuse, verifyCommitments } from "./codec.js";
 import type { Authorization } from "./codec.js";
-import { renderAuthorization, renderCard } from "./render.js";
+import { cardKind, cardTone, renderAuthorization, renderCard } from "./render.js";
 import { createApprovalTransport } from "./transport.js";
 import type { ApprovalServiceOptions } from "./transport.js";
 import { ownerIcon } from "../icons.js";
@@ -144,8 +144,10 @@ export class ApprovalCards implements ApprovalPaneService {
         const digestLabel = document.createElement("p");
         digestLabel.className = "ak-label";
         digestLabel.textContent = "Exact bytes · SHA-256";
+        digestLabel.dataset.section = "digest";
         const digest = document.createElement("dl");
         digest.className = "ak-fields approval-digest";
+        digest.dataset.section = "digest";
         const digestKey = document.createElement("dt");
         digestKey.textContent = "new_sha256";
         const digestValue = document.createElement("dd");
@@ -157,7 +159,7 @@ export class ApprovalCards implements ApprovalPaneService {
         const authorize = document.createElement("button");
         authorize.type = "button";
         // Unmistakable: the card's tone, ringed as an opened portal, with the owner mark and the passkey cue.
-        authorize.className = `ak-action ${card.risk === "critical" ? "ak-tone-red" : "ak-tone-blue"} approval-passkey`;
+        authorize.className = `ak-action ${cardTone(cardKind(auth.target, auth.op), card.risk)} approval-passkey`;
         const labels = { apply: "Approve", retire: "Retire", release: "Approve release",
           grant: "Approve grant", permission: "Approve permission" };
         const actionLabel = document.createElement("span");

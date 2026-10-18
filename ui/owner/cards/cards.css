@@ -34,21 +34,35 @@
 .approval-digest code { font-family: var(--ak-mono); overflow-wrap: anywhere; }
 .approval-model-note { margin: 0; }
 
-/* The card's tone boxes the summary and every detail beneath it (Peter, 2026-10-18): a 1px border in the tone and a
-   faint tint of it, red for a critical card and blue for a routine one. Text keeps its own colours, so it stays
-   readable on either tint. */
+/* Colours (Peter, 2026-10-18). The card's outline and its summary box share the card's colour, red or blue by its
+   kind (render.ts cardTone). Each detail beneath has a hue of its own, so the sections are easy to tell apart: a 1px
+   border and a faint tint, with the section label in the same hue; text keeps its own colours. */
+.approval-card {
+  --approval-hue-digest: var(--ak-gold);
+  --approval-hue-signs: var(--ak-violet);
+  --approval-hue-changes: var(--ak-mint);
+  --approval-hue-card: rgb(236, 150, 196);
+  --approval-hue-authorization: rgb(110, 202, 228);
+}
 .approval-card > .approval-head {
   width: auto;
   margin: 12px 16px 0;
   padding-inline: 12px;
-  border: 1px solid color-mix(in srgb, var(--ak-tone) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ak-tone) 50%, transparent);
   border-radius: var(--ak-row-radius, 12px);
-  background: color-mix(in srgb, var(--ak-tone) 9%, transparent);
+  background: color-mix(in srgb, var(--ak-tone) 10%, transparent);
 }
-.approval-card .approval-body > .ak-fields, .approval-card .approval-body > .approval-fold {
-  border-color: color-mix(in srgb, var(--ak-tone) 38%, transparent);
-  background: color-mix(in srgb, var(--ak-tone) 5%, transparent);
+.approval-card [data-section='digest'] { --approval-hue: var(--approval-hue-digest); }
+.approval-card [data-section='signs'] { --approval-hue: var(--approval-hue-signs); }
+.approval-card [data-section='changes'] { --approval-hue: var(--approval-hue-changes); }
+.approval-card [data-section='card'] { --approval-hue: var(--approval-hue-card); }
+.approval-card [data-section='authorization'] { --approval-hue: var(--approval-hue-authorization); }
+.approval-card .approval-body > :is(.ak-fields, .approval-fold)[data-section] {
+  --ak-tone: var(--approval-hue);
+  border-color: color-mix(in srgb, var(--approval-hue) 42%, transparent);
+  background: color-mix(in srgb, var(--approval-hue) 6%, transparent);
 }
+.approval-card .approval-body > .ak-label[data-section] { color: color-mix(in srgb, var(--approval-hue) 80%, var(--ak-muted)); }
 
 /* Folds for the exact changes, the exact card and the authorization: static record rows that open in place. */
 .approval-fold { margin-top: 6px; }
