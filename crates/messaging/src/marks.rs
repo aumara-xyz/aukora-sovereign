@@ -59,9 +59,12 @@ impl Messaging {
         mark: ConversationMark,
     ) -> Result<()> {
         txn.check_owner_session()?;
-        self.current_contact(txn, mark.contact)?
-            .ok_or(refuse("stranger"))?;
         let key = mark.contact.as_bytes().as_slice();
+        // Clearing needs only the owner's session, so a mark left by a since-removed contact can always be cleared.
+        if mark.pinned || mark.archived {
+            self.current_contact(txn, mark.contact)?
+                .ok_or(refuse("stranger"))?;
+        }
         if !mark.pinned && !mark.archived {
             self.db
                 .execute("DELETE FROM messaging_marks WHERE contact=?1", params![key])

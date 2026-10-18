@@ -455,6 +455,13 @@ impl Messaging {
                     params![key.as_bytes().as_slice()],
                 )
                 .map_err(|_| refuse("store-write"))?;
+            // A pin or archive belongs to this approval: it neither outlives the removal nor returns on re-approval.
+            self.db
+                .execute(
+                    "DELETE FROM messaging_marks WHERE contact=?1",
+                    params![key.as_bytes().as_slice()],
+                )
+                .map_err(|_| refuse("store-write"))?;
             self.approved_outbox
                 .retain(|_, send| send.envelope.recipient != key);
         }

@@ -942,5 +942,18 @@ fn conversation_marks_need_the_owner_session_and_an_approved_contact() -> Result
     assert_eq!(store.conversation_marks()?, vec![mark(friend, true, true)]);
     store.set_conversation_mark(&mut host, mark(friend, false, false))?;
     assert!(store.conversation_marks()?.is_empty());
+    // Removing the contact removes its marks, so re-approval does not bring back an old pin or archive.
+    store.set_conversation_mark(&mut host, mark(friend, true, true))?;
+    host.contacts.remove(&hex::encode(friend.as_bytes()));
+    assert!(store.synchronize_contact(&mut host, friend)?.is_none());
+    assert!(store.conversation_marks()?.is_empty());
+    host.add_contact(friend);
+    assert!(store.conversation_marks()?.is_empty());
+    // A mark left behind (here: the approval gone without the store hearing of it) can still be cleared by the owner.
+    store.set_conversation_mark(&mut host, mark(friend, true, false))?;
+    host.contacts.remove(&hex::encode(friend.as_bytes()));
+    assert_eq!(store.set_conversation_mark(&mut host, mark(friend, true, false)), Err(refuse("stranger")));
+    store.set_conversation_mark(&mut host, mark(friend, false, false))?;
+    assert!(store.conversation_marks()?.is_empty());
     Ok(())
 }

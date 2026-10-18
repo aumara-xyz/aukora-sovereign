@@ -698,3 +698,13 @@ test('a preview that keeps failing slows the live loop instead of retrying every
   tick(6_000); for (let turn = 0; turn < 6; turn++) await settle();
   assert.equal(failures, 3);
 });
+
+test('a send stopped by a contact change says why on its retry control', async t => {
+  const { root, messages } = mount(t);
+  messages.unshift({ ...message('stopped', maya, 60, 'out', 'Still there?'), state: 'failed', code: 'messaging:contact-removed' });
+  await settle();
+  const card = conversation(root);
+  byClass(card, 'ak-portal__head').click(); await settle();
+  const retry = byClass(find(card, item => item.dataset?.message === 'stopped'), 'bubble-retry');
+  assert.equal(retry.getAttribute('aria-label'), 'Sending stopped because this contact was removed. Send again');
+});
