@@ -75,7 +75,7 @@ shell. A and B have separate state, origins, cookies and passkey RP IDs.
    thread. Reply from B and observe the text in A's thread. Confirm the send
    and receive Aura entries. Relay acceptance means published, not peer read.
 5. Restart B and confirm both its npub and received text persist. A stranger's
-   wrap must increase refusal counts without creating a visible message.
+   wrap must increase refusal counts once (later polls skip it) without creating a visible message.
 
 Both contact cards must be approved before sending: ingress rejects strangers
 before opening their message payload. This run does not add invitations,
@@ -107,7 +107,8 @@ The current relay adapter reads complete bounded snapshots (at most 128 gift
 wraps and 500 relay event frames per query). A relay with more matching stored
 events refuses the batch instead of dropping data. This first exchange supports
 that bound; durable relay-history cursors are follow-up work before sustained
-high-volume use. Known admitted wraps are skipped during routine polling.
+high-volume use. Known admitted wraps, and wraps already refused and counted, are skipped during routine polling; a refused wrap
+is never retried, so a message sent before both owners approved each other must be sent again.
 
 ## Privacy and storage
 

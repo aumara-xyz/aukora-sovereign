@@ -254,6 +254,11 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
             counts BLOB NOT NULL
         );
         INSERT OR IGNORE INTO messaging_refusal_cache VALUES(1,1,x'');
+        -- Envelope ids (public relay event ids, nothing else) of wraps already refused and counted, so the relay
+        -- worker's repeated snapshots never decrypt and count the same wrap again.
+        CREATE TABLE IF NOT EXISTS messaging_refused_envelope(
+            envelope BLOB PRIMARY KEY CHECK(length(envelope)=32)
+        );
         CREATE TABLE IF NOT EXISTS messaging_pending_refusal(
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
             attempt BLOB NOT NULL CHECK(length(attempt)=16),
@@ -305,9 +310,12 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
 impl Messaging {
     /// The relay worker can skip an already admitted envelope in repeated relay
     /// snapshots. Explicit ingress attempts still pass through the replay fence.
+    /// A wrap already refused (and counted once) is skipped the same way; it is never retried, so a sender who was not
+    /// yet an approved contact sends again after both owners have approved each other.
     pub fn seen_envelope(&self, envelope: EventId) -> Result<bool> {
         self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM messaging_seen WHERE envelope=?1)",
+            "SELECT EXISTS(SELECT 1 FROM messaging_seen WHERE envelope=?1)
+             OR EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)",
             [envelope.as_bytes().as_slice()], |row| row.get(0),
         ).map_err(|_| refuse("store-read"))
     }
@@ -405,6 +413,13 @@ impl Messaging {
                             observation_body(&observation, attempt)?.canonical_bytes(),
                             prior.to_value()?.canonical_bytes()
                         ],
+                    )
+                    .map_err(|_| refuse("store-write"))?;
+                // Durable with the pending attempt: recovery counts this attempt once, and no later snapshot recounts it.
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO messaging_refused_envelope VALUES(?1)",
+                        [envelope.id.as_bytes().as_slice()],
                     )
                     .map_err(|_| refuse("store-write"))?;
                 transaction.commit().map_err(|_| refuse("store-commit"))?;

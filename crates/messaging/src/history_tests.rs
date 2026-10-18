@@ -447,6 +447,22 @@ fn stranger_is_only_counted_and_owner_session_is_required() -> Result<()> {
         b.db.query_row("SELECT count(*) FROM messaging_seen", [], |r| r.get(0))
             .unwrap();
     assert_eq!(seen, 0);
+    // The relay worker re-reads the same stored wrap on every poll: it is skipped, so the stranger is counted once,
+    // across a restart too, and nothing about the sender or text is kept for it.
+    for _ in 0..3 {
+        if !b.seen_envelope(incoming.id)? {
+            b.receive(&mut host_b, &incoming, &key_b, TransportKind::NostrRelays, NOW)?;
+        }
+    }
+    assert_eq!(b.refusal_counts()?.stranger, 1);
+    drop(b);
+    let b = Messaging::open(&dir_b.0, NodeId::from_bytes([4; 16]))?;
+    assert!(b.seen_envelope(incoming.id)?);
+    let kept: i64 = b
+        .db
+        .query_row("SELECT count(*) FROM messaging_refused_envelope", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, 1);
     Ok(())
 }
 
