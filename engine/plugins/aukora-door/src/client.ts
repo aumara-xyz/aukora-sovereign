@@ -36,7 +36,10 @@ export function parseReply(line: string, request: DoorRequest): DoorReply {
     if (!REPLY_KEYS.has(key)) throw new DoorError('door-protocol', `the reply has an unknown field ${JSON.stringify(key).slice(0, 40)}`)
   }
   if (reply.v !== 1) throw new DoorError('door-protocol', 'the reply version is not 1')
-  if (reply.call_id !== request.call_id) throw new DoorError('door-protocol', 'the reply answers a different call')
+  // The door may refuse overload before reading the request. Only these result-free denials are uncorrelated.
+  const overload = reply.call_id === 'unknown' && reply.decision === 'deny' &&
+    (reply.refusal === 'busy' || reply.refusal === 'rate-limited')
+  if (reply.call_id !== request.call_id && !overload) throw new DoorError('door-protocol', 'the reply answers a different call')
   const decision = reply.decision
   if (decision !== 'allow' && decision !== 'deny' && decision !== 'ask') throw new DoorError('door-protocol', 'the reply decision is unknown')
   if (reply.refusal !== undefined && (typeof reply.refusal !== 'string' || !REFUSAL.test(reply.refusal))) {

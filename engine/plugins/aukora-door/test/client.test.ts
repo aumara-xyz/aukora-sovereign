@@ -23,6 +23,28 @@ function request(overrides: Partial<DoorRequest> = {}): DoorRequest {
   }
 }
 
+test('PL-4: pre-request busy and rate-limited replies preserve their refusal', () => {
+  for (const refusal of ['busy', 'rate-limited']) {
+    const reply = { v: 1, call_id: 'unknown', decision: 'deny', refusal }
+    assert.equal(parseReply(JSON.stringify(reply), request()).refusal, refusal)
+  }
+})
+
+test('PL-4: only well-formed overload denials may omit the matching call id', () => {
+  for (const change of [
+    { decision: 'allow', result: { value: 1 } },
+    { decision: 'ask' },
+    { refusal: 'bad-request' },
+    { call_id: 'some-other-call' },
+    { result: { value: 1 } },
+    { extra: true },
+    { v: 2 },
+  ]) {
+    const reply = { v: 1, call_id: 'unknown', decision: 'deny', refusal: 'busy', ...change }
+    assert.throws(() => parseReply(JSON.stringify(reply), request()), { code: 'door-protocol' })
+  }
+})
+
 async function codeOfFailure(promise: Promise<unknown>): Promise<string> {
   try {
     await promise
