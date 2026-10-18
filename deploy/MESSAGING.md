@@ -80,7 +80,13 @@ shell. A and B have separate state, origins, cookies and passkey RP IDs.
 
 Both contact cards must be approved before sending: ingress rejects strangers
 before opening their message payload. This run does not add invitations,
-co-presence, NIP-42 relay authentication or an engine send route.
+co-presence or an engine send route.
+
+NIP-42: the relay client answers a relay's AUTH challenge when its caller gives it a signer
+(`crates/relay/src/auth.rs`), but the messaging transport gives none, so a relay that challenges a messaging query
+or publish is refused for that operation (`relay:auth-required`) and the other relays carry on. The client also
+accepts at most one challenge per operation (`MAX_AUTH_CHALLENGES = 1`) and refuses a relay that challenges again;
+re-authenticating on a fresh challenge is a known follow-up.
 
 ## Face API
 

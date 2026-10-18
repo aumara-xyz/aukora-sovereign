@@ -347,3 +347,53 @@ fn large_timestamp_tie_drains_in_byte_bounded_batches_and_keeps_receiving() {
     let batch = receive_page(&keys, &request, 200, |_, filter| Ok(query(&events, filter))).unwrap();
     assert!(batch.envelopes.iter().any(|e| e.id == fresh_id));
 }
+
+// An outside review of the earlier client (one receive cycle refused as a whole when any relay held 129 or more
+// matching wraps, or sent more than 500 frames) asked for this exact shape: two relays, one flooded. Each poll queries
+// one relay; a flooded relay's refusal is deferred and rotated past, never a refusal of the clean relay's batch.
+#[test]
+fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
+    let key = SecretKey::generate().unwrap();
+    let recipient = key.public_key().unwrap();
+    let clean = vec![event(&key, recipient, 90, "clean relay")];
+    let flood: Vec<_> = (0..200)
+        .map(|n| event(&key, recipient, 80, &n.to_string()))
+        .collect();
+    let keys = [
+        relay_key("wss://flooded.example"),
+        relay_key("wss://clean.example"),
+    ];
+    for failure in ["query-event-limit", "oversized-page", "saturated"] {
+        let mut request = ReceiveRequest {
+            recipient,
+            cursor: None,
+            max_items: 128,
+            max_bytes: 1_048_576,
+            deadline_ms: 1,
+        };
+        let mut clean_seen = 0;
+        for _ in 0..6 {
+            let batch = receive_page(&keys, &request, 100, |index, filter| {
+                if index == 1 {
+                    return Ok(query(&clean, filter));
+                }
+                match failure {
+                    // More than MAX_QUERY_EVENTS frames: the client refuses that relay's query.
+                    "query-event-limit" => Err(canon::Refusal { organ: "relay", reason: "query-event-limit" }),
+                    // A relay answering beyond the requested limit cannot move any cursor.
+                    "oversized-page" => Ok(flood.clone()),
+                    // 200 wraps in one second: more than the 128-item tie limit.
+                    _ => Ok(query(&flood, filter)),
+                }
+            })
+            .unwrap();
+            clean_seen += batch
+                .envelopes
+                .iter()
+                .filter(|e| e.id == clean[0].event().id)
+                .count();
+            request.cursor = batch.next_cursor;
+        }
+        assert!(clean_seen > 0, "{failure}: the clean relay's wrap is admitted");
+    }
+}
