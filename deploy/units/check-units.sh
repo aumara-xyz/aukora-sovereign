@@ -86,8 +86,8 @@ enabled=$(systemctl list-unit-files 'aukora-release-probe@*' --state=enabled --n
 # systemctl show prints RestrictAddressFamilies=none and an unset (or reset) list alike, as nothing: read the unit
 # files instead; the last [Service] assignment, drop-ins included and spelled as systemd parses it, must be none.
 families=$(systemctl cat "$probe" 2>/dev/null | awk '
-    /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
-    section == "[Service]" && /^[[:space:]]*RestrictAddressFamilies[[:space:]]*=/ {
+    /^[[:space:]]*\[/ { section = $0; sub(/^[[:space:]]*\[/, "", section); sub(/\].*$/, "", section); next }
+    section == "Service" && /^[[:space:]]*RestrictAddressFamilies[[:space:]]*=/ {
         value = $0; sub(/^[^=]*=[[:space:]]*/, "", value); sub(/[[:space:]]*$/, "", value); last = value
     }
     END { print last }')

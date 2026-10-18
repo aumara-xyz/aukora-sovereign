@@ -767,7 +767,7 @@ test('a marks read that lands while a mark write is still in flight does not und
   let release = null;
   const { root, live } = mount(t, {
     marksRead: () => ({ items: nodeMarks }),
-    mark: params => new Promise(resolve => { release = () => { nodeMarks = [params]; resolve({}); }; }),
+    mark: params => new Promise(resolve => { release = () => { nodeMarks = [{ ...params, pinned: true }]; resolve({}); }; }),
   });
   for (let turn = 0; turn < 6; turn++) await settle();
   find(conversation(root, maya), item => item.getAttribute('aria-label') === 'Archive conversation').click();
@@ -775,5 +775,7 @@ test('a marks read that lands while a mark write is still in flight does not und
   assert.deepEqual(visibleRows(root), [sam], 'the node has not stored it yet: the read must not undo the archive');
   release();
   await live();
-  assert.deepEqual(visibleRows(root), [sam], 'stored and read back');
+  // The node now holds a state the click did not set (pinned too): seeing it proves the read was applied.
+  filterButton(root, 'Show only archived conversations').click();
+  assert.equal(byClass(conversation(root, maya), 'pinMarker').hidden, false, 'stored and read back');
 });

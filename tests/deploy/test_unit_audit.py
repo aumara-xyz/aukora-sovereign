@@ -35,6 +35,10 @@ if sys.argv[1] == 'cat':
             # systemd ignores this line outside [Service]; the audit must too.
             print('[Install]')
             print('RestrictAddressFamilies=none')
+    if os.environ.get('NOTED_HEADER'):
+        # systemd reads the name between [ and ]: this is still [Service].
+        print('[Service] # dial out')
+        print('RestrictAddressFamilies=AF_INET')
     sys.exit(0)
 if sys.argv[1] == 'list-unit-files':
     if os.environ.get('ENABLE_INSTANCE'):
@@ -84,6 +88,9 @@ else:
                 reset = subprocess.run(audit, env={**env, "RESET_FAMILIES": spelling}, capture_output=True, text=True)
                 self.assertEqual(reset.returncode, 1, reset.stdout + reset.stderr)
                 self.assertIn("RestrictAddressFamilies is ''", reset.stdout)
+            noted = subprocess.run(audit, env={**env, "NOTED_HEADER": "1"}, capture_output=True, text=True)
+            self.assertEqual(noted.returncode, 1, noted.stdout + noted.stderr)
+            self.assertIn("RestrictAddressFamilies is 'AF_INET'", noted.stdout)
             # A real release instance enabled through a drop-in would start at boot; the placeholder stays static.
             instance = subprocess.run(audit, env={**env, "ENABLE_INSTANCE": "1"}, capture_output=True, text=True)
             self.assertEqual(instance.returncode, 1, instance.stdout + instance.stderr)
