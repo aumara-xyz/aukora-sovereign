@@ -555,10 +555,12 @@ impl SharedStore {
                         .optional()
                         .map_err(sql)?;
                     let src_seq = src_seq.ok_or_else(|| refuse("note-source-unknown"))?;
-                    // Follow citations, not just roots: a web intermediary may itself cite a clean root.
+                    // Follow citations and roots: a web intermediary may cite a clean root, and a sourceless repeat
+                    // may have adopted a web-derived root without citing it.
                     if meta.slot.is_some() && tx.query_row(
-                        "WITH RECURSIVE sources(seq) AS (SELECT ?1 UNION
-                         SELECT e.seq FROM sources s JOIN citations c ON c.seq = s.seq JOIN events e ON e.id = c.source)
+                        "WITH RECURSIVE sources(seq) AS (SELECT ?1
+                         UNION SELECT e.seq FROM sources s JOIN citations c ON c.seq = s.seq JOIN events e ON e.id = c.source
+                         UNION SELECT e.seq FROM sources s JOIN ancestry a ON a.seq = s.seq JOIN events e ON e.id = a.root)
                          SELECT EXISTS(SELECT 1 FROM sources s JOIN events e ON e.seq = s.seq WHERE e.capture = 'web-derived')",
                         params![src_seq], |r| r.get::<_, bool>(0),
                     ).map_err(sql)? {

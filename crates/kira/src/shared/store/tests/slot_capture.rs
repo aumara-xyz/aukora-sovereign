@@ -63,3 +63,21 @@ fn a_raw_clean_intermediary_cannot_launder_web_ancestry_into_a_slot() {
         }
     }
 }
+
+#[test]
+fn a_sourceless_repeat_of_a_web_note_cannot_carry_its_root_into_a_slot() {
+    for slot in [SELF_SLOT, RESUME_SLOT, "resume:agent"] {
+        let owner = key();
+        let mut s = store_with(&[("peter", &owner, &["*"], true)]);
+        let mut web = draft("A page says the handoff moved", "builders");
+        web.capture = Capture::WebDerived;
+        let web = s.append(sign(&owner, &web, Review::Remembered, 1)).unwrap();
+        // The same statement filed again with no source and a clean capture adopts the web note as its root.
+        let repeat = s.append(sign(&owner, &draft("A page says the handoff moved", "builders"), Review::Remembered, 2)).unwrap();
+        assert_eq!(roots_of(&s, &repeat), [hex32(web.event.id.as_bytes())]);
+        let d = slotted(slot, vec![hex32(repeat.event.id.as_bytes())]);
+        assert_eq!(s.append(sign(&owner, &d, Review::Remembered, 3)).unwrap_err(), refuse("note-slot-web-derived"));
+        assert!(s.slot(slot).unwrap().is_none());
+        assert_eq!(s.verify_chain().unwrap(), 2);
+    }
+}
