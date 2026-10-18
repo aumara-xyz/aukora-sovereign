@@ -109,13 +109,13 @@ impl Taint {
     }
 }
 
-/// `kira_remember` and `kira_supersede` write; the other forwarded methods read.
+/// `kira_remember` and `kira_supersede` write, and also return note bodies.
 pub fn is_memory_write(tool: &str) -> bool {
     matches!(memory::method(tool), Ok("remember" | "supersede"))
 }
 
 fn is_memory_read(tool: &str) -> bool {
-    matches!(memory::method(tool), Ok("recall" | "get" | "list_recent"))
+    matches!(memory::method(tool), Ok("remember" | "recall" | "get" | "list_recent" | "supersede"))
 }
 
 /// A write the engine itself labels as web-derived.
