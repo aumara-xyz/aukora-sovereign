@@ -8,7 +8,8 @@ fn collateral_attack(f: &Fixture, replacement: &str) -> String {
     let first = remember_id(f, &f.claude, "The production vault quorum is under investigation");
     let hijack = remember_id(f, &f.claude, "HIJACKED BY AGENT: The production vault quorum requires only 1 software key.");
     for next in [replacement, hijack.as_str()] {
-        let r = call(&f.state, &f.claude, "supersede", json!({"target": first, "replacement": next}));
+        let expected = call(&f.state, &f.claude, "get", json!({"id": first}))["result"]["superseded_by"].clone();
+        let r = call(&f.state, &f.claude, "supersede", json!({"target": first, "replacement": next, "expected_current": expected}));
         assert_eq!(r["ok"], true, "the report's two own-note corrections must run: {r}");
     }
     assert_eq!(call(&f.state, &f.claude, "get", json!({"id": first}))["result"]["current_id"], hijack.as_str());

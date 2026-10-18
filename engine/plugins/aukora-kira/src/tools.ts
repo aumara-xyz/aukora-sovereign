@@ -332,7 +332,7 @@ export function createKiraTools(): DshToolDefinition[] {
     {
       name: 'kira_supersede',
       description:
-        'Correct a note in shared memory (Kira 2) without deleting it: name the note that replaces it. On your own note it is in force at once. On another author\'s note it needs your own replacement note and is only a proposal until the author or the owner accepts it. The latest correction in force wins.',
+        'Correct a note in shared memory (Kira 2) without deleting it: name the note that replaces it. On your own note it is in force at once. On another author\'s note it needs your own replacement note and is only a proposal until the author or the owner accepts it. A concurrent correction refuses as kira:supersede-stale; read again before retrying.',
       parameters: {
         type: 'object',
         properties: {
@@ -343,6 +343,10 @@ export function createKiraTools(): DshToolDefinition[] {
           replacement: {
             type: 'string',
             description: 'Optional 64-character hex event ID of the replacement note (required, and your own, when the target is not yours).',
+          },
+          expected_current: {
+            type: 'string',
+            description: 'The target\'s superseded_by event ID last read, when changing an existing correction. Omit or use none for a live target; a changed head refuses as kira:supersede-stale.',
           },
           reason: {
             type: 'string',

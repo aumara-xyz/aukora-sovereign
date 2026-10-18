@@ -449,7 +449,7 @@ impl SharedStore {
             .map_err(sql)?;
         for (event_id, target) in links {
             let Some(author) = self.note_author(&target)? else { continue };
-            if self.corrections_of(&target, &author)?.0.iter().any(|c| c.event == event_id) {
+            if self.retirement(&target, &author)?.is_some_and(|c| c.event == event_id) {
                 return Ok(true);
             }
         }

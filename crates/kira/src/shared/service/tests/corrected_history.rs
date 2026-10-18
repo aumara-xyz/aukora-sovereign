@@ -86,7 +86,8 @@ fn history_respects_scope_local_privacy_and_resume_slot_access() {
         };
         let old = write("The secret atlas was on the desk", "none");
         let new = write("The secret atlas is on the shelf", &old);
-        assert_eq!(call(&f.state, &f.owner, "supersede", json!({"target": old, "replacement": new}))["ok"], true);
+        let expected = call(&f.state, &f.owner, "get", json!({"id": old}))["result"]["superseded_by"].clone();
+        assert_eq!(call(&f.state, &f.owner, "supersede", json!({"target": old, "replacement": new, "expected_current": expected}))["ok"], true);
         let q = json!({"query": "secret atlas", "include_history": true});
         let readable = call(&f.state, &f.owner, "recall", q.clone());
         assert_eq!(ids_of(&readable), vec![(new.clone(), Value::Null), (old.clone(), json!("superseded"))], "{restriction}: {readable}");

@@ -14,6 +14,7 @@ mod recall_wording;
 mod corrected_history;
 mod pl5;
 mod slot_retirement;
+mod supersede_race;
 
 struct Fixture {
     dir: PathBuf,
@@ -542,7 +543,8 @@ fn the_latest_correction_in_force_wins() {
     let medium = remember_id(&f, &claude, "Finding K2-15 invite replay is rated MEDIUM");
     let low = remember_id(&f, &claude, "Finding K2-15 invite replay is rated LOW");
     assert_eq!(call(&f.state, &claude, "supersede", json!({"target": high, "replacement": medium}))["ok"], true);
-    assert_eq!(call(&f.state, &claude, "supersede", json!({"target": high, "replacement": low}))["ok"], true);
+    let expected = call(&f.state, &claude, "get", json!({"id": high}))["result"]["superseded_by"].clone();
+    assert_eq!(call(&f.state, &claude, "supersede", json!({"target": high, "replacement": low, "expected_current": expected}))["ok"], true);
     assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], low.as_str());
     // Neither correction targeted MEDIUM: it remains independent of HIGH's current replacement.
     let medium_note = call(&f.state, &grok, "get", json!({"id": medium}));
@@ -558,7 +560,8 @@ fn the_latest_correction_in_force_wins() {
     let urgent = remember_id(&f, &grok, "Finding K2-15 invite replay is rated CRITICAL after the retest");
     let proposal = call(&f.state, &grok, "supersede", json!({"target": high, "replacement": urgent}))["result"]["event"].as_str().unwrap().to_owned();
     assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], low.as_str(), "pending: not yet in force");
-    call(&f.state, &claude, "accept_correction", json!({"proposal": proposal}));
+    let expected = call(&f.state, &claude, "get", json!({"id": high}))["result"]["superseded_by"].clone();
+    call(&f.state, &claude, "accept_correction", json!({"proposal": proposal, "expected_current": expected}));
     assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], urgent.as_str());
 }
 

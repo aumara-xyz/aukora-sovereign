@@ -75,6 +75,19 @@ fn is_hex64(text: &str) -> bool {
     text.len() == 64 && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// Omission means the caller read a live note. An override names its `superseded_by` audit pointer, not an
+/// indirectly named replacement (being named grants no authority over that replacement).
+fn check_correction_head(target: &StoredNote, expected: Option<&str>) -> Result<()> {
+    let expected = expected.filter(|id| *id != "none");
+    if expected.is_some_and(|id| !is_hex64(id)) {
+        return Err(refuse("id-invalid"));
+    }
+    if target.superseded_by.as_deref() != expected {
+        return Err(refuse("supersede-stale"));
+    }
+    Ok(())
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
@@ -393,12 +406,14 @@ struct SupersedeParams {
     target: String,
     replacement: Option<String>,
     reason: Option<String>,
+    expected_current: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AcceptParams {
     proposal: String,
+    expected_current: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -638,22 +653,25 @@ impl State {
 
     /// Supersede a note. By its author or the owner this is in force at once. By any other agent (which must offer a
     /// replacement note of its own) it is only a proposal, listed on the note until its author or the owner accepts
-    /// it with `accept_correction`. The latest correction in force wins.
+    /// it with `accept_correction`. Changing an existing correction must name the retirement event last read.
     fn supersede(&mut self, caller: &Caller, p: SupersedeParams) -> Result<Value> {
         if !is_hex64(&p.target) || p.replacement.as_deref().is_some_and(|r| !is_hex64(r)) {
             return Err(refuse("id-invalid"));
         }
         // A note the caller may not read is refused as one that does not exist: neither the target nor the
         // replacement can be probed for existence through the refusal code.
-        if !self.store.get(&p.target)?.is_some_and(|n| visible(caller, &n)) {
-            return Err(refuse("supersede-target-unknown"));
-        }
+        let target = self.store.get(&p.target)?.filter(|n| visible(caller, n)).ok_or_else(|| refuse("supersede-target-unknown"))?;
         if let Some(replacement) = &p.replacement {
             if !self.store.get(replacement)?.is_some_and(|n| visible(caller, &n)) {
                 return Err(refuse("supersede-replacement-unknown"));
             }
         }
-        let mut tags = vec![vec!["supersedes".to_owned(), p.target.clone()]];
+        // dispatch holds requests.lock through this check and append, including against other State handles.
+        // Proposals are advisory; only a correction entering force must match the target's retirement head.
+        if target.author_name == caller.name || caller.owner || p.expected_current.is_some() {
+            check_correction_head(&target, p.expected_current.as_deref())?;
+        }
+        let mut tags = vec![vec!["supersedes".to_owned(), p.target.clone()], vec!["expected_current".to_owned(), p.expected_current.unwrap_or_else(|| "none".into())]];
         if let Some(replacement) = &p.replacement {
             tags.push(vec!["replacement".to_owned(), replacement.clone()]);
         }
@@ -670,7 +688,7 @@ impl State {
     }
 
     /// Accept a proposed correction of a note: signed by the note's author or the owner. From then on the proposal is
-    /// in force, and it wins over any correction that came before it.
+    /// in force if the target still has the retirement head the caller last read.
     fn accept_correction(&mut self, caller: &Caller, p: AcceptParams) -> Result<Value> {
         if !is_hex64(&p.proposal) {
             return Err(refuse("id-invalid"));
@@ -680,11 +698,17 @@ impl State {
         if !target.as_ref().is_some_and(|t| visible(caller, t)) {
             return Err(refuse("not-found"));
         }
+        let target = target.ok_or_else(|| refuse("not-found"))?;
+        // An already accepted proposal goes to the store's duplicate check, preserving its precise refusal.
+        if target.superseded_by.as_deref() != Some(p.proposal.as_str()) {
+            check_correction_head(&target, p.expected_current.as_deref())?;
+        }
+        let tags = vec![vec!["accepts".to_owned(), p.proposal.clone()], vec!["expected_current".to_owned(), p.expected_current.unwrap_or_else(|| "none".into())]];
         let id = self.signed(caller, |s| {
-            let event = Event::sign(s.key(&caller.name)?, now(), ACCEPT_KIND, vec![vec!["accepts".to_owned(), p.proposal.clone()]], String::new())?;
+            let event = Event::sign(s.key(&caller.name)?, now(), ACCEPT_KIND, tags, String::new())?;
             s.store.record(event)
         })?;
-        let target = self.store.get(&target.map(|t| hex(t.event.id.as_bytes())).unwrap_or_default())?.ok_or_else(|| refuse("not-found"))?;
+        let target = self.store.get(&hex(target.event.id.as_bytes()))?.ok_or_else(|| refuse("not-found"))?;
         Ok(json!({"event": id, "target": view(&self.store, caller, &target)?}))
     }
 
