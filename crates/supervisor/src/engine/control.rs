@@ -9,7 +9,7 @@
 //! owner's passkey applies. Starting means: hand the approved set and an admission record to the root closure step
 //! (`control_dir`), then `systemctl start` the one engine unit, which polkit lets this user start and stop.
 
-use super::{refuse, write_atomic, Engine, UNIT};
+use super::{refuse, runtime, write_atomic, Engine, UNIT};
 use crate::engine_plugins::{self, PLUGIN_SET_TARGET};
 use crate::host::{Host, ReleaseStanding};
 use canon::{digest::Digest32, Result};
@@ -248,7 +248,7 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
         let found = tokio::task::spawn_blocking(move || engine_plugins::discover(&root))
             .await
             .unwrap_or_else(|_| Err(refuse("plugin-package")));
-        let decision = plan(Inputs {
+        let mut decision = plan(Inputs {
             bound,
             release: release_standing(&host).await,
             // A door policy the door would refuse to start on is no door at all (Grok review, part 5 #3).
@@ -257,6 +257,19 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
             found,
         });
         let state = unit_state().await;
+        // Runtime loss overrides even the release-lock grace. Correct package bytes do not prove that the
+        // harness loaded them: compatibility preflight can silently disable a profile row.
+        if decision.run || decision.hold {
+            if let (Some(set), Some(release)) = (approved.as_deref(), host.release_digest()) {
+                let pin = PluginSet::parse(set).and_then(|set| set.set_hash());
+                if let Ok(pin) = pin {
+                    let active = servable(&state) && started_from.as_deref() == Some(set);
+                    if let Err(refusal) = runtime::check(&engine.config, &pin.to_string(), &release, active) {
+                        decision = stop(refusal.reason, decision.propose);
+                    }
+                }
+            }
+        }
         if decision.hold {
             let since = *unreadable_since.get_or_insert_with(Instant::now);
             if keep_through_hold(started_from.is_some(), may_run(&state), since.elapsed()) {
@@ -271,7 +284,7 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
         // "running" is said (and served, proxy.rs) only once the unit is active, i.e. after the policy check passed.
         let declined_now = declined.is_some() && decision.propose.as_deref().map(Digest32::sha256) == declined;
         engine.set_status(match decision.reason {
-            "running" if !servable(&state) => "starting",
+            "running" if !servable(&state) || started_from.as_deref() != approved.as_deref() => "starting",
             "awaiting-plugin-set-approval" if declined_now => "plugin-set-declined",
             reason => reason,
         });

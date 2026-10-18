@@ -2,8 +2,8 @@
 # can write (its home, its settings) can undo it. Root-owned, inside the release (/engine/aukora, read-only).
 #
 # 1. The door, with the node's real values, and Kira 2's tools after it. They must match the door's policy (/etc/aukora/door-policy-v1.json):
-#    socket /run/aukora-door/door.sock, workspace root /work. A wrong value makes the door's apply() throw, so the
-#    harness does not start with the door half open.
+#    socket /run/aukora-door/door.sock, workspace root /work. The launcher requires positive activation of both
+#    packages (and every approved authority package); a disabled, missing or inactive plugin stops the engine.
 - insert:
     - id: aukora-door
       name: '@aukora/door'

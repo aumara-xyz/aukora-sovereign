@@ -33,6 +33,12 @@ impl Host {
         )
     }
 
+    /// Engine authority failures share the owner's existing notice poll without hiding approval cards.
+    pub(super) fn approval_snapshot(&self, session: &frontdoor::session::BoundSession<'_>, at: u64) -> Result<Value> {
+        let snapshot = self.approvals.snapshot(session, at)?;
+        with_engine_refusal(snapshot, self.engine.as_ref().and_then(|engine| engine.runtime_refusal()))
+    }
+
     /// The gate, for the engine controller's plugin-set reads and proposals.
     pub fn engine_gate(&self) -> &crate::adapters::GateAdapter {
         &self.gate
@@ -279,6 +285,34 @@ impl Host {
             ("fingerprint".into(), Value::text(fingerprint)?),
             ("state".into(), Value::text(state.to_owned())?),
         ])?)
+    }
+}
+
+fn with_engine_refusal(snapshot: Value, refusal: Option<&str>) -> Result<Value> {
+    let canon::json::ValueView::Object(fields) = snapshot.view() else { return Err(codes::SUPERVISOR_STATE) };
+    let mut fields = fields.to_vec();
+    fields.push(("engine_refusal".into(), match refusal {
+        Some(reason) => Value::text(format!("supervisor:{reason}"))?,
+        None => Value::null(),
+    }));
+    let snapshot = Value::object(fields)?;
+    frontdoor::api::JsonData::new(&snapshot)?;
+    Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authority_notice_keeps_the_approval_snapshot_intact() {
+        let snapshot = canon::json::parse_strict(br#"{"declined":[],"proposals":[{"expires_at_ms":1,"proposal":"0123456789abcdef0123456789abcdef"}],"sequence":7}"#).unwrap();
+        let result = with_engine_refusal(snapshot.clone(), Some("authority-plugin-missing")).unwrap();
+        for field in ["declined", "proposals", "sequence"] {
+            assert_eq!(result.get(field), snapshot.get(field));
+        }
+        assert_eq!(result.get("engine_refusal"), Some(&Value::text("supervisor:authority-plugin-missing".into()).unwrap()));
+        assert_eq!(with_engine_refusal(snapshot, None).unwrap().get("engine_refusal"), Some(&Value::null()));
     }
 }
 

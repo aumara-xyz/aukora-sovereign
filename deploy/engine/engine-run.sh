@@ -147,7 +147,30 @@ if host.get("Memory") != memory or host.get("NanoCpus") != nano or not 0 < (host
         or tmpfs.get("/tmp") != 1 << 30:
     print("engine-run: the sandbox container is not capped as asked", file=sys.stderr)
     sys.exit(1)
-' "$ENGINE_MEMORY_MIB" "$ENGINE_CPU_MILLI"
+' "$ENGINE_MEMORY_MIB" "$ENGINE_CPU_MILLI" || return 1
+    # A live positive assertion, not the absence of a warning. Until it exists the Type=exec unit stays activating
+    # and the supervisor serves no engine traffic. The entry watchdog kills on silence and on any disabled row.
+    for _ in $(seq 1 30); do
+        # >>> authority-ready (tests/deploy/test_engine_authority.py executes this check)
+        if python3 -I -c '
+import json, os, sys, time
+try:
+    path = "/run/aukora-engine/io/authority-status"
+    with open(path, "rb") as f:
+        raw = f.read(16385)
+        age = time.time() - os.fstat(f.fileno()).st_mtime
+    with open("/var/lib/aukora-engine/home/profiles/aukora/node_modules/.aukora-authority.json", "rb") as f:
+        expected = json.load(f)
+    value = json.loads(raw)
+    assert len(raw) <= 16384 and 0 <= age < 10 and value.pop("state") == "ready" and value == expected
+except (OSError, ValueError, AssertionError, KeyError, TypeError, AttributeError):
+    sys.exit(1)
+'; then return 0; fi
+        # <<< authority-ready
+        sleep 1
+    done
+    echo "engine-run: supervisor:authority-plugin-missing; runtime authority check refused the start" >&2
+    return 1
 }
 
 # Remove the sandbox and prove it is gone (SCOUT's sweep, M10: a delete whose failure was swallowed could leave the

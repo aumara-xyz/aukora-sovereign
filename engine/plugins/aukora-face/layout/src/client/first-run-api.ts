@@ -121,13 +121,14 @@ async function post(path: string, body: unknown, what: string): Promise<FirstRun
  *
  *  - **voice** — AUMA's read-only status, `plugins/aukora-face/layout/src/client/auma-status.ts:44`
  *  - **memory** — KIRA's list route, `plugins/aukora-kira/lib/memory-routes.mjs:32`
- *  - **approvals** — the AUMLOK control projection, `plugins/aukora-face/aumlok/src/control-projection.ts:88`
  *  - **messaging** — the messages contacts read, `plugins/aukora-face/messages/src/messages-route.ts:122`
+ *
+ * Approvals stay unknown here: the old AUMLOK local-control projection is not the node's approvals
+ * service. Sovereign keeps that service on the shell/owner origins, outside the engine page.
  */
 export const STATUS_SOURCES = {
   voice: '/api/auma-live/status',
   memory: '/api/kira/memories',
-  approvals: '/api/aukora/aumlok-control',
   messaging: '/aukora-messages/contacts.json',
 } as const
 

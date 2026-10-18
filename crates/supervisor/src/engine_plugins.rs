@@ -153,10 +153,10 @@ pub fn pending(approved: &PluginSet, assembly: &Assembly) -> Result<Vec<PendingP
         .collect()
 }
 
-/// A package keeps its `authority` mark across a change of bytes: the door is always one, and so is any package the
+/// A package keeps its `authority` mark across a change of bytes: Door and Kira are always ones, and so is any package the
 /// approved set already marks. A changed door therefore stays mandatory in the set the owner is asked to approve.
 fn is_authority(approved: &PluginSet, name: &str) -> bool {
-    name == floor::plugins::DOOR_PLUGIN || approved.entries().iter().any(|entry| entry.name == name && entry.authority)
+    matches!(name, floor::plugins::DOOR_PLUGIN | "@aukora/kira") || approved.entries().iter().any(|entry| entry.name == name && entry.authority)
 }
 
 /// The one set the owner is asked to approve next: the approved set with every pending package added or replaced.
@@ -177,7 +177,7 @@ pub fn candidate_set(approved: &PluginSet, assembly: &Assembly) -> Result<Option
 }
 
 /// The first set, for a node whose owner has approved none yet: every package found (hot reload and creator mode left
-/// out), the door marked as authority. `None` when the door package is not staged: without it nothing may start.
+/// out), Door and Kira marked as authority. `None` when Door is not staged: without it nothing may start.
 pub fn initial_set(found: &[Candidate]) -> Result<Option<Vec<u8>>> {
     if !found.iter().any(|candidate| candidate.name == floor::plugins::DOOR_PLUGIN) {
         return Ok(None);
@@ -188,7 +188,7 @@ pub fn initial_set(found: &[Candidate]) -> Result<Option<Vec<u8>>> {
         .map(|candidate| PluginEntry {
             name: candidate.name.clone(),
             digest: candidate.digest,
-            authority: candidate.name == floor::plugins::DOOR_PLUGIN,
+            authority: matches!(candidate.name.as_str(), floor::plugins::DOOR_PLUGIN | "@aukora/kira"),
         })
         .collect();
     PluginSet::new(entries)?.canonical_bytes().map(Some)
@@ -466,15 +466,21 @@ mod tests {
     }
 
     #[test]
-    fn the_first_set_needs_the_door_and_marks_it_authority() {
+    fn the_first_set_needs_the_door_and_marks_door_and_kira_authority() {
         let root = temp("initial");
         package(&root, "face", "@aukora/face-layout", "face");
         assert!(initial_set(&discover(&root).unwrap()).unwrap().is_none());
         package(&root, "door", DOOR_PLUGIN, "door");
+        package(&root, "kira", "@aukora/kira", "kira");
         package(&root, "hmr", "@cordis/plugin-hmr", "reload");
         let set = PluginSet::parse(&initial_set(&discover(&root).unwrap()).unwrap().unwrap()).unwrap();
         let names: Vec<_> = set.entries().iter().map(|entry| (entry.name.as_str(), entry.authority)).collect();
-        assert_eq!(names, [(DOOR_PLUGIN, true), ("@aukora/face-layout", false)]);
+        assert_eq!(names, [(DOOR_PLUGIN, true), ("@aukora/face-layout", false), ("@aukora/kira", true)]);
+        std::fs::write(root.join("kira/lib/index.js"), "changed kira").unwrap();
+        let assembly = assemble_dir(&set, &set.set_hash().unwrap(), &root).unwrap();
+        assert!(assembly.startable().is_err());
+        let next = PluginSet::parse(&candidate_set(&set, &assembly).unwrap().unwrap()).unwrap();
+        assert!(next.entries().iter().any(|entry| entry.name == "@aukora/kira" && entry.authority));
         let _ = std::fs::remove_dir_all(root);
     }
 

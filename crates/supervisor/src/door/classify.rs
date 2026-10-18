@@ -63,9 +63,11 @@ pub enum Derived {
 
 const FILE_TOOLS: [&str; 9] = ["read", "write", "edit", "str_replace_editor", "read_image", "glob", "grep", "working_directory", "lsp"];
 const EXEC_TOOLS: [&str; 6] = ["bash", "pwsh", "job_kill", "job_list", "job_output", "run_code"];
-const SESSION_TOOLS: [&str; 20] = [
+const SESSION_TOOLS: [&str; 21] = [
     "todo_write",
     "ask_user_question",
+    // The harness reviews a plan through userQuestions and updates only session plan state, never door grants.
+    "exit_plan_mode",
     "create_goal",
     "get_goal",
     "update_goal",
@@ -358,5 +360,13 @@ mod tests {
         assert_eq!(settle("local", Derived::Cross(Class::Net)), Err("bad-class"));
         assert_eq!(settle("quantum", Derived::Cross(Class::Net)), Err("bad-class"));
         assert_eq!(settle("", Derived::Cross(Class::Net)), Err("bad-class"));
+    }
+
+    #[test]
+    fn plan_review_is_local_without_admitting_sibling_tools() {
+        let r = roots();
+        assert_eq!(derive("exit_plan_mode", &args(r##"{"plan":"# Plan\nReview the workspace"}"##), &r), Derived::Local);
+        assert_eq!(derive("exit_plan_mode_export", &args("{}"), &r), Derived::Cross(Class::Unknown));
+        assert_eq!(derive("EXIT_PLAN_MODE", &args("{}"), &r), Derived::Cross(Class::Unknown));
     }
 }

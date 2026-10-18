@@ -41,7 +41,8 @@ if (root) {
     const show = (error: unknown) => {
       const code = error instanceof Error ? error.message : '';
       notice.textContent = code === 'frontdoor:session-required' || code === 'aumlok:binding-required'
-        ? 'Sign in to continue.' : code.startsWith('shell:approval-')
+        ? 'Sign in to continue.' : /^supervisor:(?:authority-[a-z-]+|profile-plugin-disabled)$/.test(code)
+          ? `Engine stopped (${code}). Required plugins could not be verified.` : code.startsWith('shell:approval-')
           ? 'Approvals are unavailable. Try again shortly.' : 'Connection unavailable. Try again shortly.';
       notice.hidden = false;
       notice.dataset.source = 'connection';

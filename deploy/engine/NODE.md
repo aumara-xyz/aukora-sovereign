@@ -39,9 +39,9 @@ owner session.
    store itself waits about a second for a lock another reader holds before it refuses.
 3. `door-not-configured`: no `/etc/aukora/door-policy-v1.json`.
 4. `awaiting-plugin-set-approval`: the owner has approved no plugin set. The controller raises one critical proposal for
-   `engine/plugin-set.json` holding every staged package by name and fingerprint, the door marked `authority`. One card.
-5. `authority-plugin-changed`: the door package on disk is not the approved bytes. The engine stops, and the changed
-   door is still proposed (it keeps `authority: true`), so the owner sees it instead of a silent outage.
+   `engine/plugin-set.json` holding every staged package by name and fingerprint, Door and Kira marked `authority`. One card.
+5. `authority-plugin-changed`: an authority package on disk is not the approved bytes. The engine stops, and the changed
+   package is still proposed (it keeps `authority: true`), so the owner sees it instead of a silent outage.
 6. `running`: the controller writes the approved set and `admission.json` to `/run/aukora-engine-ctl` (0750
    aukora:root, tmpfiles; files 0600 aukora, written with that mode whatever the umask; never mounted into the
    sandbox) and runs `systemctl start aukora-engine.service`. The root side does not assume that ownership, it
@@ -54,6 +54,24 @@ New or changed non-authority packages never load (the closure copies only approv
 minutes; a set the owner explicitly **Declined** is not raised again until the owner asks again (O19), and the engine
 says `plugin-set-declined` meanwhile.
 Hot reload and creator mode are never loaded and never approvable (`floor::plugins::is_hot_reload`).
+
+Correct bytes alone are insufficient: DSH can disable an incompatible profile plugin and boot successfully without
+it. The root closure now seals `.aukora-authority.json` with the approved set hash, release id and every package
+marked `authority`, plus the overlay's mandatory `@aukora/door` and `@aukora/kira`. Door checks the live Cordis Loader
+entries (enabled, fiber ACTIVE) and sends their names to its parent launcher over Node IPC every second. No readiness
+within 30 s, any `disabling profile plugin` diagnostic, loss of an active authority entry, or 10 s without a heartbeat
+kills the harness. The web and model bridges forward nothing before readiness. This is an honest-loader invariant;
+hostile code in the same process can forge IPC, so the OS wall remains the boundary.
+
+`engine-run.sh verify` also requires a fresh assertion for this exact set/release before the unit becomes active.
+The supervisor checks freshness every 5 s, outside the wall, and stops on loss even during the release-lock grace.
+Refusal codes are `profile-plugin-disabled`, `authority-plugin-missing`, `authority-plugin-inactive`,
+`authority-plugin-timeout` or `authority-runtime-check`: the journal names the code and the shell's existing approvals
+poll shows it as a notice while continuing to deliver approval cards. The launcher's terminal refusal persists in
+`/run/aukora-engine/io/authority-refusal`, scoped to the failed set/release, so systemd cannot silently restart the
+same broken composition. Newly approved set/release bytes may try again; an operator explicitly retrying unchanged
+bytes removes that file while the engine is stopped. No owner approval is inferred from a retry. Kira is mandatory
+at runtime even in older sets that did not mark it `authority`; fresh and changed Kira proposals now mark it.
 
 ## 3. The plugin fingerprint gate, end to end
 
@@ -126,6 +144,14 @@ Kira reads, the approvals list, the data bridge) and could frame and overlay the
 clickjack seam). A sibling origin gets none of that: host-only cookies stay on their hosts and the owner origin keeps
 refusing every frame ancestor but the shell. This deviates from the brief ("the shell origin serves the DSH web UI");
 see decision D1.
+
+The browser face does not poll the legacy desktop `/api/aukora/aumlok-control` projection: that reader requires
+the desktop ceremony bridge. First-run also no longer treats that projection as node approvals; unavailable
+approvals stay unknown, and the real approvals remain on the shell/owner origins.
+
+`exit_plan_mode` is an exact-name local tool in both door classifiers. The pinned harness validates the plan,
+asks `userQuestions` for review, and changes session plan intent; it executes no crossing and grants no door
+authority. Unknown sibling tool names remain refused.
 
 **Who may open it (SCOUT M18).** `GET /engine/open` mints a ticket (at most 32 a minute), and cookies are `SameSite=Strict`,
 which is site-based: a page on `engine.<shell>` is same-site with the shell, so it could send credentialed no-cors GETs and
@@ -378,6 +404,11 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
    upgrade to any path but `/api/remote.mux`, or from another Origin, is refused (unit tests). Signing out of the shell
    (`POST /api/session/end`) → the engine origin answers 403 at once and an open engine WebSocket closes 1008 within
    5 s (NODE, O12); re-bind or a release change → 403 as well.
+   Runtime activation check (not yet run on the node): in a throwaway approved composition, give Door or Kira
+   mismatched DSH peers. Even if DSH prints its normal launch line, no engine/model traffic may pass; expect
+   `profile-plugin-disabled` and a stopped sandbox, plus the refusal notice in the shell's Approvals poll. A missing
+   Door row must stop within 30 s (`authority-plugin-missing`); disabling any marked authority after readiness must
+   stop it too. Restore approved compatible bytes/release before retrying; never approve a faulty set on a real node.
 
 **E. Upgrade a bound node (O17).** The node keeps serving its approved release (shell, owner origin, engine) until
 the owner approves the new one; nothing switches before that.

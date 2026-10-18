@@ -26,6 +26,8 @@ const EXEC_TOOLS = new Set(['bash', 'pwsh', 'job_kill', 'job_list', 'job_output'
 /** Session-internal tools: no file, process, network or persistence channel of their own. */
 const SESSION_TOOLS = new Set([
   'todo_write', 'ask_user_question', 'create_goal', 'get_goal', 'update_goal', 'skill', 'load_workspace_dependencies',
+  // The harness reviews the plan through userQuestions and changes only session plan state, never door grants.
+  'exit_plan_mode',
   'cordis_inspect_list', 'cordis_inspect_query', 'list_agents', 'list_subagent_models', 'interrupt_agent', 'send_message',
   // Read-only queries over the engine's own persisted session history (DSH authorizes which sessions a caller may see).
   // Listed by name, never by prefix: a future `session_*` tool that writes must not inherit `local`.

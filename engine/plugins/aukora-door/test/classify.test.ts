@@ -69,6 +69,12 @@ test('an unknown tool crosses by default', () => {
   assert.equal(classifyCall('READ', { file_path: 'a' }, roots), 'unknown')
 })
 
+test('plan review is session-local and does not admit sibling tools', () => {
+  assert.equal(classifyCall('exit_plan_mode', { plan: '# Plan\nReview the workspace' }, roots), 'local')
+  assert.equal(classifyCall('exit_plan_mode_export', {}, roots), 'unknown')
+  assert.equal(classifyCall('EXIT_PLAN_MODE', {}, roots), 'unknown')
+})
+
 test('pwsh is the shell: local, with its working directory checked', () => {
   assert.equal(classifyCall('pwsh', { command: 'Get-ChildItem', description: 'list' }, roots), 'local')
   assert.equal(classifyCall('pwsh', { command: 'dir', workdir: '/sandbox/src' }, roots), 'local')

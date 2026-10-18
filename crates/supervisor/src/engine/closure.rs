@@ -64,7 +64,7 @@ fn read_small(path: &Path, limit: u64, supervisor: u32) -> Result<Vec<u8>> {
 }
 
 /// The set and its pin, from the control folder, cross-checked.
-pub fn admitted(control: &Path, supervisor: u32) -> Result<(PluginSet, Digest32)> {
+pub fn admitted(control: &Path, supervisor: u32) -> Result<(PluginSet, Digest32, String)> {
     check_control(control, supervisor)?;
     let set_bytes = read_small(&control.join("plugin-set.json"), floor::plugins::SET_MAX_BYTES as u64, supervisor)?;
     let record: serde_json::Value = serde_json::from_slice(&read_small(&control.join("admission.json"), 4096, supervisor)?)
@@ -83,7 +83,7 @@ pub fn admitted(control: &Path, supervisor: u32) -> Result<(PluginSet, Digest32)
     {
         return Err(refuse("engine-admission"));
     }
-    Ok((set, pin))
+    Ok((set, pin, record["release"].as_str().unwrap().to_owned()))
 }
 
 fn writable(dir: &Path) {
@@ -107,7 +107,7 @@ fn remove_tree(dir: &Path) {
 
 /// Build the closure for `to` and swap it in. Returns the closure manifest (`Assembly::manifest_bytes`).
 pub fn build(control: &Path, from: &Path, to: &Path, supervisor: u32) -> Result<Vec<u8>> {
-    let (set, pin) = admitted(control, supervisor)?;
+    let (set, pin, release) = admitted(control, supervisor)?;
     let name = to.file_name().and_then(|name| name.to_str()).ok_or_else(|| refuse("engine-closure"))?;
     let fresh: PathBuf = to.with_file_name(format!(".{name}.new"));
     let old: PathBuf = to.with_file_name(format!(".{name}.old"));
@@ -124,6 +124,18 @@ pub fn build(control: &Path, from: &Path, to: &Path, supervisor: u32) -> Result<
         remove_tree(&fresh);
         return Err(refusal);
     }
+    // Root-owned, sealed with the closure, and impossible as a package name (leading dot). The runtime must see
+    // every owner-marked authority package, plus both plugins required by the node's authority overlay.
+    let mut required: Vec<_> = set.entries().iter().filter(|entry| entry.authority).map(|entry| entry.name.as_str()).collect();
+    required.extend([floor::plugins::DOOR_PLUGIN, "@aukora/kira"]);
+    required.sort_unstable();
+    required.dedup();
+    let runtime = serde_json::to_vec(&serde_json::json!({"plugins": required, "set_hash": pin.to_string(), "release": release}))
+        .map_err(|_| refuse("engine-closure"))?;
+    std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).map_err(|_| refuse("engine-closure"))?;
+    std::fs::write(fresh.join(".aukora-authority.json"), runtime).map_err(|_| refuse("engine-closure"))?;
+    std::fs::set_permissions(fresh.join(".aukora-authority.json"), std::fs::Permissions::from_mode(0o444))
+        .map_err(|_| refuse("engine-closure"))?;
     // Some kernels update a moved directory's `..` entry and want it writable for that; seal it again after.
     let mode = |path: &Path, bits| std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits));
     if std::fs::symlink_metadata(to).is_ok() {
@@ -202,13 +214,18 @@ mod tests {
         let (from, control, to) = (root.join("staged"), root.join("control"), root.join("node_modules"));
         package(&from, "door", DOOR_PLUGIN, "door v1");
         package(&from, "face", "@aukora/face-layout", "face v1");
+        package(&from, "guard", "@owner/guard", "guard v1");
         let found = crate::engine_plugins::discover(&from).unwrap();
-        let entries = found.iter().map(|c| PluginEntry { name: c.name.clone(), digest: c.digest, authority: c.name == DOOR_PLUGIN }).collect();
+        let entries = found.iter().map(|c| PluginEntry { name: c.name.clone(), digest: c.digest, authority: c.name != "@aukora/face-layout" }).collect();
         let set = PluginSet::new(entries).unwrap();
         hand_over(&control, &set, &set.set_hash().unwrap().to_string());
         let manifest = String::from_utf8(build(&control, &from, &to, me()).unwrap()).unwrap();
         assert!(manifest.contains("\"hmr\":false") && manifest.contains("@aukora/face-layout"));
         assert!(to.join("@aukora/door/lib/index.js").is_file());
+        let runtime: serde_json::Value = serde_json::from_slice(&std::fs::read(to.join(".aukora-authority.json")).unwrap()).unwrap();
+        assert_eq!(runtime["plugins"], serde_json::json!([DOOR_PLUGIN, "@aukora/kira", "@owner/guard"]));
+        assert_eq!(runtime["set_hash"], set.set_hash().unwrap().to_string());
+        assert_eq!(std::fs::metadata(to.join(".aukora-authority.json")).unwrap().mode() & 0o777, 0o444);
         // A rebuild replaces the old closure; a changed door leaves the last good closure in place and refuses.
         build(&control, &from, &to, me()).unwrap();
         std::fs::write(from.join("door/lib/index.js"), "door v2").unwrap();

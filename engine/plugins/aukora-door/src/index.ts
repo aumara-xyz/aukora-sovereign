@@ -8,6 +8,7 @@
 // process, and every failure refuses. The OS wall around the whole engine is the boundary.
 
 import type { Context } from '@deepseek-ai/cordis'
+import { watchAuthority } from './authority.ts'
 import { createDoor } from './door.ts'
 import type { DoorConfig, ExecLike, PreDecisionLike, ResultLike } from './types.ts'
 
@@ -39,4 +40,5 @@ export function apply(ctx: Context, config: DoorConfig): void {
   ctx.tools.guard(((exec: Readonly<ExecLike>) => door.guard(exec)) as never)
   ctx.on('tools/execute', ((exec: ExecLike, next: () => Promise<ResultLike>) => door.execute(exec, next)) as never, first)
   ctx.on('tools/result', ((exec: Readonly<ExecLike>) => { door.forget(exec) }) as never, first)
+  watchAuthority(ctx as never)
 }

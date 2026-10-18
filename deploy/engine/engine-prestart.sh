@@ -55,7 +55,7 @@ sed -e "s/@AUMA_UID@/$AUMA_UID/g" -e "s/@AUMA_GID@/$AUMA_GID/g" "$REL/openshell-
 chmod 0644 /etc/aukora/engine/.policy.new
 mv -f /etc/aukora/engine/.policy.new /etc/aukora/engine/openshell-policy.yaml
 install -o root -g root -m 0644 "$REL/resolv.conf" /etc/aukora/engine/resolv.conf
-for name in entry.mjs authority.patch.yml; do
+for name in entry.mjs authority.mjs authority.patch.yml; do
     install -o root -g root -m 0644 "$REL/$name" "/opt/aukora-engine/aukora/$name"
 done
 # The engine's disk is its own fixed-size filesystem (engine_install.py: a loop-mounted ext4 image,
@@ -138,4 +138,4 @@ chmod 0555 "$PROFILE/node_modules"
 
 # 4.
 [ "$(findmnt -n -o FSTYPE --target "$IO" 2>/dev/null)" = tmpfs ] && mountpoint -q "$IO" || fail "the bridge folder is not its tmpfs"
-rm -f -- "$IO/web.sock" "$IO/launch-url"
+rm -f -- "$IO/web.sock" "$IO/launch-url" "$IO/authority-status"

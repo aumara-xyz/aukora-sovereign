@@ -361,7 +361,7 @@ def install_artifacts(artifacts, stage):
     safe_extract(os.path.join(stage, "engine-plugins.tar"), ENGINE_ROOT + "/plugins")
     # The in-wall scripts and the authority overlay come from the release itself.
     owned_dir(ENGINE_ROOT + "/aukora", 0o755)
-    for name in ("entry.mjs", "authority.patch.yml"):
+    for name in ("entry.mjs", "authority.mjs", "authority.patch.yml"):
         shutil.copyfile(release_file("engine/" + name), ENGINE_ROOT + "/aukora/" + name)
         os.chmod(ENGINE_ROOT + "/aukora/" + name, 0o644)
     return image

@@ -12,12 +12,15 @@ type StatusFetch = (
 ) => Promise<Response>
 
 /**
- * Refreshes one generation-scoped AUMLOK status projection from the local page origin.
+ * Refreshes the desktop shell's AUMLOK projection from the local page origin.
  * Every refresh disconnects first; aborted or superseded reads cannot restore stale status.
  */
 export class AumlokControlStatusLoader {
   private controller: AbortController | undefined
   private disposed = false
+  private readonly projection: AumlokControlProjectionService
+  private readonly connection: Pick<ConnectionHandle, 'isLoopback'>
+  private readonly fetchStatus: StatusFetch
 
   /**
    * @param projection - browser-owned validated projection service.
@@ -25,24 +28,31 @@ export class AumlokControlStatusLoader {
    * @param fetchStatus - same-origin HTTP reader; defaults to the browser fetch implementation.
    */
   constructor(
-    private readonly projection: AumlokControlProjectionService,
-    private readonly connection: Pick<ConnectionHandle, 'isLoopback'>,
-    private readonly fetchStatus: StatusFetch = (input, init) => globalThis.fetch(input, init),
-  ) {}
+    projection: AumlokControlProjectionService,
+    connection: Pick<ConnectionHandle, 'isLoopback'>,
+    fetchStatus: StatusFetch = (input, init) => globalThis.fetch(input, init),
+  ) {
+    this.projection = projection
+    this.connection = connection
+    this.fetchStatus = fetchStatus
+  }
 
   private stale(controller: AbortController): boolean {
     return controller.signal.aborted
   }
 
   /**
-   * Drop the current projection and attempt one fresh loopback read.
+   * Drop the current projection and attempt one fresh desktop-shell loopback read.
    * Network, HTTP, media-type, and validation failures leave the service disconnected.
    * @returns after the current generation either connects or remains disconnected.
    */
   async refresh(): Promise<void> {
     this.controller?.abort()
     this.projection.disconnect()
-    if (this.disposed || !this.connection.isLoopback) return
+    // Sovereign's browser has no desktop controller bridge: the owner binding lives outside the
+    // engine origin (NODE.md section 5). The legacy local-control route cannot answer for that node,
+    // so leave the projection disconnected instead of repeatedly requesting its expected 404.
+    if (this.disposed || !this.connection.isLoopback || !this.projection.ceremonyAvailable) return
     const controller = new AbortController()
     this.controller = controller
     try {

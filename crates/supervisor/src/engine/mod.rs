@@ -21,6 +21,7 @@ mod access;
 pub mod closure;
 mod control;
 mod proxy;
+mod runtime;
 mod socket;
 
 use crate::host::Host;
@@ -103,6 +104,10 @@ pub struct Engine {
 const MAX_SOCKETS: usize = 16;
 
 impl Engine {
+    /// For the existing approvals notice path; carries a refusal, never an approval action.
+    pub(crate) fn runtime_refusal(&self) -> Option<&'static str> {
+        self.status.lock().ok().and_then(|status| runtime::is_refusal(*status).then_some(*status))
+    }
     /// `None` when the node has no `engine-v1.json`. A present but bad file is a refusal (logged by the caller; the
     /// node keeps serving without an engine).
     pub fn load(config: &crate::config::NodeConfig) -> Result<Option<Arc<Self>>> {

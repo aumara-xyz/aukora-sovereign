@@ -6,7 +6,6 @@ mod engine_routes;
 pub use engine_routes::ReleaseStanding;
 mod owner_gate;
 mod pairing_routes;
-
 use crate::{
     adapters::{HostClock, HostLedger},
     config::NodeConfig,
@@ -572,7 +571,7 @@ impl Host {
                     if session.record().scope != frontdoor::session::SessionScope::Shell {
                         return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
                     }
-                    let snapshot = self.approvals.snapshot(&session, now()?)?;
+                    let snapshot = self.approval_snapshot(&session, now()?)?;
                     self.with_release(|_| Ok(()))?;
                     json_response(snapshot)
                 },
@@ -620,7 +619,7 @@ impl Host {
                             return Err(codes::AUMLOK_BINDING_REQUIRED);
                         };
                         return Ok(crate::identity::Reply {
-                            body: self.approvals.snapshot(&session, now()?)?,
+                            body: self.approval_snapshot(&session, now()?)?,
                             transition: None,
                         });
                     }

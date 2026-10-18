@@ -22,7 +22,7 @@ export const SESSION_REFUSALS: ReadonlySet<string> = new Set([
   'frontdoor:cookie-host-refused', 'aumlok:binding-required',
 ]);
 
-async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: string[]; declined: string[] }> {
+async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: string[]; declined: string[]; engineRefusal: string | null }> {
   const response = await fetch('/api/approvals', {
     method: 'GET', credentials: 'same-origin', mode: 'same-origin', redirect: 'error', cache: 'no-store',
     headers: { accept: 'application/json' }, signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
@@ -48,7 +48,13 @@ async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: st
       ? data.error : 'shell:approval-unavailable';
     throw new Error(code);
   }
-  exactKeys(data, ['sequence', 'proposals', 'declined']);
+  exactKeys(data, Object.hasOwn(data, 'engine_refusal')
+    ? ['sequence', 'proposals', 'declined', 'engine_refusal'] : ['sequence', 'proposals', 'declined']);
+  const engineRefusal = data.engine_refusal ?? null;
+  if (engineRefusal !== null && (typeof engineRefusal !== 'string'
+    || !/^supervisor:(?:authority-[a-z0-9-]+|profile-plugin-disabled)$/.test(engineRefusal))) {
+    throw new Error('shell:approval-response-invalid');
+  }
   if (typeof data.sequence !== 'number' || !Number.isSafeInteger(data.sequence) || data.sequence < 0
     || !Array.isArray(data.proposals) || data.proposals.length > MAX_NOTIFICATIONS) {
     throw new Error('shell:approval-response-invalid');
@@ -69,7 +75,7 @@ async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: st
     if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id) || declined.has(id)) throw new Error('shell:approval-response-invalid');
     declined.add(id);
   }
-  return { sequence: data.sequence, ids: [...ids], declined: [...declined] };
+  return { sequence: data.sequence, ids: [...ids], declined: [...declined], engineRefusal };
 }
 
 /** Server-filtered notifications select a pane; they carry no approval material. */
@@ -116,6 +122,7 @@ export class ApprovalWatch {
       if (this.#disposed) return;
       if (this.#sequence !== null && next.sequence < this.#sequence) throw new Error('shell:approval-sequence-rollback');
       this.#options.session(true);
+      if (next.engineRefusal !== null) this.#options.refusal(new Error(next.engineRefusal));
       this.#sequence = next.sequence;
       this.#options.pending(next.ids.length);
       this.#options.declined(next.declined);
