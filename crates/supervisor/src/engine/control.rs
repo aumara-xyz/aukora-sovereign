@@ -261,10 +261,10 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
         // harness loaded them: compatibility preflight can silently disable a profile row.
         if decision.run || decision.hold {
             if let (Some(set), Some(release)) = (approved.as_deref(), host.release_digest()) {
-                let pin = PluginSet::parse(set).and_then(|set| set.set_hash());
-                if let Ok(pin) = pin {
+                let parsed = PluginSet::parse(set).and_then(|set| Ok((set.set_hash()?, super::closure::required_plugins(&set))));
+                if let Ok((pin, plugins)) = parsed {
                     let active = servable(&state) && started_from.as_deref() == Some(set);
-                    if let Err(refusal) = runtime::check(&engine.config, &pin.to_string(), &release, active) {
+                    if let Err(refusal) = runtime::check(&engine.config, &pin.to_string(), &release, &plugins, active) {
                         decision = stop(refusal.reason, decision.propose);
                     }
                 }

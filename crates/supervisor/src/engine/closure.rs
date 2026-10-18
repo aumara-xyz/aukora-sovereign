@@ -105,6 +105,17 @@ fn remove_tree(dir: &Path) {
     }
 }
 
+/// The packages the running harness must report live: every owner-marked authority package of the approved set, plus
+/// both plugins the node's authority overlay requires. Sorted and unique, exactly as sealed in `.aukora-authority.json`.
+pub fn required_plugins(set: &PluginSet) -> Vec<String> {
+    let mut required: Vec<String> =
+        set.entries().iter().filter(|entry| entry.authority).map(|entry| entry.name.clone()).collect();
+    required.extend([floor::plugins::DOOR_PLUGIN.to_owned(), "@aukora/kira".to_owned()]);
+    required.sort_unstable();
+    required.dedup();
+    required
+}
+
 /// Build the closure for `to` and swap it in. Returns the closure manifest (`Assembly::manifest_bytes`).
 pub fn build(control: &Path, from: &Path, to: &Path, supervisor: u32) -> Result<Vec<u8>> {
     let (set, pin, release) = admitted(control, supervisor)?;
@@ -126,10 +137,7 @@ pub fn build(control: &Path, from: &Path, to: &Path, supervisor: u32) -> Result<
     }
     // Root-owned, sealed with the closure, and impossible as a package name (leading dot). The runtime must see
     // every owner-marked authority package, plus both plugins required by the node's authority overlay.
-    let mut required: Vec<_> = set.entries().iter().filter(|entry| entry.authority).map(|entry| entry.name.as_str()).collect();
-    required.extend([floor::plugins::DOOR_PLUGIN, "@aukora/kira"]);
-    required.sort_unstable();
-    required.dedup();
+    let required = required_plugins(&set);
     let runtime = serde_json::to_vec(&serde_json::json!({"plugins": required, "set_hash": pin.to_string(), "release": release}))
         .map_err(|_| refuse("engine-closure"))?;
     std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).map_err(|_| refuse("engine-closure"))?;

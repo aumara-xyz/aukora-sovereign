@@ -30,13 +30,21 @@ fn read(path: &Path) -> Result<Option<(Value, Duration)>> {
     Ok(Some((value, age)))
 }
 
+fn same_plugins(value: &Value, plugins: &[String]) -> bool {
+    value["plugins"].as_array().is_some_and(|named| {
+        named.len() == plugins.len() && named.iter().zip(plugins).all(|(named, plugin)| named.as_str() == Some(plugin))
+    })
+}
+
 fn same_run(value: &Value, set: &str, release: &str) -> bool {
     value["set_hash"].as_str() == Some(set) && value["release"].as_str() == Some(release)
 }
 
 /// A terminal refusal survives systemd restarts for these exact set/release bytes. A newly approved set or release
 /// may try again. Root can explicitly retry unchanged bytes by removing authority-refusal while the engine is stopped.
-pub fn check(config: &EngineConfig, set: &str, release: &str, active: bool) -> Result<()> {
+/// An active engine also needs its live assertion to name exactly the `plugins` sealed for this set (the closure's
+/// `required_plugins`), so an assertion for another package list never keeps it served (Grok review, batch 3 door #4).
+pub fn check(config: &EngineConfig, set: &str, release: &str, plugins: &[String], active: bool) -> Result<()> {
     let dir = config.launch_file.parent().ok_or_else(|| refuse("authority-runtime-check"))?;
     if let Some((value, _)) = read(&dir.join("authority-refusal"))? {
         if same_run(&value, set, release) {
@@ -52,6 +60,9 @@ pub fn check(config: &EngineConfig, set: &str, release: &str, active: bool) -> R
     }
     if active {
         match read(&dir.join("authority-status"))? {
+            Some((value, _)) if same_run(&value, set, release) && !same_plugins(&value, plugins) => {
+                return Err(refuse("authority-runtime-check"))
+            }
             Some((value, age)) if same_run(&value, set, release) && value["state"] == "ready" && age < Duration::from_secs(10) => {}
             Some(_) => return Err(refuse("authority-plugin-timeout")),
             None => return Err(refuse("authority-plugin-missing")),
@@ -70,33 +81,57 @@ mod tests {
         }
     }
 
+    fn required() -> Vec<String> {
+        vec!["@aukora/door".into(), "@aukora/kira".into()]
+    }
+
     #[test]
     fn an_active_engine_needs_a_fresh_assertion_and_a_refusal_blocks_restarts_of_those_bytes() {
         let dir = std::env::temp_dir().join(format!("engine-runtime-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let config = config(&dir);
-        assert!(check(&config, "set", "release", false).is_ok());
-        assert_eq!(check(&config, "set", "release", true).unwrap_err().reason, "authority-plugin-missing");
+        assert!(check(&config, "set", "release", &required(), false).is_ok());
+        assert_eq!(check(&config, "set", "release", &required(), true).unwrap_err().reason, "authority-plugin-missing");
         let status = dir.join("authority-status");
-        std::fs::write(&status, r#"{"set_hash":"set","release":"release","state":"ready"}"#).unwrap();
-        assert!(check(&config, "set", "release", true).is_ok());
-        assert!(check(&config, "other", "release", true).is_err());
+        std::fs::write(&status, r#"{"set_hash":"set","release":"release","plugins":["@aukora/door","@aukora/kira"],"state":"ready"}"#).unwrap();
+        assert!(check(&config, "set", "release", &required(), true).is_ok());
+        assert!(check(&config, "other", "release", &required(), true).is_err());
         let old = std::time::SystemTime::now() - Duration::from_secs(11);
         std::fs::File::open(&status).unwrap().set_times(std::fs::FileTimes::new().set_modified(old)).unwrap();
-        assert_eq!(check(&config, "set", "release", true).unwrap_err().reason, "authority-plugin-timeout");
+        assert_eq!(check(&config, "set", "release", &required(), true).unwrap_err().reason, "authority-plugin-timeout");
         std::fs::write(dir.join("authority-refusal"), r#"{"set_hash":"set","release":"release","reason":"profile-plugin-disabled"}"#).unwrap();
-        assert_eq!(check(&config, "set", "release", false).unwrap_err().reason, "profile-plugin-disabled");
-        assert!(check(&config, "new-set", "release", false).is_ok());
-        assert!(check(&config, "set", "new-release", false).is_ok());
+        assert_eq!(check(&config, "set", "release", &required(), false).unwrap_err().reason, "profile-plugin-disabled");
+        assert!(check(&config, "new-set", "release", &required(), false).is_ok());
+        assert!(check(&config, "set", "new-release", &required(), false).is_ok());
         std::fs::write(dir.join("authority-refusal"), "malformed").unwrap();
-        assert_eq!(check(&config, "set", "release", false).unwrap_err().reason, "authority-runtime-check");
+        assert_eq!(check(&config, "set", "release", &required(), false).unwrap_err().reason, "authority-runtime-check");
         std::fs::remove_file(dir.join("authority-refusal")).unwrap();
         std::fs::remove_file(&status).unwrap();
         std::os::unix::fs::symlink("/dev/zero", &status).unwrap();
-        assert_eq!(check(&config, "set", "release", true).unwrap_err().reason, "authority-runtime-check");
+        assert_eq!(check(&config, "set", "release", &required(), true).unwrap_err().reason, "authority-runtime-check");
         std::fs::remove_dir_all(&dir).unwrap();
     }
+    #[test]
+    fn a_fresh_assertion_for_another_plugin_list_never_keeps_the_engine_served() {
+        let dir = std::env::temp_dir().join(format!("engine-runtime-plugins-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = config(&dir);
+        let status = dir.join("authority-status");
+        let sealed: Vec<String> = vec!["@aukora/door".into(), "@aukora/kira".into(), "@owner/guard".into()];
+        for listed in [r#"["@aukora/door","@aukora/kira"]"#, r#"["@aukora/door","@aukora/kira","@owner/other"]"#,
+            r#"["@aukora/door","@aukora/kira","@owner/guard","@owner/extra"]"#, r#""@aukora/door""#, "null"] {
+            std::fs::write(&status, format!(r#"{{"set_hash":"set","release":"release","plugins":{listed},"state":"ready"}}"#)).unwrap();
+            assert_eq!(check(&config, "set", "release", &sealed, true).unwrap_err().reason, "authority-runtime-check", "{listed}");
+        }
+        std::fs::write(&status, r#"{"set_hash":"set","release":"release","state":"ready"}"#).unwrap();
+        assert_eq!(check(&config, "set", "release", &sealed, true).unwrap_err().reason, "authority-runtime-check");
+        std::fs::write(&status, r#"{"set_hash":"set","release":"release","plugins":["@aukora/door","@aukora/kira","@owner/guard"],"state":"ready"}"#).unwrap();
+        assert!(check(&config, "set", "release", &sealed, true).is_ok());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn runtime_assertions_are_bound_to_the_approved_set_and_release() {
         let value = serde_json::json!({"set_hash": "set", "release": "release"});
