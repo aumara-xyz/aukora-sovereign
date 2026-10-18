@@ -276,6 +276,7 @@ impl Transport for FakeRelay {
             envelopes,
             next_cursor: None,
             exhausted: true,
+            deferred: None,
         })
     }
 }

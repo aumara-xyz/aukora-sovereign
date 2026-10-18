@@ -32,6 +32,7 @@ impl Transport for Relay {
             envelopes: self.incoming.clone(),
             next_cursor: None,
             exhausted: true,
+            deferred: None,
         })
     }
 }

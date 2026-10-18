@@ -142,6 +142,9 @@ pub struct ReceiveBatch {
     pub next_cursor: Option<String>,
     /// True means this bounded query completed; it does not prove global absence.
     pub exhausted: bool,
+    /// Query failure to report after admitting the returned data and retaining
+    /// the next cursor, so retry health does not discard successful progress.
+    pub deferred: Option<Refusal>,
 }
 
 /// Trusted-host adapter contract. Messaging policy precedes send and follows

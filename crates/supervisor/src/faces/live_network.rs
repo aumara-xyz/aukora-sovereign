@@ -174,6 +174,10 @@ impl LiveNetwork {
             .lock()
             .map_err(|_| refuse("network-store-unavailable"))?
             .set_receive_cursor(batch.next_cursor.as_deref())?;
+        // Retain settled progress and relay rotation before triggering backoff.
+        if let Some(code) = batch.deferred {
+            return Err(code);
+        }
         Ok(())
     }
 }

@@ -187,7 +187,7 @@ fn saturated_timestamp_is_retained_without_starving_another_relay() {
 }
 
 #[test]
-fn failed_query_cannot_pin_polling_to_an_unresponsive_relay() {
+fn failed_query_reports_health_and_cannot_pin_polling_to_an_unresponsive_relay() {
     let key = SecretKey::generate().unwrap();
     let recipient = key.public_key().unwrap();
     let healthy = vec![event(&key, recipient, 80, "healthy relay")];
@@ -215,6 +215,17 @@ fn failed_query_cannot_pin_polling_to_an_unresponsive_relay() {
             }
         })
         .unwrap();
+        assert_eq!(
+            batch.deferred,
+            if poll % 2 == 0 {
+                Some(canon::Refusal {
+                    organ: "relay",
+                    reason: "operation-timeout",
+                })
+            } else {
+                None
+            }
+        );
         delivered += batch.envelopes.len();
         request.cursor = batch.next_cursor;
         assert_eq!(delivered > 0, poll > 0);

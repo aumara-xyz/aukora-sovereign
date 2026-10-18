@@ -373,7 +373,9 @@ pub(crate) fn receive_page(
                 "relay: query-deferred {}:{}; history cursor retained",
                 code.organ, code.reason
             );
-            return finish_batch(Vec::new(), &positions, index, keys.len(), false);
+            let mut batch = finish_batch(Vec::new(), &positions, index, keys.len(), false)?;
+            batch.deferred = Some(code);
+            return Ok(batch);
         }
     };
     // A frozen or saturated history boundary must not also freeze the fresh
@@ -429,6 +431,7 @@ fn finish_batch(
         envelopes,
         next_cursor: Some(cursor),
         exhausted,
+        deferred: None,
     })
 }
 const fn refusal(reason: &'static str) -> canon::Refusal {

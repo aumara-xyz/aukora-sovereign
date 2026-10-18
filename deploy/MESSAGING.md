@@ -109,16 +109,20 @@ The relay adapter pages each relay independently with persisted inclusive
 its upper bound so newer arrivals cannot continually displace older messages.
 Each relay alternates history pages with an independent query of the newest
 16 wraps in the two-day timestamp window. A long history sweep cannot freeze
-that query's upper bound. Normal pages contain at most 16 wraps. A timestamp boundary is queried again
+that query's upper bound. Normal pages contain at most 16 wraps. A timestamp
+boundary is queried again
 with a query limit growing to 128. A query result larger than the delivery
 byte budget is returned in bounded chunks; a persisted timestamp/ID marker
 resumes the same query in NIP-01 order across polls and restarts. The relay
 client separately bounds each query to 500 attempted events and 4 MiB of input.
 A short response permits best-effort traversal past that timestamp; it is not
-proof that the relay returned every stored event. Completed sweeps overlap the two-day NIP-59 timestamp randomization
+proof that the relay returned every stored event. Completed sweeps overlap the
+two-day NIP-59 timestamp randomization
 interval; every fourth subsequent sweep revisits all history, covering old
 queued wraps first published after a long sender outage. Failed queries retain
-their history position and still rotate to the next relay. A cursor advances
+their history position and still rotate to the next relay. Once the cursor and
+retained retries settle, query failures reach the worker and trigger backoff.
+A cursor advances
 only after the page is admitted or durably refused.
 Clearable refusals retain their ciphertext locally and retry eight per poll
 across pagination and restarts. This queue holds at most 4096 wraps and 16 MiB
@@ -127,13 +131,16 @@ fills. An evicted wrap requires the contact to resend it.
 
 NIP-01 has inclusive, second-resolution time bounds and exact event IDs, with
 no offset or exclusion cursor. A full 128-wrap single-second boundary therefore
-logs `query-timestamp-saturated` and retains that history boundary. Independent
+logs `query-timestamp-saturated` and retains that history boundary. The client's
+4 MiB input cap can retain a crowded second before the 128-item limit too;
+chunking the returned batches does not increase that input cap. Independent
 tail queries continue advancing their upper bound, including on that relay;
 without them the frozen boundary would block new inbound as well as history.
 A same-second flood can still hide wraps outside the relay response and block
 older history. Relays may also return fewer events than requested, so history
 completeness cannot be guaranteed. Lossless traversal of an arbitrarily crowded
-second requires an additional relay paging capability. NIP-59 hides the real sender behind an ephemeral
+second requires an additional relay paging capability. NIP-59 hides the real
+sender behind an ephemeral
 outer key, so a per-sender cap before opening the seal would not identify
 contacts or constrain a stranger generating fresh outer keys.
 

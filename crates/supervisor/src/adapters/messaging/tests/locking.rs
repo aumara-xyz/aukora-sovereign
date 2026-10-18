@@ -60,6 +60,7 @@ impl nostr::Transport for Relay {
             envelopes: Vec::new(),
             next_cursor: None,
             exhausted: true,
+            deferred: None,
         })
     }
 }
