@@ -96,3 +96,21 @@ fn refund_keeps_the_durable_high_water_and_other_agents_charges() {
     assert_eq!(restarted.reserve(&f.dir, "claude", 3_759), Err(refuse("rate-limited")));
     restarted.reserve(&f.dir, "claude", 3_760).unwrap();
 }
+
+#[test]
+fn refund_returns_only_the_refunded_agents_last_charge_and_unexpired_charges_still_count() {
+    let f = fixture();
+    let mut budget = Budget::open(&f.dir, 100).unwrap();
+    for _ in 0..RATE_WRITES {
+        budget.reserve(&f.dir, "claude", 100).unwrap();
+    }
+    budget.reserve(&f.dir, "grok", 101).unwrap();
+    budget.reserve(&f.dir, "grok", 102).unwrap();
+    budget.refund(&f.dir, "grok").unwrap();
+    let mut restarted = Budget::open(&f.dir, 103).unwrap();
+    assert_eq!(restarted.high_water, 102);
+    assert_eq!(restarted.writes["claude"], vec![100; RATE_WRITES]);
+    assert_eq!(restarted.writes["grok"], vec![101]);
+    assert_eq!(restarted.reserve(&f.dir, "claude", 103), Err(refuse("rate-limited")));
+    restarted.reserve(&f.dir, "claude", 160).unwrap();
+}

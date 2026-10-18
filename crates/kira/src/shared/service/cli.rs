@@ -117,19 +117,19 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
             Ok(())
         }
         [command @ ("register" | "token"), name] => {
-            if token_file.as_deref().is_some_and(|f| fs::symlink_metadata(f).is_ok()) {
-                return Err(refuse("token-file-exists"));
+            if let Some(file) = token_file.as_deref() {
+                if registration::present(file)? {
+                    return Err(refuse("token-file-exists"));
+                }
             }
+            let mut output = TokenOutput { name, file: token_file.as_deref(), written: false };
             if *command == "register" {
                 let scopes = scopes.unwrap_or_else(|| vec![if owner { "*" } else { "builders" }.to_owned()]);
                 registration::require_registration_owner(&dir, owner_token_file.as_deref(), name, &scopes, owner)?;
-                registration::register_with_delivery(&dir, name, &scopes, owner, |token| {
-                    deliver_token(name, token, token_file.as_deref())
-                })?;
+                registration::register_with_delivery(&dir, name, &scopes, owner, &mut output)?;
             } else {
                 require_owner(&dir, owner_token_file.as_deref())?;
-                let token = reissue(&dir, name, rotate)?;
-                deliver_token(name, &token, token_file.as_deref())?;
+                registration::reissue_with_delivery(&dir, name, rotate, &mut output)?;
             }
             Ok(())
         }
@@ -137,16 +137,56 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
     }
 }
 
-/// An explicitly requested private output must succeed; a failed file write never sends its secret to stdout.
+/// The CLI's token output, used before the token is saved (registration::Delivery).
+struct TokenOutput<'a> {
+    name: &'a str,
+    file: Option<&'a Path>,
+    written: bool,
+}
+
+impl registration::Delivery for TokenOutput<'_> {
+    fn send(&mut self, token: &str) -> Result<()> {
+        deliver_token(self.name, token, self.file)?;
+        self.written = true;
+        Ok(())
+    }
+
+    /// The token in the file was never saved; remove it so the retry can write the next one.
+    fn withdraw(&mut self) {
+        if let (true, Some(file)) = (self.written, self.file) {
+            let _ = fs::remove_file(file);
+        }
+    }
+}
+
+/// An explicitly requested private output must succeed; a failed file write never sends its secret to stdout. The
+/// file appears whole or not at all: the token is written and synced under a staging name, then linked into place,
+/// which refuses an existing file. A refused write leaves nothing at the requested path to block the retry.
 fn deliver_token(name: &str, token: &str, file: Option<&Path>) -> Result<()> {
     let mut output = std::io::stdout().lock();
     match file {
         Some(file) => {
-            write_private(file, format!("{token}\n").as_bytes(), true)?;
             let parent = file.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
-            fs::File::open(parent).and_then(|dir| dir.sync_all()).map_err(|_| refuse("state-write"))?;
-            writeln!(output, "kira: token for {name} written to {} (mode 0600)", file.display())
+            let base = file.file_name().ok_or_else(|| refuse("state-write"))?.to_string_lossy();
+            let staged = parent.join(format!(".{base}.kira-new"));
+            let _ = fs::remove_file(&staged);
+            let placed = write_private(&staged, format!("{token}\n").as_bytes(), true).and_then(|()| {
+                fs::hard_link(&staged, file).map_err(|e| match e.kind() {
+                    std::io::ErrorKind::AlreadyExists => refuse("token-file-exists"),
+                    _ => refuse("state-write"),
+                })
+            });
+            let _ = fs::remove_file(&staged);
+            placed?;
+            let announced = fs::File::open(parent)
+                .and_then(|dir| dir.sync_all())
+                .and_then(|()| writeln!(output, "kira: token for {name} written to {} (mode 0600)", file.display()))
+                .and_then(|()| output.flush());
+            if announced.is_err() {
+                let _ = fs::remove_file(file);
+            }
+            announced
         }
-        None => writeln!(output, "{token}"),
-    }.and_then(|()| output.flush()).map_err(|_| refuse("state-write"))
+        None => writeln!(output, "{token}").and_then(|()| output.flush()),
+    }.map_err(|_| refuse("state-write"))
 }
