@@ -302,6 +302,7 @@ pub fn reissue(dir: &Path, name: &str, rotate: bool) -> Result<String> {
 /// process that can read the file passes (see the trust boundary above).
 pub fn require_owner(dir: &Path, owner_token_file: Option<&Path>) -> Result<()> {
     let mut state = State::open(dir)?;
+    let _authorization = request_guard(dir)?;
     if !state.store.has_owner()? {
         return Ok(());
     }
@@ -319,6 +320,7 @@ pub fn require_owner(dir: &Path, owner_token_file: Option<&Path>) -> Result<()> 
 pub fn revoke(dir: &Path, name: &str) -> Result<()> {
     agent_name(name)?;
     let state = State::open(dir)?;
+    let _authorization = request_guard(dir)?;
     // The last live owner cannot be revoked: with no live owner token, `register` and `token` are refused for good.
     // Register a second owner first (the owner's token mints it), then revoke the old one.
     if state.store.is_last_live_owner(name)? {
@@ -472,6 +474,7 @@ impl State {
     pub fn open(dir: &Path) -> Result<Self> {
         refuse_live_in_test(dir)?;
         private_dir(dir)?;
+        let _authorization = request_guard(dir)?;
         private_dir(&dir.join(KEYS))?;
         let store = SharedStore::open(&dir.join(DB))?;
         fs::set_permissions(dir.join(DB), fs::Permissions::from_mode(0o600)).map_err(|_| refuse("state-dir"))?;
@@ -506,22 +509,6 @@ impl State {
     fn pubkey_of(&mut self, name: &str) -> Result<String> {
         let key = self.key(name).map_err(|_| refuse("author-unknown"))?;
         Ok(hex(key.public_key()?.as_bytes()))
-    }
-
-    /// Every request sees the current `tokens.json`: it is re-read whenever its stamp changes.
-    fn caller(&mut self, token: &str) -> Result<Caller> {
-        let stamp = tokens_stamp(&self.dir)?;
-        if stamp != self.tokens_stamp {
-            self.tokens = load_tokens(&self.dir)?;
-            self.tokens_stamp = stamp;
-        }
-        let name = self.tokens.get(&token_hash(token)).cloned().ok_or_else(|| refuse("token-refused"))?;
-        let pubkey = self.pubkey_of(&name).map_err(|_| refuse("token-refused"))?;
-        let agent = self.store.agent(&pubkey)?.ok_or_else(|| refuse("token-refused"))?;
-        if agent.revoked_at.is_some() {
-            return Err(refuse("agent-revoked"));
-        }
-        Ok(Caller { name, pubkey, owner: agent.owner, scopes: agent.scopes })
     }
 
     /// The signing-oracle rate (spec v0.3 §5): at most RATE_WRITES signatures per agent per RATE_WINDOW seconds.
@@ -773,8 +760,10 @@ fn recall(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Result<Valu
 }
 
 fn recall_gather(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Result<(Prepared, Option<SharedReranker>)> {
-    let (query, embedder, reranker) = {
+    let (mut query, embedder, reranker) = {
         let mut s = lock(state);
+        let _authorization = request_guard(&s.dir)?;
+        let caller = s.refresh_caller(&caller.name, &caller.pubkey)?;
         let author = match p.author {
             None => None,
             Some(author) if is_hex64(&author) => Some(author),
@@ -795,7 +784,14 @@ fn recall_gather(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Resu
     };
     let model = embedder.as_ref().map(|e| e.model_id().to_owned());
     let vector = embedder.as_deref().and_then(|e| query_vector(&query, e));
-    let prepared = lock(state).store.recall_prepare(&query, model.as_deref().map(|m| (m, vector)))?;
+    let prepared = {
+        let s = lock(state);
+        let _authorization = request_guard(&s.dir)?;
+        let caller = s.refresh_caller(&caller.name, &caller.pubkey)?;
+        query.scopes = caller.read_scopes(query.scopes)?;
+        query.include_local = caller.owner;
+        s.store.recall_prepare(&query, model.as_deref().map(|m| (m, vector)))?
+    };
     Ok((prepared, reranker))
 }
 
@@ -806,11 +802,8 @@ fn recall_gather(state: &Mutex<State>, caller: &Caller, p: RecallParams) -> Resu
 /// was already a correction keeps its label, and a quarantined one is only ever a stub.
 fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome) -> Result<Value> {
     let s = lock(state);
-    let record = s.store.agent(&caller.pubkey)?.ok_or_else(|| refuse("token-refused"))?;
-    if record.revoked_at.is_some() {
-        return Err(refuse("agent-revoked"));
-    }
-    let caller = Caller { name: caller.name.clone(), pubkey: caller.pubkey.clone(), owner: record.owner, scopes: record.scopes };
+    let _authorization = request_guard(&s.dir)?;
+    let caller = s.refresh_caller(&caller.name, &caller.pubkey)?;
     let mut status = outcome.status.clone();
     let (mut items, mut live, mut changed, mut justified) = (Vec::new(), 0usize, false, false);
     let mut states: BTreeMap<String, usize> = BTreeMap::new();
@@ -919,9 +912,11 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
 fn dispatch(state: &Mutex<State>, line: &str) -> Result<Value> {
     let request: Request = serde_json::from_str(line).map_err(|_| refuse("request-malformed"))?;
     let mut s = lock(state);
+    let authorization = request_guard(&s.dir)?;
     let caller = s.caller(&request.token)?;
     match request.method.as_str() {
         "recall" => {
+            drop(authorization);
             drop(s);
             recall(state, &caller, parse(request.params)?)
         }
@@ -954,6 +949,7 @@ fn read_line(reader: &mut impl BufRead, limit: usize) -> Option<String> {
     String::from_utf8(buf).ok()
 }
 
+mod authorization;
 mod cli;
 mod import;
 mod mcp;
@@ -967,6 +963,7 @@ pub use import::{import_epoch1, ImportReport};
 pub use mcp::{mcp, mcp_reply};
 pub use peer::Admission;
 pub use server::serve;
+use authorization::request_guard;
 use wire::{note_json, stub, validity, view, visible};
 
 #[cfg(test)]
