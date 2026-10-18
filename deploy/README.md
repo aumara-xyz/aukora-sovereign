@@ -76,6 +76,9 @@ One marked block per node in the host's Caddyfile (a VM's Caddyfile holds only t
 ## Upgrade and rollback (row 80)
 The switch changes the `current` link, installs the new release's units, restarts the supervisor and probes it for up to three minutes: the unit runs the new binary without a restart for ten seconds and the frontdoor answers `/` on the shell host. A failed probe restores the previous release and its units. State is never restored: Aura has no rollback and a restored copy could revive a spent approval, so a release must not migrate state in a way its predecessor cannot read. The new release still waits for its owner's approval in the app before the agent runs.
 
+## Disk images and recovery
+Nebius has no disk snapshots, only images created from disks. An image of a node disk contains the plaintext model key and owner state: treat it as a secret, including its storage and access. Before restoring state, read the anchored-floor refusal and recovery constraints in [engine/NODE.md (B30)](engine/NODE.md); an older or partial state copy can be refused. This deploy tooling does not schedule disk images or implement backups.
+
 ## Not provided here
 - The supervisor's `serve` command and its reading of `node.json`, `claim.sha256`, `egress.json` and `status.json` (rows 23, 128); the immune probes for Body checks 18 (release pointer), 19 and 20 (egress allowlist, address and TLS identity) still report unwritten until they read `active.json` and `status.json`. Nothing here measures the served TLS certificate.
 - The owner pane that signs a pointer.
