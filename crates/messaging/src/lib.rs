@@ -5,6 +5,7 @@
 pub mod contacts;
 pub mod ingress;
 mod history;
+mod retry;
 mod store;
 #[cfg(test)]
 mod history_tests;
@@ -332,6 +333,7 @@ impl Messaging {
         db.busy_timeout(std::time::Duration::from_millis(500))
             .map_err(|_| refuse("store-busy"))?;
         store::initialize(&mut db, node)?;
+        retry::initialize(&db)?;
         ingress::initialize(&db)?;
         Ok(Self {
             node,

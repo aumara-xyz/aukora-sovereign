@@ -78,14 +78,19 @@ impl LiveNetwork {
             .store
             .lock()
             .map_err(|_| refuse("network-store-unavailable"))?
-            .pending_owner_sends(20)?;
+            .pending_owner_sends_due(now_ms, 20)?;
         for id in pending {
-            self.ledger.messaging(scope, false, |txn| {
+            let result = self.ledger.messaging(scope, false, |txn| {
                 self.store
                     .lock()
                     .map_err(|_| refuse("network-store-unavailable"))?
                     .transmit_owner(txn, transport, id, deadline_ms)
-            })?;
+            });
+            self.store
+                .lock()
+                .map_err(|_| refuse("network-store-unavailable"))?
+                .record_owner_attempt(id, now_ms, result.as_ref().ok())?;
+            result?;
         }
         let batch = transport.receive(&nostr::transport::ReceiveRequest {
             recipient: self.identity.public_key(),

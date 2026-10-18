@@ -228,14 +228,7 @@ impl Client {
                 {
                     continue;
                 }
-                return Ok((
-                    if accepted {
-                        SubmissionStatus::Accepted
-                    } else {
-                        SubmissionStatus::Rejected
-                    },
-                    reason,
-                ));
+                return Ok((submission_status(accepted, reason), reason));
             }
             if frame.kind() == "CLOSED" {
                 return Err(refusal("subscription-closed"));
@@ -835,6 +828,20 @@ fn remote_refusal(message: &str, accepted: bool) -> Option<Refusal> {
     }
     .map(refusal)
 }
+
+fn submission_status(accepted: bool, reason: Option<Refusal>) -> SubmissionStatus {
+    if accepted || reason == Some(refusal("duplicate")) {
+        SubmissionStatus::Accepted
+    } else if reason == Some(refusal("rate-limited")) {
+        // Retain the exact envelope for retry; this is no permanent rejection.
+        SubmissionStatus::Unknown
+    } else {
+        SubmissionStatus::Rejected
+    }
+}
+
+#[cfg(test)]
+mod ack_tests;
 
 #[derive(Clone, Copy)]
 struct Deadline {
