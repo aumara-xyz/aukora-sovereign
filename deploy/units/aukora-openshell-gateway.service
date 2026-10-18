@@ -7,6 +7,7 @@
 Description=AUKORA OpenShell gateway for the engine sandbox
 After=docker.service network-online.target aukora-engine-fence.service
 Requires=docker.service aukora-engine-fence.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
@@ -14,6 +15,8 @@ Environment=OPENSHELL_TELEMETRY_ENABLED=false HOME=/var/lib/aukora-openshell
 ExecStart=/usr/local/bin/openshell-gateway --config /etc/aukora/engine/openshell-gateway.toml
 Restart=on-failure
 RestartSec=5s
+RestartSteps=6
+RestartMaxDelaySec=300s
 StateDirectory=aukora-openshell
 StateDirectoryMode=0700
 UMask=0077

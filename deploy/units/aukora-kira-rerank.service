@@ -10,6 +10,7 @@ After=aukora-engine-fence.service
 Requires=aukora-engine-fence.service
 After=aukora-kira-embed.service
 JoinsNamespaceOf=aukora-kira-embed.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
@@ -19,6 +20,8 @@ ExecStartPre=/bin/sh -c 'echo "a43c7c9b11a4c1517e5bf95151960e1621d1b72f7a493364b
 ExecStart=/opt/aukora-kira/llama/llama-server -m /opt/aukora-kira/models/rerank.gguf --alias a43c7c9b11a4c1517e5bf95151960e1621d1b72f7a493364b01e386cf1aaa1d3 --reranking -np 1 -c 2048 -b 2048 -ub 2048 -t 2 --host 127.0.0.1 --port 8772
 Restart=on-failure
 RestartSec=5s
+RestartSteps=6
+RestartMaxDelaySec=300s
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

@@ -5,12 +5,15 @@
 [Unit]
 Description=AUKORA engine host-disk guard
 ConditionPathExists=/etc/aukora/engine-v1.json
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/opt/aukora/current/deploy/engine/engine-run.sh watch
 Restart=always
 RestartSec=5s
+RestartSteps=6
+RestartMaxDelaySec=300s
 NoNewPrivileges=yes
 ProtectHome=yes
 PrivateTmp=yes

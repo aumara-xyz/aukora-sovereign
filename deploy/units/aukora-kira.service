@@ -10,6 +10,7 @@ Wants=aukora-kira-embed.service aukora-kira-rerank.service
 # The model servers' private network namespace: Kira reaches 127.0.0.1:8771/8772 there and nowhere else.
 JoinsNamespaceOf=aukora-kira-embed.service
 Before=aukora-sovereign.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
@@ -20,6 +21,8 @@ Environment=KIRA_RERANK_ADDR=127.0.0.1:8772 KIRA_RERANK_MODEL=a43c7c9b11a4c1517e
 ExecStart=/opt/aukora/current/bin/sovereign kira serve --state /var/lib/aukora-kira --socket /run/aukora-kira/kira.sock --group-socket
 Restart=on-failure
 RestartSec=3s
+RestartSteps=6
+RestartMaxDelaySec=300s
 StateDirectory=aukora-kira
 StateDirectoryMode=0700
 ReadWritePaths=/run/aukora-kira

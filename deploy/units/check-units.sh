@@ -11,15 +11,22 @@ set -eu
 failed=0
 fail() { printf 'FAIL %s: %s\n' "$1" "$2"; failed=1; }
 
-# check_unit UNIT CEILING PROPERTY=VALUE...
-check_unit() {
-    unit=$1 ceiling=$2
-    shift 2
+# check_properties UNIT PROPERTY=VALUE...
+check_properties() {
+    unit=$1
+    shift
     for expected in "$@"; do
         property=${expected%%=*}
         actual=$(systemctl show --property="$property" --value "$unit" 2>/dev/null) || actual=
         [ "$actual" = "${expected#*=}" ] || fail "$unit" "$property is '$actual', expected '${expected#*=}'"
     done
+}
+
+# check_unit UNIT CEILING PROPERTY=VALUE...
+check_unit() {
+    unit=$1 ceiling=$2
+    shift 2
+    check_properties "$unit" "$@"
     exposure=$(systemd-analyze security --no-pager "$unit" 2>/dev/null |
         sed -n 's/.*Overall exposure level for [^:]*: *\([0-9][0-9.]*\).*/\1/p' | tail -n 1)
     if [ -z "$exposure" ]; then
@@ -39,6 +46,14 @@ RestrictRealtime=yes RestrictSUIDSGID=yes LockPersonality=yes MemoryDenyWriteExe
 [ "$(id -u)" = 0 ] || { echo 'check-units: run as root' >&2; exit 2; }
 command -v systemd-analyze >/dev/null || { echo 'check-units: systemd-analyze is missing' >&2; exit 2; }
 
+# systemctl show's property names and time spelling on systemd 255. Every authority service keeps retrying with
+# increasing delays; engine admission/refusal and the one-shot fences retain their own lifecycle.
+retry_properties="StartLimitIntervalUSec=0 RestartSteps=6 RestartMaxDelayUSec=5min"
+# shellcheck disable=SC2086
+check_properties aukora-sovereign.service $retry_properties Restart=on-failure RestartUSec=3s
+# shellcheck disable=SC2086
+check_properties aukora-egress.service $retry_properties Restart=on-failure RestartUSec=5s
+
 check_unit aukora-sovereign.service 7.5 User=aukora ProtectSystem=strict ProtectHome=yes PrivateTmp=yes \
     ProtectKernelModules=yes ProtectClock=yes LockPersonality=yes RestrictRealtime=yes RestrictSUIDSGID=yes \
     RemoveIPC=yes SystemCallArchitectures=native Delegate=yes UMask=0077
@@ -53,6 +68,13 @@ done
 # An engine node (deploy/engine/NODE.md): Kira and its model servers run as kira with nothing else; the engine unit is
 # started only by the supervisor, so it carries no install section and is not checked for enablement.
 if [ -f /etc/aukora/engine-v1.json ]; then
+    for unit in aukora-kira.service aukora-kira-embed.service aukora-kira-rerank.service \
+        aukora-openshell-gateway.service; do
+        # shellcheck disable=SC2086
+        check_properties "$unit" $retry_properties Restart=on-failure
+    done
+    # shellcheck disable=SC2086
+    check_properties aukora-engine-diskguard.service $retry_properties Restart=always RestartUSec=5s
     # systemctl show's spelling (systemd 255, node rehearsal 2026-10-17): IPAddressDeny=any reads back as
     # "::/0 0.0.0.0/0", address families in its own order, an empty bounding set as nothing.
     kira_properties="User=kira NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes PrivateTmp=yes PrivateDevices=yes

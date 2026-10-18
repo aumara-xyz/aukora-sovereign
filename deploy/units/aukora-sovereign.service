@@ -18,8 +18,8 @@ Wants=network-online.target
 # Without the egress rules loaded the supervisor does not start.
 Requires=aukora-egress.service
 AssertPathExists=/etc/aukora/node.json
-StartLimitIntervalSec=120
-StartLimitBurst=6
+# Never latch the authority down after a crash loop; systemd 255 increases the retry delay below.
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
@@ -32,6 +32,8 @@ ExecStartPre=-+/usr/bin/python3 -B -I /opt/aukora/current/deploy/upgrade/node_re
 ExecStart=/opt/aukora/current/bin/sovereign serve --config /etc/aukora/node.json
 Restart=on-failure
 RestartSec=3s
+RestartSteps=6
+RestartMaxDelaySec=300s
 TimeoutStopSec=10s
 KillMode=control-group
 

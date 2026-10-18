@@ -6,11 +6,19 @@ Description=AUKORA egress allowlist for the node service user
 After=local-fs.target
 Before=aukora-sovereign.service
 AssertPathExists=/etc/aukora/egress.json
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/python3 -B /opt/aukora/current/deploy/units/egress_apply.py load
+# A failed boot load cancels the supervisor's Requires job. Requeue it only after a successful load; --no-block
+# avoids waiting for the supervisor, whose After dependency is this unit. Root can reach systemd over AF_UNIX.
+ExecStartPost=/usr/bin/systemctl --no-block start aukora-sovereign.service
+Restart=on-failure
+RestartSec=5s
+RestartSteps=6
+RestartMaxDelaySec=300s
 # The status file is world-readable and holds digests only.
 RuntimeDirectory=aukora-egress
 RuntimeDirectoryMode=0755

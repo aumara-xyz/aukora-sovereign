@@ -8,6 +8,7 @@
 Description=AUKORA Kira 2 embed model (llama.cpp, CPU, loopback)
 After=aukora-engine-fence.service
 Requires=aukora-engine-fence.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
@@ -17,6 +18,8 @@ ExecStartPre=/bin/sh -c 'echo "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b2
 ExecStart=/opt/aukora-kira/llama/llama-server -m /opt/aukora-kira/models/embed.gguf --alias 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439 --embedding --pooling last -np 1 -c 2048 -b 2048 -ub 2048 -t 2 --host 127.0.0.1 --port 8771
 Restart=on-failure
 RestartSec=5s
+RestartSteps=6
+RestartMaxDelaySec=300s
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
