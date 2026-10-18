@@ -1,5 +1,7 @@
 # The AUKORA Golden Boundary, v2: full sovereignty
 
+Long-form white paper behind this charter: [AUKORA Golden Boundary, Sovereign edition](https://github.com/aumara-xyz/aukora-sovereign/blob/main/docs/GOLDEN-BOUNDARY-PAPER.md).
+
 > The Golden Boundary is the line between what anything may propose and what only the person may permit: no model,
 > message, record, server or builder, AUMARA included, can supply the owner's approval, and none can take away the
 > owner's identity, keys, memory, node or way out.

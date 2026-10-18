@@ -4,6 +4,7 @@
     "checks",
     "crates",
     "deploy",
+    "docs",
     "engine",
     "guest",
     "immune",
@@ -99,6 +100,9 @@
     "Cargo.toml",
     "LICENSE",
     "NORTH-STAR.md",
-    "README.md"
+    "NOTICE",
+    "PATENTS.md",
+    "README.md",
+    "START-HERE-FOR-AI.md"
   ]
 }
