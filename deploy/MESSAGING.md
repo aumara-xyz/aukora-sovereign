@@ -107,7 +107,9 @@ seconds to five minutes; SIGTERM stops ingress and joins bounded relay work.
 The relay adapter pages each relay independently with persisted inclusive
 `since`/`until` bounds. One query runs per poll, rotating relays; a sweep freezes
 its upper bound so newer arrivals cannot continually displace older messages.
-Normal pages contain at most 16 wraps. A timestamp boundary is queried again
+Each relay alternates history pages with an independent query of the newest
+16 wraps in the two-day timestamp window. A long history sweep cannot freeze
+that query's upper bound. Normal pages contain at most 16 wraps. A timestamp boundary is queried again
 with a limit growing to 128, and is crossed only after a short page proves it
 complete. Completed sweeps overlap the two-day NIP-59 timestamp randomization
 interval; every fourth subsequent sweep revisits all history, covering old

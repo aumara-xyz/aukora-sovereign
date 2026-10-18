@@ -107,6 +107,7 @@ struct Position {
     limit: u16,
     done: bool,
     recent_sweeps: u8,
+    next_tail: bool,
 }
 impl Position {
     fn new(key: String, now: u64) -> Self {
@@ -119,6 +120,7 @@ impl Position {
             limit: PAGE_ITEMS,
             done: false,
             recent_sweeps: 0,
+            next_tail: false,
         }
     }
     fn encode(&self) -> Value {
@@ -130,13 +132,14 @@ impl Position {
             self.tie,
             self.limit,
             self.done,
-            self.recent_sweeps
+            self.recent_sweeps,
+            self.next_tail
         ])
     }
     fn decode(v: &Value) -> canon::Result<Self> {
         let a = v
             .as_array()
-            .filter(|a| a.len() == 8)
+            .filter(|a| a.len() == 8 || a.len() == 9)
             .ok_or(refusal("cursor-invalid"))?;
         let key = a[0]
             .as_str()
@@ -166,6 +169,10 @@ impl Position {
                 .as_u64()
                 .filter(|n| *n < 4)
                 .ok_or(refusal("cursor-invalid"))? as u8,
+            next_tail: match a.get(8) {
+                Some(v) => v.as_bool().ok_or(refusal("cursor-invalid"))?,
+                None => false,
+            },
         };
         if p.until > p.head || (!p.done && p.since > p.until) {
             return Err(refusal("cursor-invalid"));
@@ -255,7 +262,9 @@ pub(crate) fn receive_page(
         .iter_mut()
         .find(|p| p.key == keys[index])
         .ok_or(refusal("cursor-invalid"))?;
-    if p.done {
+    let tail = p.next_tail;
+    p.next_tail = !tail;
+    if p.done && !tail {
         // Gift-wrap creation time is randomized up to two days into the past.
         // Overlap by that whole interval; never trust an event's time as a head.
         // Queued envelopes retain their original time even after a long sender
@@ -272,12 +281,18 @@ pub(crate) fn receive_page(
         p.until = p.head;
         p.done = false;
     }
-    let limit = p.limit.min(request.max_items);
+    let limit = if tail { PAGE_ITEMS } else { p.limit }.min(request.max_items);
     let filter = Filter {
         kinds: vec![nostr::nip59::GIFT_WRAP_KIND],
         recipients: vec![request.recipient],
-        since_seconds: Some(if p.tie { p.until } else { p.since }),
-        until_seconds: Some(p.until),
+        since_seconds: Some(if tail {
+            now.saturating_sub(nostr::nip59::TIMESTAMP_JITTER_SECONDS)
+        } else if p.tie {
+            p.until
+        } else {
+            p.since
+        }),
+        until_seconds: Some(if tail { now } else { p.until }),
         limit: Some(limit),
         ..Filter::default()
     };
@@ -323,6 +338,11 @@ pub(crate) fn receive_page(
             return finish_batch(Vec::new(), &positions, index, keys.len(), false);
         }
     };
+    // A frozen or saturated history boundary must not also freeze the fresh
+    // query's upper bound. Each relay alternates its own tail and history turns.
+    if tail {
+        return finish_batch(envelopes, &positions, index, keys.len(), false);
+    }
     if envelopes.len() == usize::from(limit) {
         if p.tie {
             if limit == nostr::transport::MAX_BATCH_ITEMS || limit == request.max_items {

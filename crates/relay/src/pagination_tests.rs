@@ -243,7 +243,7 @@ fn periodic_full_history_sweep_finds_wrap_published_after_a_long_sender_outage()
     // This signed wrap was queued long before it could first reach the relay.
     let old = vec![event(&key, recipient, 10, "late publication")];
     let mut found = false;
-    for _ in 0..4 {
+    for _ in 0..8 {
         let batch = receive_page(&keys, &request, now + 30, |_, filter| {
             Ok(query(&old, filter))
         })
@@ -255,4 +255,40 @@ fn periodic_full_history_sweep_finds_wrap_published_after_a_long_sender_outage()
         found,
         "timestamp overlap alone permanently loses old queued wraps"
     );
+}
+
+#[test]
+fn fresh_tail_is_polled_while_frozen_history_is_still_backlogged() {
+    let key = SecretKey::generate().unwrap();
+    let recipient = key.public_key().unwrap();
+    let mut events: Vec<_> = (0..500)
+        .map(|n| event(&key, recipient, 100 + n, &n.to_string()))
+        .collect();
+    let keys = [relay_key("wss://relay.example")];
+    let mut request = ReceiveRequest {
+        recipient,
+        cursor: None,
+        max_items: 128,
+        max_bytes: 1_048_576,
+        deadline_ms: 1,
+    };
+    let first = receive_page(&keys, &request, 1000, |_, filter| Ok(query(&events, filter)))
+        .unwrap();
+    assert!(!first.exhausted);
+    request.cursor = first.next_cursor;
+    let fresh = event(&key, recipient, 1001, "new inbound during backfill");
+    let fresh_id = fresh.event().id;
+    events.push(fresh);
+    let tail = receive_page(&keys, &request, 1001, |_, filter| Ok(query(&events, filter)))
+        .unwrap();
+    assert!(tail.envelopes.iter().any(|e| e.id == fresh_id));
+    // The fresh query does not abandon the durable, frozen history position.
+    request.cursor = tail.next_cursor;
+    let mut until = None;
+    receive_page(&keys, &request, 1002, |_, filter| {
+        until = filter.until_seconds;
+        Ok(query(&events, filter))
+    })
+    .unwrap();
+    assert_eq!(until, Some(584));
 }
