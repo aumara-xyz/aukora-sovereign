@@ -103,6 +103,7 @@
     "NOTICE",
     "PATENTS.md",
     "README.md",
-    "START-HERE-FOR-AI.md"
+    "START-HERE-FOR-AI.md",
+    "tsconfig.json"
   ]
 }

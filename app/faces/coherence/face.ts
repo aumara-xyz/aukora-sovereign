@@ -5,7 +5,7 @@
 // picture that can no longer be kept current is cleared rather than left up as if it were; Refresh starts both feeds over.
 import type { JsonValue } from "../../core/index.js";
 import { serviceMessage, throwServiceRefusal } from "../../core/service-state.js";
-import type { FaceHost } from "../aumlok/link.js";
+import type { ServiceFaceHost } from "../general/kit.js";
 import { MAX_SNAPSHOT_BYTES } from "./health.js";
 import { parseHead } from "./head.js";
 import type { PentoraModule } from "./pentora.js";
@@ -27,7 +27,7 @@ export function snapshotBytes(value: JsonValue): Uint8Array {
 }
 
 export async function mountCoherence(
-  host: FaceHost,
+  host: ServiceFaceHost,
   loadPentora: (signal: AbortSignal) => Promise<PentoraModule>,
   loadHealthDecoder: (signal: AbortSignal) => Promise<HealthDecoder>,
   repairing: ReadonlySet<number> = new Set<number>(),

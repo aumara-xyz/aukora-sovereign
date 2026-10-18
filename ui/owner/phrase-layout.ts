@@ -252,7 +252,7 @@ export function phraseForm(signal: AbortSignal): PhraseForm {
   return {
     element,
     all: () => [...boxes, ...inputs],
-    values: () => [boxes.map((box, at) => letter(at)).join(""), ...inputs.map(field => normaliseWord(field.value))],
+    values: () => [boxes.map((_, at) => letter(at)).join(""), ...inputs.map(field => normaliseWord(field.value))],
     complete: () => boxes.every((_, at) => letter(at) !== "") && inputs.every(field => normaliseWord(field.value) !== ""),
     flagAnchor(bad) { boxes.forEach(box => box.toggleAttribute("aria-invalid", bad)); if (bad) boxes.forEach(box => box.setAttribute("aria-invalid", "true")); },
     flagWord(index, bad) { inputs[index].toggleAttribute("aria-invalid", bad); if (bad) inputs[index].setAttribute("aria-invalid", "true"); },

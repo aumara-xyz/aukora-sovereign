@@ -36,7 +36,6 @@ function trustedOrigin(value: string): string {
 
 export class OwnerFrame {
   #origin: string;
-  #dialog: HTMLDialogElement | null = null;
   #close: (() => void) | null = null;
   #notice: (notice: OwnerNotice) => void;
   #prepare: () => Promise<string | void>;
@@ -120,7 +119,6 @@ export class OwnerFrame {
     window.addEventListener('message', onMessage);
     dialog.append(frame, close);
     document.body.append(dialog);
-    this.#dialog = dialog;
     this.#close = () => {
       window.removeEventListener('message', onMessage);
       close.removeEventListener('click', dismiss);
@@ -140,7 +138,6 @@ export class OwnerFrame {
     this.#route = null;
     const close = this.#close;
     this.#close = null;
-    this.#dialog = null;
     close?.();
   }
 

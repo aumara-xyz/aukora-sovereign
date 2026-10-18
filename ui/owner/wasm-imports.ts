@@ -51,7 +51,7 @@ export function ownerWasmImports(module: WebAssembly.Module): {
     if (disposed || !(runtime?.memory instanceof WebAssembly.Memory)) return fail();
     return runtime.memory;
   };
-  const bytes = (pointer: number, length: number): Uint8Array => {
+  const bytes = (pointer: number, length: number): Uint8Array<ArrayBuffer> => {
     pointer >>>= 0;
     length >>>= 0;
     const buffer = memory().buffer;

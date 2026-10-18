@@ -217,6 +217,7 @@ export function mountPractice(
         controls.push(input, check);
         card.append(label, check);
       } else {
+        const sentence = question.tiles;
         const answer = el("div", "lingwa-tiles");
         answer.setAttribute("aria-label", "Your sentence; choose a word to return it");
         const bank = el("div", "lingwa-tiles");
@@ -224,12 +225,12 @@ export function mountPractice(
         const chosen: number[] = [];
         let selectionEvents = new AbortController();
         events.addEventListener("abort", () => selectionEvents.abort(), { once: true });
-        const ordered = shuffled(question.tiles.map((_, index) => index));
+        const ordered = shuffled(sentence.map((_, index) => index));
         if (ordered.every((index, at) => index === at)) [ordered[0], ordered[1]] = [ordered[1], ordered[0]];
         const tiles = new Map<number, HTMLButtonElement>();
         const check = button("Check sentence", () => {
-          if (!current() || chosen.length !== question.tiles.length) return;
-          submit(chosen.map(index => question.tiles[index]).join(" ") === question.tiles.join(" "));
+          if (!current() || chosen.length !== sentence.length) return;
+          submit(chosen.map(index => sentence[index]).join(" ") === sentence.join(" "));
         }, events, "lingwa-primary");
         check.disabled = true;
         controls.push(check);
@@ -239,7 +240,7 @@ export function mountPractice(
           answer.replaceChildren();
           if (!chosen.length) answer.append(el("span", "lingwa-muted", "Choose words in sentence order."));
           for (const index of chosen) {
-            const tile = button(question.tiles[index], () => {
+            const tile = button(sentence[index], () => {
               if (!current() || submitted) return;
               const selected = chosen.indexOf(index);
               if (selected < 0) return;
@@ -250,10 +251,10 @@ export function mountPractice(
             }, selectionEvents.signal, "lingwa-tile");
             answer.append(tile);
           }
-          check.disabled = chosen.length !== question.tiles.length;
+          check.disabled = chosen.length !== sentence.length;
         }
         for (const index of ordered) {
-          const tile = button(question.tiles[index], () => {
+          const tile = button(sentence[index], () => {
             if (!current() || submitted || tile.disabled) return;
             tile.disabled = true;
             chosen.push(index);

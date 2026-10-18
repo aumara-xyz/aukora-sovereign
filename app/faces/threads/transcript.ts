@@ -5,7 +5,7 @@
 import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
 import { COPY, sourceText } from "./copy.js";
 import type { Conversation, State, Stream } from "./conversation.js";
-import { h, icon, mark, neutralize, untrusted, visible } from "./dom.js";
+import { h, icon, mark, untrusted, visible } from "./dom.js";
 import { clip } from "./model.js";
 import type { Entry, Receipt } from "./model.js";
 import { render } from "./text.js";

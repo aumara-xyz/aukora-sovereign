@@ -86,6 +86,7 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
               if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
             }
             if (observation.phase === "BLOOM" && observation.receiptBytes) {
+              const receiptBytes = observation.receiptBytes;
               let verdict: ReceiptVerdict | null = null;
               try { verdict = receiptVerdict(observation.verdict); } catch { /* Refused below. */ }
               if (verdict === null || receiptCode(verdict) !== null) {
@@ -107,7 +108,7 @@ export function createPortalPage(options: PageOptions = {}): PortalPage {
                 phase.value = "BLOOM";
                 if (observation.frameBytes) services.optical.showFrame(observation.frameBytes);
                 if (!receiptUrl) {
-                  receiptUrl = URL.createObjectURL(new Blob([observation.receiptBytes!], { type: "application/json" }));
+                  receiptUrl = URL.createObjectURL(new Blob([new Uint8Array(receiptBytes)], { type: "application/json" }));
                   download.href = receiptUrl; download.hidden = false;
                   // Keep the confirmation visible long enough for the other screen to read it.
                   setTimeout(() => {

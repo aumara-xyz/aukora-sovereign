@@ -256,9 +256,9 @@ export function createOnboarding(
         if (ceremony && ceremony.expires <= performance.now()) ceremony = undefined;
         if (!ceremony) ceremony = options(await post("/api/enrol/start", {}, signal), true, config.relyingParty);
         if (ceremony.registration) { enrolScreen(); return; }
-        if (!ceremony.assertion) throw new Error("aumlok:ceremony-state");
-        deadline(ceremony.expires);
         const current = ceremony;
+        if (!current.assertion) throw new Error("aumlok:ceremony-state");
+        deadline(current.expires);
         const assertion = await passkey.assert(current.assertion, signal);
         ceremony = undefined;
         const reply = await post("/api/enrol/finish", { enrolment_id: current.id, assertion }, signal);
@@ -598,9 +598,9 @@ export function createOnboarding(
         if (error instanceof Error && error.message === "aumlok:enrolment-required") { enrolScreen(); return false; }
         throw error;
       }
-      if (!ceremony.assertion) throw new Error("aumlok:ceremony-state");
-      deadline(ceremony.expires);
       const current = ceremony;
+      if (!current.assertion) throw new Error("aumlok:ceremony-state");
+      deadline(current.expires);
       const assertion = await passkey.assert(current.assertion, signal);
       ceremony = undefined;
       const reply = await post("/api/signin/finish", { ceremony_id: current.id, assertion }, signal);

@@ -3,7 +3,7 @@
 // never on a timer: it shows when it was read, and a failed or malformed read replaces it with an explicit unavailable
 // state instead of keeping the last list up. Reading is bounded: a few pages at a time, a repeated cursor ends the read
 // as a refusal, and a session's entries come a page at a time on request. Nothing here writes to a session.
-import type { FaceHost } from "../aumlok/link.js";
+import type { ServiceFaceHost } from "../general/kit.js";
 import { follow } from "../general/kit.js";
 import { MAX_PAGE, parseOpened, parsePage } from "./sessions.js";
 import type { Summary } from "./sessions.js";
@@ -20,7 +20,7 @@ interface Listing {
   readonly cursor: string | null;
 }
 
-export function mountArchived(host: FaceHost): void {
+export function mountArchived(host: ServiceFaceHost): void {
   const { client, signal } = host;
   let view: ArchivedView | undefined;
   let current: Listing = { sessions: new Map(), cursor: null };

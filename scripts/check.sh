@@ -5,6 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 -B checks/run.py
+node scripts/typecheck.mjs
 # The engine installer's extraction and the engine pre-start's home patch (the root-run deploy code that touches
 # archives and engine-writable folders).
 python3 -B -m unittest discover -s tests/deploy -p 'test_*.py'

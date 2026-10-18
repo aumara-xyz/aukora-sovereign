@@ -4,7 +4,7 @@ export const utf8 = new TextEncoder();
 export const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 export function refuse(reason: string): never { throw new Error(`copresence:${reason}`); }
 export function checkAbort(signal: AbortSignal): void { if (signal.aborted) refuse("cancelled"); }
-export function concat(...parts: Uint8Array[]): Uint8Array {
+export function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(parts.reduce((sum, item) => sum + item.length, 0));
   let at = 0;
   for (const item of parts) { out.set(item, at); at += item.length; }
@@ -13,7 +13,7 @@ export function concat(...parts: Uint8Array[]): Uint8Array {
 export function hex(bytes: Uint8Array): string {
   return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 }
-export function unhex(value: unknown, length: number): Uint8Array {
+export function unhex(value: unknown, length: number): Uint8Array<ArrayBuffer> {
   if (typeof value !== "string" || value.length !== length * 2 || !/^[0-9a-f]+$/.test(value)) refuse("hex");
   return Uint8Array.from(value.match(/../g)!, pair => Number.parseInt(pair, 16));
 }
@@ -79,11 +79,11 @@ export function optional(value: Json): Uint8Array {
   return value === null ? new Uint8Array([0]) : concat(new Uint8Array([1]), unhex(value, 32));
 }
 export async function sign(key: CryptoKey, bytes: Uint8Array): Promise<string> {
-  return hex(new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, bytes)));
+  return hex(new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, new Uint8Array(bytes))));
 }
 export async function verify(key: Json, signature: Json, bytes: Uint8Array): Promise<void> {
   const raw = unhex(key, 65);
   if (raw[0] !== 4) refuse("key");
   const imported = await crypto.subtle.importKey("raw", raw, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
-  if (!await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, imported, unhex(signature, 64), bytes)) refuse("signature");
+  if (!await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, imported, unhex(signature, 64), new Uint8Array(bytes))) refuse("signature");
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AttemptStore, ContextExchange, CopresenceEngine, ExchangeMethod, PersonNostrKeys, PersonNostrKeysForReceipt, PortalExchange, PortalObservation, ReceiptVerdict } from "./contracts.js";
+import type { AttemptStore, ContextExchange, CopresenceEngine, PersonNostrKeys, PersonNostrKeysForReceipt, PortalExchange, PortalObservation, ReceiptVerdict } from "./contracts.js";
 import { checkAbort, concat, digest, domain, encode, hex, integer, object, parse, refuse, sign, string, text, unhex, verify, type Json } from "./bytes.js";
 import { IndexedAttempts, ticket } from "./attempts.js";
 import { copyPersonKey, pairingDigest, type PentoraPairingDigest } from "./bloom/derive.js";
@@ -159,6 +159,8 @@ class BrowserExchange implements PortalExchange {
   private readonly intent: string | null;
   private readonly options: BrowserEngineOptions;
   private readonly onContext: (context: Context) => void;
+  private readonly compact: boolean;
+  private readonly dwell: number;
 
   constructor(exchange: ContextExchange, who: Participant, key: CryptoKey,
     purpose: string, intent: string | null, options: BrowserEngineOptions,

@@ -7,6 +7,9 @@ import { clearServiceState, showServiceState } from "../../core/service-state.js
 import type { FaceClient } from "../../core/index.js";
 import type { FaceHost } from "../aumlok/link.js";
 
+// Service faces receive only the shell RPC link; owner navigation belongs to AUMLOK.
+export type ServiceFaceHost = Pick<FaceHost, "root" | "client" | "signal">;
+
 /** What a badge reports: data from the node that is fine, data that wants a look, a failure, nothing known, or a plain label. */
 export type Tone = "ok" | "attention" | "failed" | "unknown" | "plain";
 
@@ -21,12 +24,12 @@ export function make<K extends keyof HTMLElementTagNameMap>(tag: K, className?: 
  * Opens a settings face: the heading and what the page is for appear at once, before and whether or not the shell link
  * comes up, so a page that cannot reach its service still says what it is.
  */
-export function openSettings(id: string, title: string, purpose: string, mount: (host: FaceHost) => void | Promise<void>): void {
+export function openSettings(id: string, title: string, purpose: string, mount: (host: ServiceFaceHost) => void | Promise<void>): void {
   openServiceFace(id, title, mount);
   document.getElementById("face")?.querySelector("h1")?.after(make("p", "purpose", purpose));
 }
 
-export function openServiceFace(id: string, title: string, mount: (host: FaceHost) => void | Promise<void>): () => void {
+export function openServiceFace(id: string, title: string, mount: (host: ServiceFaceHost) => void | Promise<void>): () => void {
   const root = document.getElementById("face");
   if (!root) throw new Error("app:unknown-face");
   const life = new AbortController();
@@ -165,7 +168,7 @@ export interface Reading<T> {
  * on load, on request and on a timer. The moment a read fails the face is told to clear what it printed, so a stale value
  * never stands on screen behind a service that has stopped answering. A read that has been superseded is ignored.
  */
-export function follow<T>(host: FaceHost, build: (stage: HTMLElement) => Reading<T>): void {
+export function follow<T>(host: ServiceFaceHost, build: (stage: HTMLElement) => Reading<T>): void {
   const { root, signal } = host;
   const refresh = make("button", undefined, "Refresh");
   refresh.type = "button";

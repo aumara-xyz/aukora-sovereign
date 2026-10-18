@@ -2,7 +2,7 @@
 // Reads the public card on load, on request, once a minute while visible, and when a contact code is about to lapse or has.
 // A failed or malformed read replaces the card with an explicit unavailable state; the last good card is never kept on
 // screen behind a failure.
-import type { FaceHost } from "../aumlok/link.js";
+import type { ServiceFaceHost } from "../general/kit.js";
 import { parseCard } from "./card.js";
 import { createIdentityView } from "./view.js";
 
@@ -10,7 +10,7 @@ export const RENEW_SECONDS = 5;
 export const MIN_GAP_MS = 5_000;
 export const REFRESH_MS = 60_000;
 
-export function mountIdentity(host: FaceHost): void {
+export function mountIdentity(host: ServiceFaceHost): void {
   const { root, client, signal } = host;
   const refresh = document.createElement("button");
   refresh.type = "button";

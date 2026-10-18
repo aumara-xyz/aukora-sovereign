@@ -4,6 +4,7 @@
 // the node's pinned context, the node's verdict and the one-time link the phone opens (portal/COPRESENCE-NODE.md).
 
 import { createNodePairingPort } from "../../portal/node/pairing-port.js";
+import type { OpticalSurface } from "../../portal/contracts.js";
 
 export type PairingMethod = "optical";
 
@@ -36,12 +37,7 @@ export interface PairingServices {
     reserve(method: PairingMethod, signal: AbortSignal): Promise<string>;
     finish(attemptId: string, outcome: "bloom" | "refused" | "cancelled", signal: AbortSignal): Promise<void>;
   };
-  readonly optical: {
-    showFrame(bytes: Uint8Array): void;
-    scan(consume: (bytes: Uint8Array) => void, signal: AbortSignal): Promise<() => void>;
-    showBloom(keys: PairingObservation["personNostrKeys"], signal?: AbortSignal): Promise<Uint8Array | null>;
-    clear(): void;
-  };
+  readonly optical: OpticalSurface;
 }
 
 export type PairingCanvases = {

@@ -3,7 +3,7 @@
 // visible, which plugins the shell reports as started. A failed or malformed read turns every state to "Unknown"; the
 // last reported states are never kept on screen behind a failure, so nothing keeps reading "Running" after the shell
 // stopped answering.
-import type { FaceHost } from "../aumlok/link.js";
+import type { ServiceFaceHost } from "../general/kit.js";
 import { FACE_CATALOG } from "../catalog.js";
 import { follow } from "../general/kit.js";
 import { parsePlugins } from "./registry.js";
@@ -11,7 +11,7 @@ import { createPluginsView } from "./view.js";
 
 export const REFRESH_MS = 30_000;
 
-export function mountPlugins(host: FaceHost): void {
+export function mountPlugins(host: ServiceFaceHost): void {
   const { client } = host;
   follow(host, stage => {
     const view = createPluginsView(stage, FACE_CATALOG);

@@ -10,7 +10,7 @@ export type AumlokBrowser = {
 const fail = (): never => { throw new Error('aumlok:wasm-abi'); };
 const MAX_MODULE_BYTES = 16 * 1024 * 1024;
 
-async function moduleBytes(address: URL, signal?: AbortSignal): Promise<Uint8Array> {
+async function moduleBytes(address: URL, signal?: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
   const request = abortScope(signal, 15_000);
   try {
     checkAbort(request.signal);
