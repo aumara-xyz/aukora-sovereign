@@ -86,6 +86,7 @@ class Element extends Text {
     if (['hidden', 'disabled', 'required'].includes(key)) this[key] = true;
   }
   getAttribute(key) { return this.attributes[key] ?? null; }
+  removeAttribute(key) { delete this.attributes[key]; if (['hidden', 'disabled', 'required'].includes(key)) this[key] = false; }
   addEventListener(type, handler, options = {}) {
     const listeners = this.listeners.get(type) ?? [];
     listeners.push({ handler, signal: options.signal }); this.listeners.set(type, listeners);
@@ -146,7 +147,7 @@ function mount(t, options = {}) {
   globalThis.document = document;
   const controller = new AbortController();
   const calls = [];
-  const contacts = [{ npub: maya, label: 'Maya', pairing: null }, { npub: sam, label: 'Sam', pairing: null }];
+  const contacts = options.contacts ?? [{ npub: maya, label: 'Maya', pairing: null }, { npub: sam, label: 'Sam', pairing: null }];
   const messages = [
     message('new', maya, 30, 'in', 'See you at five?'), message('middle', maya, 20, 'out', 'A walk sounds lovely.'),
     message('old', maya, 10, 'in', 'Are you free later?'), message('sam', sam, 5, 'in', 'I found the book.'),
@@ -171,9 +172,12 @@ function mount(t, options = {}) {
       assert.fail(`unexpected method: ${method}`);
     },
   };
+  // The face re-reads on its own every few seconds; the tests move that clock by hand.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const live = async () => { t.mock.timers.tick(6_000); for (let turn = 0; turn < 6; turn++) await settle(); };
   mountMessages(root, client, controller.signal, new Set(options.granted ?? ['contacts.list', 'messages.list', 'refusals.counts', 'conversations.marks', 'contact.propose', 'send', 'conversation.mark']));
   t.after(() => { controller.abort(); assert.equal(root.children.length, 0, 'face removes its canvas on dispose'); });
-  return { root, document, calls, contacts, messages };
+  return { root, document, calls, contacts, messages, live };
 }
 
 function conversation(root, contact = maya) { return find(root, element => element.dataset.contact === contact); }
@@ -207,7 +211,7 @@ test('the same conversation portal opens a chronological thread and returns to t
   assert.equal(head.getAttribute('aria-label'), 'Maya. Back to conversations');
   assert.equal(byClass(card, 'conversation-snippet').textContent, `Aukora ID ${maya.slice(0, 10)}…${maya.slice(-4)}`);
   assert.equal(back.hidden, false, 'an open thread has a clear back button');
-  assert.equal(byClass(root, 'msg-top').hidden, true, 'the thread header takes the top of the lane');
+  assert.ok(all(root, item => hasClass(item, 'drawer')).every(drawer => drawer.dataset.open === 'no'), 'opening a thread closes any panel');
   const rows = byClass(card, 'transcript').children;
   assert.deepEqual(rows.map(row => row.dataset.message), ['old', 'middle', 'new']);
   assert.deepEqual(rows.map(row => row.dataset.direction), ['in', 'out', 'in']);
@@ -225,10 +229,10 @@ test('the same conversation portal opens a chronological thread and returns to t
   assert.equal(root.children.length, 1, 'navigation keeps the same centre canvas');
 });
 
-test('drafts survive close, reopen and refresh; Send uses the owner network API', async t => {
+test('drafts survive close, reopen and a live re-read; Send uses the owner network API', async t => {
   let finish;
   const sent = new Promise(resolve => { finish = resolve; });
-  const { root, calls } = mount(t, { send: () => sent });
+  const { root, calls, live } = mount(t, { send: () => sent });
   await settle();
   const card = conversation(root);
   const head = byClass(card, 'ak-portal__head');
@@ -237,7 +241,7 @@ test('drafts survive close, reopen and refresh; Send uses the owner network API'
   const draft = find(form, element => element.tagName === 'textarea');
   draft.value = 'A draft for Maya';
   head.click(); head.click(); await settle();
-  button(byClass(card, 'thread-panel'), 'Refresh').click(); await settle();
+  await live();
   assert.equal(find(form, element => element.tagName === 'textarea'), draft);
   assert.equal(draft.value, 'A draft for Maya');
   draft.value = '  Meet by the water.\nSee you soon.';
@@ -285,11 +289,11 @@ test('the own ID reuses QR and copy; contact approval names the exact ID and rel
   document.copied = true;
   button(own, 'Copy Aukora ID').click();
   assert.match(own.textContent, /Aukora ID copied\./);
-  const add = find(root, element => element.tagName === 'section' && element.children[0]?.textContent.includes('Add a contact'));
-  const head = byClass(add, 'ak-portal__head');
+  const head = button(byClass(root, 'panel-row'), 'Add a contact+');
   head.click();
   assert.equal(head.getAttribute('aria-expanded'), 'true');
-  const form = byClass(add, 'contact-form');
+  assert.equal(byClass(root, 'drawer--contact').dataset.open, 'yes');
+  const form = byClass(root, 'contact-form');
   assert.match(form.textContent, /The card approves this exact Aukora ID, not the person\./);
   assert.match(form.textContent, /compare it with them in person or on a call you trust\./);
   find(form, element => element.name === 'npub').value = key('r');
@@ -307,7 +311,7 @@ test('the own ID reuses QR and copy; contact approval names the exact ID and rel
 
 test('an exhausted older cursor stays exhausted when an overlapping newest page refreshes', async t => {
   let refreshed = false;
-  const { root, calls } = mount(t, { page(params) {
+  const { root, calls, live } = mount(t, { page(params) {
     if (params.before === 'older') return { items: [message('earliest', maya, 1, 'in')], next: null };
     return {
       items: refreshed ? [message('arrival', maya, 4, 'in'), message('top', maya, 3, 'out')]
@@ -323,7 +327,7 @@ test('an exhausted older cursor stays exhausted when an overlapping newest page 
   earlier.click(); await settle();
   assert.equal(earlier.hidden, true);
   refreshed = true;
-  button(byClass(card, 'thread-panel'), 'Refresh').click(); await settle();
+  await live();
   assert.equal(earlier.hidden, true, 'refresh does not revive a consumed history cursor');
   assert.deepEqual(byClass(card, 'transcript').children.map(row => row.dataset.message), ['earliest', 'previous', 'top', 'arrival']);
   assert.equal(calls.filter(call => call.method === 'messages.list' && call.params.before === 'older').length, 1);
@@ -332,7 +336,7 @@ test('an exhausted older cursor stays exhausted when an overlapping newest page 
 test('a burst with no page overlap resets the history window and follows the new older cursor', async t => {
   let burst = false;
   const range = (from, count) => Array.from({ length: count }, (_, at) => message(`burst-${from - at}`, maya, from - at, 'in'));
-  const { root, calls } = mount(t, { page(params) {
+  const { root, calls, live } = mount(t, { page(params) {
     if (params.before === 'old-history') return { items: [message('oldest', maya, 1, 'in')], next: null };
     if (params.before === 'burst-history') return { items: range(101, 50), next: 'more-burst-history' };
     assert.equal(params.before, null);
@@ -348,7 +352,7 @@ test('a burst with no page overlap resets the history window and follows the new
   const draft = find(byClass(card, 'composer'), element => element.tagName === 'textarea');
   draft.value = 'Keep this while new messages arrive';
   burst = true;
-  button(byClass(card, 'thread-panel'), 'Refresh').click(); await settle();
+  await live();
   assert.equal(earlier.hidden, false);
   assert.equal(byClass(card, 'transcript').children.length, 50);
   assert.match(card.textContent, /Showing the latest messages\. Load earlier messages to continue this conversation\./);
@@ -362,7 +366,7 @@ test('a burst with no page overlap resets the history window and follows the new
 test('a capped thread still accepts new arrivals and retains a thousand newest rows', async t => {
   let refreshed = false;
   const range = (from, count) => Array.from({ length: count }, (_, at) => message(`message-${from - at}`, maya, from - at, 'in'));
-  const { root } = mount(t, { page(params) {
+  const { root, live } = mount(t, { page(params) {
     const from = params.before === null ? (refreshed ? 1001 : 1000) : Number(params.before);
     return { items: range(from, 50), next: String(from - 50) };
   } });
@@ -374,7 +378,7 @@ test('a capped thread still accepts new arrivals and retains a thousand newest r
   assert.equal(byClass(card, 'transcript').children.length, 1000);
   assert.equal(earlier.hidden, true);
   refreshed = true;
-  button(byClass(card, 'thread-panel'), 'Refresh').click(); await settle();
+  await live();
   const rows = byClass(card, 'transcript').children;
   assert.equal(rows.length, 1000);
   assert.equal(rows[0].dataset.message, 'message-2');
@@ -392,20 +396,22 @@ test('the filters, search and the owner marks choose which conversations show', 
   // A pinned conversation leads the list.
   assert.deepEqual(visibleRows(root), [sam, maya]);
   assert.equal(byClass(conversation(root, sam), 'pinMarker').hidden, false);
-  filterButton(root, 'Pinned conversations').click();
+  filterButton(root, 'Show only pinned conversations').click();
   assert.deepEqual(visibleRows(root), [sam]);
-  assert.equal(filterButton(root, 'Pinned conversations').getAttribute('aria-pressed'), 'true');
-  assert.equal(filterButton(root, 'All conversations').getAttribute('aria-pressed'), 'false');
-  filterButton(root, 'All conversations').click();
+  assert.equal(filterButton(root, 'Show only pinned conversations').getAttribute('aria-pressed'), 'true');
+  // Tapping the selected filter again clears it: no filter is all conversations.
+  filterButton(root, 'Show only pinned conversations').click();
+  assert.equal(filterButton(root, 'Show only pinned conversations').getAttribute('aria-pressed'), 'false');
+  assert.deepEqual(visibleRows(root), [sam, maya]);
   // Archiving writes both marks for that one npub and moves it to the Archived filter.
   find(conversation(root, maya), item => item.getAttribute('aria-label') === 'Archive conversation').click();
   await settle();
   assert.deepEqual(writes, [{ npub: maya, pinned: false, archived: true }]);
   assert.deepEqual(visibleRows(root), [sam]);
-  filterButton(root, 'Archived conversations').click();
+  filterButton(root, 'Show only archived conversations').click();
   assert.deepEqual(visibleRows(root), [maya]);
   assert.equal(byClass(conversation(root, maya), 'archiveMarker').hidden, false);
-  filterButton(root, 'All conversations').click();
+  filterButton(root, 'Show only archived conversations').click();
   // Search reads names and the loaded message text.
   const query = byClass(root, 'msg-search__input');
   query.value = 'book'; query.dispatch('input');
@@ -434,18 +440,70 @@ test('a refused mark is put back; mark as unread and read stay in this view', as
   assert.equal(byClass(card, 'unreadMarker').hidden, false);
 });
 
-test('without the mark grant there is no pin or archive, and the Aukora ID drops down from the header', async t => {
+test('without the mark grant there is no pin or archive; the row-two panels open one at a time', async t => {
   const { root, calls } = mount(t, { granted: ['contacts.list', 'messages.list', 'send'] });
   await settle();
   assert.deepEqual(byClass(conversation(root, maya), 'row-actions').children.map(child => child.getAttribute('aria-label')), ['Mark as read']);
   assert.ok(!calls.some(call => call.method === 'conversations.marks'));
-  const toggle = byClass(root, 'id-toggle');
-  const drop = byClass(root, 'id-drop');
-  assert.equal(drop.hidden, true);
-  toggle.click();
-  assert.equal(drop.hidden, false);
-  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
-  assert.match(drop.textContent, new RegExp(owner));
-  toggle.click();
-  assert.equal(drop.hidden, true);
+  assert.deepEqual(byClass(root, 'panel-row').children.map(child => child.textContent), ['Aukora ID+', 'More+'], 'no Add a contact without its grant');
+  const id = button(byClass(root, 'panel-row'), 'Aukora ID+');
+  const drawer = name => byClass(root, `drawer--${name}`);
+  assert.equal(drawer('id').dataset.open, 'no');
+  assert.equal(drawer('id').getAttribute('inert'), '', 'a closed panel cannot take focus');
+  id.click();
+  assert.equal(drawer('id').dataset.open, 'yes');
+  assert.equal(drawer('id').getAttribute('inert'), null);
+  assert.match(drawer('id').textContent, new RegExp(owner));
+  button(byClass(root, 'panel-row'), 'More+').click();
+  assert.equal(drawer('id').dataset.open, 'no', 'one panel at a time');
+  assert.equal(drawer('more').dataset.open, 'yes');
+  assert.match(drawer('more').textContent, /Your Aukora ID is a Nostr public key\./);
+  root.dispatch('keydown');
+  assert.equal(drawer('more').dataset.open, 'yes', 'only Escape closes');
+  const escape = { type: 'keydown', key: 'Escape', defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+  for (const listener of root.listeners.get('keydown')) listener.handler(escape);
+  assert.equal(drawer('more').dataset.open, 'no');
+});
+
+test('New message picks a contact, or starts with Add a contact when there is none', async t => {
+  const { root } = mount(t);
+  await settle();
+  const plus = filterButton(root, 'New message');
+  plus.click();
+  const picker = byClass(root, 'drawer--pick');
+  assert.equal(picker.dataset.open, 'yes');
+  const choices = all(picker, item => item.className === 'picker__choice');
+  assert.deepEqual(choices.map(choice => choice.textContent), ['Maya', 'Sam']);
+  choices[1].click(); await settle();
+  assert.equal(root.dataset.view, 'thread');
+  assert.equal(byClass(root, 'thread-stage').children[0].dataset.contact, sam);
+  assert.equal(picker.dataset.open, 'no');
+});
+
+test('with no contacts yet, New message opens Add a contact', async t => {
+  const { root } = mount(t, { contacts: [] });
+  await settle();
+  filterButton(root, 'New message').click();
+  assert.equal(byClass(root, 'drawer--contact').dataset.open, 'yes');
+  assert.match(byClass(root, 'msg-list').textContent, /No contacts yet\. Share your Aukora ID/);
+});
+
+test('new messages arrive live in the list and in the open thread, keeping the draft', async t => {
+  const { root, messages, live, calls } = mount(t);
+  await settle();
+  messages.unshift(message('fresh', sam, 40, 'in', 'Are you coming?'));
+  await live();
+  assert.equal(byClass(conversation(root, sam), 'conversation-snippet').textContent, 'Are you coming?');
+  assert.deepEqual(visibleRows(root), [sam, maya], 'the newest conversation moves up');
+  const card = conversation(root, maya);
+  byClass(card, 'ak-portal__head').click(); await settle();
+  const draft = find(byClass(card, 'composer'), element => element.tagName === 'textarea');
+  draft.value = 'Half a thought';
+  messages.unshift(message('later', maya, 50, 'in', 'On my way.'));
+  const before = calls.length;
+  await live();
+  assert.deepEqual(byClass(card, 'transcript').children.map(row => row.dataset.message), ['old', 'middle', 'new', 'later']);
+  assert.equal(draft.value, 'Half a thought');
+  assert.ok(calls.slice(before).every(call => call.params.npub === maya), 'an open thread re-reads only itself');
+  assert.equal(byClass(card, 'thread-panel').children[0].textContent.includes('Reading'), false, 'no Reading flicker');
 });

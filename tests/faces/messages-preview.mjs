@@ -45,7 +45,7 @@ const contacts = freeze(empty ? [] : [
   { npub: jun, label: 'Jun', pairing: null },
   { npub: lee, label: 'Lee', pairing: { method: 'remote', verified_at: date - 3_600_000 } },
 ]);
-const messages = freeze(empty ? [] : [
+let messages = freeze(empty ? [] : [
   { id: 'maya-3', direction: 'in', contact: maya, at: date, text: 'See you by the water at five?', transport: 'nostr-relays', state: null, code: null },
   { id: 'maya-2', direction: 'out', contact: maya, at: date - 600_000, text: 'A walk sounds lovely. Where shall we meet?', transport: 'nostr-relays', state: 'published', code: null },
   { id: 'maya-1', direction: 'in', contact: maya, at: date - 900_000, text: 'Are you free for a walk later?', transport: 'nostr-relays', state: null, code: null },
@@ -63,6 +63,12 @@ const refusals = freeze({
   envelope: 0, signature: 0, recipient: 0, stranger: 0, replay: 0, payload: 0, stale_contact: 0,
   total: 0, last_aura_sequence: 0,
 });
+
+// The reviewer's console (or a capture script) can deliver one more incoming message, to watch it arrive live.
+window.previewArrive = (text = 'I am at the bench by the pier.') => {
+  messages = freeze([{ id: `maya-live-${messages.length}`, direction: 'in', contact: maya, at: date + 60_000, text, transport: 'nostr-relays', state: null, code: null }, ...messages]);
+  status.textContent = 'A preview message arrived. Nothing was sent.';
+};
 
 // The owner's own marks: Anastasia pinned, Jun archived. Kept in this page only.
 const marks = new Map(empty ? [] : [[ana, { pinned: true, archived: false }], [jun, { pinned: false, archived: true }]]);

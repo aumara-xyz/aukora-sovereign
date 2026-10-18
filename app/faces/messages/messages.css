@@ -50,45 +50,65 @@ form .ak-label { margin-top: 4px; }
 .thread-details .ak-fields { margin: 8px 0; }
 #face[data-view="thread"] { overflow: hidden; }
 #face[data-view="thread"] > .ak-canvas { height: 100%; min-height: 0; }
-#face[data-view="thread"] .msg-top { display: none; }
+#face[data-view="thread"] :is(.msg-filters, .msg-panels) { display: none; }
 .thread-stage, .thread-stage > .conversation, .thread-stage .ak-portal__body, .thread-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.thread-stage .conversation-line { flex: none; }
+.thread-stage .conversation-line { flex: none; padding-bottom: 8px; border-bottom: 1px solid var(--ak-hairline); }
+/* The open thread has no frame of its own (Peter, 2026-10-18): its header row and the messages use the lane. */
+#face .thread-stage > .conversation { border-color: transparent; border-radius: 0; background: transparent; box-shadow: none; }
+#face .thread-stage .conversation .ak-portal__body { padding-inline: 0; }
+#face .thread-stage .conversation-line > .ak-portal__head { padding-inline: 12px 4px; }
 .thread-stage .ak-portal__body { gap: 0; }
 .thread-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 2px 2px 10px; }
 .thread-panel .composer { flex: none; border-top: 1px solid var(--ak-hairline); padding-top: 8px; }
 
-/* Header: the title left; the filters and the compact Aukora ID portal right (Peter, 2026-10-18). */
-.msg-top { display: flex; flex-direction: column; gap: 12px; }
-.msg-header { align-items: center; padding-bottom: 14px; }
+/* Hot corners (Peter, 2026-10-18): each lane's top corners (74px squares) belong to the shell, so no control sits
+   in them. Row 1 holds the title (not a control) on the left and its icon buttons right beside it, inward from the
+   right corner; row 2 starts below the corners. */
+#face .msg-header { flex-direction: row; justify-content: flex-start; align-items: center; gap: 14px; min-height: 52px; padding-bottom: 12px; }
 .msg-header .ak-header__title { margin: 0; }
-.msg-header__tools { display: flex; align-items: center; gap: 10px; flex: none; }
+.msg-top { display: flex; flex-direction: column; gap: 14px; }
+#face .msg-filters { gap: 4px; }
 #face :is(.msg-filters, .row-actions) .iconButton { color: var(--ak-violet); }
 #face :is(.msg-filters, .row-actions) .iconButton svg { width: 16px; height: 16px; }
 #face .pinAction[aria-pressed='true'] { color: var(--ak-violet); }
 #face .unreadAction[aria-pressed='true'] { color: var(--ak-mint); }
 #face .archiveAction[aria-pressed='true'] { color: var(--ak-gold); }
-#face .allAction[aria-pressed='true'] { color: var(--ak-text); }
-.id-toggle {
-  --ak-tone: var(--ak-blue);
-  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+#face .plusAction[aria-expanded='true'] { background: color-mix(in srgb, currentColor 13%, transparent); }
+
+/* Row 2: three thin buttons; each telescopes its panel down beneath the row, one at a time. */
+.panel-row { display: flex; gap: 8px; }
+.panel-toggle {
+  display: inline-flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 7px; height: 40px; padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--ak-tone) 30%, transparent); border-radius: 12px;
   background: transparent; color: var(--ak-text); font-size: 12.5px; font-weight: 500; letter-spacing: .02em; cursor: pointer;
   transition: border-color 180ms ease, box-shadow 180ms ease;
 }
-.id-toggle > svg { width: 16px; height: 16px; color: var(--ak-tone); }
-.id-toggle .ak-expander { width: 12px; font-size: 16px; }
-.id-toggle:hover, .id-toggle[aria-expanded='true'] {
+.panel-toggle > svg { width: 16px; height: 16px; flex: none; color: var(--ak-tone); }
+.panel-toggle__label { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.panel-toggle .ak-expander { width: 12px; font-size: 16px; }
+.panel-toggle:hover, .panel-toggle[aria-expanded='true'] {
   border-color: color-mix(in srgb, var(--ak-tone) 70%, transparent);
   box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone) 14%, transparent);
 }
-.id-toggle:focus-visible { outline: 2px solid var(--ak-tone); outline-offset: 3px; }
-.id-drop {
-  padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--ak-tone) 45%, transparent); border-radius: 14px;
-  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone) 10%, transparent); animation: ak-glide 220ms ease both;
-}
+.panel-toggle:focus-visible { outline: 2px solid var(--ak-tone); outline-offset: 3px; }
+.drawer { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 260ms cubic-bezier(.16, 1, .3, 1); }
+.drawer[data-open='yes'] { grid-template-rows: 1fr; }
+.drawer__inner { min-height: 0; overflow: hidden; }
+.drawer__body { margin-top: 10px; padding: 14px 16px; border: 1px solid var(--ak-hairline); border-radius: 14px; }
+.drawer--contact .drawer__body { border-color: color-mix(in srgb, var(--ak-mint) 40%, transparent); }
+.drawer--id .drawer__body { border-color: color-mix(in srgb, var(--ak-blue) 40%, transparent); }
+.drawer--more .drawer__body { border-color: color-mix(in srgb, var(--ak-violet) 40%, transparent); }
+.drawer--pick .drawer__body { border-color: color-mix(in srgb, var(--ak-violet) 40%, transparent); }
+.drawer form { margin-top: 0; }
 .id-panel .info { margin-bottom: 0; }
+.picker { display: grid; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
+.picker__choice { --ak-tone: var(--ak-mint); display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid var(--ak-hairline); border-radius: 12px; background: transparent; color: var(--ak-text); font-size: 13px; text-align: left; cursor: pointer; }
+.picker__choice:hover { border-color: color-mix(in srgb, var(--ak-tone) 70%, transparent); }
+.picker__choice:focus-visible { outline: 2px solid var(--ak-tone); outline-offset: 3px; }
+.picker__choice .ak-icon-tile { width: 26px; height: 26px; }
+.picker__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Search, then Add a contact beside More; an opened one takes the whole row and the other steps aside. */
+/* Search, then the conversations; the whole page scrolls. */
 .msg-search {
   display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px;
   border: 1px solid var(--ak-hairline); border-radius: 12px; color: var(--ak-muted);
@@ -99,11 +119,6 @@ form .ak-label { margin-top: 4px; }
 .msg-search__input:focus-visible { outline: none; }
 .msg-search__input::-webkit-search-cancel-button { display: none; }
 .msg-search .msg-search__clear { color: var(--ak-muted); }
-.msg-tools { display: flex; flex-wrap: wrap; gap: 10px; }
-.msg-tools > .ak-portal { flex: 1 1 0; min-width: 0; }
-.msg-tools > .ak-portal[data-open='yes'] { flex-basis: 100%; }
-.more-panel { display: flex; flex-direction: column; gap: 10px; }
-.more-panel > .button-row { margin-top: 0; }
 .list-scene { gap: 14px; }
 .msg-list .rows { margin-top: 0; }
 
@@ -125,7 +140,7 @@ form .ak-label { margin-top: 4px; }
 
 /* The open thread: its portal button is the header, with a back button at its start. */
 .thread-back {
-  display: inline-flex; align-items: center; gap: 4px; flex: none; height: 32px; margin-left: 12px; padding: 0 10px 0 6px;
+  display: inline-flex; align-items: center; gap: 4px; flex: none; height: 32px; margin-left: 0; padding: 0 10px 0 6px;
   border: 1px solid color-mix(in srgb, var(--ak-tone) 38%, transparent); border-radius: 999px;
   background: transparent; color: var(--ak-tone); font-size: 12px; cursor: pointer;
 }
@@ -133,7 +148,7 @@ form .ak-label { margin-top: 4px; }
 .thread-back:hover { border-color: color-mix(in srgb, var(--ak-tone) 70%, transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone) 14%, transparent); }
 .thread-back:focus-visible { outline: 2px solid var(--ak-tone); outline-offset: 3px; }
 .thread-back + .ak-portal__head { padding-left: 12px; }
-@media (prefers-reduced-motion: reduce) { .id-drop { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .drawer, .panel-toggle { transition: none; } }
 
 @container ak-app (max-width: 340px) {
   .identity-field { align-items: flex-start; }

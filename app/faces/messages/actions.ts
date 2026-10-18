@@ -5,7 +5,6 @@ import { parseCard } from "../identity/card.js";
 import { encodeQr } from "../identity/qr.js";
 import { COPY } from "./copy.js";
 import { h } from "./dom.js";
-import { portal } from "./portal.js";
 
 const encoder = new TextEncoder();
 const MAX_TEXT_BYTES = 16_384;
@@ -62,7 +61,7 @@ export function ownIdentity(client: FaceClient, signal: AbortSignal): HTMLElemen
   return element;
 }
 
-export function addContact(client: FaceClient, signal: AbortSignal): HTMLElement {
+export function addContact(client: FaceClient, signal: AbortSignal): HTMLFormElement {
   const npub = h("input", { type: "text", name: "npub", required: "", pattern: NPUB, maxlength: "63", placeholder: "npub1…", autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Contact Aukora ID" });
   const name = h("input", { type: "text", name: "label", maxlength: String(MAX_LABEL_BYTES), placeholder: "Name (optional)", autocomplete: "off", "aria-label": "Contact name (optional)" });
   const submit = h("button", { type: "submit", class: "ak-action" }, "Review contact");
@@ -85,7 +84,7 @@ export function addContact(client: FaceClient, signal: AbortSignal): HTMLElement
     }).catch(error => { if (!signal.aborted) showServiceState(status, error); })
       .finally(() => { if (!signal.aborted) submit.disabled = false; });
   }, { signal });
-  return portal("Add a contact", "By their Aukora ID", form, signal).element;
+  return form;
 }
 
 export function composer(client: FaceClient, signal: AbortSignal, npub: string, sent: () => void): HTMLElement {
