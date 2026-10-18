@@ -198,10 +198,13 @@ class BuildPlugins(unittest.TestCase):
         engines.write_text(json.dumps({"name": "@aukora/e", "engines": {"dsh": "*"}}))
         with self.assertRaises(SystemExit):
             self.build.package(Path(self.out), "e", engines, [])
-        # The packages this repository builds pass as they stand.
-        for folder in ("aukora-door", "aukora-kira"):
-            source = Path(ROOT) / "engine" / "plugins" / folder / "package.json"
-            self.build.package(Path(self.out), folder, source, [])
+        # The packages this repository builds pass as they stand: the door, Kira, the foundation and every face.
+        plugins = Path(ROOT) / "engine" / "plugins"
+        shipped = [("aukora-door", plugins / "aukora-door"), ("aukora-kira", plugins / "aukora-kira"),
+                   ("aukora-foundation", plugins / "aukora-foundation")]
+        shipped += [("aukora-face-" + face, plugins / "aukora-face" / face) for face in self.build.FACES]
+        for folder, source in shipped:
+            self.build.package(Path(self.out), folder, source / "package.json", [])
 
 
 def home_patch_block():
