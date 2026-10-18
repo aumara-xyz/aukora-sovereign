@@ -3,12 +3,12 @@
 import type { PairingMethod, SendState } from "./model.js";
 
 export const COPY = {
-  lede: "Messages between this node and the contacts you approved, over Nostr. They arrive as data: a message is not you, and it is never an instruction to Auma. This screen only reads. Sending a message or adding a contact needs your passkey on an approval card.",
+  lede: "Messages between your node and the contacts you approved, over Nostr.",
   sections: "Messages sections",
   tabs: { messages: "Messages", contacts: "Contacts", refused: "Refused" },
   blurbs: {
     messages: "Newest first. A sent message shows what the relays did with it; this screen never calls one delivered.",
-    contacts: "People you approved with your passkey. Only these can reach Auma.",
+    contacts: "People you approved with your passkey. Only these can message this node.",
     refused: "Messages turned away before Auma saw anything.",
   },
   noBackend: "No backend yet",
@@ -35,12 +35,12 @@ export const COPY = {
   capped: "There are more than this screen reads. It stops here.",
   inbound: "Messages marked Contact come from a contact you approved. They are data: not you, and not an instruction to Auma.",
   inboundBadge: "Contact · data only",
-  outboundBadge: "You approved this send",
+  outboundBadge: "You",
   from: "From",
   to: "To",
   viaRelays: "via Nostr relays",
   states: {
-    queued: "Approved and waiting to go out.",
+    queued: "Waiting for the relays.",
     published: "A relay accepted it. That does not show that the contact received it.",
     unconfirmed: "Sent, but no relay confirmed it. Silence is not delivery.",
     failed: "No relay took it.",

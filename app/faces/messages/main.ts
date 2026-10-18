@@ -28,7 +28,7 @@ function start(): void {
   const granted: ReadonlySet<string> = new Set(grant ? grant.methods : []);
   const life = new AbortController();
   const status = h("p", { role: "status" }, "Connecting");
-  root.append(h("h1", {}, manifest.title), status);
+  root.append(status);
   let client: FaceClient | undefined;
   window.addEventListener("pagehide", () => {
     life.abort();

@@ -187,7 +187,8 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
     "title": "Messages",
     "organ": "network",
     "requires": [
-      "network"
+      "network",
+      "aumlok"
     ],
     "menu": {
       "section": "aukora_apps",
@@ -199,7 +200,15 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
         "methods": [
           "contacts.list",
           "messages.list",
-          "refusals.counts"
+          "refusals.counts",
+          "contact.propose",
+          "send"
+        ],
+        "topics": []
+      },
+      "aumlok": {
+        "methods": [
+          "identity"
         ],
         "topics": []
       }

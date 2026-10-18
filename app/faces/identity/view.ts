@@ -121,7 +121,9 @@ export function createIdentityView(root: HTMLElement): IdentityView {
       subject.textContent = next.subject ?? "None yet. Bind a phrase in the AUMLOK pane first.";
       node.textContent = next.nodeNpub ?? "None yet.";
       agent.textContent = next.agentNpub ?? "None yet.";
-      lead.textContent = "Public keys only. Nothing on this page can sign, approve or open anything.";
+      lead.textContent = next.nodeNpub !== null && !next.nodeKeyBound
+        ? "Node key is not yet bound by an owner-approved Nostr identity record."
+        : "Public keys only. Nothing on this page can sign, approve or open anything.";
       expiresAt = null;
       lapsed = false;
       if (next.contact === null) {

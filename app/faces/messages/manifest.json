@@ -3,7 +3,8 @@
   "title": "Messages",
   "organ": "network",
   "requires": [
-    "network"
+    "network",
+    "aumlok"
   ],
   "menu": {
     "section": "aukora_apps",
@@ -15,7 +16,15 @@
       "methods": [
         "contacts.list",
         "messages.list",
-        "refusals.counts"
+        "refusals.counts",
+        "contact.propose",
+        "send"
+      ],
+      "topics": []
+    },
+    "aumlok": {
+      "methods": [
+        "identity"
       ],
       "topics": []
     }

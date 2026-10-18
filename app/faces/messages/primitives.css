@@ -1,0 +1,388 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/*
+ * AUKORA SPATIAL PRIMITIVES (Peter, 2026-10-17: "lock this in as the new primitives").
+ *
+ * Framework-neutral: plain class names (`ak-`), every token defined here, no dependency on the harness theme. Any
+ * surface (the Spatial face, the owner origin `ui/owner`, a future native shell) copies THIS FILE VERBATIM and writes
+ * the markup below; the React components in this folder only emit it. Change a measurement here and nowhere else,
+ * and only after Peter has previewed it (SPATIAL-DESIGN-RULES 6 and 8).
+ *
+ * THE MEASUREMENTS (the source of truth; the design rules quote them):
+ *   palette     mint rgb(129,212,180)  blue rgb(150,180,255)  violet rgb(196,170,255)  gold rgb(224,183,106)
+ *               red rgb(242,85,90) (quarantine, failure, danger only)  muted rgb(139,144,153)
+ *               text rgb(232,234,237)  secondary rgb(184,188,196)  hairline rgba(255,255,255,0.10)
+ *               surface rgba(38,43,54,0.72)
+ *   tone ring   1px border = tone at 30% (rest); 70% + glow 0 0 14px tone at 14% (open or hover). Never thicker.
+ *   portal      radius 14px; head height 68px (two lines: title + one-line summary) or 52px (title only);
+ *               a right-hand menu launcher is always 68px (so every menu lines up); stack gap 10px;
+ *               head padding 0 16px; gap 12px; body padding 4px 16px 18px.
+ *   icon tile   30 x 30px, radius 10px, inset ring 1px tone at 28%, glyph 16px, stroke 1.4px, round caps, tone colour.
+ *   type        title 13.5px/20px weight 520 tracking .02em; summary 11.5px/18px muted; both one line, ellipsis.
+ *   expander    "+" closed, "−" open; 18px, tone colour, 14px wide column.
+ *   record row  radius 12px, head height 52px, padding 0 14px, gap 10px; title 12.5px/20px 500; summary 11px/16px;
+ *               body padding 0 14px 14px, gap 10px; rows stack with 6px gaps. Static rows: hairline border, no expander.
+ *   nesting     portal body inset 16px; record body inset 14px (+ the 1px ring each level) = 30px from the lane card edge.
+ *   label       mono 9.5px/14px weight 600 tracking .16em caps, muted; 14px above, 6px below (4px above when first).
+ *   field table 1px hairline, radius 10px, padding 10px 12px; columns max-content(min 84px) | 1fr, gap 4px 14px;
+ *               key 11px/18px muted; value mono 11px/18px, wraps anywhere, never truncated.
+ *   stat tiles  auto-fit min 150px, gap 8px; tile 1px hairline, radius 12px, padding 10px 12px;
+ *               name 10.5px muted; value 16px weight 480 in the tile's tone.
+ *   status pill 1px border tone at 45%, radius 999px, padding 1px 8px, mono 9.5px/16px weight 600 tracking .10em caps.
+ *   meter       84 x 6px, 1px border tone at 45%, fill tone at 55%, radius 999px.
+ *   locked act. pill: 1px border tone at 38% (70% + glow on hover), radius 999px, min-height 28px, padding 3px 12px,
+ *               12px text in tone, lock glyph and outward arrow 12px; note beside it 11px muted.
+ *   app header  eyebrow mono 10px/14px weight 600 tracking .16em caps in the app's tone; title clamp(22px,4.4cqi,30px)
+ *               weight 480 tracking .08em caps; badges right (pill, mono 9.5px caps); 18px below, hairline under.
+ *   app canvas  max 760px wide, centred; 18px between blocks; lane padding clamp(18px, 3.2%, 40px).
+ *   grid        auto-fill columns min 280px, gap 10px: two columns at two-thirds of a 1440px window, one at one-third.
+ *   motion      opening glides in (opacity 0 -> 1, 6px rise, 220ms ease); borders ease 180ms; none if reduced motion.
+ */
+
+:root {
+  --ak-mint: rgb(129, 212, 180);
+  --ak-blue: rgb(150, 180, 255);
+  --ak-violet: rgb(196, 170, 255);
+  --ak-gold: rgb(224, 183, 106);
+  --ak-red: rgb(242, 85, 90);
+  --ak-muted: rgb(139, 144, 153);
+  --ak-text: rgb(232, 234, 237);
+  --ak-text-2: rgb(184, 188, 196);
+  --ak-hairline: rgba(255, 255, 255, 0.1);
+  --ak-surface: rgba(38, 43, 54, 0.72);
+  --ak-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --ak-portal-radius: 14px;
+  --ak-row-radius: 12px;
+  --ak-tile-radius: 10px;
+  --ak-portal-h2: 68px;
+  --ak-portal-h1: 52px;
+  --ak-row-h: 52px;
+  --ak-ease: 180ms ease;
+}
+
+.ak-tone-mint { --ak-tone: var(--ak-mint); }
+.ak-tone-blue { --ak-tone: var(--ak-blue); }
+.ak-tone-violet { --ak-tone: var(--ak-violet); }
+.ak-tone-gold { --ak-tone: var(--ak-gold); }
+.ak-tone-red { --ak-tone: var(--ak-red); }
+.ak-tone-muted { --ak-tone: var(--ak-muted); }
+
+/* ── App surface, canvas and header ───────────────────────────────────────────────────────────────────────── */
+.ak-app {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(18px, 3.2%, 40px);
+  box-sizing: border-box;
+  overflow: auto;
+  container-name: ak-app;
+  container-type: inline-size;
+  color: var(--ak-text);
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ak-app[hidden] { display: none; }
+.ak-canvas { width: min(100%, 760px); margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+
+.ak-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--ak-hairline);
+}
+.ak-header__copy { min-width: 0; }
+.ak-header__eyebrow {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ak-tone, var(--ak-violet));
+  font-family: var(--ak-mono);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ak-header__title {
+  margin: 6px 0 0;
+  font-size: clamp(22px, 4.4cqi, 30px);
+  line-height: 1.1;
+  font-weight: 480;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ak-header__badges { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+
+/* ── Portal button and its opened state ───────────────────────────────────────────────────────────────────── */
+.ak-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ak-grid[data-open='yes'] { grid-template-columns: minmax(0, 1fr); }
+.ak-grid > li { min-width: 0; animation: ak-glide 220ms ease both; }
+
+.ak-portal, .ak-row {
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 30%, transparent);
+  border-radius: var(--ak-portal-radius);
+  background: var(--ak-surface);
+  color: var(--ak-text);
+  transition: border-color var(--ak-ease), box-shadow var(--ak-ease);
+}
+.ak-portal:hover, .ak-portal[data-open='yes'], .ak-row:hover:not(.ak-row--static), .ak-row[data-open='yes'] {
+  border-color: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 70%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
+}
+.ak-portal--menu { margin: 10px 2px; }
+/* Every launcher in a right-hand menu is the two-line height, title-only or not, so the stacks line up across tabs. */
+.ak-portal--menu > .ak-portal__head { height: var(--ak-portal-h2); }
+/* A caller of the previous PortalButton API (long text it must not cut): same frame, the header grows past the standard height. */
+.ak-portal--free > .ak-portal__head { height: auto; min-height: var(--ak-portal-h1); padding-block: 10px; }
+.ak-portal--free > .ak-portal__head .ak-portal__title, .ak-portal--free > .ak-portal__head .ak-portal__summary { white-space: normal; }
+
+.ak-portal__head, .ak-row__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  height: var(--ak-portal-h2);
+  padding: 0 16px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.ak-portal--one-line .ak-portal__head { height: var(--ak-portal-h1); }
+.ak-portal__head:focus-visible, .ak-row__head:focus-visible, .ak-action:focus-visible {
+  outline: 2px solid var(--ak-tone, var(--ak-blue));
+  outline-offset: 3px;
+}
+
+.ak-icon-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--ak-tile-radius);
+  color: var(--ak-tone, var(--ak-blue));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 28%, transparent);
+}
+.ak-icon-tile svg { width: 16px; height: 16px; }
+
+.ak-portal__copy, .ak-row__copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.ak-portal__title, .ak-portal__summary, .ak-row__title, .ak-row__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ak-portal__title { font-size: 13.5px; line-height: 20px; font-weight: 520; letter-spacing: 0.02em; }
+.ak-portal__summary { color: var(--ak-muted); font-size: 11.5px; line-height: 18px; }
+.ak-portal__end, .ak-row__end { display: flex; align-items: center; gap: 8px; flex: none; }
+.ak-expander { flex: none; width: 14px; color: var(--ak-tone, var(--ak-blue)); font-size: 18px; line-height: 1; text-align: center; }
+
+.ak-portal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 16px 18px;
+  animation: ak-glide 240ms ease both;
+}
+
+/* ── Record rows: the nested, smaller portal ──────────────────────────────────────────────────────────────── */
+.ak-rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ak-row { border-radius: var(--ak-row-radius); }
+.ak-row--static { border-color: var(--ak-hairline); }
+.ak-row__head { height: var(--ak-row-h); padding: 0 14px; gap: 10px; }
+.ak-row--static .ak-row__head { cursor: default; }
+.ak-row__title { font-size: 12.5px; line-height: 20px; font-weight: 500; }
+.ak-row__summary { color: var(--ak-muted); font-size: 11px; line-height: 16px; }
+.ak-row__body { display: flex; flex-direction: column; gap: 10px; padding: 0 14px 14px; animation: ak-glide 200ms ease both; }
+
+.ak-label {
+  margin: 14px 0 6px;
+  color: var(--ak-muted);
+  font-family: var(--ak-mono);
+  font-size: 9.5px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.ak-label:first-child { margin-top: 4px; }
+.ak-lead { margin: 0 0 4px; color: var(--ak-text-2); font-size: 12.5px; }
+.ak-quote {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-mint)) 60%, transparent);
+  color: var(--ak-text-2);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.ak-mono { font-family: var(--ak-mono); font-size: 11px; color: var(--ak-text-2); }
+
+/* ── Field table ──────────────────────────────────────────────────────────────────────────────────────────── */
+.ak-fields__title {
+  margin: 0 0 -4px;
+  color: var(--ak-muted);
+  font-family: var(--ak-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.ak-fields {
+  display: grid;
+  grid-template-columns: minmax(84px, max-content) minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ak-hairline);
+  border-radius: var(--ak-tile-radius);
+}
+.ak-fields dt { color: var(--ak-muted); font-size: 11px; line-height: 18px; }
+.ak-fields dd { margin: 0; font-family: var(--ak-mono); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+
+/* ── Stat tiles, status pill, meter, level scale ──────────────────────────────────────────────────────────── */
+.ak-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; }
+.ak-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ak-hairline);
+  border-radius: var(--ak-row-radius);
+}
+.ak-stat__name { color: var(--ak-muted); font-size: 10.5px; }
+.ak-stat__value { overflow: hidden; color: var(--ak-tone, var(--ak-text)); font-size: 16px; font-weight: 480; letter-spacing: 0.02em; text-overflow: ellipsis; white-space: nowrap; }
+
+.ak-pill, .ak-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-muted)) 45%, transparent);
+  border-radius: 999px;
+  color: var(--ak-tone, var(--ak-muted));
+  font-family: var(--ak-mono);
+  font-size: 9.5px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ak-badge { padding: 4px 10px; gap: 6px; letter-spacing: 0.14em; }
+.ak-badge:not([class*='ak-tone-']) { color: var(--ak-text-2); border-color: var(--ak-hairline); }
+.ak-pill svg, .ak-badge svg { width: 11px; height: 11px; }
+
+.ak-meter {
+  position: relative;
+  flex: none;
+  width: 84px;
+  height: 6px;
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 45%, transparent);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.ak-meter > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 55%, transparent);
+}
+
+.ak-scale { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.ak-scale + .ak-lead { margin-top: 6px; }
+.ak-scale__notch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  border: 1px solid var(--ak-hairline);
+  border-radius: var(--ak-row-radius);
+  color: var(--ak-muted);
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+}
+.ak-scale__notch b { font-family: var(--ak-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+.ak-scale__notch[aria-current='true'] {
+  color: var(--ak-tone);
+  border-color: color-mix(in srgb, var(--ak-tone) 60%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone) 14%, transparent);
+}
+.ak-scale__dot { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1px currentColor; }
+.ak-scale__notch[aria-current='true'] .ak-scale__dot { background: currentColor; }
+
+/* ── Locked action: the only way to change anything, always on the owner origin ───────────────────────────── */
+.ak-actionrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 2px; }
+.ak-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 12px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 38%, transparent);
+  border-radius: 999px;
+  background: var(--ak-surface);
+  color: var(--ak-tone, var(--ak-blue));
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color var(--ak-ease), box-shadow var(--ak-ease);
+}
+.ak-action:hover {
+  border-color: color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 70%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ak-tone, var(--ak-blue)) 14%, transparent);
+}
+.ak-action svg { width: 12px; height: 12px; }
+.ak-action__note { color: var(--ak-muted); font-size: 11px; }
+
+.ak-footnote {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: var(--ak-muted);
+  font-size: 11px;
+  text-align: center;
+}
+.ak-footnote svg { width: 11px; height: 11px; flex: none; }
+
+@keyframes ak-glide {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ak-grid > li, .ak-portal__body, .ak-row__body { animation: none; }
+  .ak-portal, .ak-row, .ak-action { transition: none; }
+}
+
+@container ak-app (max-width: 420px) {
+  .ak-header { flex-direction: column; }
+  .ak-header__badges { flex-direction: row; align-items: center; }
+  .ak-scale { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

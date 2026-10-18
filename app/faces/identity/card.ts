@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The public contact card as the aumlok identity service reports it: who this node is to others (a label, the AUMLOK ID
-// and the two delegated Nostr addresses), the contact code the node issued, and the safety numbers to compare. Public keys
+// and the public Nostr addresses, with the node key's binding state), the contact code the node issued, and the safety numbers to compare. Public keys
 // and digits only; no key material, signature or secret can be in it. The face never creates, signs or verifies any of it.
 // Any other shape refuses, and a label written by someone else is shown only after it passes the same readability rules.
 import type { JsonValue } from "../../core/index.js";
@@ -19,6 +19,7 @@ export interface IdentityCard {
   readonly label: string;
   readonly subject: string | null;
   readonly nodeNpub: string | null;
+  readonly nodeKeyBound: boolean;
   readonly agentNpub: string | null;
   readonly contact: ContactCode | null;
   readonly safety: readonly SafetyNumber[];
@@ -31,7 +32,7 @@ export const OWN_DIGITS = 35;
 export const PAIR_DIGITS = 70;
 export const UNREADABLE = "Unreadable name";
 
-const KEYS = ["agent_npub", "contact_code", "label", "node_npub", "safety", "subject"];
+const KEYS = ["agent_npub", "contact_code", "label", "node_key_bound", "node_npub", "safety", "subject"];
 const SUBJECT = /^aukora:1:[0-9a-f]{64}$/;
 const NPUB = /^npub1[a-z0-9]{1,123}$/;
 const PRINTABLE = /^[\x20-\x7e]+$/;
@@ -91,11 +92,13 @@ export function parseCard(value: JsonValue): IdentityCard {
   const label = readableLabel(row.label);
   if (label === null) invalid();
   const subject = nullable(row.subject, SUBJECT);
+  if (typeof row.node_key_bound !== "boolean") invalid();
   const code = contact(row.contact_code);
   // A node that is not bound has no identity to introduce, so it can have no contact code.
   if (subject === null && code !== null) invalid();
   return {
-    label, subject, nodeNpub: nullable(row.node_npub, NPUB), agentNpub: nullable(row.agent_npub, NPUB),
+    label, subject, nodeNpub: nullable(row.node_npub, NPUB), nodeKeyBound: row.node_key_bound,
+    agentNpub: nullable(row.agent_npub, NPUB),
     contact: code, safety: safety(row.safety),
   };
 }

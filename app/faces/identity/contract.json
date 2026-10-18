@@ -2,13 +2,14 @@
   "schema": "aukora-identity-face-v1",
   "service": "aumlok.identity",
   "reply": {
-    "keys": "exactly agent_npub, contact_code, label, node_npub, safety, subject; any other key or type refuses the card",
+    "keys": "exactly agent_npub, contact_code, label, node_key_bound, node_npub, safety, subject; any other key or type refuses the card",
     "label": "string, 1..64 characters, no control, bidirectional or zero-width characters, no leading or trailing space",
     "subject": "null, or aukora:1: followed by 64 lowercase hex digits",
     "node_npub": "null, or an npub of at most 128 bytes",
     "agent_npub": "null, or an npub of at most 128 bytes",
     "contact_code": "null, or {text, expires_at}: text is 1..1000 printable ASCII characters that the node issued, expires_at is unix seconds or null; null whenever subject is null",
-    "safety": "at most 101 entries {kind, label, digits}: at most one own entry with 35 digits, contact entries with 70 digits; every entry shows its own label after the label rules, or an unreadable name when it fails them"
+    "safety": "at most 101 entries {kind, label, digits}: at most one own entry with 35 digits, contact entries with 70 digits; every entry shows its own label after the label rules, or an unreadable name when it fails them",
+    "node_key_bound": "boolean; true only when the node key has an owner-approved Nostr binding; owner subject alone does not establish this binding"
   },
   "contact_code": {
     "drawing": "the text is encoded as a QR picture on a canvas by qr.ts (UTF-8 byte mode, level M, versions 1 to 40); no data image is used",
