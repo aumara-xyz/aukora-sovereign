@@ -81,3 +81,5 @@ The switch changes the `current` link, installs the new release's units, restart
 - The owner pane that signs a pointer.
 - Go Sovereign (row 74) and the move or retirement of S1 (row 103); both are later rows. OpenViking's units are `deploy/openviking/` (row 58).
 - A tested run: nothing here has been run against a host.
+
+Two-node owner messaging: [ceremony, relay egress and operator steps](MESSAGING.md).
