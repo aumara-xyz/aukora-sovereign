@@ -648,7 +648,7 @@ test('a refresh reads the whole contact book before replacing it; nothing beyond
   const charset = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
   const id = n => `npub1${charset[Math.floor(n / 32)]}${charset[n % 32]}${'q'.repeat(56)}`;
   const book = Array.from({ length: 120 }, (_, n) => ({ npub: id(n), label: `Friend ${n}`, pairing: null }));
-  const { root, calls } = mount(t, {
+  const { root, calls, contacts, live } = mount(t, {
     contacts: book, contactPage: true,
     contactAdd: (params, contacts) => { contacts.push({ npub: params.npub, label: params.label, pairing: null }); return { state: 'applied' }; },
   });
@@ -664,6 +664,26 @@ test('a refresh reads the whole contact book before replacing it; nothing beyond
   for (let turn = 0; turn < 10; turn++) await settle();
   for (const contact of [book[0], book[60], book[119]]) assert.ok(conversation(root, contact.npub), `${contact.label} after refresh`);
   assert.ok(conversation(root, `npub1${'z'.repeat(58)}`), 'the added contact');
+  // A book of more than one page still re-reads live: a removal far down the book leaves the list.
+  const gone = book[100].npub;
+  contacts.splice(contacts.findIndex(contact => contact.npub === gone), 1);
+  const listedBefore = listed().length;
+  await live();
+  assert.ok(listed().length > listedBefore, 'the live tick re-read the book');
+  assert.equal(all(root, element => element.dataset.contact === gone).length, 0, 'a live re-read of a long book sees the removal');
+});
+
+test('a failed preview of a contact that has since gone no longer slows the live loop', async t => {
+  let failures = 0;
+  const { root, contacts, live, calls } = mount(t, { preview: params => { if (params.npub === sam) { failures++; throw new Error('app:invalid-reply'); } } });
+  for (let turn = 0; turn < 6; turn++) await settle();
+  assert.equal(failures, 1);
+  contacts.splice(contacts.findIndex(contact => contact.npub === sam), 1);
+  await live();
+  assert.equal(all(root, element => element.dataset.contact === sam).length, 0);
+  const before = calls.length;
+  await live();
+  assert.ok(calls.slice(before).some(call => call.method === 'contacts.list'), 'the next tick reads again: no backoff');
 });
 
 test('a preview that keeps failing slows the live loop instead of retrying every tick', async t => {

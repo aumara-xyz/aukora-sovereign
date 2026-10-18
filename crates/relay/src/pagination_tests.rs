@@ -350,7 +350,8 @@ fn large_timestamp_tie_drains_in_byte_bounded_batches_and_keeps_receiving() {
 
 // An outside review of the earlier client (one receive cycle refused as a whole when any relay held 129 or more
 // matching wraps, or sent more than 500 frames) asked for this exact shape: two relays, one flooded. Each poll queries
-// one relay; a flooded relay's refusal is deferred and rotated past, never a refusal of the clean relay's batch.
+// one relay; a flooded relay's refusal is deferred and rotated past, never a refusal of the clean relay's batch, and
+// the flooded relay's history cursor does not move past what it never delivered.
 #[test]
 fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
     let key = SecretKey::generate().unwrap();
@@ -363,7 +364,7 @@ fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
         relay_key("wss://flooded.example"),
         relay_key("wss://clean.example"),
     ];
-    for failure in ["query-event-limit", "oversized-page", "saturated"] {
+    for failure in ["query-event-limit", "query-page-invalid", "saturated"] {
         let mut request = ReceiveRequest {
             recipient,
             cursor: None,
@@ -372,21 +373,33 @@ fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
             deadline_ms: 1,
         };
         let mut clean_seen = 0;
-        for _ in 0..6 {
+        // Enough polls for the saturated relay to sit on a full 128-item tie (16, 32, 64, 128).
+        for poll in 0..24 {
             let batch = receive_page(&keys, &request, 100, |index, filter| {
                 if index == 1 {
                     return Ok(query(&clean, filter));
                 }
                 match failure {
                     // More than MAX_QUERY_EVENTS frames: the client refuses that relay's query.
-                    "query-event-limit" => Err(canon::Refusal { organ: "relay", reason: "query-event-limit" }),
-                    // A relay answering beyond the requested limit cannot move any cursor.
-                    "oversized-page" => Ok(flood.clone()),
-                    // 200 wraps in one second: more than the 128-item tie limit.
+                    "query-event-limit" => Err(canon::Refusal {
+                        organ: "relay",
+                        reason: "query-event-limit",
+                    }),
+                    // All 200 wraps, beyond the requested limit: the page cannot move any cursor.
+                    "query-page-invalid" => Ok(flood.clone()),
+                    // 200 wraps in one second, answered within each requested limit.
                     _ => Ok(query(&flood, filter)),
                 }
             })
             .unwrap();
+            let flooded_turn = poll % 2 == 0;
+            if failure != "saturated" {
+                let expected = flooded_turn.then_some(canon::Refusal {
+                    organ: "relay",
+                    reason: failure,
+                });
+                assert_eq!(batch.deferred, expected, "{failure} poll {poll}");
+            }
             clean_seen += batch
                 .envelopes
                 .iter()
@@ -395,5 +408,20 @@ fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
             request.cursor = batch.next_cursor;
         }
         assert!(clean_seen > 0, "{failure}: the clean relay's wrap is admitted");
+        let cursor: serde_json::Value =
+            serde_json::from_str(request.cursor.as_ref().unwrap()).unwrap();
+        let flooded = cursor[2]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p[0] == keys[0])
+            .unwrap();
+        if failure == "saturated" {
+            assert_eq!(flooded[2], 80, "never below an unexhausted second");
+            assert_eq!(flooded[4], true);
+            assert_eq!(flooded[5], 128);
+        } else {
+            assert_eq!(flooded[2], 100, "{failure}: the history cursor stays at its start");
+        }
     }
 }

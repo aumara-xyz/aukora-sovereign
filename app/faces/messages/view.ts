@@ -561,7 +561,9 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       render();
       if (contacts.size > 0 && !advances && page.next !== null) info.textContent = COPY.stalled;
       else if (contacts.size >= MAX_ROWS && page.next !== null) info.textContent = COPY.capped;
-      // A preview that keeps failing is retried on each live read; count it so the live loop backs off.
+      // A preview that keeps failing is retried on each live read; count it so the live loop backs off. A contact
+      // that left the book takes its failure with it.
+      for (const npub of [...previewFailures]) if (!contacts.has(npub)) previewFailures.delete(npub);
       return previewFailures.size === 0;
     } catch (error) {
       if (!signal.aborted) { busy = false; render(); info.textContent = ""; showServiceState(problem, error); problem.hidden = false; }
@@ -586,7 +588,8 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     timer = undefined;
     if (signal.aborted) return;
     if (document.hidden || client.shown === false || root.getClientRects().length === 0) { schedule(LIVE_MS); return; }
-    const ok = selected ? await (cards.get(selected)?.poll() ?? Promise.resolve(true)) : contacts.size <= PAGE ? await read(true) : true;
+    // The list re-reads the whole book (one snapshot, readAllPages), however many pages it has.
+    const ok = selected ? await (cards.get(selected)?.poll() ?? Promise.resolve(true)) : await read(true);
     delay = ok ? LIVE_MS : Math.min(delay * 2, LIVE_MAX_MS);
     schedule(delay);
   }
