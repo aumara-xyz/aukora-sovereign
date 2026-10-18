@@ -2,6 +2,7 @@
 import type { FaceClient } from "../../core/index.js";
 import { clearServiceState, showServiceState } from "../../core/service-state.js";
 import { parseCard } from "../identity/card.js";
+import { COPY } from "./copy.js";
 import { h } from "./dom.js";
 import { portal } from "./portal.js";
 
@@ -34,8 +35,8 @@ export function ownIdentity(client: FaceClient, signal: AbortSignal): HTMLElemen
     address.textContent = identity.nodeNpub ?? "Node address unavailable";
     copy.disabled = identity.nodeNpub === null;
     status.textContent = identity.nodeNpub === null ? "Node address unavailable."
-      : !identity.nodeKeyBound ? "Node key is not yet bound by an owner-approved Nostr identity record. Exchange this address directly with the other owner."
-        : "Node key · exchange this address directly with the other owner.";
+      : !identity.nodeKeyBound ? "Node key is not yet bound by an owner-approved Nostr identity record. " + COPY.mutual
+        : "Node key · " + COPY.mutual;
   }).catch(error => { if (!signal.aborted) showServiceState(status, error); });
   return element;
 }
@@ -47,6 +48,7 @@ export function addContact(client: FaceClient, signal: AbortSignal): HTMLElement
   const status = h("p", { role: "status", class: "info", "aria-live": "polite" });
   const form = h("form", { class: "contact-form" },
     h("label", {}, "Nostr address", npub), h("label", {}, "Name", name),
+    h("p", { class: "info" }, COPY.contactKey),
     h("div", { class: "ak-actionrow" }, submit, h("span", { class: "ak-action__note" }, "One passkey approval")), status);
   form.addEventListener("submit", event => {
     event.preventDefault();
@@ -57,7 +59,7 @@ export function addContact(client: FaceClient, signal: AbortSignal): HTMLElement
     status.textContent = "Opening approval…";
     void client.call("network", "contact.propose", { npub: npub.value.trim(), label: name.value.trim() || null }, { signal }).then(() => {
       if (signal.aborted) return;
-      status.textContent = "Review the Add contact card with your passkey. The contact appears here after approval.";
+      status.textContent = COPY.contactReview;
       form.reset();
     }).catch(error => { if (!signal.aborted) showServiceState(status, error); })
       .finally(() => { if (!signal.aborted) submit.disabled = false; });
@@ -70,7 +72,8 @@ export function composer(client: FaceClient, signal: AbortSignal, npub: string, 
   const submit = h("button", { type: "submit", class: "ak-action" }, "Send");
   const status = h("p", { role: "status", class: "info", "aria-live": "polite" });
   const form = h("form", { class: "composer" }, h("label", { class: "ak-label" }, "Message", text),
-    h("div", { class: "ak-actionrow" }, submit, h("span", { class: "ak-action__note" }, "Sent by you · recorded in Aura")), status);
+    h("div", { class: "ak-actionrow" }, submit, h("span", { class: "ak-action__note" }, "Sent by you · recorded in Aura")),
+    h("p", { class: "info" }, COPY.sendSession), h("p", { class: "info" }, COPY.relaysSee), status);
   form.addEventListener("submit", event => {
     event.preventDefault();
     if (submit.disabled || !form.reportValidity()) return;

@@ -11,6 +11,12 @@ export const COPY = {
     contacts: "People you approved with your passkey. Only these can message this node.",
     refused: "Messages turned away before Auma saw anything.",
   },
+  // Dot's launch requirements (a private launch review, not published: F3-F5, F7), shown where the owner acts.
+  mutual: "Share your npub with your friend, add theirs, and ask them to add yours. Messages arrive only after each of you has approved the other.",
+  contactKey: "The card approves this exact npub, not the person. Before you approve, compare it with them in person or on a call you trust.",
+  contactReview: "Review the Add contact card with your passkey. It approves this exact npub, not the person: compare it with them first. The contact appears here after approval.",
+  sendSession: "Anyone using your signed-in session can send messages as you. Each send is recorded in Aura.",
+  relaysSee: "Relays cannot read your text, but they see your node's IP address, the recipient's npub, and when messages are sent.",
   noBackend: "No backend yet",
   absent: {
     messages: [

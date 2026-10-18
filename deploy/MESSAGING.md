@@ -11,6 +11,16 @@ The key remains in Ring 3; no face response, engine mount or log includes it.
 Restart keeps the same npub. A missing key with an existing public companion
 refuses startup instead of silently rotating identity. Identity shows the real
 node npub; it is unbound until an explicit Nostr binding ceremony exists.
+The key is random: the seven-word phrase does not derive, back up or restore
+it. A node that loses its supervisor state loses this npub, and its contacts
+must approve the new one.
+
+What the owner is told in Messages: anyone using the signed-in shell session
+can send as the owner, and each send is recorded in Aura; a contact card
+approves an exact npub, not a person, so compare it with the other person in
+person or on a call you trust before approving; relays cannot read the text but
+see node IP addresses, recipient npubs and timing; both owners must add each
+other before messages arrive.
 
 ## Operator preparation
 
