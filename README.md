@@ -151,7 +151,10 @@ addressed to you.
   depend on; external crates only from `checks/deps.json`; no absolute paths.
 - **Headers:** new source files carry `SPDX-License-Identifier: AGPL-3.0-or-later` and the copyright line used across
   the repository.
-- **Security problems:** report them privately (a GitHub security advisory on this repository), not in a public issue.
+- **Security problems:** report them privately (a GitHub security advisory on this repository, or email
+  peter@aumara.xyz), not in a public issue.
+
+Contact: peter@aumara.xyz · [aukora.xyz](https://aukora.xyz)
 
 Contributions are made under the same licence as the project, AGPL-3.0-or-later.
 
