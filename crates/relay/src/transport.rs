@@ -400,9 +400,10 @@ pub(crate) fn receive_page(
         return finish_batch(envelopes, &positions, index, keys.len(), false);
     }
     // A replay that returned only events at or before the marker (the relay picked another subset of a crowded
-    // second) consumed nothing: keep the marker and the boundary, so what the first page returned is still read.
+    // second) consumed nothing: do not step past the second on it. Walk the next page of that second from its start
+    // (already admitted wraps are skipped by ingress); the saturation rule applies once a pass has consumed a page.
     if started_from.is_some() && resume.is_none() && count == usize::from(limit) && p.tie {
-        p.resume = started_from;
+        p.resume = None;
         return finish_batch(envelopes, &positions, index, keys.len(), false);
     }
     p.resume = None;

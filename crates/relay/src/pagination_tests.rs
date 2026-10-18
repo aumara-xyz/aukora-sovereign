@@ -476,9 +476,10 @@ fn an_uncarriable_wrap_is_skipped_instead_of_refusing_its_page() {
 
 // NIP-01 does not fix which 128 of a crowded second a relay returns. A page split by the delivery budget leaves a
 // resume marker; if the replay returns another subset that lies wholly at or before that marker, nothing was
-// consumed, and stepping past the second then would lose the rest of the first page. The marker is kept instead.
+// consumed, and stepping past the second then would lose the rest of the first page. The second is walked again
+// from its start instead, and a relay that keeps the other subset still lets the walk move on.
 #[test]
-fn a_replay_that_consumes_nothing_keeps_its_resume_marker() {
+fn a_replay_that_consumes_nothing_does_not_step_past_its_second() {
     let key = SecretKey::generate().unwrap();
     let recipient = key.public_key().unwrap();
     let mut crowd: Vec<_> = (0..200)
@@ -492,7 +493,7 @@ fn a_replay_that_consumes_nothing_keeps_its_resume_marker() {
     let budget: u32 = high[..60].iter().map(size).sum();
     let relay = relay_key("wss://relay.example");
     let position = serde_json::json!([relay, 0, 80, 100, true, 128, false, 0, false, null]);
-    let mut request = ReceiveRequest {
+    let request = ReceiveRequest {
         recipient,
         cursor: Some(serde_json::json!([1, 0, [position]]).to_string()),
         max_items: 128,
@@ -500,15 +501,28 @@ fn a_replay_that_consumes_nothing_keeps_its_resume_marker() {
         deadline_ms: 1,
     };
     let keys = [relay];
-    let mut delivered = BTreeSet::new();
-    for call in 0..8 {
-        let batch = receive_page(&keys, &request, 100, |_, _| {
-            Ok(if call == 2 { low.clone() } else { high.clone() })
-        })
-        .unwrap();
-        delivered.extend(batch.envelopes.iter().map(|e| e.id));
-        request.cursor = batch.next_cursor;
-    }
+    let start = Some(serde_json::json!([1, 0, [position]]).to_string());
+    let run = |calls: usize, switch: &dyn Fn(usize) -> bool| {
+        let mut request = ReceiveRequest { cursor: start.clone(), ..request.clone() };
+        let mut delivered = BTreeSet::new();
+        for call in 0..calls {
+            let page = if switch(call) { &low } else { &high };
+            let batch = receive_page(&keys, &request, 100, |_, filter| {
+                // The tail turn's filter is not the crowded second's; answer it as an honest relay would.
+                Ok(if filter.since_seconds == Some(80) { page.to_vec() } else { Vec::new() })
+            })
+            .unwrap();
+            delivered.extend(batch.envelopes.iter().map(|e| e.id));
+            request.cursor = batch.next_cursor;
+        }
+        let cursor: serde_json::Value = serde_json::from_str(request.cursor.as_ref().unwrap()).unwrap();
+        (delivered, cursor[2][0].clone())
+    };
+    // The relay answers once with the other subset: the first page is still read in full.
+    let (delivered, _) = run(12, &|call| call == 2);
     let missing = high.iter().filter(|e| !delivered.contains(&e.event().id)).count();
     assert_eq!(missing, 0, "every wrap of the first page is delivered");
+    // The relay switches to the other subset for good while a marker is outstanding: the walk still leaves the second.
+    let (_, position) = run(16, &|call| call > 0);
+    assert!(position[2].as_u64().unwrap() < 80 || position[6] == true, "{position}");
 }
