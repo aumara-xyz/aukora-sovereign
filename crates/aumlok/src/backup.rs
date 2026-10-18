@@ -224,7 +224,7 @@ impl KdfWire {
             parallelism: self.parallelism,
             time_cost: self.time_cost,
         };
-        parameters.validate()?;
+        parameters.validate_open()?;
         Ok(parameters)
     }
 }
@@ -315,6 +315,95 @@ pub enum BackupDownload {
     PasskeyBound(BackupEnvelopeV2),
     /// Separately and explicitly requested phrase-only copy.
     PhraseOnly(EnvelopeV1),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use argon2::{Algorithm, Argon2, Params, Version};
+    use hkdf::Hkdf;
+
+    fn encoded_backup(memory_kib: u32, time_cost: u32) -> Vec<u8> {
+        BackupEnvelopeV2 {
+            canonical: Vec::new(),
+            kdf: KdfParameters {
+                memory_kib,
+                time_cost,
+                parallelism: 1,
+            },
+            salt: [0x12; SALT_BYTES],
+            nonce: [0x34; NONCE_BYTES],
+            ciphertext: [0; CIPHERTEXT_BYTES],
+            prf: PrfBinding::new(
+                CredentialId::new(vec![0xa5; 32]).unwrap(),
+                "owner.example.com".into(),
+            )
+            .unwrap(),
+        }
+        .encode()
+        .unwrap()
+    }
+
+    #[test]
+    fn opening_refuses_weak_memory_or_time_with_a_distinct_code() {
+        for (memory_kib, time_cost) in [(32, 1), (65_535, 3), (262_144, 2)] {
+            assert_eq!(
+                BackupEnvelopeV2::from_canonical_bytes(&encoded_backup(memory_kib, time_cost))
+                    .unwrap_err(),
+                refuse("envelope-kdf-weak")
+            );
+        }
+    }
+
+    #[test]
+    fn opening_accepts_production_and_the_documented_floor() {
+        for costs in [
+            KdfParameters::PRODUCTION,
+            KdfParameters {
+                memory_kib: 65_536,
+                time_cost: 3,
+                parallelism: 1,
+            },
+        ] {
+            let backup = BackupEnvelopeV2::from_canonical_bytes(&encoded_backup(
+                costs.memory_kib,
+                costs.time_cost,
+            ))
+            .unwrap();
+            assert_eq!(backup.parts().0, costs);
+        }
+    }
+
+    #[test]
+    fn explicit_low_cost_backup_kdf_vector_is_unchanged() {
+        // Only this disposable KDF fixture uses the documented 32 KiB/t=1
+        // costs directly; no real backup parser or restore bypass is provided.
+        let vector: serde_json::Value =
+            serde_json::from_str(include_str!("../vectors/backup-kdf-v2.json")).unwrap();
+        let phrase = vector["phrase"].as_str().unwrap();
+        let salt = hex::decode(vector["salt_hex"].as_str().unwrap()).unwrap();
+        let prf = hex::decode(vector["prf_hex"].as_str().unwrap()).unwrap();
+        let costs = KdfParameters {
+            memory_kib: 32,
+            time_cost: 1,
+            parallelism: 1,
+        };
+        costs.validate().unwrap();
+        let params = Params::new(costs.memory_kib, costs.time_cost, costs.parallelism, Some(32))
+            .unwrap();
+        let mut phrase_key = [0; 32];
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+            .hash_password_into(phrase.as_bytes(), &salt, &mut phrase_key)
+            .unwrap();
+        assert_eq!(hex::encode(phrase_key), vector["phrase_key_hex"]);
+        let mut inputs = phrase_key.to_vec();
+        inputs.extend_from_slice(&prf);
+        let mut backup_key = [0; 32];
+        Hkdf::<Sha256>::new(Some(BACKUP_HKDF_SALT), &inputs)
+            .expand(BACKUP_HKDF_INFO, &mut backup_key)
+            .unwrap();
+        assert_eq!(hex::encode(backup_key), vector["backup_key_hex"]);
+    }
 }
 
 /// PRF results and phrase-derived keys are confined to the owner-browser build.
@@ -548,6 +637,7 @@ pub mod owner {
         phrase: &OwnerPhrase,
         prf: &OwnerPrf,
     ) -> Result<IdentityRoot> {
+        backup.kdf.validate_open()?;
         if prf.binding != backup.prf {
             return Err(refuse("backup-prf-metadata"));
         }

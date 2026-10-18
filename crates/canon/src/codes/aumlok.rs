@@ -56,7 +56,7 @@ organ_codes! {
             "device-membership-limit", "device-membership-missing", "device-membership-state", "device-membership-version",
             "device-not-member", "device-pairing-required", "device-possession-format", "device-receipt", "device-receipt-context",
             "device-receipt-time", "device-revoked", "empty-bucket", "envelope-authentication", "envelope-base64", "envelope-json",
-            "envelope-kdf", "envelope-kdf-failed", "envelope-length", "envelope-not-canonical", "envelope-seal-failed", "envelope-too-large",
+            "envelope-kdf", "envelope-kdf-failed", "envelope-kdf-weak", "envelope-length", "envelope-not-canonical", "envelope-seal-failed", "envelope-too-large",
             "envelope-version", "health-record-epoch", "health-record-format", "health-record-operation", "health-signers-unavailable",
             "integer-range", "key-algorithm", "key-clock-unavailable", "key-context", "key-epoch", "key-exists", "key-expired", "key-id",
             "key-invalid", "key-material", "key-missing", "key-owner-context", "key-revoked", "key-revoked-or-future", "key-role",

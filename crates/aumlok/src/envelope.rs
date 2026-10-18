@@ -60,6 +60,18 @@ impl KdfParameters {
         }
         Ok(())
     }
+
+    /// Enforce the security floor before accepting or opening retained ciphertext.
+    pub(crate) fn validate_open(self) -> Result<()> {
+        self.validate()?;
+        // At least 64 MiB and three passes are required for offline-guessing
+        // resistance. PRODUCTION remains above this floor; smaller explicit
+        // interoperability fixtures may use validate(), never the open path.
+        if self.memory_kib < 65_536 || self.time_cost < 3 {
+            return Err(refuse("envelope-kdf-weak"));
+        }
+        Ok(())
+    }
 }
 
 impl Default for KdfParameters {
@@ -178,7 +190,7 @@ impl WireKdf {
             parallelism: self.parallelism,
             time_cost: self.time_cost,
         };
-        costs.validate()?;
+        costs.validate_open()?;
         Ok(costs)
     }
 
@@ -228,6 +240,107 @@ pub struct EnvelopeSubmission {
     pub identity: RootIdentity,
     /// Current owner epoch, outside the immutable envelope-v1 object.
     pub expected_epoch: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use argon2::{Algorithm, Argon2, Params, Version};
+    use chacha20poly1305::{
+        aead::{Aead, KeyInit, Payload},
+        XChaCha20Poly1305, XNonce,
+    };
+
+    const VECTOR: &[u8] = include_bytes!("../vectors/envelope-v1.json");
+
+    fn with_costs(memory_kib: u32, time_cost: u32) -> Vec<u8> {
+        let mut wire: WireEnvelope = serde_json::from_slice(VECTOR).unwrap();
+        wire.kdf.memory_kib = memory_kib;
+        wire.kdf.time_cost = time_cost;
+        encode(&wire).unwrap()
+    }
+
+    #[test]
+    fn opening_refuses_weak_memory_or_time_with_a_distinct_code() {
+        for (memory_kib, time_cost) in [(32, 1), (65_535, 3), (262_144, 2)] {
+            let error = EnvelopeV1::from_canonical_bytes(&with_costs(memory_kib, time_cost))
+                .unwrap_err();
+            assert_eq!(error, refuse("envelope-kdf-weak"));
+        }
+    }
+
+    #[test]
+    fn opening_accepts_production_and_the_documented_floor() {
+        for costs in [
+            KdfParameters::PRODUCTION,
+            KdfParameters {
+                memory_kib: 65_536,
+                time_cost: 3,
+                parallelism: 1,
+            },
+        ] {
+            let envelope = EnvelopeV1::from_canonical_bytes(&with_costs(
+                costs.memory_kib,
+                costs.time_cost,
+            ))
+            .unwrap();
+            assert_eq!(envelope.parts().0, costs);
+        }
+        assert_eq!(
+            EnvelopeV1::from_canonical_bytes(&with_costs(262_145, 3)).unwrap_err(),
+            refuse("envelope-kdf")
+        );
+    }
+
+    #[test]
+    fn explicit_low_cost_interoperability_fixture_is_unchanged() {
+        // Reproduce disposable fixture cryptography directly. Real envelope
+        // parsing/opening must refuse these costs, including in test builds.
+        let costs = KdfParameters {
+            memory_kib: 32,
+            time_cost: 1,
+            parallelism: 1,
+        };
+        costs.validate().unwrap();
+        assert_eq!(costs.validate_open(), Err(refuse("envelope-kdf-weak")));
+        let wire: WireEnvelope = serde_json::from_slice(VECTOR).unwrap();
+        assert_eq!(wire.kdf.memory_kib, costs.memory_kib);
+        assert_eq!(wire.kdf.time_cost, costs.time_cost);
+        assert_eq!(wire.kdf.parallelism, costs.parallelism);
+        let salt: [u8; SALT_BYTES] = decode_fixed(&wire.salt).unwrap();
+        let nonce: [u8; NONCE_BYTES] = decode_fixed(&wire.nonce).unwrap();
+        let params = Params::new(costs.memory_kib, costs.time_cost, costs.parallelism, Some(32))
+            .unwrap();
+        let mut key = [0; 32];
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+            .hash_password_into(b"envelope interoperability fixture", &salt, &mut key)
+            .unwrap();
+        let mut header: serde_json::Value = serde_json::from_slice(VECTOR).unwrap();
+        header.as_object_mut().unwrap().remove("ciphertext");
+        let mut aad = ENVELOPE_AAD_DOMAIN.to_vec();
+        aad.extend_from_slice(&serde_json::to_vec(&header).unwrap());
+        let cipher = XChaCha20Poly1305::new_from_slice(&key).unwrap();
+        let ciphertext = cipher
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: &[0x5a; ROOT_BYTES],
+                    aad: &aad,
+                },
+            )
+            .unwrap();
+        assert_eq!(STANDARD.encode(&ciphertext), wire.ciphertext);
+        let opened = cipher
+            .decrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: &ciphertext,
+                    aad: &aad,
+                },
+            )
+            .unwrap();
+        assert_eq!(opened, [0x5a; ROOT_BYTES]);
+    }
 }
 
 /// Secret operations are absent from native builds.
@@ -346,6 +459,7 @@ pub mod owner {
         envelope: &EnvelopeV1,
         phrase: &OwnerPhrase,
     ) -> Result<IdentityRoot> {
+        envelope.kdf.validate_open()?;
         let key = derive_phrase_key(browser, phrase, envelope.kdf, &envelope.salt)?;
         let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
             .map_err(|_| refuse("envelope-authentication"))?;
