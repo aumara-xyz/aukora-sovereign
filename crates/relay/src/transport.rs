@@ -378,6 +378,16 @@ pub(crate) fn receive_page(
     })();
     let (envelopes, oldest, count, more, resume) = match page {
         Ok(page) => page,
+        // The client's 4 MiB input cap is the same dead end as a full 128-item second when the wraps are large:
+        // the earlier, smaller pages of this second were delivered; step past it rather than retry it forever.
+        Err(code) if !tail && p.tie && code.organ == "relay" && code.reason == "query-byte-limit" => {
+            eprintln!("relay: query-timestamp-saturated (bytes); skipping the rest of that second");
+            p.resume = None;
+            p.finish_tie();
+            let mut batch = finish_batch(Vec::new(), &positions, index, keys.len(), false)?;
+            batch.deferred = Some(code);
+            return Ok(batch);
+        }
         Err(code) => {
             eprintln!(
                 "relay: query-deferred {}:{}; history cursor retained",
@@ -401,10 +411,11 @@ pub(crate) fn receive_page(
     if count == usize::from(limit) {
         if p.tie {
             if limit == nostr::transport::MAX_BATCH_ITEMS {
-                // NIP-01 has inclusive second-resolution time bounds and exact
-                // IDs, with no exclusion or offset. Never skip a full boundary:
-                // more events can share this second. Other relays still rotate.
-                eprintln!("relay: query-timestamp-saturated; history cursor retained");
+                // NIP-01 has inclusive second-resolution time bounds and exact IDs, with no exclusion or offset, so
+                // the rest of a crowded second cannot be reached on this relay. Retaining it would freeze all older
+                // history behind 128 wraps anyone can publish: what came back was delivered; step past the second.
+                eprintln!("relay: query-timestamp-saturated; skipping the rest of that second");
+                p.finish_tie();
             } else {
                 p.limit = (limit * 2).min(nostr::transport::MAX_BATCH_ITEMS);
             }

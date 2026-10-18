@@ -145,7 +145,7 @@ fn incomplete_or_oversized_page_retains_history_and_rotates() {
 }
 
 #[test]
-fn saturated_timestamp_is_retained_without_starving_another_relay() {
+fn a_saturated_second_is_stepped_past_without_starving_another_relay() {
     let key = SecretKey::generate().unwrap();
     let recipient = key.public_key().unwrap();
     let flooded: Vec<_> = (0..300)
@@ -164,7 +164,7 @@ fn saturated_timestamp_is_retained_without_starving_another_relay() {
         deadline_ms: 1,
     };
     let mut seen_other = false;
-    for _ in 0..16 {
+    for _ in 0..24 {
         let batch = receive_page(&keys, &request, 100, |index, filter| {
             Ok(query(if index == 0 { &flooded } else { &other }, filter))
         })
@@ -180,10 +180,10 @@ fn saturated_timestamp_is_retained_without_starving_another_relay() {
         .iter()
         .find(|p| p[0] == keys[0])
         .unwrap();
-    assert_eq!(position[2], 80, "never move below an unexhausted timestamp");
-    assert_eq!(position[4], true);
-    assert_eq!(position[5], 128);
-    assert_eq!(position[6], false);
+    // A full 128-item second cannot be paged further (NIP-01 has no offset): its 128 were delivered, and history
+    // continues below it rather than freezing there.
+    assert!(position[2].as_u64().unwrap() < 80 || position[6] == true, "{position}");
+    assert_eq!(position[4], false);
 }
 
 #[test]
@@ -417,9 +417,9 @@ fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
             .find(|p| p[0] == keys[0])
             .unwrap();
         if failure == "saturated" {
-            assert_eq!(flooded[2], 80, "never below an unexhausted second");
-            assert_eq!(flooded[4], true);
-            assert_eq!(flooded[5], 128);
+            // After a full 128-item page at that second, the walk steps past it instead of freezing there.
+            assert!(flooded[2].as_u64().unwrap() < 80 || flooded[6] == true, "{flooded}");
+            assert_eq!(flooded[4], false);
         } else {
             assert_eq!(flooded[2], 100, "{failure}: the history cursor stays at its start");
         }
@@ -460,4 +460,39 @@ fn an_uncarriable_wrap_is_skipped_instead_of_refusing_its_page() {
         request.cursor = batch.next_cursor;
     }
     assert!(delivered.contains(&good.event().id), "the carriable wrap behind it is delivered");
+}
+
+// Large wraps hit the client's 4 MiB input cap before the 128-item limit (64 x 64 KiB): that second is stepped past
+// too, after its smaller pages were delivered, instead of the same refused query repeating forever.
+#[test]
+fn a_second_too_large_for_the_input_cap_is_stepped_past() {
+    let key = SecretKey::generate().unwrap();
+    let recipient = key.public_key().unwrap();
+    let flood: Vec<_> = (0..100)
+        .map(|n| event(&key, recipient, 80, &n.to_string()))
+        .collect();
+    let older = vec![event(&key, recipient, 50, "older")];
+    let keys = [relay_key("wss://relay.example")];
+    let mut request = ReceiveRequest {
+        recipient,
+        cursor: None,
+        max_items: 128,
+        max_bytes: 1_048_576,
+        deadline_ms: 1,
+    };
+    let mut delivered = BTreeSet::new();
+    for _ in 0..16 {
+        let batch = receive_page(&keys, &request, 100, |_, filter| {
+            if filter.limit.unwrap_or(0) > 32 {
+                return Err(canon::Refusal { organ: "relay", reason: "query-byte-limit" });
+            }
+            let mut all = flood.clone();
+            all.extend(older.iter().cloned());
+            Ok(query(&all, filter))
+        })
+        .unwrap();
+        delivered.extend(batch.envelopes.iter().map(|e| e.id));
+        request.cursor = batch.next_cursor;
+    }
+    assert!(delivered.contains(&older[0].event().id), "history below the crowded second is reached");
 }
