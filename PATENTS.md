@@ -1,6 +1,6 @@
 # Patents
 
-Aumara has filed provisional patent applications in the United States covering parts of this work.
+Patent pending. Aumara has filed provisional patent applications in the United States covering parts of this work.
 
 AUKORA Sovereign is licensed under the GNU Affero General Public License, version 3 or later ([LICENSE](LICENSE)).
 Section 11 of that licence says that each contributor grants every recipient of the program "a non-exclusive,
@@ -15,6 +15,6 @@ This page describes the licence's effect; it is not legal advice. The licence te
 
 ## Filed applications
 
-The application numbers will be listed here.
-
-- (to be added)
+- US provisional application 64/178,841, filed 2026-10-18
+- US provisional application 64/178,843, filed 2026-10-18
+- Additional US provisional applications pending.
