@@ -15,7 +15,14 @@ export function mountIdentity(host: ServiceFaceHost): void {
   const refresh = document.createElement("button");
   refresh.type = "button";
   refresh.textContent = "Refresh";
-  root.append(refresh);
+  refresh.className = "identity-refresh";
+  // The same header as Messages: the title on the left, its one action on the right, a hairline under both.
+  const header = document.createElement("header");
+  header.className = "identity-header";
+  const heading = root.querySelector("h1");
+  if (heading) header.append(heading);
+  header.append(refresh);
+  root.prepend(header);
   const view = createIdentityView(root);
   signal.addEventListener("abort", () => view.dispose(), { once: true });
   let reading = 0;
