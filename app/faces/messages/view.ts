@@ -118,7 +118,7 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
       if (shape !== drawn) { drawn = shape; rows.replaceChildren(...ordered.map(message => messageRow(message, writer ? writer.send : null))); }
       info.textContent = ordered.length === 0 ? COPY.emptyMessages : stalled ? COPY.stalled
         : capped ? COPY.capped : resetWindow ? "Showing the latest messages. Load earlier messages to continue this conversation." : "";
-      if (visible && !document.hidden && element.getClientRects().length > 0) changed(ordered);
+      if (visible && client.shown !== false && !document.hidden && element.getClientRects().length > 0) changed(ordered);
       if (restart && (bottom || resetWindow)) scroll.scrollTop = scroll.scrollHeight;
       else if (!restart) scroll.scrollTop = oldTop + scroll.scrollHeight - oldHeight;
       return true;
@@ -154,7 +154,7 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
     toggleInfo(show = details.hidden !== false): boolean { details.hidden = !show; return show; },
     /** The live re-read of the newest page while this thread is open; false when it failed. */
     poll(): Promise<boolean> {
-      return visible && started && element.getClientRects().length > 0 ? read(true, true) : Promise.resolve(true);
+      return visible && started && client.shown !== false && element.getClientRects().length > 0 ? read(true, true) : Promise.resolve(true);
     },
   };
 }
@@ -561,7 +561,8 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       render();
       if (contacts.size > 0 && !advances && page.next !== null) info.textContent = COPY.stalled;
       else if (contacts.size >= MAX_ROWS && page.next !== null) info.textContent = COPY.capped;
-      return true;
+      // A preview that keeps failing is retried on each live read; count it so the live loop backs off.
+      return previewFailures.size === 0;
     } catch (error) {
       if (!signal.aborted) { busy = false; render(); info.textContent = ""; showServiceState(problem, error); problem.hidden = false; }
       return false;
@@ -575,7 +576,8 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
   };
   moreContacts.addEventListener("click", () => { void read(false); }, { signal });
 
-  // Live: re-read while the face is shown, the open thread when one is open, else the list. Hidden, it only waits.
+  // Live: re-read while the face is shown, the open thread when one is open, else the list. Hidden (the tab, or the
+  // shell parking this face's slot), it only waits, and showing it again re-reads at once.
   let timer: ReturnType<typeof setTimeout> | undefined;
   let delay = LIVE_MS;
   const schedule = (ms: number) => { if (timer !== undefined) clearTimeout(timer); if (!signal.aborted) timer = setTimeout(() => { void live(); }, ms); };
@@ -583,12 +585,14 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     if (now) { schedule(0); return; }
     timer = undefined;
     if (signal.aborted) return;
-    if (document.hidden || root.getClientRects().length === 0) { schedule(LIVE_MS); return; }
+    if (document.hidden || client.shown === false || root.getClientRects().length === 0) { schedule(LIVE_MS); return; }
     const ok = selected ? await (cards.get(selected)?.poll() ?? Promise.resolve(true)) : contacts.size <= PAGE ? await read(true) : true;
     delay = ok ? LIVE_MS : Math.min(delay * 2, LIVE_MAX_MS);
     schedule(delay);
   }
   document.addEventListener?.("visibilitychange", () => { if (!document.hidden) { delay = LIVE_MS; schedule(0); } }, { signal });
+  const unshown = client.onShown?.(shown => { if (shown && !document.hidden) { delay = LIVE_MS; schedule(0); } });
+  if (unshown) signal.addEventListener("abort", () => { void unshown(); }, { once: true });
   signal.addEventListener("abort", () => { if (timer !== undefined) clearTimeout(timer); canvas.remove(); }, { once: true });
   render();
   void read(true, true).then(() => schedule(LIVE_MS));

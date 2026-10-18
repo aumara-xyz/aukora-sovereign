@@ -13,6 +13,10 @@ export interface FaceClient {
   subscribe(service: string, topic: string, params: JsonValue, onValue: (value: JsonValue) => void,
     options?: SubscriptionOptions): Promise<Dispose>;
   dispose(): void;
+  /** False while the shell parks this face (its slot is inactive); a face never told otherwise is shown. */
+  readonly shown?: boolean;
+  /** Called when the shell shows or parks this face. A face uses it to pause and resume its own polling. */
+  onShown?(listener: (shown: boolean) => void): Dispose;
 }
 
 interface Pending {
@@ -40,6 +44,8 @@ export function connectFace(options: FaceClientOptions): FaceClient {
   } catch { throw new Error('app:invalid-shell'); }
 
   const pending = new Map<string, Pending>();
+  const shownListeners = new Set<(shown: boolean) => void>();
+  let shown = true;
   let port: MessagePort | null = null;
   let closed = false;
   let serial = 0;
@@ -136,6 +142,17 @@ export function connectFace(options: FaceClientOptions): FaceClient {
     try {
       const message = objectData(decodeData(encodeData(event.data)));
       if (message.channel !== RPC_CHANNEL || message.pluginId !== pluginId) return;
+      if (message.type === 'shown') {
+        // Visibility only: the shell parks an inactive face with visibility:hidden, which the frame cannot observe.
+        exactKeys(message, ['channel', 'type', 'pluginId', 'shown']);
+        if (typeof message.shown !== 'boolean' || event.ports.length) throw new Error('app:invalid-message');
+        if (message.shown === shown) return;
+        shown = message.shown;
+        for (const listener of [...shownListeners]) {
+          try { listener(shown); } catch { /* One face listener cannot stop another. */ }
+        }
+        return;
+      }
       exactKeys(message, ['channel', 'type', 'pluginId']);
       if (message.type === 'hello-request' && event.ports.length === 0) { hello(); return; }
       if (message.type !== 'connect' || event.ports.length !== 1) throw new Error('app:invalid-message');
@@ -201,6 +218,7 @@ export function connectFace(options: FaceClientOptions): FaceClient {
       if (work.sent) send({ v: 1, type: work.onValue ? 'unsubscribe' : 'cancel', id });
     }
     disconnect('app:disposed');
+    shownListeners.clear();
     window.removeEventListener('message', connect);
     window.removeEventListener('pagehide', dispose);
     options.signal?.removeEventListener('abort', dispose);
@@ -211,6 +229,12 @@ export function connectFace(options: FaceClientOptions): FaceClient {
   if (options.signal?.aborted) dispose();
   else hello();
   return Object.freeze({
+    get shown() { return shown; },
+    onShown: (listener: (value: boolean) => void): Dispose => {
+      if (typeof listener !== 'function') throw new Error('app:invalid-message');
+      if (!closed) shownListeners.add(listener);
+      return () => { shownListeners.delete(listener); };
+    },
     call: (service: string, method: string, params: JsonValue, callOptions?: CallOptions) =>
       request('call', service, method, params, null, callOptions).promise,
     subscribe: async (service: string, topic: string, params: JsonValue, onValue: (value: JsonValue) => void,

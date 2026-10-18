@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Organism, hostFace } from '../core/index.js';
+import { Organism, RPC_CHANNEL, hostFace } from '../core/index.js';
 import type { Dispose, PluginHandle, PluginStatus, RpcService } from '../core/index.js';
 import { COPY, fill } from '../design/index.js';
 import { FACE_CATALOG } from '../faces/catalog.js';
@@ -54,6 +54,16 @@ function active(element: HTMLElement, shown: boolean): void {
   element.dataset.active = String(shown);
   element.inert = !shown;
   element.setAttribute('aria-hidden', String(!shown));
+}
+
+// visibility:hidden parks a face's frame without changing document.hidden inside it, so the shell tells the face.
+// The message carries one boolean and no port; a face uses it only to pause its own polling while parked.
+function announceShown(slot: FaceSlot): void {
+  const target = slot.frame?.contentWindow;
+  if (!target) return;
+  try {
+    target.postMessage({ channel: RPC_CHANNEL, type: 'shown', pluginId: slot.manifest.id, shown: slot.element.dataset.active === 'true' }, '*');
+  } catch { /* The face keeps its last state; it still pauses when its document is hidden. */ }
 }
 
 export function mountShell(options: ShellOptions): ShellController {
@@ -127,7 +137,9 @@ export function mountShell(options: ShellOptions): ShellController {
     surfaceEmpty.hidden = selected !== '';
     for (const [key, value] of slots) {
       const shown = value.manifest.menu.section === 'workspace' ? key === workspace : key === selected;
+      const changed = value.element.dataset.active !== String(shown);
       active(value.element, shown);
+      if (changed) announceShown(value);
       value.button?.classList.toggle('menuItemActive', shown);
       value.button?.setAttribute('aria-pressed', String(shown));
       if (shown) value.button?.setAttribute('aria-current', 'page');
@@ -224,6 +236,14 @@ export function mountShell(options: ShellOptions): ShellController {
           }
         };
         context.listen(window, 'message', navigate as EventListener);
+        // The face's hello means its listener is ready: tell it whether its slot is shown now.
+        const greeted = (event: MessageEvent) => {
+          if (disposed || context.signal.aborted || event.source !== frame.contentWindow || event.origin !== 'null') return;
+          const data: unknown = event.data;
+          if (data && typeof data === 'object' && (data as { channel?: unknown }).channel === RPC_CHANNEL
+            && (data as { type?: unknown }).type === 'hello') announceShown(slot);
+        };
+        context.listen(window, 'message', greeted as EventListener);
         frame.src = entry.href;
         container.append(frame);
         context.effect(() => {

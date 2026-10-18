@@ -166,6 +166,7 @@ function mount(t, options = {}) {
       }
       if (method === 'messages.list') {
         if (options.page && params.npub === maya && params.limit !== 1) return options.page(params);
+        if (options.preview && params.limit === 1) options.preview(params);
         const scoped = messages.filter(item => !params.npub || item.contact === params.npub);
         return { items: scoped.slice(0, params.limit), next: null };
       }
@@ -178,12 +179,20 @@ function mount(t, options = {}) {
       assert.fail(`unexpected method: ${method}`);
     },
   };
+  // The shell's park/show signal (app/core/client.ts): absent in the older fixtures, which behave as always shown.
+  const shownListeners = new Set();
+  if (options.shown !== undefined) {
+    let shown = options.shown;
+    Object.defineProperty(client, 'shown', { get: () => shown });
+    client.onShown = listener => { shownListeners.add(listener); return () => shownListeners.delete(listener); };
+    client.setShown = value => { shown = value; for (const listener of shownListeners) listener(value); };
+  }
   // The face re-reads on its own every few seconds; the tests move that clock by hand.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const live = async () => { t.mock.timers.tick(6_000); for (let turn = 0; turn < 6; turn++) await settle(); };
   mountMessages(root, client, controller.signal, new Set(options.granted ?? ['contacts.list', 'messages.list', 'refusals.counts', 'conversations.marks', 'contact.propose', 'contact.remove', 'send', 'conversation.mark']));
   t.after(() => { controller.abort(); assert.equal(root.children.length, 0, 'face removes its canvas on dispose'); });
-  return { root, document, calls, contacts, messages, live };
+  return { root, document, calls, contacts, messages, live, client, shownListeners, tick: ms => t.mock.timers.tick(ms) };
 }
 
 function conversation(root, contact = maya) { return find(root, element => element.dataset.contact === contact); }
@@ -599,6 +608,42 @@ test('a failed send shows one red retry, which sends the same text again', async
   assert.deepEqual(calls.filter(call => call.method === 'send').map(call => call.params), [{ npub: maya, text: 'Did this arrive?' }]);
 });
 
+test('while the shell parks the face, the live loop reads nothing and an open thread marks nothing read', async t => {
+  const { root, messages, live, calls, client, shownListeners, tick } = mount(t, { shown: true });
+  await settle();
+  const card = conversation(root, maya);
+  byClass(card, 'ak-portal__head').click(); await settle();
+  byClass(card, 'thread-back').click(); await settle();
+  // Parked with visibility:hidden: document.hidden stays false and the frame keeps its layout.
+  client.setShown(false);
+  messages.unshift(message('parked', maya, 70, 'in', 'Still there?'));
+  const before = calls.length;
+  for (let turn = 0; turn < 5; turn++) await live();
+  assert.deepEqual(calls.slice(before), [], 'no reads while parked');
+  assert.equal(byClass(conversation(root, maya), 'conversation-snippet').textContent, 'See you at five?');
+  // Shown again: one immediate re-read, without waiting for the next tick.
+  client.setShown(true);
+  tick(0);
+  for (let turn = 0; turn < 6; turn++) await settle();
+  assert.ok(calls.slice(before).some(call => call.method === 'contacts.list'), 'showing the face re-reads at once');
+  assert.equal(byClass(conversation(root, maya), 'conversation-snippet').textContent, 'Still there?');
+  assert.equal(byClass(conversation(root, maya), 'unreadMarker').hidden, false, 'arrivals while parked stay unread');
+  assert.equal(shownListeners.size, 1);
+});
+
+test('an open thread does not re-read or mark messages read while the face is parked', async t => {
+  const { root, messages, live, calls, client } = mount(t, { shown: true });
+  await settle();
+  const card = conversation(root, maya);
+  byClass(card, 'ak-portal__head').click(); await settle();
+  client.setShown(false);
+  messages.unshift(message('unseen', maya, 80, 'in', 'Are you there?'));
+  const before = calls.length;
+  for (let turn = 0; turn < 3; turn++) await live();
+  assert.deepEqual(calls.slice(before), []);
+  assert.equal(byClass(card, 'transcript').children.some(row => row.dataset.message === 'unseen'), false);
+});
+
 test('a refresh reads the whole contact book before replacing it; nothing beyond the first page drops out', async t => {
   const charset = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
   const id = n => `npub1${charset[Math.floor(n / 32)]}${charset[n % 32]}${'q'.repeat(56)}`;
@@ -621,3 +666,15 @@ test('a refresh reads the whole contact book before replacing it; nothing beyond
   assert.ok(conversation(root, `npub1${'z'.repeat(58)}`), 'the added contact');
 });
 
+test('a preview that keeps failing slows the live loop instead of retrying every tick', async t => {
+  let failures = 0;
+  const { live, tick } = mount(t, { preview: params => { if (params.npub === sam) { failures++; throw new Error('app:invalid-reply'); } } });
+  for (let turn = 0; turn < 6; turn++) await settle();
+  assert.equal(failures, 1);
+  await live();
+  assert.equal(failures, 2, 'the first live read retries it');
+  await live();
+  assert.equal(failures, 2, 'then the loop waits longer than one tick');
+  tick(6_000); for (let turn = 0; turn < 6; turn++) await settle();
+  assert.equal(failures, 3);
+});
