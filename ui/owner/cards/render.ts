@@ -99,6 +99,16 @@ export function cardTone(kind: CardKind, risk: ApprovalCard["risk"]): "ak-tone-r
   return risk === "critical" ? "ak-tone-red" : "ak-tone-blue";
 }
 
+/**
+ * The pill beside the summary never contradicts the card's colour: a red card says CRITICAL; a blue card names its
+ * kind (CONTACT, DOOR ASK, STANDING GRANT) instead of the gate's rating. The rating itself is unchanged and stays in
+ * the exact card below and in the card's accessible name.
+ */
+export function cardPill(kind: CardKind, risk: ApprovalCard["risk"]): { text: string; tone: "ak-tone-red" | "ak-tone-blue" } {
+  const tone = cardTone(kind, risk);
+  return tone === "ak-tone-red" && risk === "critical" ? { text: "CRITICAL", tone } : { text: KIND_TITLE[kind].toUpperCase(), tone };
+}
+
 function glyph(document: Document, kind: CardKind): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -157,8 +167,9 @@ export function renderCard(document: Document, card: ApprovalCard,
   const end = document.createElement("span");
   end.className = "ak-portal__end";
   const risk = document.createElement("span");
-  risk.className = `ak-pill approval-risk ${card.risk === "critical" ? "ak-tone-red" : "ak-tone-blue"}`;
-  risk.textContent = card.risk.toUpperCase();
+  const pill = cardPill(kind, card.risk);
+  risk.className = `ak-pill approval-risk ${pill.tone}`;
+  risk.textContent = pill.text;
   end.append(risk);
   head.append(tile, copy, end);
   const body = document.createElement("div");

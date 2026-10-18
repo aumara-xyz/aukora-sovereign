@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const dir = mkdtempSync(path.join(tmpdir(), 'owner-card-tone-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 writeFileSync(path.join(dir, 'render.js'), stripTypeScriptTypes(readFileSync(path.join(root, 'ui/owner/cards/render.ts'), 'utf8')));
-const { cardKind, cardTone } = await import(pathToFileURL(path.join(dir, 'render.js')).href);
+const { cardKind, cardPill, cardTone } = await import(pathToFileURL(path.join(dir, 'render.js')).href);
 
 test('the node-changing kinds are red and the people-facing kinds blue, whatever the gate rated them', () => {
   const tone = (target, op, risk) => cardTone(cardKind(target, op), risk);
@@ -29,4 +29,15 @@ test('the node-changing kinds are red and the people-facing kinds blue, whatever
   // Any other change keeps the gate's own rating.
   assert.equal(tone('notes/today.md', 'apply', 'critical'), 'ak-tone-red');
   assert.equal(tone('notes/today.md', 'apply', 'routine'), 'ak-tone-blue');
+});
+
+test('the pill never contradicts the colour: red cards say CRITICAL, blue cards name their kind', () => {
+  const pill = (target, op, risk) => cardPill(cardKind(target, op), risk);
+  assert.deepEqual(pill('release', 'release', 'critical'), { text: 'CRITICAL', tone: 'ak-tone-red' });
+  assert.deepEqual(pill('engine/model-key.json', 'apply', 'critical'), { text: 'CRITICAL', tone: 'ak-tone-red' });
+  assert.deepEqual(pill('messaging/contacts.json', 'apply', 'critical'), { text: 'CONTACT', tone: 'ak-tone-blue' });
+  assert.deepEqual(pill('door/ask-01.json', 'apply', 'critical'), { text: 'DOOR ASK', tone: 'ak-tone-blue' });
+  assert.deepEqual(pill('door/standing-grants.json', 'grant', 'critical'), { text: 'STANDING GRANT', tone: 'ak-tone-blue' });
+  assert.deepEqual(pill('notes/today.md', 'apply', 'critical'), { text: 'CRITICAL', tone: 'ak-tone-red' });
+  assert.deepEqual(pill('notes/today.md', 'apply', 'routine'), { text: 'CHANGE', tone: 'ak-tone-blue' });
 });
