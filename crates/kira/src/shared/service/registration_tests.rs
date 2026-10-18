@@ -170,6 +170,31 @@ fn first_owner_retry_needs_no_token_when_the_interruption_came_before_the_save()
     assert!(!dir.0.join("register-peter.json").exists());
 }
 
+/// A crash after the token file was placed but before its save leaves a file that authenticates nothing: the retry
+/// replaces it. A file holding a saved token, or anything that is not a lone token, still refuses token-file-exists.
+#[test]
+fn a_token_file_left_by_a_crash_before_the_save_is_replaced_on_retry() {
+    let dir = Directory::new();
+    let token_file = dir.0.join("owner.tok");
+    interrupt_at("token-delivered", || {
+        let _ = owner_cli(&dir.0, &token_file, None, &["register", "peter", "--owner"]);
+    });
+    let unsaved = fs::read_to_string(&token_file).unwrap();
+    assert!(load_tokens(&dir.0).unwrap().is_empty());
+    owner_cli(&dir.0, &token_file, None, &["register", "peter", "--owner"]).unwrap();
+    let saved = fs::read_to_string(&token_file).unwrap();
+    assert_ne!(saved, unsaved);
+    assert!(State::open(&dir.0).unwrap().caller(saved.trim()).unwrap().owner);
+    // The live owner's own token file is never replaced, nor is a file that is not a lone token.
+    let refused = owner_cli(&dir.0, &token_file, Some(&token_file), &["token", "peter"]);
+    assert_eq!(refused, Err(refuse("token-file-exists")));
+    assert_eq!(fs::read_to_string(&token_file).unwrap(), saved);
+    let notes = dir.0.join("notes.txt");
+    write_private(&notes, b"not a token\n", true).unwrap();
+    assert_eq!(owner_cli(&dir.0, &notes, Some(&token_file), &["token", "peter"]), Err(refuse("token-file-exists")));
+    assert_eq!(fs::read(&notes).unwrap(), b"not a token\n");
+}
+
 /// A saved token was delivered first: a leftover intent beside it never lets a retry rotate the owner without it.
 #[test]
 fn a_leftover_intent_beside_a_delivered_owner_token_keeps_the_owner_gate() {

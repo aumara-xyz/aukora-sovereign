@@ -64,6 +64,30 @@ impl Delivery for () {
     }
 }
 
+/// A token file left by a delivery whose save never happened (a crash between the two): a private regular file holding
+/// exactly one token whose hash is not saved. It authenticates nothing, so the retry may replace it. Returns whether
+/// the path is now free; anything else there (another file, a saved token) is left alone.
+pub(super) fn clear_unsaved_token_file(dir: &Path, file: &Path) -> Result<bool> {
+    if !present(file)? {
+        return Ok(true);
+    }
+    if !fs::symlink_metadata(file).map_err(|_| refuse("state-read"))?.file_type().is_file() {
+        return Ok(false);
+    }
+    let Ok(bytes) = read_private(file, 256) else { return Ok(false) };
+    let token = match std::str::from_utf8(&bytes).ok().and_then(|text| text.strip_suffix('\n')) {
+        Some(token) if token.len() == 64 && token.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) => token,
+        _ => return Ok(false),
+    };
+    State::open(dir)?;
+    let _authorization = request_guard(dir)?;
+    if load_tokens(dir)?.contains_key(&token_hash(token)) {
+        return Ok(false);
+    }
+    fs::remove_file(file).map_err(|_| refuse("state-write"))?;
+    Ok(true)
+}
+
 fn sync_dir(dir: &Path) -> Result<()> {
     fs::File::open(dir).and_then(|file| file.sync_all()).map_err(|_| refuse("state-write"))
 }

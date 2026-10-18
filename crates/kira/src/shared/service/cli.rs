@@ -118,7 +118,7 @@ pub fn cli(arguments: &[OsString]) -> Result<()> {
         }
         [command @ ("register" | "token"), name] => {
             if let Some(file) = token_file.as_deref() {
-                if registration::present(file)? {
+                if !registration::clear_unsaved_token_file(&dir, file)? {
                     return Err(refuse("token-file-exists"));
                 }
             }
