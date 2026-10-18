@@ -331,7 +331,10 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     else if (query.value) { event.preventDefault(); query.value = ""; clearSearch.hidden = true; render(); }
   }, { signal });
 
+  // A marks read that started before a local change must not overwrite it when it lands.
+  let markGeneration = 0;
   const setMark = (npub: string, change: Partial<Mark>) => {
+    markGeneration++;
     const before = marks.get(npub) ?? NO_MARK;
     const after = { ...before, ...change };
     const updated = new Map(marks);
@@ -514,10 +517,18 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     await Promise.all([worker(), worker(), worker(), worker()]);
   };
 
-  const readMarksNow = async () => {
-    if (!granted.has("conversations.marks")) return;
-    try { marks = readMarks(await client.call("network", "conversations.marks", {}, { signal })); }
-    catch (error) { if (!signal.aborted) { showServiceState(problem, error); problem.hidden = false; } }
+  // Returns false when the read failed (the old marks stay and the problem is shown).
+  const readMarksNow = async (): Promise<boolean> => {
+    if (!granted.has("conversations.marks")) return true;
+    const generation = markGeneration;
+    try {
+      const read = readMarks(await client.call("network", "conversations.marks", {}, { signal }));
+      if (generation === markGeneration) marks = read;
+      return true;
+    } catch (error) {
+      if (!signal.aborted) { showServiceState(problem, error); problem.hidden = false; }
+      return false;
+    }
   };
 
   // `first` is the opening read (previews for every contact and the owner marks); a live re-read takes the newest
@@ -560,18 +571,17 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       remember(recent.items);
       // Marks are re-read with every full refresh: a contact removed and approved again between two reads comes back
       // with the node's marks (none), not this view's old ones.
-      await Promise.all([previews(), restart ? readMarksNow() : Promise.resolve()]);
+      const [, marksRead] = await Promise.all([previews(), restart ? readMarksNow() : Promise.resolve(true)]);
       if (signal.aborted) return false;
       busy = false;
-      problem.hidden = true;
-      clearServiceState(problem);
+      if (marksRead) { problem.hidden = true; clearServiceState(problem); }
       render();
       if (contacts.size > 0 && !advances && page.next !== null) info.textContent = COPY.stalled;
       else if (contacts.size >= MAX_ROWS && page.next !== null) info.textContent = COPY.capped;
       // A preview that keeps failing is retried on each live read; count it so the live loop backs off. A contact
       // that left the book takes its failure with it.
       for (const npub of [...previewFailures]) if (!contacts.has(npub)) previewFailures.delete(npub);
-      return previewFailures.size === 0;
+      return marksRead && previewFailures.size === 0;
     } catch (error) {
       if (!signal.aborted) { busy = false; render(); info.textContent = ""; showServiceState(problem, error); problem.hidden = false; }
       return false;

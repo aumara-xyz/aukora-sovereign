@@ -173,7 +173,7 @@ function mount(t, options = {}) {
       if (method === 'send') return options.send ? options.send(params) : {};
       if (method === 'contact.propose') return options.contactAdd ? options.contactAdd(params, contacts) : { state: 'pending', proposal_id: '6'.repeat(32) };
       if (method === 'contact.remove') return options.contactRemove ? options.contactRemove(params, contacts) : { state: 'pending', proposal_id: '6'.repeat(32) };
-      if (method === 'conversations.marks') return { items: options.marks ?? [] };
+      if (method === 'conversations.marks') return options.marksRead ? options.marksRead() : { items: options.marks ?? [] };
       if (method === 'conversation.mark') return options.mark ? options.mark(params) : {};
       if (method === 'refusals.counts') return { envelope: 0, signature: 0, recipient: 0, stranger: 0, replay: 0, payload: 0, stale_contact: 0, total: 0, last_aura_sequence: 0 };
       assert.fail(`unexpected method: ${method}`);
@@ -732,4 +732,32 @@ test('a contact removed and added back between two reads takes the node\'s marks
   marks.length = 0;
   await live();
   assert.deepEqual(visibleRows(root), [maya, sam], 'the next refresh takes the node\'s marks');
+});
+
+test('a marks read that started before an archive does not undo it, and a failed marks read backs off', async t => {
+  let release = null;
+  let fail = false;
+  const { root, live, calls, tick } = mount(t, {
+    mark: () => ({}),
+    marksRead: () => {
+      if (fail) throw new Error('app:service-unavailable');
+      if (calls.filter(call => call.method === 'conversations.marks').length < 2) return { items: [] };
+      return new Promise(resolve => { release = () => resolve({ items: [] }); });
+    },
+  });
+  for (let turn = 0; turn < 6; turn++) await settle();
+  t.mock.timers.tick(6_000); for (let turn = 0; turn < 6; turn++) await settle();
+  assert.ok(release, 'a refresh is waiting on its marks read');
+  find(conversation(root, maya), item => item.getAttribute('aria-label') === 'Archive conversation').click();
+  release();
+  for (let turn = 0; turn < 6; turn++) await settle();
+  assert.deepEqual(visibleRows(root), [sam], 'the archive stays: the older read did not overwrite it');
+  // A failed marks read keeps the problem shown and counts as a failed read, so the loop waits longer.
+  fail = true;
+  await live();
+  const reads = () => calls.filter(call => call.method === 'conversations.marks').length;
+  const after = reads();
+  tick(6_000); for (let turn = 0; turn < 6; turn++) await settle();
+  assert.equal(reads(), after, 'backed off: not read again on the next tick');
+  assert.equal(byClass(root, 'msg-list').children.some(child => hasClass(child, 'problem') && !child.hidden), true);
 });
