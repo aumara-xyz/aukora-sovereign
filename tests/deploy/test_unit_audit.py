@@ -27,7 +27,11 @@ if sys.argv[1] == 'cat':
     print('RestrictAddressFamilies=none')
     if os.environ.get('RESET_FAMILIES'):
         print('# /etc/systemd/system/aukora-release-probe@.service.d/override.conf')
-        print('RestrictAddressFamilies=')
+        print(' RestrictAddressFamilies = ' if os.environ['RESET_FAMILIES'] == 'spaced' else 'RestrictAddressFamilies=')
+    sys.exit(0)
+if sys.argv[1] == 'list-unit-files':
+    if os.environ.get('ENABLE_INSTANCE'):
+        print('aukora-release-probe@0123456789ab-0123456789ab.service enabled enabled')
     sys.exit(0)
 if sys.argv[1] != 'show':
     sys.exit(0)
@@ -69,9 +73,14 @@ else:
             self.assertEqual(enabled.returncode, 1, enabled.stdout + enabled.stderr)
             self.assertIn("is not static", enabled.stdout)
             # A drop-in that resets the address families reads back like "none" in systemctl show; the unit files tell.
-            reset = subprocess.run(audit, env={**env, "RESET_FAMILIES": "1"}, capture_output=True, text=True)
-            self.assertEqual(reset.returncode, 1, reset.stdout + reset.stderr)
-            self.assertIn("RestrictAddressFamilies is ''", reset.stdout)
+            for spelling in ("1", "spaced"):
+                reset = subprocess.run(audit, env={**env, "RESET_FAMILIES": spelling}, capture_output=True, text=True)
+                self.assertEqual(reset.returncode, 1, reset.stdout + reset.stderr)
+                self.assertIn("RestrictAddressFamilies is ''", reset.stdout)
+            # A real release instance enabled through a drop-in would start at boot; the placeholder stays static.
+            instance = subprocess.run(audit, env={**env, "ENABLE_INSTANCE": "1"}, capture_output=True, text=True)
+            self.assertEqual(instance.returncode, 1, instance.stdout + instance.stderr)
+            self.assertIn("an instance is enabled for boot", instance.stdout)
             bad = subprocess.run(audit, env={**env, "WEAKEN_PROBE": "1"}, capture_output=True, text=True)
             self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
             self.assertIn("FAIL aukora-release-probe@000000000000-000000000000.service: PrivateNetwork", bad.stdout)
