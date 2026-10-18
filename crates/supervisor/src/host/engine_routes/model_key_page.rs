@@ -46,6 +46,9 @@ const BODY: &str = concat!(
     "<path d=\"M8 11V8a4 4 0 0 1 8 0v3\"/></svg>Outside the engine</span></div></header>",
     "<p class=\"ak-lead\">Your key goes to your node's broker, outside the wall. Auma's engine never sees it; it can only \
      ask the broker to make a call. Your passkey approves the key next.</p>",
+    // The one check only the owner can make: a page the engine serves could imitate this one, but not its address.
+    "<p class=\"address\" id=\"address\">Check the address bar: it should show your node's own address. Never type \
+     your key on a page whose address starts with engine.</p>",
     // Step 1: the one field.
     "<section class=\"ak-portal ak-tone-mint\" data-open=\"yes\" aria-labelledby=\"s1\">",
     "<div class=\"ak-portal__head\"><span class=\"ak-icon-tile\"><svg GLYPH><path d=\"M12 3c.6 4.8 3.2 7.4 8 8-4.8.6-7.4 \
@@ -94,7 +97,8 @@ color-mix(in srgb,var(--ak-mint) 14%,transparent);outline:none}.ak-actionrow{mar
 .ak-action:disabled{opacity:.5;cursor:default}#out{min-height:18px;margin:10px 0 0;color:var(--ak-muted);\
 font-size:11.5px}#out[data-tone='bad']{color:var(--ak-red)}#out[data-tone='gold']{color:var(--ak-gold)}\
 .fingerprint{margin:0 0 10px;color:var(--ak-blue);font:500 24px/32px var(--ak-mono);letter-spacing:.16em}\
-.back{color:var(--ak-muted);text-decoration:none}.back:hover{color:var(--ak-text)}";
+.address{margin:-6px 0 0;padding:8px 12px;border:1px solid var(--ak-hairline);border-radius:var(--ak-tile-radius);\
+color:var(--ak-text-2);font-size:12px;line-height:18px}.back{color:var(--ak-muted);text-decoration:none}.back:hover{color:var(--ak-text)}";
 
 /// Sends the key once and forgets it: the field is cleared before the request leaves, and only the reply's fingerprint
 /// (12 hex digits of its SHA-256) is ever written to the page, as text.
@@ -139,6 +143,9 @@ mod tests {
         assert_eq!(page.matches("<style>").count(), 2);
         assert!(!page.contains(" onclick=") && !page.contains(" onsubmit=") && !page.contains(" onload="), "no inline handler");
         assert!(!page.contains("src=") && !page.contains("<link") && !page.contains("<iframe"));
+        // The address check, said once and calmly.
+        assert!(page.contains("Check the address bar: it should show your node's own address. Never type your key on a \
+                               page whose address starts with engine."));
         // The one field: masked, never autofilled, never spell-checked; nothing on the page is a key.
         assert_eq!(page.matches("<input").count(), 1);
         for attribute in ["type=\"password\"", "autocomplete=\"off\"", "spellcheck=\"false\"", "autocapitalize=\"off\""] {

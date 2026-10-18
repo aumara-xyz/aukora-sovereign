@@ -21,9 +21,12 @@ export function isPreviewComposition(): boolean {
 
 /**
  * The owner origin for this page: the installer serves the owner pages at `owner.` plus the shell's host
- * (deploy/spawn/node_install.py; the native shell derives it the same way in app/shell/entry.ts).
+ * (deploy/spawn/node_install.py; the native shell derives it the same way in app/shell/entry.ts). On a node this page
+ * is served from the engine origin, `engine.` plus the shell's host (deploy/engine/NODE.md section 5), so that prefix
+ * comes off first: `engine.<shell>` -> `owner.<shell>`, never `owner.engine.<shell>`.
  */
-export function ownerOrigin(): string {
-  const place = globalThis.location
-  return place === undefined ? 'https://owner.invalid' : `${place.protocol}//owner.${place.host}`
+export function ownerOrigin(place: { readonly protocol: string; readonly host: string } | undefined = globalThis.location): string {
+  if (place === undefined) return 'https://owner.invalid'
+  const shell = place.host.startsWith('engine.') ? place.host.slice('engine.'.length) : place.host
+  return shell === '' ? 'https://owner.invalid' : `${place.protocol}//owner.${shell}`
 }

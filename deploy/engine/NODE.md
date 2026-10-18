@@ -247,7 +247,9 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   `GET https://engine.<shell>/.aukora/model-key`, answered by the engine proxy itself after its usual admission (the
   owner's engine session, re-checked against binding, shell session and release floor; GET, `Sec-Fetch-Site:
   same-origin`); the engine never sees it. Reply: `{"state": "none" | "awaiting-approval" | "not-approved" |
-  "approved"}`, plus `"last4"` once approved; never the key, its digest or fingerprint. `POST /api/engine/model-key` needs the bound
+  "approved"}` and nothing else: no character of the key (O15 keeps even its last four out of the engine), never its
+  digest or fingerprint. The key page also tells the owner to check the address bar: an engine page could imitate it,
+  not its address. `POST /api/engine/model-key` needs the bound
   owner's shell session (frontdoor: same origin, JSON). The broker holds the key and proposes
   `engine/model-key.json` = `{key_sha256, kind, provider, v}`: the card shows the digest only; the page shows its
   first 12 hex digits (the fingerprint) to compare. A call uses the key only while its SHA-256 equals the approved

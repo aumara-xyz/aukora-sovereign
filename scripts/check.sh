@@ -10,6 +10,14 @@ python3 -B checks/run.py
 python3 -B -m unittest discover -s tests/deploy -p 'test_*.py'
 # The source walls themselves (checks/walls.py), probed on samples.
 python3 -B -m unittest discover -s tests/checks -p 'test_*.py'
+# The Spatial face's pure helpers (the Models row's reading of the key broker, the owner origin): Node's own test runner,
+# no install needed (Node >= 22.18 strips the types). A machine without Node may set AUKORA_SKIP_NODE_TESTS=1; the run
+# then says so instead of passing silently.
+if [ "${AUKORA_SKIP_NODE_TESTS:-}" = 1 ]; then
+  echo "NODE TESTS SKIPPED (AUKORA_SKIP_NODE_TESTS=1): engine/plugins/aukora-face/*/test"
+else
+  node --test engine/plugins/aukora-face/*/test/*.test.ts
+fi
 # The stranger's verifier: the standalone verify.py must match its sources, and the pinned vectors replay through both
 # the Rust aukora-verify and the Python twin (known divergences are listed in scripts/verifier-vectors-known.json).
 python3 -B tools/verify/build.py --check

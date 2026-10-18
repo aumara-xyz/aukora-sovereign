@@ -16,7 +16,7 @@ use crate::adapters::{GateAdapter, HostLedger};
 use broker::engine_link::budget::{Budget, KeyApproval, Prices, BUDGET_KIND, PROVIDER};
 use broker::engine_link::{self, Approved, Authority, Limits, Link, Pending, Upstream};
 use broker::keyfile::{reconcile, KeyFile, Step};
-use broker::keystore::{HeldKey, KeyInbox};
+use broker::keystore::KeyInbox;
 use canon::{
     alg::AlgorithmId,
     authority::{AuthorityTxn, FactKind, FactRecord},
@@ -179,8 +179,8 @@ pub enum KeyStage {
     AwaitingApproval(String),
 }
 
-/// The key's standing for the owner's Models row. Nothing in it is the key or derived from it except `last4`, and only
-/// for a key the owner's passkey approved.
+/// The key's standing for the owner's Models row. Nothing in it is the key or derived from it: no character of the key
+/// ever reaches engine-served script (NODE.md O15 keeps even the provider's last-four out of the engine).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyStatus {
     /// No key is held: none was entered, or the stored one was not usable at start.
@@ -190,32 +190,29 @@ pub enum KeyStatus {
     /// A key is held but its card was declined or ran out of time.
     NotApproved,
     /// The held key is the one the owner approved.
-    Approved { last4: String },
+    Approved,
 }
 
 impl KeyStatus {
-    /// `{"state": ...}`, plus `"last4"` once approved: the whole reply of `GET /.aukora/model-key`.
+    /// `{"state": ...}`: the whole reply of `GET /.aukora/model-key`.
     pub fn to_json(&self) -> String {
         let state = match self {
             Self::None => "none",
             Self::AwaitingApproval => "awaiting-approval",
             Self::NotApproved => "not-approved",
-            Self::Approved { .. } => "approved",
+            Self::Approved => "approved",
         };
-        match self {
-            Self::Approved { last4 } => serde_json::json!({ "state": state, "last4": last4 }).to_string(),
-            _ => serde_json::json!({ "state": state }).to_string(),
-        }
+        serde_json::json!({ "state": state }).to_string()
     }
 }
 
 /// The key's standing from what the broker holds and what the gate says: the approved card's bytes and the bytes of a
 /// card still up for `engine/model-key.json`. A card counts only if it names the held key's digest.
-fn standing(held: Option<HeldKey>, approved: Option<&[u8]>, pending: Option<&[u8]>) -> KeyStatus {
-    let Some(held) = held else { return KeyStatus::None };
-    let names_held = |bytes: Option<&[u8]>| bytes.and_then(KeyApproval::parse).is_some_and(|card| card.key_sha256 == held.key_sha256);
+fn standing(held_sha256: Option<String>, approved: Option<&[u8]>, pending: Option<&[u8]>) -> KeyStatus {
+    let Some(held) = held_sha256 else { return KeyStatus::None };
+    let names_held = |bytes: Option<&[u8]>| bytes.and_then(KeyApproval::parse).is_some_and(|card| card.key_sha256 == held);
     if names_held(approved) {
-        KeyStatus::Approved { last4: held.last4 }
+        KeyStatus::Approved
     } else if names_held(pending) {
         KeyStatus::AwaitingApproval
     } else {
@@ -273,10 +270,9 @@ impl ModelBroker {
     }
 
     /// Where the owner's key stands, for the Models row on the engine origin (`GET /.aukora/model-key`, answered by the
-    /// engine proxy, never the engine). Only the state and, once approved, the key's last four characters: never the
-    /// key, never its digest or fingerprint.
+    /// engine proxy, never the engine). Only the state: never the key, any character of it, its digest or fingerprint.
     pub async fn key_status(&self) -> Result<KeyStatus> {
-        let Some(held) = self.keys.held()? else { return Ok(KeyStatus::None) };
+        let Some(held) = self.keys.key_sha256()? else { return Ok(KeyStatus::None) };
         let approved = self.gate.approved_target(KEY_TARGET).await.ok().flatten();
         let pending = self.gate.pending_target(KEY_TARGET).await?;
         Ok(standing(Some(held), approved.as_deref(), pending.as_deref()))
@@ -513,18 +509,18 @@ mod tests {
     }
 
     #[test]
-    fn the_models_row_reads_the_standing_and_only_an_approved_key_shows_its_last_four() {
+    fn the_models_row_reads_the_standing_and_never_a_character_of_the_key() {
         let key = "sk-test-0000000000000000000000000000wxyz";
         let other = "sk-test-1111111111111111111111111111abcd";
         let held = || {
             let keys = KeyInbox::new();
             let ticket = keys.issue(1, 1000).unwrap();
             keys.redeem(ticket.token(), key.to_owned(), 2).unwrap();
-            keys.held().unwrap()
+            keys.key_sha256().unwrap()
         };
         let card = |key: &str| KeyApproval::for_key(key).canonical_bytes();
         assert_eq!(standing(None, Some(&card(key)), None), KeyStatus::None, "an approval without a held key is no key");
-        assert_eq!(standing(held(), Some(&card(key)), None), KeyStatus::Approved { last4: "wxyz".into() });
+        assert_eq!(standing(held(), Some(&card(key)), None), KeyStatus::Approved);
         // A new key replaced the approved one and its card is up: waiting (the old approval is not this key's).
         assert_eq!(standing(held(), Some(&card(other)), Some(&card(key))), KeyStatus::AwaitingApproval);
         assert_eq!(standing(held(), None, Some(&card(key))), KeyStatus::AwaitingApproval);
@@ -532,17 +528,17 @@ mod tests {
         assert_eq!(standing(held(), Some(&card(other)), None), KeyStatus::NotApproved);
         assert_eq!(standing(held(), None, Some(&card(other))), KeyStatus::NotApproved);
         assert_eq!(standing(held(), None, Some(b"not a card")), KeyStatus::NotApproved);
-        // The reply: the state, and last4 only once approved. Never the key, its digest or its fingerprint.
+        // The reply: the state only. Never the key, any of its characters, its digest or its fingerprint.
         let digest = KeyApproval::for_key(key).key_sha256;
         for (status, json) in [
             (KeyStatus::None, r#"{"state":"none"}"#),
             (KeyStatus::AwaitingApproval, r#"{"state":"awaiting-approval"}"#),
             (KeyStatus::NotApproved, r#"{"state":"not-approved"}"#),
-            (standing(held(), Some(&card(key)), None), r#"{"last4":"wxyz","state":"approved"}"#),
+            (standing(held(), Some(&card(key)), None), r#"{"state":"approved"}"#),
         ] {
             let text = status.to_json();
             assert_eq!(text, json);
-            assert!(!text.contains("sk-") && !text.contains(&digest[..12]));
+            assert!(!text.contains("sk-") && !text.contains("wxyz") && !text.contains(&digest[..12]));
         }
     }
 }

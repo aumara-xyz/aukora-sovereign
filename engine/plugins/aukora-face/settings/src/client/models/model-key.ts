@@ -7,8 +7,8 @@
  * field for the key: Edit opens the node's own key page on the SHELL origin (`https://<shell>/engine/model-key`) in a
  * new tab, and the key goes from there to the model broker outside the wall. What comes back here is only the
  * broker's standing, read from `GET /.aukora/model-key`, which the supervisor's engine proxy answers itself (the engine
- * never sees the request): `{state}` and, once the owner's passkey approved the key, `last4`. Never the key, never
- * its digest or fingerprint.
+ * never sees the request): `{state}` and nothing else. No character of the key, its digest or its fingerprint ever
+ * reaches this engine-served script (NODE.md O15 keeps even the provider's last-four out of the engine).
  *
  * Pure functions only (no React, no DOM beyond what is passed in), so `node --test` runs them as they are.
  */
@@ -27,17 +27,17 @@ export type ModelKeyStanding =
   | { readonly state: 'none' }
   | { readonly state: 'awaiting-approval' }
   | { readonly state: 'not-approved' }
-  | { readonly state: 'approved'; readonly last4: string }
+  | { readonly state: 'approved' }
   /** 404: this composition has no broker in front of it (not a node). */
   | { readonly state: 'unavailable' }
   /** Not read yet, or the node was busy / the reply was not one this page reads. */
   | { readonly state: 'unknown' }
 
-const BROKER_STATES = new Set(['none', 'awaiting-approval', 'not-approved'])
+const BROKER_STATES = new Set(['none', 'awaiting-approval', 'not-approved', 'approved'])
 
 /**
- * Read the proxy's reply strictly: exactly `{state}`, or `{state: "approved", last4}` with four key characters.
- * Anything else is `unknown`, never a guess.
+ * Read the proxy's reply strictly: exactly `{state}` with a known state. Anything else (an extra member included) is
+ * `unknown`, never a guess.
  */
 export function parseStanding(status: number, body: unknown): ModelKeyStanding {
   if (status === 404) return { state: 'unavailable' }
@@ -46,10 +46,6 @@ export function parseStanding(status: number, body: unknown): ModelKeyStanding {
   const keys = Object.keys(record).sort().join(',')
   if (keys === 'state' && typeof record.state === 'string' && BROKER_STATES.has(record.state)) {
     return { state: record.state } as ModelKeyStanding
-  }
-  if (keys === 'last4,state' && record.state === 'approved' && typeof record.last4 === 'string'
-    && /^[A-Za-z0-9_-]{4}$/.test(record.last4)) {
-    return { state: 'approved', last4: record.last4 }
   }
   return { state: 'unknown' }
 }
@@ -92,7 +88,7 @@ export function rowView(standing: ModelKeyStanding): RowView {
     case 'not-approved':
       return { tone: 'red', pill: 'Not approved', summary: 'Declined or ran out of time: enter it again', action: 'Edit', actionable: true }
     case 'approved':
-      return { tone: 'mint', pill: 'Approved', summary: `Key ending …${standing.last4} · held outside the engine`, action: 'Edit', actionable: true }
+      return { tone: 'mint', pill: 'Approved', summary: 'Held by your node, outside the engine', action: 'Edit', actionable: true }
     case 'unavailable':
       return { tone: 'muted', pill: 'Not on this node', summary: 'No model broker answers here', action: 'Edit', actionable: false }
     case 'unknown':

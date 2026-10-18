@@ -5,17 +5,15 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { keyPageHref, parseStanding, rowView, shellOrigin } from '../src/client/models/model-key.ts'
 
-test('the broker standing is read strictly: state only, last4 only once approved', () => {
+test('the broker standing is read strictly: state only, never a character of the key', () => {
   assert.deepEqual(parseStanding(200, { state: 'none' }), { state: 'none' })
   assert.deepEqual(parseStanding(200, { state: 'awaiting-approval' }), { state: 'awaiting-approval' })
   assert.deepEqual(parseStanding(200, { state: 'not-approved' }), { state: 'not-approved' })
-  assert.deepEqual(parseStanding(200, { state: 'approved', last4: 'wxyz' }), { state: 'approved', last4: 'wxyz' })
+  assert.deepEqual(parseStanding(200, { state: 'approved' }), { state: 'approved' })
   assert.deepEqual(parseStanding(404, undefined), { state: 'unavailable' })
   for (const [status, body] of [
     [503, { state: 'none' }],
-    [200, { state: 'approved' }],
-    [200, { state: 'approved', last4: 'wxyz!' }],
-    [200, { state: 'approved', last4: 'wxy' }],
+    [200, { state: 'approved', last4: 'wxyz' }],
     [200, { state: 'none', last4: 'wxyz' }],
     [200, { state: 'approved', last4: 'wxyz', key: 'sk-test-0000' }],
     [200, { state: 'approved', last4: 'wxyz', fingerprint: '0123456789ab' }],
@@ -38,14 +36,15 @@ test('Edit opens the shell origin, never the engine origin it runs on', () => {
   }
 })
 
-test('the row is honest about each standing and shows only the last four', () => {
+test('the row is honest about each standing and shows no part of the key', () => {
   assert.equal(rowView({ state: 'none' }).action, 'Add your DeepSeek key')
   assert.equal(rowView({ state: 'awaiting-approval' }).pill, 'Waiting for you')
   assert.equal(rowView({ state: 'awaiting-approval' }).tone, 'gold')
-  const approved = rowView({ state: 'approved', last4: 'wxyz' })
+  const approved = rowView({ state: 'approved' })
   assert.equal(approved.tone, 'mint')
   assert.equal(approved.pill, 'Approved')
-  assert.equal(approved.summary, 'Key ending …wxyz · held outside the engine')
+  assert.equal(approved.summary, 'Held by your node, outside the engine')
+  assert.equal(rowView({ state: 'not-approved' }).tone, 'red')
   assert.equal(approved.action, 'Edit')
   assert.equal(rowView({ state: 'unavailable' }).actionable, false)
   assert.notEqual(rowView({ state: 'unknown' }).tone, 'mint', 'nothing read is never shown as approved')

@@ -107,7 +107,7 @@ export function ModelsSection(_props: PropsRuntime<'settings.section'>) {
       </ul>
       <p className={css.note}>
         Your key is typed on your node&apos;s own page and kept by its model broker, outside the engine; your passkey
-        approves each new key. Other providers are not offered here: their keys would live inside the engine.
+        approves each new key. More providers come through your node&apos;s broker later.
       </p>
     </div>
   )

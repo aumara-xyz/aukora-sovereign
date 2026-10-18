@@ -53,13 +53,6 @@ pub struct KeyInbox {
     state: Mutex<State>,
 }
 
-/// The held key as the owner's status may name it: its digest (what the card names) and its last four characters.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HeldKey {
-    pub key_sha256: String,
-    pub last4: String,
-}
-
 impl Default for KeyInbox {
     fn default() -> Self {
         Self::new()
@@ -208,17 +201,6 @@ impl KeyInbox {
         Ok(state.key.as_ref().map(|key| crate::engine_link::budget::KeyApproval::for_key(key).key_sha256))
     }
 
-    /// What the owner's Models row may show about the key held now, read under one lock (so the digest and the tail
-    /// are the same key's): its SHA-256 and its last four characters. Never the key; `None` when there is none.
-    pub fn held(&self) -> Result<Option<HeldKey>> {
-        let state = self.state.lock().map_err(|_| codes::BROKER_STATE)?;
-        Ok(state.key.as_ref().map(|key| HeldKey {
-            key_sha256: crate::engine_link::budget::KeyApproval::for_key(key).key_sha256,
-            // validate_key admits ASCII only and at least 16 bytes, so the last four bytes are four characters.
-            last4: key.get(key.len().saturating_sub(4)..).unwrap_or_default().to_owned(),
-        }))
-    }
-
     /// A copy of the held key for the key file, only if its digest is `approved_sha256` (the owner's approved card).
     pub fn key_to_persist(&self, approved_sha256: &str) -> Result<Option<Zeroizing<String>>> {
         let state = self.state.lock().map_err(|_| codes::BROKER_STATE)?;
@@ -259,25 +241,5 @@ fn snapshot(state: &State) -> KeyState {
         present: state.key.is_some(),
         generation: state.generation,
         pending_tickets: state.tickets.len(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn held_names_the_key_by_digest_and_last_four_and_nothing_more() {
-        let keys = KeyInbox::new();
-        assert_eq!(keys.held().unwrap(), None);
-        let key = "sk-test-0000000000000000000000000000wxyz";
-        let ticket = keys.issue(1, 1_000).unwrap();
-        keys.redeem(ticket.token(), key.to_owned(), 2).unwrap();
-        let held = keys.held().unwrap().unwrap();
-        assert_eq!(held.last4, "wxyz");
-        assert_eq!(held.key_sha256, crate::engine_link::budget::KeyApproval::for_key(key).key_sha256);
-        assert!(!format!("{held:?}").contains("sk-test"), "the key itself is never in it");
-        keys.clear().unwrap();
-        assert_eq!(keys.held().unwrap(), None);
     }
 }

@@ -294,7 +294,7 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
 
 /// The Models row's read of the owner's DeepSeek key (NODE.md section 7): answered here, by the supervisor, for an
 /// admitted engine session (the owner's bound scope, re-checked above). The engine never sees this request or its
-/// reply. The reply is `{"state"}` and, once approved, `"last4"`: never the key, its digest or its fingerprint.
+/// reply. The reply is `{"state"}` only: never the key, any character of it, its digest or its fingerprint (O15).
 pub const MODEL_KEY_STATUS: &str = "/.aukora/model-key";
 
 async fn model_key_status(host: &Host, method: &http::Method, headers: &http::HeaderMap) -> Response<Body> {
@@ -709,14 +709,14 @@ mod tests {
         let mut two = headers(Some("same-origin"));
         two.append("sec-fetch-site", http::HeaderValue::from_static("same-origin"));
         assert!(!status_read_admitted(&http::Method::GET, &two));
-        let reply = status_reply(Some(Ok(KeyStatus::Approved { last4: "wxyz".into() })));
+        let reply = status_reply(Some(Ok(KeyStatus::Approved)));
         assert_eq!(reply.status(), StatusCode::OK);
         assert_eq!(reply.headers().get("content-type").unwrap(), "application/json");
         assert_eq!(reply.headers().get("cache-control").unwrap(), "no-store");
         assert_eq!(reply.headers().get("x-frame-options").unwrap(), "DENY");
         assert!(reply.headers().get("access-control-allow-origin").is_none());
         let body = reply.into_body().collect().await.unwrap().to_bytes();
-        assert_eq!(&body[..], br#"{"last4":"wxyz","state":"approved"}"#);
+        assert_eq!(&body[..], br#"{"state":"approved"}"#);
         assert_eq!(status_reply(None).status(), StatusCode::NOT_FOUND);
         assert_eq!(status_reply(Some(Err(refuse("x")))).status(), StatusCode::SERVICE_UNAVAILABLE);
         // The route is the proxy's own: a path the harness would otherwise be asked for, never relayed.
