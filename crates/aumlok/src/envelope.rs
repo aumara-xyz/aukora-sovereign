@@ -2,7 +2,11 @@
 //! The unchanged v1 encrypted envelope and owner-only identity-root contracts.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use canon::{alg::AlgorithmId, alg::PublicKey, ids::SubjectId, Refusal, Result};
+use canon::{
+    alg::{AlgorithmId, PublicKey, AUMLOK_ARGON2_MIN_MEMORY_KIB, AUMLOK_ARGON2_MIN_TIME_COST},
+    ids::SubjectId,
+    Refusal, Result,
+};
 use serde::{Deserialize, Serialize};
 
 /// The existing envelope's outer version; algorithms are not added as new v1 keys.
@@ -67,7 +71,9 @@ impl KdfParameters {
         // At least 64 MiB and three passes are required for offline-guessing
         // resistance. PRODUCTION remains above this floor; smaller explicit
         // interoperability fixtures may use validate(), never the open path.
-        if self.memory_kib < 65_536 || self.time_cost < 3 {
+        if self.memory_kib < AUMLOK_ARGON2_MIN_MEMORY_KIB
+            || self.time_cost < AUMLOK_ARGON2_MIN_TIME_COST
+        {
             return Err(refuse("envelope-kdf-weak"));
         }
         Ok(())
@@ -263,8 +269,8 @@ mod tests {
     #[test]
     fn opening_refuses_weak_memory_or_time_with_a_distinct_code() {
         for (memory_kib, time_cost) in [(32, 1), (65_535, 3), (262_144, 2)] {
-            let error = EnvelopeV1::from_canonical_bytes(&with_costs(memory_kib, time_cost))
-                .unwrap_err();
+            let error =
+                EnvelopeV1::from_canonical_bytes(&with_costs(memory_kib, time_cost)).unwrap_err();
             assert_eq!(error, refuse("envelope-kdf-weak"));
         }
     }
@@ -279,11 +285,9 @@ mod tests {
                 parallelism: 1,
             },
         ] {
-            let envelope = EnvelopeV1::from_canonical_bytes(&with_costs(
-                costs.memory_kib,
-                costs.time_cost,
-            ))
-            .unwrap();
+            let envelope =
+                EnvelopeV1::from_canonical_bytes(&with_costs(costs.memory_kib, costs.time_cost))
+                    .unwrap();
             assert_eq!(envelope.parts().0, costs);
         }
         assert_eq!(
@@ -309,8 +313,13 @@ mod tests {
         assert_eq!(wire.kdf.parallelism, costs.parallelism);
         let salt: [u8; SALT_BYTES] = decode_fixed(&wire.salt).unwrap();
         let nonce: [u8; NONCE_BYTES] = decode_fixed(&wire.nonce).unwrap();
-        let params = Params::new(costs.memory_kib, costs.time_cost, costs.parallelism, Some(32))
-            .unwrap();
+        let params = Params::new(
+            costs.memory_kib,
+            costs.time_cost,
+            costs.parallelism,
+            Some(32),
+        )
+        .unwrap();
         let mut key = [0; 32];
         Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
             .hash_password_into(b"envelope interoperability fixture", &salt, &mut key)

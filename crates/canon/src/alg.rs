@@ -3,6 +3,11 @@
 
 use crate::{refusal::Refusal, Result};
 
+/// Minimum Argon2id memory in KiB for retained AUMLOK envelope-v1 and backup-v2 data.
+pub const AUMLOK_ARGON2_MIN_MEMORY_KIB: u32 = 65_536;
+/// Minimum Argon2id passes for retained AUMLOK envelope-v1 and backup-v2 data.
+pub const AUMLOK_ARGON2_MIN_TIME_COST: u32 = 3;
+
 /// A closed primitive identifier; an unknown wire spelling refuses instead of falling back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AlgorithmId {

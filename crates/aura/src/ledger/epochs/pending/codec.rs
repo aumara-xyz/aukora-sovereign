@@ -2,7 +2,10 @@
 //! Bounded decoding and exact assertion verification for subject-less ceremonies.
 
 use super::*;
-use canon::json::SafeInteger;
+use canon::{
+    alg::{AUMLOK_ARGON2_MIN_MEMORY_KIB, AUMLOK_ARGON2_MIN_TIME_COST},
+    json::SafeInteger,
+};
 
 pub(super) fn field<'a>(value: &'a Value, name: &str) -> Result<&'a Value> {
     value.get(name).ok_or(refusal("identity-field"))
@@ -329,13 +332,17 @@ pub(super) fn envelope(value: &Value) -> Result<()> {
         ],
     )?;
     let lanes = number(kdf, "parallelism")?;
+    let memory = number(kdf, "memory_kib")?;
+    let time = number(kdf, "time_cost")?;
     if value.canonical_bytes().len() > 1024
         || number(value, "version")? != 1
         || text(kdf, "algorithm")? != "argon2id"
         || number(kdf, "version")? != 19
         || !(1..=16).contains(&lanes)
-        || !(1..=10).contains(&number(kdf, "time_cost")?)
-        || !(lanes * 8..=262144).contains(&number(kdf, "memory_kib")?)
+        || !(1..=10).contains(&time)
+        || !(lanes * 8..=262144).contains(&memory)
+        || memory < u64::from(AUMLOK_ARGON2_MIN_MEMORY_KIB)
+        || time < u64::from(AUMLOK_ARGON2_MIN_TIME_COST)
     {
         return Err(refusal("identity-envelope"));
     }
@@ -355,8 +362,12 @@ pub(super) fn identity(payload: &Value, refresh: bool) -> Result<(SubjectId, Pub
     }
     envelope(field(payload, "envelope")?)?;
     let bytes = decode_standard(text(payload, "identity_public_key")?, 32)?;
-    let encoded: &[u8; 32] = bytes.as_slice().try_into().map_err(|_| refusal("identity-key"))?;
-    let key = ed25519_dalek::VerifyingKey::from_bytes(encoded).map_err(|_| refusal("identity-key"))?;
+    let encoded: &[u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| refusal("identity-key"))?;
+    let key =
+        ed25519_dalek::VerifyingKey::from_bytes(encoded).map_err(|_| refusal("identity-key"))?;
     if key.is_weak() {
         return Err(refusal("identity-key"));
     }
@@ -385,4 +396,46 @@ pub(super) fn challenge(purpose: &str, nonce: &[u8; 32], payload: &Value) -> Res
     bytes.extend_from_slice(nonce);
     bytes.extend_from_slice(&payload.canonical_bytes());
     Ok(*Digest32::sha256(&bytes).as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded_envelope(memory: u32, time: u32, lanes: u32) -> Value {
+        // Pending-candidate validation checks shape, without deriving a phrase key.
+        json::parse_strict(
+            format!(
+                "{{\"ciphertext\":\"{}\",\"kdf\":{{\"algorithm\":\"argon2id\",\"memory_kib\":{memory},\"parallelism\":{lanes},\"time_cost\":{time},\"version\":19}},\"nonce\":\"{}\",\"salt\":\"{}\",\"version\":1}}",
+                STANDARD.encode([0; 48]),
+                STANDARD.encode([0x34; 24]),
+                STANDARD.encode([0x12; 16]),
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn pending_envelopes_refuse_weak_memory_or_time_even_in_test_builds() {
+        for (memory, time) in [(32, 1), (65_535, 3), (262_144, 2)] {
+            assert_eq!(
+                envelope(&encoded_envelope(memory, time, 1)),
+                Err(refusal("identity-envelope")),
+            );
+        }
+    }
+
+    #[test]
+    fn pending_envelopes_accept_the_floor_and_production_within_existing_bounds() {
+        for (memory, time, lanes) in [(65_536, 3, 1), (262_144, 3, 1), (65_536, 10, 16)] {
+            envelope(&encoded_envelope(memory, time, lanes)).unwrap();
+        }
+        for (memory, time, lanes) in [(262_145, 3, 1), (65_536, 11, 1), (65_536, 3, 17)] {
+            assert_eq!(
+                envelope(&encoded_envelope(memory, time, lanes)),
+                Err(refusal("identity-envelope")),
+            );
+        }
+    }
 }

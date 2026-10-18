@@ -7,7 +7,12 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
-use canon::{ids::CredentialId, json::Value, Result};
+use canon::{
+    alg::{AUMLOK_ARGON2_MIN_MEMORY_KIB, AUMLOK_ARGON2_MIN_TIME_COST},
+    ids::CredentialId,
+    json::Value,
+    Result,
+};
 
 fn base64_exact(value: &Value, length: usize, url: bool) -> Result<()> {
     let encoded = text(value)?;
@@ -47,6 +52,8 @@ fn kdf(value: &Value) -> Result<()> {
         || !(1..=10).contains(&time)
         || memory > 262_144
         || memory < lanes * 8
+        || memory < u64::from(AUMLOK_ARGON2_MIN_MEMORY_KIB)
+        || time < u64::from(AUMLOK_ARGON2_MIN_TIME_COST)
     {
         return Err(refusal("restore-keys"));
     }
@@ -130,4 +137,71 @@ pub(super) fn public_keys(bytes: &[u8], manifest: &Manifest, signing: &[u8; 32])
         return Err(refusal("restore-signing-key"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encoded_root(memory: u32, time: u32, lanes: u32, backup: bool) -> Vec<u8> {
+        // This byte-only reader checks metadata; synthetic ciphertext is never opened.
+        let prf = if backup {
+            format!(
+                "\"prf\":{{\"credential_id\":\"{}\",\"rp_id\":\"owner.example\",\"salt\":\"{}\"}},",
+                URL_SAFE_NO_PAD.encode([0xa5; 32]),
+                STANDARD.encode(digest(canon::domain::AUMLOK_BACKUP_PRF_DOMAIN.as_bytes())),
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "{{\"ciphertext\":\"{}\",\"kdf\":{{\"algorithm\":\"argon2id\",\"memory_kib\":{memory},\"parallelism\":{lanes},\"time_cost\":{time},\"version\":19}},\"nonce\":\"{}\",{prf}\"salt\":\"{}\",\"version\":{}}}",
+            STANDARD.encode([0; 48]),
+            STANDARD.encode([0x34; 24]),
+            STANDARD.encode([0x12; 16]),
+            if backup { 2 } else { 1 },
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn sealed_roots_refuse_weak_memory_or_time_even_in_test_builds() {
+        for backup in [false, true] {
+            for (memory, time) in [(32, 1), (65_535, 3), (262_144, 2)] {
+                assert_eq!(
+                    sealed_root(&encoded_root(memory, time, 1, backup), backup),
+                    Err(refusal("restore-keys")),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sealed_roots_accept_the_floor_and_production_within_existing_bounds() {
+        for backup in [false, true] {
+            for (memory, time, lanes) in [(65_536, 3, 1), (262_144, 3, 1), (65_536, 10, 16)] {
+                sealed_root(&encoded_root(memory, time, lanes, backup), backup).unwrap();
+            }
+            for (memory, time, lanes) in [(262_145, 3, 1), (65_536, 11, 1), (65_536, 3, 17)] {
+                assert_eq!(
+                    sealed_root(&encoded_root(memory, time, lanes, backup), backup),
+                    Err(refusal("restore-keys")),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn member_exit_fixture_uses_accepted_kdf_metadata() {
+        let vector =
+            canon::json::parse_strict(include_bytes!("../../vectors/exit-v1.json")).unwrap();
+        let files = field(field(&vector, "export").unwrap(), "files").unwrap();
+        for (name, backup) in [
+            (super::super::ENVELOPE, false),
+            (super::super::BACKUP, true),
+        ] {
+            let bytes = text(field(files, name).unwrap()).unwrap().as_bytes();
+            sealed_root(bytes, backup).unwrap();
+        }
+    }
 }
