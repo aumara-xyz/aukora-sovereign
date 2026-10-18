@@ -98,6 +98,31 @@ fn supersede_and_quarantine() {
 }
 
 #[test]
+fn correcting_an_agents_note_never_retires_its_owner_slot_replacement() {
+    for slot in [SELF_SLOT, RESUME_SLOT] {
+        let (owner, agent) = (key(), key());
+        let mut s = store_with(&[("peter", &owner, &["*"], true), ("agent", &agent, &["builders"], false)]);
+        let a = s.append(sign(&agent, &draft("an agent's earlier claim", "builders"), Review::Remembered, 1)).unwrap();
+        let mut owner_note = draft("the owner's old slot words", "builders");
+        owner_note.slot = Some(slot.into());
+        s.append(sign(&owner, &owner_note, Review::Remembered, 2)).unwrap();
+        owner_note.text = "the owner's current slot words".into();
+        let b = s.append(sign(&owner, &owner_note, Review::Remembered, 3)).unwrap();
+        let c = s.append(sign(&agent, &draft("the agent's later claim", "builders"), Review::Remembered, 4)).unwrap();
+        let (a, b, c) = (hex32(a.event.id.as_bytes()), hex32(b.event.id.as_bytes()), hex32(c.event.id.as_bytes()));
+        for (at, replacement) in [(5, &b), (6, &c)] {
+            let tags = vec![vec!["supersedes".into(), a.clone()], vec!["replacement".into(), replacement.clone()]];
+            s.record(Event::sign(&agent, at, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
+        }
+        assert_eq!(s.get(&a).unwrap().unwrap().current_id.as_deref(), Some(c.as_str()));
+        let owner_note = s.get(&b).unwrap().unwrap();
+        assert!(owner_note.superseded_by.is_none(), "neither correction targeted the owner's {slot} note");
+        assert!(owner_note.current_id.is_none(), "the agent's replacement is no correction of the owner's words");
+        assert_eq!(hex32(s.slot(slot).unwrap().unwrap().event.id.as_bytes()), b, "only the owner may change {slot}'s head");
+    }
+}
+
+#[test]
 fn ancestry_is_computed_not_declared() {
     let a = key();
     let mut s = store_with(&[("agent", &a, &["builders"], false)]);
@@ -174,9 +199,8 @@ fn the_last_correction_wins_and_the_links_table_is_rebuilt_for_an_old_store() {
     let s = SharedStore::open(&path).unwrap();
     let get = |id: &str| s.get(id).unwrap().unwrap();
     assert_eq!(get(&high).current_id.as_deref(), Some(low.as_str()), "the second correction wins over the first");
-    let lost = get(&medium);
-    assert!(lost.superseded_by.is_some(), "the replacement that lost is history, not a second live answer");
-    assert_eq!(lost.current_id.as_deref(), Some(low.as_str()));
+    assert!(get(&medium).superseded_by.is_none(), "a different note's correction never retires its previous replacement");
+    assert!(get(&medium).current_id.is_none());
     assert!(get(&low).superseded_by.is_none());
     for suffix in ["", "-wal", "-shm"] {
         let mut name = path.clone().into_os_string();
@@ -335,27 +359,27 @@ fn the_capture_side_column_is_added_and_filled_for_an_old_store() {
     }
 }
 
-/// Grok review part 6: T corrected to R, then to X, then back to R: R stands. A second chain that points at R keeps it
-/// standing when the first moves on.
+/// T corrected to R, then to X, then back to R: the latest correction of T wins. The independently written R and X
+/// remain live throughout, because none of these corrections targets either note.
 #[test]
-fn a_restored_correction_stands_and_another_chain_keeps_it_standing() {
+fn a_restored_correction_changes_only_its_target() {
     let a = key();
     let mut s = store_with(&[("a", &a, &["builders"], false)]);
     let mut id = |text: &str, at: u64| hex32(s.append(sign(&a, &draft(text, "builders"), Review::Remembered, at)).unwrap().event.id.as_bytes());
     let (t, r, x) = (id("finding K2-30 is HIGH", 1), id("finding K2-30 is MEDIUM", 2), id("finding K2-30 is LOW", 3));
     let (u, v) = (id("finding K2-31 is HIGH", 4), id("finding K2-31 is CRITICAL", 5));
-    let mut correct = |s: &mut SharedStore, target: &str, rep: &str, at: u64| {
+    let correct = |s: &mut SharedStore, target: &str, rep: &str, at: u64| {
         let tags = vec![vec!["supersedes".into(), target.to_owned()], vec!["replacement".into(), rep.to_owned()]];
         s.record(Event::sign(&a, at, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
     };
     correct(&mut s, &t, &r, 10);
     correct(&mut s, &t, &x, 11);
-    assert_eq!(s.get(&r).unwrap().unwrap().current_id.as_deref(), Some(x.as_str()), "R lost to X for now");
+    assert!(s.get(&r).unwrap().unwrap().superseded_by.is_none(), "T's correction to X does not target R");
     correct(&mut s, &t, &r, 12);
     let now = |s: &SharedStore, id: &str| s.get(id).unwrap().unwrap();
     assert_eq!(now(&s, &t).current_id.as_deref(), Some(r.as_str()), "the latest correction in force names R");
     assert!(now(&s, &r).superseded_by.is_none(), "R stands");
-    assert_eq!(now(&s, &x).current_id.as_deref(), Some(r.as_str()), "X lost to the restored R");
+    assert!(now(&s, &x).superseded_by.is_none(), "T's correction back to R does not target X");
     // Another chain: U and T both corrected to R; then U moves on to V. R still stands for T.
     correct(&mut s, &u, &r, 13);
     correct(&mut s, &u, &v, 14);

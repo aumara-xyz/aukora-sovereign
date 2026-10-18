@@ -533,12 +533,16 @@ fn the_latest_correction_in_force_wins() {
     assert_eq!(call(&f.state, &claude, "supersede", json!({"target": high, "replacement": medium}))["ok"], true);
     assert_eq!(call(&f.state, &claude, "supersede", json!({"target": high, "replacement": low}))["ok"], true);
     assert_eq!(call(&f.state, &grok, "get", json!({"id": high}))["result"]["current_id"], low.as_str());
-    // MEDIUM lost to LOW (it was only ever the first answer for HIGH): it is history, not a second live answer.
-    assert_eq!(call(&f.state, &grok, "get", json!({"id": medium}))["result"]["current_id"], low.as_str());
+    // Neither correction targeted MEDIUM: it remains independent of HIGH's current replacement.
+    let medium_note = call(&f.state, &grok, "get", json!({"id": medium}));
+    assert!(medium_note["result"]["current_id"].is_null(), "{medium_note}");
+    assert!(medium_note["result"]["correction"].is_null(), "{medium_note}");
     let r = call(&f.state, &grok, "recall", json!({"query": "What is the current severity of invite replay finding K2-15?"}));
     let shown = ids_of(&r);
-    assert_eq!(shown[0], (low.clone(), Value::Null), "{r}");
-    assert!(shown[1..].iter().all(|(_, label)| label == "superseded") && shown.len() == 3, "{r}");
+    assert!(shown.contains(&(low.clone(), Value::Null)), "{r}");
+    assert!(shown.contains(&(medium.clone(), Value::Null)), "{r}");
+    assert_eq!(shown.last(), Some(&(high.clone(), json!("superseded"))), "{r}");
+    assert_eq!(shown.len(), 3, "{r}");
     // A proposal accepted later is in force from its acceptance, so it beats an older own correction.
     let urgent = remember_id(&f, &grok, "Finding K2-15 invite replay is rated CRITICAL after the retest");
     let proposal = call(&f.state, &grok, "supersede", json!({"target": high, "replacement": urgent}))["result"]["event"].as_str().unwrap().to_owned();

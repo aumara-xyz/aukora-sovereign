@@ -403,36 +403,10 @@ impl SharedStore {
         Ok((in_force, pending))
     }
 
-    /// What retired note `id_hex` (written by `author`): the correction in force that came last, so a note corrected
-    /// twice stands corrected by the second. A note that was the replacement in an earlier correction of some target
-    /// that was later corrected to another note is retired too, by that later correction: it lost.
+    /// What retired note `id_hex` (written by `author`): its latest authorized correction. Being named as another
+    /// note's replacement grants no authority over this note, even when that other note is corrected again.
     fn retirement(&self, id_hex: &str, author: &str) -> Result<Option<Correction>> {
-        if let Some(last) = self.corrections_of(id_hex, author)?.0.pop() {
-            return Ok(Some(last));
-        }
-        let mut stmt = self.db.prepare("SELECT DISTINCT target FROM supersede_links WHERE replacement = ?1 ORDER BY rowid").map_err(sql)?;
-        let targets = stmt
-            .query_map(params![id_hex], |r| r.get::<_, String>(0))
-            .map_err(sql)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(sql)?;
-        // The note lost only if every target that ever named it has since been corrected to some other note: when the
-        // latest correction in force of ANY of them still names it (a correction that was later restored, or another
-        // chain that points here), it stands. Of the corrections that took it away, the latest retires it.
-        let mut retired_by: Option<Correction> = None;
-        for target in targets {
-            let Some(target_author) = self.note_author(&target)? else { continue };
-            let (in_force, _) = self.corrections_of(&target, &target_author)?;
-            let Some(named_at) = in_force.iter().filter(|c| c.replacement.as_deref() == Some(id_hex)).map(|c| c.at).max() else { continue };
-            let Some(last) = in_force.last() else { continue };
-            if last.replacement.as_deref() == Some(id_hex) {
-                return Ok(None);
-            }
-            if last.at > named_at && retired_by.as_ref().is_none_or(|best| last.at > best.at) {
-                retired_by = Some(last.clone());
-            }
-        }
-        Ok(retired_by)
+        Ok(self.corrections_of(id_hex, author)?.0.pop())
     }
 
     fn note_author(&self, id_hex: &str) -> Result<Option<String>> {
