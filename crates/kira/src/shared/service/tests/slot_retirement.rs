@@ -33,3 +33,40 @@ fn advancing_a_slot_retires_its_history_and_retracting_it_never_resurrects_an_ol
         assert_eq!(call(&reopened, token, "get", json!({"id": h1}))["result"]["validity"], "superseded");
     }
 }
+
+/// A snapshot that a later snapshot retired cannot be corrected away from the slot: `get(slot)` and the history walk
+/// of every earlier snapshot keep naming the same current note, through later snapshots too.
+#[test]
+fn a_retired_snapshot_cannot_be_corrected_away_from_the_slot_head() {
+    let f = fixture();
+    let write = |text: &str, expected: &str| {
+        let mut n = note(text, "builders");
+        (n["slot"], n["lane"], n["form"], n["capture"], n["expected_head"]) =
+            (json!("aukora:self"), json!("self"), json!("snapshot"), json!("owner-typed"), json!(expected));
+        let reply = call(&f.state, &f.owner, "remember", n);
+        assert_eq!(reply["ok"], true, "{reply}");
+        reply["result"]["id"].as_str().unwrap().to_owned()
+    };
+    let a = write("Atlas self snapshot one", "none");
+    let b = write("Atlas self snapshot two", &a);
+    let other = call(&f.state, &f.owner, "remember", note("Atlas unrelated replacement note", "builders"));
+    let r = other["result"]["id"].as_str().unwrap().to_owned();
+    let refused = call(&f.state, &f.owner, "supersede", json!({"target": a, "expected_current": b, "replacement": r}));
+    assert_eq!(refused["error"], "kira:supersede-stale", "{refused}");
+    // Even a correction recorded directly, past the service's check, does not move the old snapshot's walk.
+    {
+        let mut state = f.state.lock().unwrap();
+        let tags = vec![vec!["supersedes".to_owned(), a.clone()], vec!["expected_current".to_owned(), b.clone()],
+            vec!["replacement".to_owned(), r.clone()]];
+        let event = Event::sign(state.key("peter").unwrap(), now(), SUPERSEDE_KIND, tags, String::new()).unwrap();
+        state.store.record(event).unwrap();
+    }
+    let agree = |head: &str| {
+        assert_eq!(call(&f.state, &f.owner, "get", json!({"id": "aukora:self"}))["result"]["id"], head);
+        assert_eq!(call(&f.state, &f.owner, "get", json!({"id": a}))["result"]["current_id"], head);
+    };
+    agree(&b);
+    let c = write("Atlas self snapshot three", &b);
+    agree(&c);
+    assert_eq!(call(&f.state, &f.owner, "get", json!({"id": b}))["result"]["current_id"], c.as_str());
+}

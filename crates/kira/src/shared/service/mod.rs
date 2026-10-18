@@ -668,6 +668,11 @@ impl State {
         }
         // dispatch holds requests.lock through this check and append, including against other State handles.
         // Proposals are advisory; only a correction entering force must match the target's retirement head.
+        // A snapshot a later snapshot of its slot has retired is history: correct the slot's current note instead.
+        // Naming that same later snapshot as the replacement changes nothing and is accepted.
+        if self.store.slot_successor_id(&p.target)?.is_some_and(|next| p.replacement.as_ref() != Some(&next)) {
+            return Err(refuse("supersede-stale"));
+        }
         if target.author_name == caller.name || caller.owner || p.expected_current.is_some() {
             check_correction_head(&target, p.expected_current.as_deref())?;
         }
@@ -699,6 +704,9 @@ impl State {
             return Err(refuse("not-found"));
         }
         let target = target.ok_or_else(|| refuse("not-found"))?;
+        if self.store.slot_successor_id(&hex(target.event.id.as_bytes()))?.is_some() {
+            return Err(refuse("supersede-stale"));
+        }
         // An already accepted proposal goes to the store's duplicate check, preserving its precise refusal.
         if target.superseded_by.as_deref() != Some(p.proposal.as_str()) {
             check_correction_head(&target, p.expected_current.as_deref())?;

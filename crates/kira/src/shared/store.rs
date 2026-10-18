@@ -405,10 +405,19 @@ impl SharedStore {
     }
 
     /// What retired note `id_hex` (written by `author`): its latest authorized correction. Being named as another
-    /// note's replacement grants no authority over this note, even when that other note is corrected again.
+    /// note's replacement grants no authority over this note, even when that other note is corrected again. A slot
+    /// snapshot with a later snapshot is retired by it, whatever corrections came after: otherwise a correction of the
+    /// older snapshot would send its history walk away from the snapshot `slot()` serves (supersede refuses it too).
     fn retirement(&self, id_hex: &str, author: &str) -> Result<Option<Correction>> {
-        let correction = self.corrections_of(id_hex, author)?.0.pop();
-        Ok(correction.into_iter().chain(self.slot_successor(id_hex)?).max_by_key(|c| c.at))
+        if let Some(successor) = self.slot_successor(id_hex)? {
+            return Ok(Some(successor));
+        }
+        Ok(self.corrections_of(id_hex, author)?.0.pop())
+    }
+
+    /// The later snapshot that retired slot snapshot `id_hex`, if any.
+    pub fn slot_successor_id(&self, id_hex: &str) -> Result<Option<String>> {
+        Ok(self.slot_successor(id_hex)?.and_then(|c| c.replacement))
     }
 
     fn note_author(&self, id_hex: &str) -> Result<Option<String>> {
