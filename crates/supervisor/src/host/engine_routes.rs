@@ -23,6 +23,16 @@ pub enum ReleaseStanding {
 }
 
 impl Host {
+    pub(super) fn sessions(&self) -> Result<frontdoor::session::DurableSessions> {
+        let boundary = self.config.boundary()?;
+        frontdoor::session::DurableSessions::open(
+            self.sessions.try_clone().map_err(|_| codes::SUPERVISOR_STATE)?,
+            self.state.node,
+            boundary.shell,
+            boundary.owner,
+        )
+    }
+
     /// The gate, for the engine controller's plugin-set reads and proposals.
     pub fn engine_gate(&self) -> &crate::adapters::GateAdapter {
         &self.gate
@@ -132,11 +142,8 @@ impl Host {
         }
     }
 
-    /// `POST /api/session/end` on the shell origin: sign out. The caller's own shell session is revoked in the store
-    /// (with anything derived from it), every engine-origin session minted from it ends at once, and the browser's
-    /// shell cookie is cleared (O12). Nothing else is touched: the owner origin's session and the binding stay.
+    /// End the shell's owner session family durably, then clear the browser's shell cookie (O12).
     pub(super) fn shell_sign_out(&self, request: &AdmittedRequest) -> Result<http::Response<Vec<u8>>> {
-        use frontdoor::session::SessionStore as _;
         if request.method() != frontdoor::ingress::Method::Post {
             return Err(codes::FRONTDOOR_UNKNOWN_ROUTE);
         }
@@ -155,7 +162,7 @@ impl Host {
                 Ok(record.token_digest)
             },
         )?;
-        sessions.revoke(shell)?;
+        sessions.end_shell_session(shell, now()?)?;
         drop(sessions);
         if let Some(engine) = self.engine.as_ref() {
             engine.end_shell(shell);
@@ -164,6 +171,29 @@ impl Host {
         response.headers_mut().insert(
             http::header::SET_COOKIE,
             format!("{}=; {}; Max-Age=0", frontdoor::session::SHELL_COOKIE, frontdoor::session::COOKIE_ATTRIBUTES)
+                .parse()
+                .map_err(|_| codes::SUPERVISOR_STATE)?,
+        );
+        Ok(response)
+    }
+
+    /// The owner origin clears its own host cookie; cleanup also succeeds after shell sign-out revoked it.
+    pub(super) fn owner_sign_out(&self, request: &AdmittedRequest) -> Result<http::Response<Vec<u8>>> {
+        use frontdoor::session::{session_digest, SessionScope, SessionStore as _, COOKIE_ATTRIBUTES, OWNER_COOKIE};
+        let mut sessions = self.sessions()?;
+        if let Some(cookie) = request.cookie() {
+            let digest = session_digest(cookie)?;
+            if let Some(record) = sessions.lookup(digest)? {
+                if record.scope == SessionScope::Shell || record.origin != *request.origin() {
+                    return Err(codes::FRONTDOOR_COOKIE_HOST_REFUSED);
+                }
+            }
+            sessions.revoke(digest)?;
+        }
+        let mut response = super::json_response(Value::object(vec![("ended".into(), Value::boolean(true))])?)?;
+        response.headers_mut().insert(
+            http::header::SET_COOKIE,
+            format!("{OWNER_COOKIE}=; {COOKIE_ATTRIBUTES}; Max-Age=0")
                 .parse()
                 .map_err(|_| codes::SUPERVISOR_STATE)?,
         );

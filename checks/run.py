@@ -128,11 +128,10 @@ CLAIM_PINS = {
     "crates/aumlok/src/claim.rs": "d29c2f820b70c00b1474f04cb68b37092382085c12e61c42eca6cf3668896389",
     "crates/aumlok/src/lib.rs": "f0252d28a134424a64064351c958d596096c38137ab25c74a2bfde4d4323086b",
     "crates/frontdoor/src/claim.rs": "f85a1b29a5ca44fe21056f1d1c869615ee18ec168bdf86bf6c5011bc28201432",
-    "crates/frontdoor/src/session.rs": "c77beeb6ad784a7a1037fc5a6982cce8669a92816173d8762befe4aa817a4b22",
+    "crates/frontdoor/src/session.rs": "fab0762b87c6458309441cd901e9209f51876b957ff7cc53d5fae14683efac74",
     "crates/supervisor/src/claim.rs": "cf861ce37adc9418815884813418856989ee374796076f636aa2287db472d6fc",
     "crates/supervisor/src/lib.rs": "81d9f14180c122fb8c8022c0b7188575551441a9ca44f06f158ad237871aed52",
 }
-
 
 # The explicitly requested release-pointer unit test is allowed only at these reviewed bytes.
 RELEASE_POINTER_PINS = {

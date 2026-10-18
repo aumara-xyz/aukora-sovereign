@@ -27,6 +27,7 @@ pub enum OwnerRoute {
     BindingRefreshPrepare,
     SigninStart,
     SigninFinish,
+    SessionEnd,
     Approvals,
     ApprovalRetireChallenge,
     ApprovalCeremonyV1,
@@ -71,6 +72,7 @@ impl OwnerRoute {
             (Method::Post, "/api/binding/refresh/prepare") => Ok(Self::BindingRefreshPrepare),
             (Method::Post, "/api/signin/start") => Ok(Self::SigninStart),
             (Method::Post, "/api/signin/finish") => Ok(Self::SigninFinish),
+            (Method::Post, "/api/session/end") => Ok(Self::SessionEnd),
             (Method::Get, "/api/approvals") => Ok(Self::Approvals),
             (Method::Post, "/api/approvals") => Ok(Self::ApprovalCeremonyV1),
             (Method::Post, "/api/v1/approvals/review") => Ok(Self::ApprovalReviewV1),
@@ -703,6 +705,7 @@ pub fn dispatch_ceremony<S: crate::session::SessionStore>(
         OwnerRoute::SigninStart => identity.ceremony(context, route, None, request.body().clone()),
         OwnerRoute::Claim
         | OwnerRoute::SigninFinish
+        | OwnerRoute::SessionEnd
         | OwnerRoute::Approvals
         | OwnerRoute::ApprovalRetireChallenge
         | OwnerRoute::ApprovalCeremonyV1

@@ -545,18 +545,6 @@ impl Host {
             }
         });
     }
-    fn sessions(&self) -> Result<DurableSessions> {
-        let boundary = self.config.boundary()?;
-        DurableSessions::open(
-            self.sessions
-                .try_clone()
-                .map_err(|_| codes::SUPERVISOR_STATE)?,
-            self.state.node,
-            boundary.shell,
-            boundary.owner,
-        )
-    }
-
     /// Called from `web`'s blocking worker with a Tokio runtime entered. Data and
     /// face reads synchronously wait for async organ ports and cannot run on a
     /// Tokio runtime worker thread.
@@ -595,6 +583,9 @@ impl Host {
         }
         if request.role() == HostRole::Owner {
             let route = OwnerRoute::resolve(request.role(), request.method(), request.path())?;
+            if route == OwnerRoute::SessionEnd {
+                return self.owner_sign_out(request);
+            }
             if matches!(route, OwnerRoute::SigninStart | OwnerRoute::SigninFinish) {
                 return self.signin(request, route, None);
             }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { COPY, icon } from '../design/index.js';
 
-export type OwnerRoute = '/passkey' | '/phrase' | '/phrase/refresh' | '/claim' | '/witness' | `/approval/${string}`;
+export type OwnerRoute = '/passkey' | '/phrase' | '/phrase/refresh' | '/claim' | '/witness' | '/signout' | `/approval/${string}`;
 export type OwnerNotice = { kind: 'closed' | 'complete'; route?: OwnerRoute } | { kind: 'refusal'; code: string };
 const protocol = 'aukora.owner.v1';
 let dialogStyle: Promise<void> | null = null;
@@ -24,7 +24,7 @@ function loadDialogStyle(): Promise<void> {
 }
 
 export function validOwnerRoute(route: string): route is OwnerRoute {
-  return ['/passkey', '/phrase', '/phrase/refresh', '/claim', '/witness'].includes(route) || /^\/approval\/[0-9a-f]{32}$/.test(route);
+  return ['/passkey', '/phrase', '/phrase/refresh', '/claim', '/witness', '/signout'].includes(route) || /^\/approval\/[0-9a-f]{32}$/.test(route);
 }
 
 function trustedOrigin(value: string): string {
@@ -60,7 +60,8 @@ export class OwnerFrame {
     const generation = this.#generation;
     const prepared = this.#preparing.then(() => {
       if (generation !== this.#generation) return;
-      return this.#prepare();
+      // Logout only clears the owner cookie; it must work after the shell's family was revoked.
+      return route === '/signout' ? undefined : this.#prepare();
     });
     this.#preparing = prepared.then(() => {}, () => {});
     let reference: string | void;

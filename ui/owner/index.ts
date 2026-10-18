@@ -7,6 +7,7 @@ import { createLivePhraseService } from "./phrase/index.js";
 import { createApprovalServices } from "./cards/index.js";
 import { createPasskeyService } from "./passkey/index.js";
 import { disabledOwnerWitness, witnessPane } from "./witness/index.js";
+import { endOwnerSession } from "./session.js";
 export { mountOwner } from "./router.js";
 export { OWNER_PROTOCOL, PHRASE_ENTROPY_BITS } from "./contracts.js";
 export type {
@@ -35,6 +36,7 @@ if (root) {
     mountOwner(root, {
       shellOrigin: config.shellOrigin,
       panes: { claim: context => claims.mount(context), passkey: onboarding,
+        signout: endOwnerSession,
         phrase: context => context.route.pane === "phrase" && context.route.refresh
           ? refresh.mount(context) : onboarding(context),
         approval: context => approval.mount(context, supervisor, passkey),

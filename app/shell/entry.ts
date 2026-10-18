@@ -33,6 +33,7 @@ if (root) {
     let connecting: Promise<void> | null = null;
     let bound = false;
     let approvals: ApprovalWatch | null = null;
+    let ownerEnding: { resolve(): void; reject(error: Error): void } | null = null;
     const notice = document.createElement('p');
     notice.className = 'shell-connection';
     notice.setAttribute('role', 'status');
@@ -77,7 +78,7 @@ if (root) {
       }).finally(() => { connecting = null; });
       return connecting;
     };
-    // POST /api/session/end clears the bound shell session; an already missing session counts as ended.
+    // The server revokes the whole family first. Then the owner host clears its own HttpOnly cookie.
     const endSession = async () => {
       try {
         const reply = objectData(await handoff.request('/api/session/end', {}, lifetime.signal));
@@ -87,10 +88,22 @@ if (root) {
         if (!(error instanceof Error && SESSION_REFUSALS.has(error.message))) throw error;
       }
       bound = false;
-      // Remount every face without the session, so nothing read while signed in stays on screen.
+      shell.setSignedIn(false);
+      // Remove signed-in content as soon as revocation succeeds, even if owner-cookie cleanup later fails.
       await Promise.all(services.splice(0).map(dispose => dispose()));
       if (!lifetime.signal.aborted) provideServices();
       approvals?.refresh();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          ownerEnding = { resolve, reject };
+          timeout = setTimeout(() => reject(new Error('shell:session-end-timeout')), 15_000);
+          void shell.openOwner('/signout').catch(reject);
+        });
+      } finally {
+        clearTimeout(timeout);
+        ownerEnding = null;
+      }
     };
     const shell = mountShell({
       root, ownerOrigin: ownerOrigin(), servicesPendingText: 'Sign in',
@@ -100,6 +113,12 @@ if (root) {
       endSession,
       onOwnerNotice: notice => {
         delete document.body.dataset.claiming;
+        if (ownerEnding) {
+          if (notice.kind === 'complete' && notice.route === '/signout') ownerEnding.resolve();
+          else ownerEnding.reject(new Error('shell:session-end-refused'));
+          return;
+        }
+        if ('route' in notice && notice.route === '/signout') return;
         if (notice.kind === 'closed' && notice.route?.startsWith('/approval/')) {
           approvals?.forget(notice.route.slice('/approval/'.length));
         }

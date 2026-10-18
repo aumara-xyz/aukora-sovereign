@@ -4,6 +4,7 @@ import type { AssertionOptions, RegistrationOptions } from "./passkey/index.js";
 import { abortScope, checkAbort } from "./abort.js";
 
 type Route = "/api/enrol/start" | "/api/enrol/finish" | "/api/binding/prepare"
+  | "/api/session/end"
   | "/api/binding/confirm" | "/api/signin/start" | "/api/signin/finish"
   | "/api/binding/refresh" | "/api/binding/refresh/prepare";
 export type RecordValue = Record<string, unknown>;

@@ -30,6 +30,9 @@ const MAX_COUNTER: u64 = canon::json::MAX_SAFE_INTEGER as u64;
 const STATE_FILE: &str = "sessions-v1.json";
 const LOCK_FILE: &str = "sessions.lock";
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BindingState {
     Unclaimed,
@@ -513,6 +516,26 @@ impl DurableSessions {
             return Err(FRONTDOOR_SESSION_REQUIRED);
         }
         self.insert_record(&mut state, record, None, now_ms)?;
+        self.save(&state)
+    }
+    /// Sign-out ends the live shell's owner parent and all sibling shells in one durable transaction.
+    pub fn end_shell_session(&mut self, digest: Digest32, now_ms: u64) -> Result<()> {
+        let _lock = self.lock()?;
+        let mut state = self.load()?;
+        if self.live_record(&state, digest, now_ms)?.scope != SessionScope::Shell {
+            return Err(FRONTDOOR_COOKIE_HOST_REFUSED);
+        }
+        let parent = state
+            .records
+            .iter()
+            .find(|record| record.digest == digest.to_string())
+            .and_then(|record| record.parent.clone())
+            .ok_or(FRONTDOOR_SESSION_REQUIRED)?;
+        for record in &mut state.records {
+            if record.digest == parent || record.parent.as_ref() == Some(&parent) {
+                record.revoked = true;
+            }
+        }
         self.save(&state)
     }
     /// Epoch changes revoke every existing session in the same durable write.

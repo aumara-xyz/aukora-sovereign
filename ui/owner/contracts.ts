@@ -6,6 +6,7 @@ export type OwnerRoute =
   | { readonly pane: "phrase"; readonly refresh?: true }
   | { readonly pane: "approval"; readonly proposalId: string }
   | { readonly pane: "claim" }
+  | { readonly pane: "signout" }
   | { readonly pane: "witness" };
 
 export type ShellOwnerMessage = {
@@ -76,6 +77,7 @@ export function ownerRoute(text: string): OwnerRoute {
   if (text === "/phrase") return { pane: "phrase" };
   if (text === "/phrase/refresh") return { pane: "phrase", refresh: true };
   if (text === "/claim") return { pane: "claim" };
+  if (text === "/signout") return { pane: "signout" };
   if (text === "/witness") return { pane: "witness" };
   const approval = /^\/approval\/([0-9a-f]{32})$/.exec(text);
   if (approval) return { pane: "approval", proposalId: approval[1] };

@@ -22,7 +22,7 @@ export interface ShellOptions {
   servicesPendingText?: string;
   phraseRoute?: () => '/phrase' | '/phrase/refresh';
   openApprovals?: () => void;
-  /** Ends the shell session on the node; resolves once it is gone. */
+  /** Ends the shell and owner sessions on the node; resolves once their cookies are cleared. */
   endSession?: () => Promise<void>;
 }
 export interface ShellController {
@@ -287,12 +287,15 @@ export function mountShell(options: ShellOptions): ShellController {
   };
   const setSignedIn = (value: boolean | null) => {
     if (disposed || value === signedIn) return;
+    // ApprovalWatch also checks while an owner pane is open: logout in another tab tears it down.
+    if (value === false && signedIn === true && !ending) owner?.close();
     signedIn = value;
     sessionNote.textContent = '';
     renderSession();
   };
   const endSession = async (end: () => Promise<void>) => {
     ending = true;
+    owner?.close();
     sessionNote.textContent = '';
     renderSession();
     try {
