@@ -91,15 +91,15 @@ impl Messaging {
         }
         let contact_key = PublicKey::from_bytes(fixed(contact)?)?;
         let Some(contact) = self.current_contact(txn, contact_key)? else {
-            self.fail_owner_send(id)?;
-            return Err(refuse("stranger"));
+            self.fail_contact_send(id, "contact-removed")?;
+            return Err(refuse("contact-removed"));
         };
         let context = txn.observation_context()?;
         if contact.authority().epoch != context.authority.epoch
             || contact.consumed_card().to_string() != state_text(&body, "contact_receipt")?
         {
-            self.fail_owner_send(id)?;
-            return Err(refuse("stale-contact"));
+            self.fail_contact_send(id, "contact-changed")?;
+            return Err(refuse("contact-changed"));
         }
         let envelope = TransportEnvelope {
             v: nostr::transport::TRANSPORT_VERSION,

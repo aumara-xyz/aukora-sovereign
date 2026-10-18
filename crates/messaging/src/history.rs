@@ -237,16 +237,6 @@ impl Messaging {
         Ok(receipt)
     }
 
-    pub(crate) fn fail_owner_send(&self, id: OutboxId) -> Result<()> {
-        self.db
-            .execute(
-                "UPDATE messaging_messages SET state=3 WHERE id=?1 AND state IN(0,2)",
-                [id.0.as_bytes().as_slice()],
-            )
-            .map_err(|_| refuse("store-write"))?;
-        Ok(())
-    }
-
     /// Newest local rows first; `before` continues toward older messages.
     /// The stable cursor is scoped to one contact when supplied.
     /// Pending ledger reconciliation is never visible as admitted history.

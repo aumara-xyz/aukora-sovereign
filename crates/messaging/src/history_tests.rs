@@ -679,7 +679,7 @@ fn revoked_contact_cannot_publish_and_identical_text_has_distinct_ids() -> Resul
     let mut relay = FakeRelay::default();
     assert_eq!(
         store.transmit_owner(&mut host, &mut relay, first, 1000),
-        Err(refuse("stranger"))
+        Err(refuse("contact-removed"))
     );
     assert!(relay.0.is_empty());
     Ok(())

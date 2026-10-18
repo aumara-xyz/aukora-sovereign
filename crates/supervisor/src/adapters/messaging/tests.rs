@@ -3,6 +3,7 @@
 
 use super::*;
 mod locking;
+mod removed_contact;
 use aumlok::{
     ceremony::{
         possession_challenge, BeginCeremony, CeremonyConfig, CeremonyPurpose, CeremonyStore,
@@ -281,6 +282,7 @@ fn contact_action(seed: u8, label: &str) -> OwnerAction {
 
 impl Rig {
     fn approve(&mut self, action: &OwnerAction, counter: u32) -> Result<ProposalId> {
+        let contacts_before = self.ledger.messaging(self.scope, false, |txn| txn.contact_keys())?;
         let target = TargetId::new(messaging::CONTACT_TARGET.into())?;
         let gate = self.gate.as_mut().unwrap();
         let base = gate.target_store().observe(&target)?.digest;
@@ -307,10 +309,7 @@ impl Rig {
             review.card.canonical_bytes(),
             action.card()?.canonical_bytes()?
         );
-        assert!(self
-            .ledger
-            .messaging(self.scope, false, |txn| txn.contact_keys())?
-            .is_empty());
+        assert_eq!(self.ledger.messaging(self.scope, false, |txn| txn.contact_keys())?, contacts_before);
         let (client_data_json, authenticator_data, bytes) =
             assertion_bytes(&self.owner, *review.passkey_challenge.as_bytes(), counter);
         let assertion = OwnerAssertion {
@@ -339,10 +338,7 @@ impl Rig {
         let consumed = self.ledger.scoped(self.scope, |txn| {
             gate.consume_apply(txn, proposal.id, assertion, &mut NoInjection)
         })?;
-        assert!(self
-            .ledger
-            .messaging(self.scope, false, |txn| txn.contact_keys())?
-            .is_empty());
+        assert_eq!(self.ledger.messaging(self.scope, false, |txn| txn.contact_keys())?, contacts_before);
         let outcome = self.ledger.scoped(self.scope, |txn| {
             gate.effect_once(txn, consumed, &mut NoInjection)
         })?;

@@ -85,7 +85,12 @@ impl LiveNetwork {
                     .lock()
                     .map_err(|_| refuse("network-store-unavailable"))?
                     .prepare_owner_send(txn, id)
-            })?;
+            });
+            let prepared = match prepared {
+                Ok(prepared) => prepared,
+                Err(code) if contact_send_failed(code) => continue,
+                Err(code) => return Err(code),
+            };
             // Relay latency holds neither Aura's writer nor the local store.
             let result = prepared.submit(transport, deadline_ms);
             self.store
@@ -93,12 +98,17 @@ impl LiveNetwork {
                 .map_err(|_| refuse("network-store-unavailable"))?
                 .record_owner_attempt(id, now_ms, result.as_ref().ok())?;
             let receipt = result?;
-            self.ledger.messaging(scope, false, |txn| {
+            let recorded = self.ledger.messaging(scope, false, |txn| {
                 self.store
                     .lock()
                     .map_err(|_| refuse("network-store-unavailable"))?
                     .record_owner_send(txn, &prepared, &receipt)
-            })?;
+            });
+            match recorded {
+                Ok(()) => {},
+                Err(code) if contact_send_failed(code) => continue,
+                Err(code) => return Err(code),
+            }
         }
         let batch = transport.receive(&nostr::transport::ReceiveRequest {
             recipient: self.identity.public_key(),
@@ -230,10 +240,13 @@ impl NetworkRead for LiveNetwork {
                             messaging::MessageState::Published => Some(SendState::Published),
                             messaging::MessageState::Unconfirmed => Some(SendState::Unconfirmed),
                             messaging::MessageState::Failed => {
-                                Some(SendState::Failed(canon::Refusal {
-                                    organ: "messaging",
-                                    reason: "transport-rejected",
-                                }))
+                                Some(SendState::Failed(
+                                    store.owner_send_failure(messaging::OutboxId(row.id))?
+                                        .unwrap_or(canon::Refusal {
+                                            organ: "messaging",
+                                            reason: "transport-rejected",
+                                        }),
+                                ))
                             }
                         },
                     };
@@ -350,4 +363,9 @@ fn synchronize_contacts(
         store.synchronize_contact(txn, key)?;
     }
     Ok(())
+}
+
+// These failures have already been recorded against this one queued send.
+fn contact_send_failed(code: canon::Refusal) -> bool {
+    code.organ == "messaging" && matches!(code.reason, "contact-removed" | "contact-changed")
 }

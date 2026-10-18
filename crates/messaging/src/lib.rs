@@ -6,6 +6,7 @@ pub mod contacts;
 pub mod ingress;
 mod history;
 mod retry;
+mod send_failure;
 mod owner_transport;
 pub use owner_transport::PreparedOwnerSend;
 mod store;
@@ -336,6 +337,7 @@ impl Messaging {
             .map_err(|_| refuse("store-busy"))?;
         store::initialize(&mut db, node)?;
         retry::initialize(&db)?;
+        send_failure::initialize(&db)?;
         ingress::initialize(&db)?;
         Ok(Self {
             node,
