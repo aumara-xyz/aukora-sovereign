@@ -957,3 +957,26 @@ fn conversation_marks_need_the_owner_session_and_an_approved_contact() -> Result
     assert!(store.conversation_marks()?.is_empty());
     Ok(())
 }
+
+#[test]
+fn a_wrap_already_settled_does_not_hold_a_retry_slot() -> Result<()> {
+    let directory = TestDirectory::new();
+    let store = Messaging::open(&directory.0, NodeId::from_bytes([14; 16]))?;
+    let recipient = key(91).public_key()?;
+    let wrap = |n: u8| TransportEnvelope {
+        v: nostr::transport::TRANSPORT_VERSION,
+        codec: nostr::transport::EnvelopeCodec::Nip59V1,
+        recipient,
+        id: nostr::EventId::from_bytes([n; 32]),
+        bytes: vec![n; 8],
+    };
+    for n in 1..=9 {
+        crate::polling::retain_retry(&store.db, &wrap(n))?;
+    }
+    // Eight wraps were settled but their retry rows were left behind (an interrupted release).
+    for n in 1..=8 {
+        store.db.execute("INSERT INTO messaging_refused_envelope VALUES(?1)", [[n; 32].as_slice()]).unwrap();
+    }
+    assert_eq!(store.retry_envelopes(8)?, vec![wrap(9)]);
+    Ok(())
+}

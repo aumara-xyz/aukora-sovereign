@@ -60,6 +60,15 @@ impl Messaging {
         if limit == 0 || limit > MAX_PAGE_ITEMS {
             return Err(refuse("page-limit"));
         }
+        // A wrap already admitted or finally refused leaves the queue here too: had its release been interrupted
+        // (a crash between the two writes), its row would otherwise head the queue and take a slot every poll.
+        self.db
+            .execute(
+                "DELETE FROM messaging_ingress_retry WHERE envelope IN (SELECT envelope FROM messaging_seen)
+                 OR envelope IN (SELECT envelope FROM messaging_refused_envelope)",
+                [],
+            )
+            .map_err(|_| refuse("store-write"))?;
         let mut query = self
             .db
             .prepare(
