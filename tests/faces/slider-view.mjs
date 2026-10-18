@@ -171,3 +171,10 @@ test('the 5 s re-read pauses while the shell parks the face and resumes when it 
   client.setShown(true); await settle();
   assert.equal(reads(), 3, 'shown again: one read at once');
 });
+
+test('only the current level shows its pill, and How it works is body-size text (no small print)', async () => {
+  const css = await readFile(new URL('../../app/faces/general/slider.css', import.meta.url), 'utf8');
+  // primitives.css gives .ak-pill a display, which would otherwise show every row's hidden "Current" pill.
+  assert.match(css, /\.slider-control \.ak-pill\[hidden\] \{ display: none; \}/);
+  assert.doesNotMatch(css, /font-size: 1[0-3]px/);
+});
