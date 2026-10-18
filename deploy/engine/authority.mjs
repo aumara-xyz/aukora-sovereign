@@ -6,8 +6,10 @@ export const HEARTBEAT_MS = 10_000
 
 export function priorRefusal(authority, previous) {
   if (previous?.set_hash !== authority.set_hash || previous?.release !== authority.release) return undefined
-  return ['authority-runtime-check', 'authority-plugin-inactive', 'authority-plugin-missing',
-    'authority-plugin-timeout', 'profile-plugin-disabled'].includes(previous.reason) ? previous.reason : 'authority-runtime-check'
+  // Older launchers persisted silence as a terminal refusal. It proves no plugin loss, so a fresh process may retry.
+  if (['authority-plugin-missing', 'authority-plugin-timeout'].includes(previous.reason)) return undefined
+  return ['authority-runtime-check', 'authority-plugin-inactive', 'profile-plugin-disabled'].includes(previous.reason)
+    ? previous.reason : 'authority-runtime-check'
 }
 
 export class AuthorityWatch {
@@ -29,10 +31,10 @@ export class AuthorityWatch {
 
   close() { this.stopped = true }
 
-  fail(reason) {
+  fail(reason, terminal = true) {
     if (this.failed || this.stopped) return
     this.failed = true
-    this.refuse(reason)
+    this.refuse(reason, terminal)
   }
 
   message(value) {
@@ -43,14 +45,17 @@ export class AuthorityWatch {
     } else if (value.state === 'refused') {
       this.fail(value.reason === 'authority-runtime-check' ? value.reason : 'authority-plugin-inactive')
     } else if (value.state === 'ready' && !this.paused) {
+      // A delayed timer must not let an overdue heartbeat revive this process before tick() gets CPU time.
+      this.tick()
+      if (this.failed || this.stopped) return
       this.seen = this.now()
       this.ready()
     } else if (value.state === 'ready') {
       // Ignored once stopping: the same process is never admitted again.
     } else if (value.state === 'stopping') {
       // The plugin is being disposed: a supervisor stop, or the harness's crash path before it exits 1. Stop serving
-      // now, but latch nothing yet: a process that exits retries on its next start, and one that stays alive without
-      // its authority plugins is latched by tick() as authority-plugin-timeout (or -missing before first readiness).
+      // now, but latch nothing: a process that exits retries on its next start, and one that stays alive without
+      // its authority plugins is stopped by tick(). Only a fresh process may prove readiness again.
       this.paused = true
       this.pause()
     } else {
@@ -59,14 +64,19 @@ export class AuthorityWatch {
   }
 
   diagnostic(line) {
-    if (/(?:^|\n)dsh: disabling profile plugin(?:\s|$)/i.test(line)) this.fail('profile-plugin-disabled')
+    const disabled = /(?:^|\n)dsh: disabling profile plugin row ["']([^"']+)["']/ig
+    for (const [, row] of line.matchAll(disabled)) {
+      if (this.required.some(name => row === name || row === name.replace(/^@/, '').replace('/', '-'))) {
+        this.fail('profile-plugin-disabled')
+      }
+    }
   }
 
   tick() {
     if (this.seen === undefined) {
-      if (this.now() - this.started >= STARTUP_MS) this.fail('authority-plugin-missing')
+      if (this.now() - this.started >= STARTUP_MS) this.fail('authority-plugin-missing', false)
     } else if (this.now() - this.seen >= HEARTBEAT_MS) {
-      this.fail('authority-plugin-timeout')
+      this.fail('authority-plugin-timeout', false)
     }
   }
 }

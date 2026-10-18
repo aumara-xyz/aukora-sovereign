@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_spends_every_pending_ticket_and_signs_every_session_out() {
+    fn a_fresh_engine_forgets_the_previous_engines_tickets_and_sessions() {
         let (shell, owner) = ("https://n1-1-2-3-4.sslip.io", "https://owner.n1-1-2-3-4.sslip.io");
         let config = || EngineConfig::parse(&text("engine.n1-1-2-3-4.sslip.io", 12), shell, owner).unwrap();
         let scope = supervisor::ingress::PrincipalScope {
@@ -242,7 +242,7 @@ mod tests {
         assert!(matches!(old.lookup(&bearer, 2_001), access::Lookup::Live(_)));
         assert!(old.redeem(&pending, 2_001, 3_600_000).is_ok());
         drop(before);
-        // Engine::load builds its state through Engine::start: the restarted engine knows neither.
+        // A fresh Engine state knows neither the old tickets nor the old session.
         let after = Engine::start(config());
         let mut access = after.access.lock().unwrap();
         assert_eq!(access.redeem(&pending, 2_001, 3_600_000).unwrap_err().reason, "engine-ticket");

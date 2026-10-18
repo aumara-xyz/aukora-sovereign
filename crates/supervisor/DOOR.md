@@ -81,7 +81,8 @@ Every error is a refusal, and a refusal says nothing ran.
 Once fetched content has reached the engine, the crossings that could carry it on ask the owner, whatever the slider
 and the grants would clear (Auma's review R2, "fetched content becomes instruction"). `src/door/taint.rs`:
 
-- **Set by** any `net` result that reached the engine, and any memory read whose result carries a `web-derived` note.
+- **Set by** any `net` result that reached the engine, and any memory result carrying a `web-derived` note, including
+  a write's returned body.
   The record (`taint.json` in the state folder: first cause, first time) is written and synced *before* the result is
   released; if it cannot be, the result is withheld (`door-state`). An unreadable record counts as tainted.
 - **While tainted**, every `net` call and every memory write (`kira_remember`, `kira_supersede`) is an `ask`, even

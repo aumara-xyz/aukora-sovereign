@@ -69,11 +69,11 @@ const watch = new AuthorityWatch(authority.plugins, {
     rmSync(STATUS, { force: true })
     for (const client of clients) client.destroy()
   },
-  refuse(reason) {
+  refuse(reason, terminal) {
     admitted = false
     process.stderr.write('entry: supervisor:' + reason + '; stopping the engine\n')
     try {
-      stamp(REFUSAL, { ...authority, reason })
+      if (terminal) stamp(REFUSAL, { ...authority, reason })
       rmSync(STATUS, { force: true })
     } catch {
       process.stderr.write('entry: supervisor:authority-runtime-check; could not persist the refusal\n')

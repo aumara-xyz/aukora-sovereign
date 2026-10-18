@@ -216,6 +216,13 @@ fn keep_through_hold(started: bool, running: bool, unreadable_for: Duration) -> 
     started && running && unreadable_for < RELEASE_UNREADABLE_GRACE
 }
 
+/// No missing input may silently skip the authority check, including while considering the release-lock grace.
+fn check_runtime(config: &super::EngineConfig, approved: Option<&[u8]>, release: Option<&str>, active: bool) -> Result<()> {
+    let release = release.ok_or_else(|| refuse("release-unreadable"))?;
+    let set = PluginSet::parse(approved.ok_or_else(|| refuse("plugin-set-unreadable"))?)?;
+    runtime::check(config, &set.set_hash()?.to_string(), release, &super::closure::required_plugins(&set), active)
+}
+
 pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
     let mut proposed: Option<(Digest32, Instant)> = None;
     // The set the owner explicitly declined (NODE.md O19): not raised again until the owner asks again (Approvals).
@@ -260,14 +267,9 @@ pub async fn run(host: Arc<Host>, engine: Arc<Engine>) {
         // Runtime loss overrides even the release-lock grace. Correct package bytes do not prove that the
         // harness loaded them: compatibility preflight can silently disable a profile row.
         if decision.run || decision.hold {
-            if let (Some(set), Some(release)) = (approved.as_deref(), host.release_digest()) {
-                let parsed = PluginSet::parse(set).and_then(|set| Ok((set.set_hash()?, super::closure::required_plugins(&set))));
-                if let Ok((pin, plugins)) = parsed {
-                    let active = servable(&state) && started_from.as_deref() == Some(set);
-                    if let Err(refusal) = runtime::check(&engine.config, &pin.to_string(), &release, &plugins, active) {
-                        decision = stop(refusal.reason, decision.propose);
-                    }
-                }
+            let active = servable(&state) && started_from.is_some() && started_from.as_deref() == approved.as_deref();
+            if let Err(refusal) = check_runtime(&engine.config, approved.as_deref(), host.release_digest().as_deref(), active) {
+                decision = stop(refusal.reason, decision.propose);
             }
         }
         if decision.hold {
@@ -489,6 +491,19 @@ mod tests {
         assert!(!due(Some((Instant::now(), FAILED_BACKOFF_MIN))));
         assert!(due(Some((Instant::now(), Duration::ZERO))));
         assert!(FAILED_BACKOFF_MIN >= TICK * 6, "a try is at least six ticks apart");
+    }
+
+    #[test]
+    fn a_missing_release_digest_cannot_skip_the_runtime_check() {
+        let config = super::super::EngineConfig {
+            v: 1, plugin_root: "/opt/aukora-engine/plugins".into(), control_dir: "/run/aukora-engine-ctl".into(),
+            web_socket: "/run/aukora-engine/io/web.sock".into(), launch_file: "/run/aukora-engine/io/launch-url".into(),
+            host: "engine.example.org".into(), listen: "127.0.0.1:18081".parse().unwrap(), session_hours: 12,
+        };
+        let approved = set(&[(DOOR_PLUGIN, 1, true)]);
+        for active in [false, true] {
+            assert_eq!(check_runtime(&config, Some(&approved), None, active).unwrap_err().reason, "release-unreadable");
+        }
     }
 
     #[test]

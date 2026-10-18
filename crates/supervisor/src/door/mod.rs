@@ -308,7 +308,7 @@ impl Door {
                 Some(memory) => match memory::preflight(&request.tool, &request.args)
                     .and_then(|_| self.memory_token_ok(memory))
                     .and_then(|()| memory::forward(memory, &request.tool, &request.args))
-                    .and_then(|value| self.taint_after(Class::Memory, request, &value).map(|()| value))
+                    .and_then(|value| self.taint_after(Class::Memory, &value).map(|()| value))
                 {
                     // The whole reply line must fit what the plugin accepts (as for a fetch): a list the plugin would reject as
                     // too large is refused here, with a reason the model can act on (ask for fewer).
@@ -354,7 +354,7 @@ impl Door {
         // The whole reply line must fit what the plugin accepts, so a full-size page is cut here, not refused after it ran.
         let reply_limit = self.policy.max_frame_bytes.saturating_sub(2048);
         // The page reaches the engine only once the taint it brings is durable.
-        match self.runtime.block_on(fetch::fetch(net, url, reply_limit)).and_then(|value| self.taint_after(Class::Net, request, &value).map(|()| value)) {
+        match self.runtime.block_on(fetch::fetch(net, url, reply_limit)).and_then(|value| self.taint_after(Class::Net, &value).map(|()| value)) {
             Ok(value) => Decision::Allow { value, text: None },
             Err(code) => Decision::Deny(code),
         }

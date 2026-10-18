@@ -88,7 +88,7 @@ export function watchAuthority(ctx: AuthorityContext, parent: AuthorityProcess =
       cancel()
       // Disposal is also the harness's crash path (installFailLoud disposes the root fiber, then exits 1). Saying
       // "stopping" makes the launcher stop serving at once without a terminal refusal, so a crash retries; a harness
-      // that stays alive without this plugin still gets latched by the launcher's heartbeat timeout.
+      // that stays alive without this plugin is still stopped by the launcher's heartbeat timeout.
       if (stopped) return
       stopped = true
       report('stopping')

@@ -10,7 +10,7 @@
 //! taint (claim a fresh session). So the door's taint covers the whole engine, every session and every child of it,
 //! which is the strict superset of "per session". It is set by:
 //! - any `net` result that reached the engine;
-//! - any memory read whose result carries a `web-derived` note.
+//! - any memory result carrying a `web-derived` note, including a write's returned body.
 //!
 //! It is kept in the door's state folder (`taint.json`, written and synced before the result is released, so a
 //! restart does not forget it: the harness keeps its sessions on disk), and it is cleared only by an owner action:
@@ -122,10 +122,6 @@ pub fn is_memory_write(tool: &str) -> bool {
     matches!(memory::method(tool), Ok("remember" | "supersede"))
 }
 
-fn is_memory_read(tool: &str) -> bool {
-    matches!(memory::method(tool), Ok("remember" | "recall" | "get" | "list_recent" | "supersede"))
-}
-
 /// A write the engine itself labels as web-derived.
 pub fn web_derived_write(request: &Request) -> bool {
     is_memory_write(&request.tool)
@@ -169,10 +165,10 @@ impl Door {
     }
 
     /// After a crossing ran: record what it brought in. `Err` withholds the result (the taint could not be kept).
-    pub(super) fn taint_after(&self, class: Class, request: &Request, value: &Json) -> std::result::Result<(), String> {
+    pub(super) fn taint_after(&self, class: Class, value: &Json) -> std::result::Result<(), String> {
         let cause = match class {
             Class::Net => "net",
-            Class::Memory if is_memory_read(&request.tool) && carries_web_derived(value) => "memory-web-derived",
+            Class::Memory if carries_web_derived(value) => "memory-web-derived",
             _ => return Ok(()),
         };
         self.taint.mark(super::standing::now_ms(), cause).map_err(|_| "door-state".to_owned())

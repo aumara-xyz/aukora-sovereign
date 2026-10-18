@@ -798,11 +798,10 @@ fn taint_door(dir: &Path) -> Door {
 fn memory_result_taints(tool: &str, result: serde_json::Value) {
     let dir = temp(tool);
     let door = taint_door(&dir);
-    let request = wire::parse_request(&line("read-result", tool, "{}", "memory")).unwrap();
     let clean = json!({"capture": "model-generated", "text": "capture web-derived"});
-    door.taint_after(Class::Memory, &request, &clean).unwrap();
+    door.taint_after(Class::Memory, &clean).unwrap();
     assert!(!door.taint.tainted());
-    door.taint_after(Class::Memory, &request, &result).unwrap();
+    door.taint_after(Class::Memory, &result).unwrap();
     assert!(matches!(door.taint.state(), taint::State::Tainted { cause, .. } if cause == "memory-web-derived"));
     assert!(taint::Taint::new(&dir.join("state")).tainted());
     assert_eq!(ask_code(&call(&door, "after-write", "kira_remember", REMEMBER, "memory")), "ask-memory");
