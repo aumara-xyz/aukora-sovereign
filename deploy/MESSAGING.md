@@ -98,6 +98,11 @@ Messages manifest granting only the listed methods:
 - `network.messages.list {npub, limit, before}`: real incoming and outgoing
   history for one contact; omitted npub reads the scoped history.
 - `network.refusals.counts {}`: the existing counted refusal buckets.
+- `network.conversation.mark {npub, pinned, archived}`: the owner's own pinned and
+  archived marks on one approved contact's conversation; the request must come from
+  a bound shell session. They are view state kept in the private messaging store
+  (not an Aura record) and are never sent to the contact.
+- `network.conversations.marks {}`: every marked conversation, at most 1,000.
 
 The supervisor polls only validated relay URLs and pinned addresses in its
 egress policy. TLS certificates are checked. A fresh host firewall status must

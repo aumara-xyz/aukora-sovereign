@@ -15,7 +15,7 @@ const READS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object
   broker: Object.freeze({ 'model.report': 'models' }),
   network: Object.freeze({
     'contacts.list': 'messages', 'messages.list': 'messages', 'refusals.counts': 'messages',
-    'contact.propose': 'messages', send: 'messages',
+    'conversations.marks': 'messages', 'contact.propose': 'messages', send: 'messages', 'conversation.mark': 'messages',
   }),
   kira: Object.freeze({
     'memory.list': 'memory', 'memory.recall': 'memory',

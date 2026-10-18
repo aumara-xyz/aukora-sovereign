@@ -73,7 +73,11 @@ impl FaceServices<'_> {
                     };
                     wire::owner_event(event)?
                 }
-                ("network", "contacts.list" | "messages.list" | "refusals.counts" | "contact.propose" | "send") => {
+                (
+                    "network",
+                    "contacts.list" | "messages.list" | "refusals.counts" | "conversations.marks"
+                    | "contact.propose" | "send" | "conversation.mark",
+                ) => {
                     network::call(
                         self.network.ok_or(refuse("network-unavailable"))?,
                         scope,

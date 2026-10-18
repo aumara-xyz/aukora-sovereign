@@ -56,6 +56,20 @@ pub trait NetworkRead: Send + Sync {
     fn send(&self, _scope: PrincipalScope, _npub: &str, _text: &str) -> Result<Value> {
         Err(refuse("network-owner-actions-unavailable"))
     }
+    /// The owner's pinned and archived marks on conversations (view state, never sent to a contact).
+    fn conversation_marks(
+        &self,
+        _scope: PrincipalScope,
+    ) -> Result<Vec<messaging::ConversationMark>> {
+        Err(refuse("network-unavailable"))
+    }
+    fn mark_conversation(
+        &self,
+        _scope: PrincipalScope,
+        _mark: messaging::ConversationMark,
+    ) -> Result<()> {
+        Err(refuse("network-owner-actions-unavailable"))
+    }
 }
 
 pub fn call(
@@ -85,6 +99,34 @@ pub fn call(
             wire::string(wire::field(params, "npub")?)?,
             wire::string(wire::field(params, "text")?)?,
         );
+    }
+    if method == "conversation.mark" {
+        wire::exact(params, &["archived", "npub", "pinned"])?;
+        let npub = wire::string(wire::field(params, "npub")?)?;
+        source.mark_conversation(
+            scope,
+            messaging::ConversationMark {
+                contact: nostr::PublicKey::from_npub(npub)?,
+                pinned: wire::boolean(wire::field(params, "pinned")?)?,
+                archived: wire::boolean(wire::field(params, "archived")?)?,
+            },
+        )?;
+        return wire::object([]);
+    }
+    if method == "conversations.marks" {
+        wire::exact(params, &[])?;
+        let items = source
+            .conversation_marks(scope)?
+            .iter()
+            .map(|mark| {
+                wire::object([
+                    ("npub", wire::text(mark.contact.to_npub()?.as_str())?),
+                    ("pinned", Value::boolean(mark.pinned)),
+                    ("archived", Value::boolean(mark.archived)),
+                ])
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return wire::bounded(wire::object([("items", Value::array(items)?)])?);
     }
     if method == "refusals.counts" {
         wire::exact(params, &[])?;
@@ -274,5 +316,80 @@ mod contact_card_tests {
         assert!(says.contains("This approves the ID, not the person."), "{says}");
         assert!(says.contains("in person or on a call you trust"), "{says}");
         assert!(gate::messaging::contact_card(b"{}").is_err());
+    }
+}
+
+#[cfg(test)]
+mod conversation_mark_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Marks(Mutex<Vec<messaging::ConversationMark>>);
+    impl NetworkRead for Marks {
+        fn contacts(
+            &self,
+            _: PrincipalScope,
+            _: Option<&str>,
+            _: usize,
+        ) -> Result<Page<messaging::ApprovedContact>> {
+            unreachable!()
+        }
+        fn messages(
+            &self,
+            _: PrincipalScope,
+            _: Option<nostr::PublicKey>,
+            _: Option<&str>,
+            _: usize,
+        ) -> Result<Page<Message>> {
+            unreachable!()
+        }
+        fn refusals(&self, _: PrincipalScope) -> Result<messaging::RefusalCounts> {
+            unreachable!()
+        }
+        fn conversation_marks(
+            &self,
+            _: PrincipalScope,
+        ) -> Result<Vec<messaging::ConversationMark>> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn mark_conversation(
+            &self,
+            _: PrincipalScope,
+            mark: messaging::ConversationMark,
+        ) -> Result<()> {
+            self.0.lock().unwrap().push(mark);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_conversation_mark_is_exact_booleans_for_one_npub_and_reads_back() {
+        let scope = PrincipalScope {
+            subject: canon::ids::SubjectId::from_digest(canon::digest::Digest32::from_bytes([7; 32])),
+            epoch: 1,
+        };
+        let npub = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";
+        let source = Marks::default();
+        let params = |text: &str| canon::json::parse_strict(text.as_bytes()).unwrap();
+        let set = format!(r#"{{"archived":false,"npub":"{npub}","pinned":true}}"#);
+        assert_eq!(
+            call(&source, scope, "conversation.mark", &params(&set)).unwrap(),
+            wire::object([]).unwrap()
+        );
+        // Extra keys, a missing mark or a non-boolean are refused before the store sees them.
+        for bad in [
+            format!(r#"{{"archived":false,"npub":"{npub}","pinned":true,"label":"x"}}"#),
+            format!(r#"{{"npub":"{npub}","pinned":true}}"#),
+            format!(r#"{{"archived":0,"npub":"{npub}","pinned":true}}"#),
+            r#"{"archived":false,"npub":"npub1nope","pinned":true}"#.to_owned(),
+        ] {
+            assert!(call(&source, scope, "conversation.mark", &params(&bad)).is_err(), "{bad}");
+        }
+        let read = call(&source, scope, "conversations.marks", &params("{}")).unwrap();
+        assert_eq!(
+            String::from_utf8(read.canonical_bytes()).unwrap(),
+            format!(r#"{{"items":[{{"archived":false,"npub":"{npub}","pinned":true}}]}}"#)
+        );
     }
 }

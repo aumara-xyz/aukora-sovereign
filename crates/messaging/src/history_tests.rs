@@ -907,3 +907,40 @@ fn final_refusal_keeps_retry_until_its_recovery_record_is_durable() -> Result<()
     assert!(b.retry_envelopes(8)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn conversation_marks_need_the_owner_session_and_an_approved_contact() -> Result<()> {
+    let dir = TestDirectory::new();
+    let node = NodeId::from_bytes([12; 16]);
+    let mut store = Messaging::open(&dir.0, node)?;
+    let mut host = Host::default();
+    let (friend, stranger) = (key(21).public_key()?, key(22).public_key()?);
+    host.add_contact(friend);
+    let mark = |contact, pinned, archived| ConversationMark {
+        contact,
+        pinned,
+        archived,
+    };
+    assert!(store.conversation_marks()?.is_empty());
+    store.set_conversation_mark(&mut host, mark(friend, true, false))?;
+    assert_eq!(store.conversation_marks()?, vec![mark(friend, true, false)]);
+    store.set_conversation_mark(&mut host, mark(friend, true, true))?;
+    assert_eq!(store.conversation_marks()?, vec![mark(friend, true, true)]);
+    // Only an approved contact's conversation can be marked, and only through the owner's session.
+    assert_eq!(
+        store.set_conversation_mark(&mut host, mark(stranger, true, false)),
+        Err(refuse("stranger"))
+    );
+    host.deny_session = true;
+    assert!(store
+        .set_conversation_mark(&mut host, mark(friend, false, false))
+        .is_err());
+    host.deny_session = false;
+    // The marks survive reopening the store; clearing both leaves no row.
+    drop(store);
+    let mut store = Messaging::open(&dir.0, node)?;
+    assert_eq!(store.conversation_marks()?, vec![mark(friend, true, true)]);
+    store.set_conversation_mark(&mut host, mark(friend, false, false))?;
+    assert!(store.conversation_marks()?.is_empty());
+    Ok(())
+}

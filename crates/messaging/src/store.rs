@@ -64,12 +64,18 @@ pub(crate) fn initialize(db: &mut Connection, node: NodeId) -> Result<()> {
             aura_sequence INTEGER CHECK(aura_sequence>0),
             state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 4));
         CREATE INDEX IF NOT EXISTS messaging_messages_contact_cursor
-            ON messaging_messages(contact,cursor);",
+            ON messaging_messages(contact,cursor);
+        CREATE TABLE IF NOT EXISTS messaging_marks(
+            contact BLOB PRIMARY KEY CHECK(length(contact)=32),
+            pinned INTEGER NOT NULL CHECK(pinned IN(0,1)),
+            archived INTEGER NOT NULL CHECK(archived IN(0,1)),
+            CHECK(pinned=1 OR archived=1));",
     )
     .map_err(|_| refuse("store-schema"))?;
     // Keep the base schema at v1 so a predecessor release can still open its
     // contacts/outbox on rollback. History is an independently versioned,
     // additive extension, installed in this one transaction on existing stores.
+    // The owner's conversation marks (marks.rs) are one more additive table.
     let history_version: i64 = tx
         .query_row(
             "SELECT schema_version FROM messaging_history_meta WHERE singleton=1",

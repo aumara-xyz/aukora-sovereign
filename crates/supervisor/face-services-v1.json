@@ -19,6 +19,7 @@
       "limit": "integer 1..100"
     },
     "refusals.counts": {},
+    "conversations.marks": {},
     "memory.list": {
       "tier": "remembered or forgotten",
       "before": "note id or null"
@@ -80,6 +81,15 @@
         }
       ],
       "next": "opaque cursor or null"
+    },
+    "conversations.marks": {
+      "items": [
+        {
+          "npub": "an approved contact's npub (a removed contact's mark may linger; the face skips it)",
+          "pinned": "boolean",
+          "archived": "boolean"
+        }
+      ]
     },
     "refusals.counts": "exactly envelope, signature, recipient, stranger, replay, payload, stale_contact, total, last_aura_sequence; safe nonnegative integers",
     "memory.list": "canon MemoryListReply unchanged",

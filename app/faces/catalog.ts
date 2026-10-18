@@ -201,8 +201,10 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
           "contacts.list",
           "messages.list",
           "refusals.counts",
+          "conversations.marks",
           "contact.propose",
-          "send"
+          "send",
+          "conversation.mark"
         ],
         "topics": []
       },

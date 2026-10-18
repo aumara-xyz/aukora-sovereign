@@ -348,6 +348,31 @@ impl NetworkRead for LiveNetwork {
         ])
     }
 
+    fn conversation_marks(
+        &self,
+        scope: PrincipalScope,
+    ) -> Result<Vec<messaging::ConversationMark>> {
+        self.ledger.messaging(scope, false, |_| {
+            self.store
+                .lock()
+                .map_err(|_| refuse("network-store-unavailable"))?
+                .conversation_marks()
+        })
+    }
+
+    fn mark_conversation(
+        &self,
+        scope: PrincipalScope,
+        mark: messaging::ConversationMark,
+    ) -> Result<()> {
+        self.ledger.messaging(scope, true, |txn| {
+            self.store
+                .lock()
+                .map_err(|_| refuse("network-store-unavailable"))?
+                .set_conversation_mark(txn, mark)
+        })
+    }
+
     fn send(&self, scope: PrincipalScope, npub: &str, text: &str) -> Result<Value> {
         let recipient = nostr::PublicKey::from_npub(npub)?;
         let now_ms = u64::try_from(self.ledger.clock.now_ms()?)

@@ -102,7 +102,9 @@ impl HostFaces {
             self.recheck(scope)?;
             return super::wire::bounded(value);
         }
-        if read.service() == "network" && matches!(read.method(), "contact.propose" | "send") {
+        if read.service() == "network"
+            && matches!(read.method(), "contact.propose" | "send" | "conversation.mark")
+        {
             // Owner writes retain the shell session guard. They are dispatched
             // on this blocking host task, outside the async read future.
             let value = super::network::call(

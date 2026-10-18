@@ -10,6 +10,7 @@ mod send_failure;
 mod owner_transport;
 pub use owner_transport::PreparedOwnerSend;
 mod polling;
+mod marks;
 mod store;
 #[cfg(test)]
 mod history_tests;
@@ -17,6 +18,7 @@ mod history_tests;
 mod vector_tests;
 
 pub use history::{MessageDirection, MessageRecord, MessageState, OwnerSessionTxn, MESSAGE_SCHEMA};
+pub use marks::{ConversationMark, MAX_MARKS};
 
 use canon::json::{Value, ValueView};
 use canon::{

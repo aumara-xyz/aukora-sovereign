@@ -117,7 +117,8 @@ fn permitted(face: &str, service: &str, method: &str) -> bool {
             | (
                 "messages",
                 "network",
-                "contacts.list" | "messages.list" | "refusals.counts" | "contact.propose" | "send"
+                "contacts.list" | "messages.list" | "refusals.counts" | "conversations.marks"
+                    | "contact.propose" | "send" | "conversation.mark"
             )
             | (
                 "threads" | "sidebar" | "archived",
@@ -236,7 +237,7 @@ mod messaging_tests {
     #[test]
     fn only_the_released_messages_face_is_authorized_to_send() {
         let with_messages = release(&["messages", "threads", "humangraph"]);
-        for method in ["send", "contact.propose"] {
+        for method in ["send", "contact.propose", "conversation.mark"] {
             let read = authorize_data(&with_messages, &body("messages", method)).unwrap();
             assert_eq!((read.face(), read.service(), read.method()), ("messages", "network", method));
             // Any other face, even one the release carries, is denied the write.
@@ -254,6 +255,9 @@ mod messaging_tests {
     fn owner_shell_messages_has_writes_but_engine_origin_is_refused() {
         assert!(permitted("messages", "network", "contact.propose"));
         assert!(permitted("messages", "network", "send"));
+        assert!(permitted("messages", "network", "conversation.mark"));
+        assert!(permitted("messages", "network", "conversations.marks"));
+        assert!(!permitted("humangraph", "network", "conversation.mark"));
         assert!(!permitted("humangraph", "network", "send"));
         assert!(!permitted("threads", "network", "send"));
         assert!(resolve(HostRole::Shell, Method::Post, PATH).is_ok());
