@@ -761,3 +761,19 @@ test('a marks read that started before an archive does not undo it, and a failed
   assert.equal(reads(), after, 'backed off: not read again on the next tick');
   assert.equal(byClass(root, 'msg-list').children.some(child => hasClass(child, 'problem') && !child.hidden), true);
 });
+
+test('a marks read that lands while a mark write is still in flight does not undo it', async t => {
+  let nodeMarks = [];
+  let release = null;
+  const { root, live } = mount(t, {
+    marksRead: () => ({ items: nodeMarks }),
+    mark: params => new Promise(resolve => { release = () => { nodeMarks = [params]; resolve({}); }; }),
+  });
+  for (let turn = 0; turn < 6; turn++) await settle();
+  find(conversation(root, maya), item => item.getAttribute('aria-label') === 'Archive conversation').click();
+  await live();
+  assert.deepEqual(visibleRows(root), [sam], 'the node has not stored it yet: the read must not undo the archive');
+  release();
+  await live();
+  assert.deepEqual(visibleRows(root), [sam], 'stored and read back');
+});

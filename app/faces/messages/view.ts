@@ -331,10 +331,12 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     else if (query.value) { event.preventDefault(); query.value = ""; clearSearch.hidden = true; render(); }
   }, { signal });
 
-  // A marks read that started before a local change must not overwrite it when it lands.
+  // A marks read that started before a local change, or ran while a mark write was in flight, must not overwrite it.
   let markGeneration = 0;
+  let markWrites = 0;
   const setMark = (npub: string, change: Partial<Mark>) => {
     markGeneration++;
+    markWrites++;
     const before = marks.get(npub) ?? NO_MARK;
     const after = { ...before, ...change };
     const updated = new Map(marks);
@@ -350,7 +352,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       showServiceState(problem, error);
       problem.hidden = false;
       render();
-    });
+    }).finally(() => { markWrites--; markGeneration++; });
   };
 
   const place = (npub: string, card: ConversationCard, show: boolean) => {
@@ -523,7 +525,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     const generation = markGeneration;
     try {
       const read = readMarks(await client.call("network", "conversations.marks", {}, { signal }));
-      if (generation === markGeneration) marks = read;
+      if (generation === markGeneration && markWrites === 0) marks = read;
       return true;
     } catch (error) {
       if (!signal.aborted) { showServiceState(problem, error); problem.hidden = false; }
