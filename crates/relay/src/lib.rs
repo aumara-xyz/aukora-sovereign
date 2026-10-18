@@ -8,9 +8,13 @@ pub mod auth;
 pub mod client;
 pub mod egress;
 pub mod witness;
+mod transport;
+#[cfg(test)]
+mod pagination_tests;
 
 pub use auth::AuthContext;
-pub use client::{Client, Filter, PublishAck, QueryResult, RelayTransport};
+pub use client::{Client, Filter, PublishAck, QueryResult};
+pub use transport::RelayTransport;
 pub use egress::{EgressPolicy, RelayRule, ValidatedRelay};
 pub use witness::{HeadExpectation, HeadWitness, RetainedHeadV1};
 

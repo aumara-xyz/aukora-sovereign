@@ -110,9 +110,16 @@ impl LiveNetwork {
                 Err(code) => return Err(code),
             }
         }
+        let (cursor, mut envelopes) = {
+            let store = self
+                .store
+                .lock()
+                .map_err(|_| refuse("network-store-unavailable"))?;
+            (store.receive_cursor()?, store.retry_envelopes(8)?)
+        };
         let batch = transport.receive(&nostr::transport::ReceiveRequest {
             recipient: self.identity.public_key(),
-            cursor: None,
+            cursor,
             max_items: nostr::transport::MAX_BATCH_ITEMS,
             max_bytes: 1_048_576,
             deadline_ms,
@@ -120,7 +127,12 @@ impl LiveNetwork {
         if batch.envelopes.len() > usize::from(nostr::transport::MAX_BATCH_ITEMS) {
             return Err(refuse("network-batch-invalid"));
         }
-        for envelope in batch.envelopes {
+        envelopes.extend(batch.envelopes);
+        let mut attempted = std::collections::BTreeSet::new();
+        for envelope in envelopes {
+            if !attempted.insert(envelope.id) {
+                continue;
+            }
             // Skip a known wrap before taking the Aura writer lock (and its history scan) at all.
             if self
                 .store
@@ -151,6 +163,10 @@ impl LiveNetwork {
                     .map(|_| ())
             })?;
         }
+        self.store
+            .lock()
+            .map_err(|_| refuse("network-store-unavailable"))?
+            .set_receive_cursor(batch.next_cursor.as_deref())?;
         Ok(())
     }
 }

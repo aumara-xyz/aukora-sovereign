@@ -15,6 +15,7 @@ pub const TIMESTAMP_JITTER_SECONDS: u64 = 172_800;
 pub struct AuthenticatedSeal {
     seal: VerifiedEvent,
     recipient: PublicKey,
+    outer_created_at: u64,
 }
 
 impl AuthenticatedSeal {
@@ -28,6 +29,14 @@ impl AuthenticatedSeal {
 
     pub const fn event(&self) -> &VerifiedEvent {
         &self.seal
+    }
+
+    /// Check both encrypted-layer timestamps after the caller admits the sender.
+    pub fn validate_time(&self, now_seconds: u64) -> Result<()> {
+        if self.outer_created_at > now_seconds {
+            return Err(refusal("wrap-time-invalid"));
+        }
+        validate_seal(self.seal.event(), now_seconds)
     }
 }
 
@@ -75,13 +84,26 @@ pub fn authenticate_sender(
     recipient: &SecretKey,
     now_seconds: u64,
 ) -> Result<AuthenticatedSeal> {
+    if wrap.event().created_at > now_seconds {
+        return Err(refusal("wrap-time-invalid"));
+    }
+    let seal = authenticate_sender_identity(wrap, recipient)?;
+    seal.validate_time(now_seconds)?;
+    Ok(seal)
+}
+
+/// Authenticate the signed sender before timestamp policy or rumor decryption.
+/// Both signatures, layer kinds and the exact recipient are checked. Creation
+/// times are deferred so a stranger's future-dated seal cannot earn a retry.
+/// Call `validate_time` after contact admission; `open_message` also enforces it.
+pub fn authenticate_sender_identity(
+    wrap: &VerifiedEvent,
+    recipient: &SecretKey,
+) -> Result<AuthenticatedSeal> {
     wrap.event().clone().verify()?;
     let outer = wrap.event();
     if outer.kind != GIFT_WRAP_KIND {
         return Err(refusal("wrap-kind-invalid"));
-    }
-    if outer.created_at > now_seconds {
-        return Err(refusal("wrap-time-invalid"));
     }
     let recipient_key = recipient.public_key()?;
     let recipient_hex = hex::encode(recipient_key.as_bytes());
@@ -103,10 +125,11 @@ pub fn authenticate_sender(
     let shared = ConversationKey::derive(recipient, &outer.pubkey)?;
     let encoded_seal = nip44::decrypt(&shared, &outer.content)?;
     let seal = Event::decode(encoded_seal.as_bytes())?.verify()?;
-    validate_seal(seal.event(), now_seconds)?;
+    validate_seal(seal.event(), u64::MAX)?;
     Ok(AuthenticatedSeal {
         seal,
         recipient: recipient_key,
+        outer_created_at: outer.created_at,
     })
 }
 
@@ -121,7 +144,7 @@ pub fn open_message(
         return Err(refusal("recipient-mismatch"));
     }
     let signed = seal.seal.event();
-    validate_seal(signed, now_seconds)?;
+    seal.validate_time(now_seconds)?;
     let shared = ConversationKey::derive(recipient, &signed.pubkey)?;
     let encoded_rumor = nip44::decrypt(&shared, &signed.content)?;
     let rumor = Rumor::decode(encoded_rumor.as_bytes())?;

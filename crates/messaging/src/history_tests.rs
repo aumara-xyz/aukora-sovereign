@@ -465,7 +465,7 @@ fn stranger_is_only_counted_and_owner_session_is_required() -> Result<()> {
         .query_row("SELECT count(*) FROM messaging_refused_envelope", [], |r| r.get(0))
         .unwrap();
     assert_eq!(kept, 1);
-    // The remembered ids are bounded.
+    // A flood beyond the old cap cannot evict or recount an earlier stranger.
     use crate::ingress::REFUSED_ENVELOPE_CAP;
     for n in 0..REFUSED_ENVELOPE_CAP + 5 {
         let mut id = [0xee; 32];
@@ -476,7 +476,8 @@ fn stranger_is_only_counted_and_owner_session_is_required() -> Result<()> {
         .db
         .query_row("SELECT count(*) FROM messaging_refused_envelope", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(kept, REFUSED_ENVELOPE_CAP);
+    assert_eq!(kept, REFUSED_ENVELOPE_CAP + 6);
+    assert!(b.seen_envelope(incoming.id)?);
     Ok(())
 }
 
@@ -796,5 +797,111 @@ fn refreshed_history_starts_at_newest_page_and_continues_without_gaps() -> Resul
     drop(b);
     let b = Messaging::open(&dir_b.0, node_b)?;
     assert_eq!(b.messages(Some(contact), None, 50)?, refreshed);
+    Ok(())
+}
+
+#[test]
+fn pagination_cursor_and_clearable_refusals_survive_restart() -> Result<()> {
+    let (dir_a, dir_b) = (TestDirectory::new(), TestDirectory::new());
+    let (key_a, key_b) = (key(61), key(62));
+    let mut a = Messaging::open(&dir_a.0, NodeId::from_bytes([8; 16]))?;
+    let node_b = NodeId::from_bytes([9; 16]);
+    let mut b = Messaging::open(&dir_b.0, node_b)?;
+    let (mut host_a, mut host_b) = (Host::default(), Host::default());
+    host_a.add_contact(key_b.public_key()?);
+    host_b.add_contact(key_a.public_key()?);
+    let send = a.queue_owner_send(&mut host_a,
+        &draft(key_b.public_key()?, "Retried after pagination"), &key_a, NOW)?;
+    let mut relay = FakeRelay::default();
+    a.transmit_owner(&mut host_a, &mut relay, send, 1000)?;
+    let envelope = relay.0.remove(0);
+    b.receive(&mut host_b, &envelope, &key_b, TransportKind::NostrRelays,
+        NOW - 3 * 24 * 60 * 60 * 1000)?;
+    assert_eq!(b.retry_envelopes(8)?, vec![envelope.clone()]);
+    b.set_receive_cursor(Some("opaque-relay-position"))?;
+    drop(b);
+    let mut b = Messaging::open(&dir_b.0, node_b)?;
+    assert_eq!(b.receive_cursor()?.as_deref(), Some("opaque-relay-position"));
+    let pending = b.retry_envelopes(8)?;
+    assert_eq!(pending, vec![envelope]);
+    match b.receive(&mut host_b, &pending[0], &key_b, TransportKind::NostrRelays, NOW)? {
+        IngressOutcome::Data(data) => assert_eq!(data.text(), "Retried after pagination"),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert!(b.retry_envelopes(8)?.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn future_dated_stranger_seals_are_final_before_retry_storage() -> Result<()> {
+    let directory = TestDirectory::new();
+    let (stranger, recipient, ephemeral) = (key(71), key(72), key(73));
+    let recipient_key = recipient.public_key()?;
+    let seal_shared = nostr::nip44::ConversationKey::derive(&stranger, &recipient_key)?;
+    let seal = nostr::Event::sign(&stranger, NOW / 1000 + 86_400,
+        nostr::nip59::SEAL_KIND, Vec::new(), nostr::nip44::encrypt(&seal_shared, "unopened")?)?;
+    let wrap_shared = nostr::nip44::ConversationKey::derive(&ephemeral, &recipient_key)?;
+    let wrap = nostr::Event::sign(&ephemeral, NOW / 1000, nostr::nip59::GIFT_WRAP_KIND,
+        vec![vec!["p".into(), hex::encode(recipient_key.as_bytes())]],
+        nostr::nip44::encrypt(&wrap_shared, std::str::from_utf8(&seal.event().encode()?).unwrap())?)?;
+    let envelope = TransportEnvelope { v: nostr::transport::TRANSPORT_VERSION,
+        codec: nostr::EnvelopeCodec::Nip59V1, recipient: recipient_key,
+        id: wrap.event().id, bytes: wrap.event().encode()? };
+    let mut messages = Messaging::open(&directory.0, NodeId::from_bytes([10; 16]))?;
+    let mut host = Host::default();
+    messages.receive(&mut host, &envelope, &recipient, TransportKind::NostrRelays, NOW)?;
+    assert_eq!(messages.refusal_counts()?.stranger, 1);
+    assert!(messages.seen_envelope(envelope.id)?);
+    assert!(messages.retry_envelopes(8)?.is_empty());
+    let retry_counters: i64 = messages.db.query_row(
+        "SELECT count(*) FROM messaging_retry_envelope", [], |r| r.get(0)).unwrap();
+    assert_eq!(retry_counters, 0);
+    Ok(())
+}
+
+#[test]
+fn final_refusal_keeps_retry_until_its_recovery_record_is_durable() -> Result<()> {
+    let (dir_a, dir_b) = (TestDirectory::new(), TestDirectory::new());
+    let (key_a, key_b) = (key(74), key(75));
+    let mut a = Messaging::open(&dir_a.0, NodeId::from_bytes([11; 16]))?;
+    let node_b = NodeId::from_bytes([12; 16]);
+    let mut b = Messaging::open(&dir_b.0, node_b)?;
+    let (mut host_a, mut host_b) = (Host::default(), Host::default());
+    host_a.add_contact(key_b.public_key()?);
+    host_b.add_contact(key_a.public_key()?);
+    let send = a.queue_owner_send(&mut host_a,
+        &draft(key_b.public_key()?, "Pending final refusal"), &key_a, NOW)?;
+    let mut relay = FakeRelay::default();
+    a.transmit_owner(&mut host_a, &mut relay, send, 1000)?;
+    let envelope = relay.0.remove(0);
+    b.receive(&mut host_b, &envelope, &key_b, TransportKind::NostrRelays,
+        NOW - 3 * 24 * 60 * 60 * 1000)?;
+    b.set_receive_cursor(Some("already-advanced"))?;
+    host_b.contacts.clear();
+    // Abort just before the durable final-refusal stage: losing the old retry
+    // here would strand its envelope behind the already-advanced relay cursor.
+    b.db.execute_batch("CREATE TRIGGER stop_final_refusal BEFORE INSERT ON messaging_pending_refusal
+        BEGIN SELECT RAISE(ABORT,'test-stage-failure'); END;").unwrap();
+    assert_eq!(b.receive(&mut host_b, &envelope, &key_b, TransportKind::NostrRelays, NOW)
+        .unwrap_err().reason, "store-write");
+    drop(b);
+    let mut b = Messaging::open(&dir_b.0, node_b)?;
+    assert_eq!(b.retry_envelopes(8)?, vec![envelope.clone()]);
+    assert!(!b.seen_envelope(envelope.id)?);
+    b.db.execute_batch("DROP TRIGGER stop_final_refusal").unwrap();
+    // Once the stage is durable, an interrupted Aura commit is recovered from
+    // that record; the ciphertext may safely leave the retry queue.
+    host_b.fail_commit = true;
+    assert_eq!(b.receive(&mut host_b, &envelope, &key_b, TransportKind::NostrRelays, NOW)
+        .unwrap_err().reason, "test-commit-failed");
+    assert!(b.retry_envelopes(8)?.is_empty());
+    drop(b);
+    let mut b = Messaging::open(&dir_b.0, node_b)?;
+    host_b.fail_commit = false;
+    assert!(b.recover_refusal(&mut host_b)?.is_some());
+    assert_eq!(b.refusal_counts()?.stranger, 1);
+    assert!(b.seen_envelope(envelope.id)?);
+    assert!(b.retry_envelopes(8)?.is_empty());
     Ok(())
 }

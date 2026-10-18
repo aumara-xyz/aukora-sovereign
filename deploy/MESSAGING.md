@@ -104,15 +104,38 @@ egress policy. TLS certificates are checked. A fresh host firewall status must
 match the policy epoch/digest and loaded/live rules. Failures back off from 30
 seconds to five minutes; SIGTERM stops ingress and joins bounded relay work.
 
-The current relay adapter reads complete bounded snapshots (at most 128 gift
-wraps and 500 relay event frames per query). A relay with more matching stored
-events refuses the batch instead of dropping data. This first exchange supports
-that bound; durable relay-history cursors are follow-up work before sustained
-high-volume use. Known admitted wraps, and wraps whose refusal is final (a stranger, a bad signature or encryption, another
-recipient, a replay, a bad payload; at most 4096 ids kept), are skipped during routine polling. A message sent before
-both owners approved each other is therefore not retried and must be sent again. A refusal that can clear (clock
-skew, a contact approval still syncing, a local store error) is never pinned: the wrap is tried again on every poll
-and arrives once the cause clears, but its refusal is counted at most 20 times.
+The relay adapter pages each relay independently with persisted inclusive
+`since`/`until` bounds. One query runs per poll, rotating relays; a sweep freezes
+its upper bound so newer arrivals cannot continually displace older messages.
+Normal pages contain at most 16 wraps. A timestamp boundary is queried again
+with a limit growing to 128, and is crossed only after a short page proves it
+complete. Completed sweeps overlap the two-day NIP-59 timestamp randomization
+interval; every fourth subsequent sweep revisits all history, covering old
+queued wraps first published after a long sender outage. Failed queries retain
+their history position and still rotate to the next relay. A cursor advances
+only after the page is admitted or durably refused.
+Clearable refusals retain their ciphertext locally and retry eight per poll,
+so pagination and restarts cannot strand them behind the relay cursor.
+
+NIP-01 has inclusive, second-resolution time bounds and exact event IDs, with
+no offset or exclusion cursor. A full 128-wrap single-second boundary therefore
+logs `query-timestamp-saturated` and retains that boundary; it never silently
+skips the remaining events. Other relays continue receiving their polling turns.
+A same-second flood can still block older history on that relay. Eliminating
+this limitation requires an additional relay paging capability or a narrower,
+contact-specific routing filter. NIP-59 hides the real sender behind an ephemeral
+outer key, so a per-sender cap before opening the seal would not identify
+contacts or constrain a stranger generating fresh outer keys.
+
+Known admitted wraps and final refusals (a stranger, a bad signature or
+encryption, another recipient, a replay, a bad payload) are skipped before an
+Aura transaction or decryption. Final refusal IDs remain durable without the
+old 4096-ID eviction boundary: each is counted once across overlap and restart.
+This exact-once index grows with unique refused wraps, retaining only their
+32-byte IDs. A message sent before both owners approved each other is not
+retried and must be sent again. A refusal that can clear (clock skew, a contact
+approval still syncing, a local store error) is never pinned and arrives once
+the cause clears; its retained retry counter limits repeated observations.
 
 ## Privacy and storage
 

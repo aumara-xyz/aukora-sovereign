@@ -9,6 +9,7 @@ mod retry;
 mod send_failure;
 mod owner_transport;
 pub use owner_transport::PreparedOwnerSend;
+mod polling;
 mod store;
 #[cfg(test)]
 mod history_tests;
@@ -339,6 +340,7 @@ impl Messaging {
         retry::initialize(&db)?;
         send_failure::initialize(&db)?;
         ingress::initialize(&db)?;
+        polling::initialize(&db)?;
         Ok(Self {
             node,
             db,

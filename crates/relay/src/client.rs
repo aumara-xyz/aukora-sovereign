@@ -3,10 +3,7 @@
 
 use crate::{auth::AuthContext, egress::ValidatedRelay};
 use canon::Refusal;
-use nostr::{
-    EventId, PublicKey, ReceiveBatch, ReceiveRequest, SubmissionStatus, Transport,
-    TransportEnvelope, TransportKind, TransportReceipt, VerifiedEvent,
-};
+use nostr::{EventId, PublicKey, SubmissionStatus, VerifiedEvent};
 use serde_json::{json, value::RawValue, Value};
 use std::{
     collections::BTreeSet,
@@ -68,6 +65,8 @@ pub const MAX_AUTH_CHALLENGES: usize = 1;
 /// NIP-01 filter input; the query boundary must validate bounds before sending it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Filter {
+    /// Requested maximum number of matching stored events.
+    pub limit: Option<u16>,
     /// Complete author keys, never prefixes.
     pub authors: Vec<PublicKey>,
     /// Exact kind numbers.
@@ -117,6 +116,13 @@ pub struct Client {
 }
 
 impl Client {
+    pub(crate) fn relay_url(&self) -> &str {
+        self.relay.url()
+    }
+    pub(crate) fn connected(&self) -> bool {
+        self.socket.is_some()
+    }
+
     /// Connect directly to an approved address and verify TLS for the URL host.
     /// `deadline_ms` is an absolute monotonic deadline shared by all I/O stages.
     pub fn connect(relay: ValidatedRelay, deadline_ms: u64) -> crate::Result<Self> {
@@ -198,7 +204,7 @@ impl Client {
         self.publish_until(event, auth, now_seconds, Deadline::new(deadline_ms)?)
     }
 
-    fn publish_until(
+    pub(crate) fn publish_until(
         &mut self,
         event: &VerifiedEvent,
         auth: Option<&mut AuthContext<'_>>,
@@ -260,7 +266,7 @@ impl Client {
         self.query_until(filters, auth, now_seconds, Deadline::new(deadline_ms)?)
     }
 
-    fn query_until(
+    pub(crate) fn query_until(
         &mut self,
         filters: &[Filter],
         auth: Option<&mut AuthContext<'_>>,
@@ -500,129 +506,7 @@ impl Client {
     }
 }
 
-/// Bounded gift-wrap submission and one-shot queries over validated relays.
-pub struct RelayTransport {
-    clients: Vec<Client>,
-}
-
-impl RelayTransport {
-    /// Retain a nonempty, bounded set of independently validated clients.
-    pub fn new(clients: Vec<Client>) -> crate::Result<Self> {
-        if clients.is_empty() || clients.len() > crate::egress::MAX_RELAYS {
-            return Err(refusal("relay-set"));
-        }
-        let mut urls = BTreeSet::new();
-        for client in &clients {
-            if client.socket.is_none() || !urls.insert(client.relay.url()) {
-                return Err(refusal("relay-set"));
-            }
-        }
-        Ok(Self { clients })
-    }
-}
-
-impl Transport for RelayTransport {
-    fn kind(&self) -> TransportKind {
-        TransportKind::NostrRelays
-    }
-
-    fn send(
-        &mut self,
-        envelope: &TransportEnvelope,
-        deadline_ms: u64,
-    ) -> canon::Result<TransportReceipt> {
-        let deadline = transport_deadline(deadline_ms)?;
-        envelope.validate()?;
-        let event = nostr::Event::decode(&envelope.bytes)?.verify()?;
-        deadline.remaining()?;
-        let mut status = SubmissionStatus::Rejected;
-        for client in &mut self.clients {
-            if deadline.remaining().is_err() {
-                if status != SubmissionStatus::Accepted {
-                    status = SubmissionStatus::Unknown;
-                }
-                break;
-            }
-            // This interface holds no delegation for relay authentication.
-            match client.publish_until(&event, None, 0, deadline) {
-                Ok(ack) if ack.status == SubmissionStatus::Accepted => {
-                    status = SubmissionStatus::Accepted;
-                }
-                Ok(ack) if ack.status == SubmissionStatus::Rejected => {}
-                _ if status != SubmissionStatus::Accepted => status = SubmissionStatus::Unknown,
-                _ => {}
-            }
-        }
-        // A lost reply cannot turn a possibly published event into a rejection.
-        Ok(TransportReceipt {
-            envelope_id: envelope.id,
-            transport: self.kind(),
-            status,
-        })
-    }
-
-    fn receive(&mut self, request: &ReceiveRequest) -> canon::Result<ReceiveBatch> {
-        let deadline = transport_deadline(request.deadline_ms)?;
-        if request.max_items == 0
-            || request.max_items > nostr::transport::MAX_BATCH_ITEMS
-            || request.max_bytes == 0
-            || request.max_bytes > nostr::transport::MAX_BATCH_BYTES
-        {
-            return Err(refusal("batch-limit"));
-        }
-        // Queries return a complete bounded snapshot; no pagination codec is accepted.
-        if request.cursor.is_some() {
-            return Err(refusal("cursor-unsupported"));
-        }
-        let filter = Filter {
-            kinds: vec![nostr::nip59::GIFT_WRAP_KIND],
-            recipients: vec![request.recipient],
-            ..Filter::default()
-        };
-        let mut envelopes = Vec::new();
-        let mut seen = BTreeSet::new();
-        let mut bytes = 0usize;
-        for client in &mut self.clients {
-            deadline.remaining()?;
-            let result = client.query_until(std::slice::from_ref(&filter), None, 0, deadline)?;
-            if !result.end_of_stored_events {
-                return Err(refusal("query-incomplete"));
-            }
-            for verified in result.events {
-                deadline.remaining()?;
-                let event = verified.event();
-                let envelope = TransportEnvelope {
-                    v: nostr::transport::TRANSPORT_VERSION,
-                    codec: nostr::EnvelopeCodec::Nip59V1,
-                    recipient: request.recipient,
-                    id: event.id,
-                    bytes: event.encode()?,
-                };
-                envelope.validate()?;
-                if !seen.insert(envelope.id) {
-                    continue;
-                }
-                bytes = bytes
-                    .checked_add(envelope.bytes.len())
-                    .ok_or_else(|| refusal("batch-limit"))?;
-                if envelopes.len() >= usize::from(request.max_items)
-                    || bytes > request.max_bytes as usize
-                {
-                    return Err(refusal("batch-limit"));
-                }
-                envelopes.push(envelope);
-            }
-        }
-        deadline.remaining()?;
-        Ok(ReceiveBatch {
-            envelopes,
-            next_cursor: None,
-            exhausted: true,
-        })
-    }
-}
-
-fn transport_deadline(requested_ms: u64) -> crate::Result<Deadline> {
+pub(crate) fn transport_deadline(requested_ms: u64) -> crate::Result<Deadline> {
     let limit = clock_ms()?
         .checked_add(MAX_OPERATION_MS)
         .ok_or_else(|| refusal("operation-timeout"))?;
@@ -635,6 +519,9 @@ const MAX_SAFE_SECONDS: u64 = 9_007_199_254_740_991;
 impl Filter {
     fn wire(&self) -> Value {
         let mut fields = serde_json::Map::new();
+        if let Some(limit) = self.limit {
+            fields.insert("limit".into(), json!(limit));
+        }
         if !self.authors.is_empty() {
             fields.insert(
                 "authors".into(),
@@ -670,7 +557,7 @@ impl Filter {
         Value::Object(fields)
     }
 
-    fn matches(&self, event: &nostr::Event) -> bool {
+    pub(crate) fn matches(&self, event: &nostr::Event) -> bool {
         (self.authors.is_empty() || self.authors.contains(&event.pubkey))
             && (self.kinds.is_empty() || self.kinds.contains(&event.kind))
             && self
@@ -700,14 +587,17 @@ fn validate_filters(filters: &[Filter]) -> crate::Result<()> {
         return Err(refusal("filters-invalid"));
     }
     for filter in filters {
-        if [
-            filter.authors.len(),
-            filter.kinds.len(),
-            filter.recipients.len(),
-            filter.identifiers.len(),
-        ]
-        .into_iter()
-        .any(|count| count > MAX_FILTER_VALUES)
+        if filter
+            .limit
+            .is_some_and(|limit| limit == 0 || usize::from(limit) > MAX_QUERY_EVENTS)
+            || [
+                filter.authors.len(),
+                filter.kinds.len(),
+                filter.recipients.len(),
+                filter.identifiers.len(),
+            ]
+            .into_iter()
+            .any(|count| count > MAX_FILTER_VALUES)
             || filter
                 .identifiers
                 .iter()
@@ -844,7 +734,7 @@ fn submission_status(accepted: bool, reason: Option<Refusal>) -> SubmissionStatu
 mod ack_tests;
 
 #[derive(Clone, Copy)]
-struct Deadline {
+pub(crate) struct Deadline {
     supervisor_ms: u64,
     local: Instant,
 }
@@ -861,7 +751,7 @@ impl Deadline {
         })
     }
 
-    fn remaining(&self) -> crate::Result<Duration> {
+    pub(crate) fn remaining(&self) -> crate::Result<Duration> {
         let millis = self
             .supervisor_ms
             .checked_sub(clock_ms()?)

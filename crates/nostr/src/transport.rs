@@ -7,7 +7,7 @@ pub const TRANSPORT_VERSION: u16 = 1;
 pub const MAX_ENVELOPE_BYTES: usize = 65_536;
 pub const MAX_BATCH_ITEMS: u16 = 128;
 pub const MAX_BATCH_BYTES: u32 = 1_048_576;
-pub const MAX_CURSOR_BYTES: usize = 512;
+pub const MAX_CURSOR_BYTES: usize = 4_096;
 
 /// Adapter selection is not a claim that an adapter is installed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

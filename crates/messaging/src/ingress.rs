@@ -394,6 +394,7 @@ impl Messaging {
                 Ok(IngressOutcome::Data(data))
             }
             Err((reason, retryable)) => {
+                if retryable { crate::polling::retain_retry(&self.db, envelope)?; }
                 if retryable && refused::retry_exhausted(&self.db, envelope.id.as_bytes())? {
                     return Ok(IngressOutcome::Retrying(reason));
                 }
@@ -432,9 +433,10 @@ impl Messaging {
                     .map_err(|_| refuse("store-write"))?;
                 // Durable with the pending attempt: recovery counts this attempt once, and no later snapshot recounts it.
                 // Only reasons that can never clear for these bytes are remembered: a payload refused for clock skew or a
-                // contact approval that is catching up stays retryable on the next poll. Bounded: past the cap a wrap is
-                // simply counted again on a later poll, never dropped.
+                // contact approval that is catching up stays retryable on the next poll.
+                // Final ids remain durable, so a large flood cannot evict earlier refusals.
                 settle_refused(&transaction, envelope.id.as_bytes(), retryable)?;
+                if !retryable { crate::polling::forget_retry(&transaction, envelope.id.as_bytes())?; }
                 transaction.commit().map_err(|_| refuse("store-commit"))?;
                 let counted = append_refusal_attempt(txn, observation, attempt, prior)?;
                 self.db
@@ -508,9 +510,6 @@ impl Messaging {
         if transport != TransportKind::NostrRelays {
             return Err(fin(R::Envelope));
         }
-        if received_at_ms > MAX_SAFE_INTEGER as u64 {
-            return Err(retry(R::Payload));
-        }
         envelope
             .validate()
             .map_err(|error| fin(classify(error, R::Envelope)))?;
@@ -522,13 +521,15 @@ impl Messaging {
             .and_then(Event::verify)
             .map_err(|error| fin(classify(error, R::Signature)))?;
         let now = received_at_ms / 1000;
-        let seal = nostr::nip59::authenticate_sender(&wrap, recipient_key, now)
-            .map_err(|error| (classify(error, R::Envelope), timed(&error)))?;
+        let seal = nostr::nip59::authenticate_sender_identity(&wrap, recipient_key)
+            .map_err(|error| fin(classify(error, R::Envelope)))?;
         let sender = *seal.sender();
         let contact = self
             .current_contact(txn, sender)
             .map_err(|_| retry(R::StaleContact))?
             .ok_or(fin(R::Stranger))?;
+        if received_at_ms > MAX_SAFE_INTEGER as u64 { return Err(retry(R::Payload)); }
+        seal.validate_time(now).map_err(|error| (classify(error, R::Envelope), timed(&error)))?;
         let context = txn.observation_context().map_err(|_| retry(R::StaleContact))?;
         if contact.authority().epoch != context.authority.epoch
             || contact.authority().sequence >= context.authority.sequence
