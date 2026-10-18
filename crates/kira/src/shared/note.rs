@@ -73,6 +73,14 @@ pub fn check_capture_lane(capture: Capture, lane: Lane) -> Result<()> {
     Ok(())
 }
 
+/// Slot text is loaded into a session's prompt; web capture cannot enter it through another lane.
+pub fn check_slot_capture(capture: Capture, slot: Option<&str>) -> Result<()> {
+    if slot.is_some() && capture == Capture::WebDerived {
+        return Err(refuse("note-slot-web-derived"));
+    }
+    Ok(())
+}
+
 /// A registered agent's name: 1..=64 of `[a-z0-9_-]`, starting with a letter or digit.
 pub fn valid_agent_name(name: &str) -> bool {
     (1..=64).contains(&name.len())
@@ -311,6 +319,7 @@ impl NoteDraft {
         }
         // By whitelist: only the owner's own words are filed as a commitment, the self file or the resume. Tool, model,
         // web and imported material never are; imports are promoted only by an owner-signed manifest.
+        check_slot_capture(self.capture, self.slot.as_deref())?;
         check_capture_lane(self.capture, self.lane)?;
         if let (Some(from), Some(to)) = (self.valid_from, self.valid_to) {
             if to <= from {
@@ -381,6 +390,9 @@ impl NoteMeta {
             })
             .collect::<Result<Vec<_>>>()?;
         let epoch = required(tags, "epoch")?.parse::<u32>().map_err(|_| refuse("note-tag-number"))?;
+        let capture = Capture::parse(required(tags, Capture::TAG)?)?;
+        let slot = single(tags, "d")?.map(str::to_owned);
+        check_slot_capture(capture, slot.as_deref())?;
         Ok(Self {
             subject: required(tags, "subject")?.to_owned(),
             scope: required(tags, "scope")?.to_owned(),
@@ -388,9 +400,9 @@ impl NoteMeta {
             form: Form::parse(required(tags, Form::TAG)?)?,
             review: Review::parse(required(tags, Review::TAG)?)?,
             privacy: Privacy::parse(required(tags, Privacy::TAG)?)?,
-            capture: Capture::parse(required(tags, Capture::TAG)?)?,
+            capture,
             sources,
-            slot: single(tags, "d")?.map(str::to_owned),
+            slot,
             valid_from: number(single(tags, "valid_from")?)?,
             valid_to: number(single(tags, "valid_to")?)?,
             epoch,

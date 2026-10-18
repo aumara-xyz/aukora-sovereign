@@ -5,6 +5,8 @@ use super::super::note::*;
 use super::*;
 use nostr::SecretKey;
 
+mod slot_capture;
+
 fn key() -> SecretKey {
     SecretKey::generate().unwrap()
 }

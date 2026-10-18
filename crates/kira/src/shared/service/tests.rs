@@ -6,6 +6,7 @@ use super::*;
 mod argon_break1;
 mod argon_break2;
 mod recall_race;
+mod slot_capture;
 
 struct Fixture {
     dir: PathBuf,
