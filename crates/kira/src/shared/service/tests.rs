@@ -8,6 +8,7 @@ mod argon_break2;
 mod recall_race;
 mod slot_capture;
 mod pending_proposals;
+mod recall_wording;
 
 struct Fixture {
     dir: PathBuf,

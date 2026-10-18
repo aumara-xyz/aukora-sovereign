@@ -48,6 +48,19 @@ pub enum RecallStatus {
     Undetermined(&'static str),
 }
 
+impl RecallStatus {
+    /// Guidance for interpreting the evidence labels, without hiding other reasons recall could not answer.
+    pub fn message(&self) -> Option<&'static str> {
+        match self {
+            Self::Found => Some("Evidence labels apply to each note; found does not verify every returned claim."),
+            Self::Undetermined("similar-note-unverified") => {
+                Some("Related notes were found, but K2 couldn't establish an evidence-backed answer. Use these as leads to check.")
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecallItem {
     pub id: String,

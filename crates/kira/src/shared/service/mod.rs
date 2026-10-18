@@ -906,13 +906,14 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
     if matches!(status, RecallStatus::Found | RecallStatus::Undetermined("similar-note-unverified")) && items.is_empty() {
         status = RecallStatus::Empty;
     }
+    let message = status.message();
     let (status, reason) = match status {
         RecallStatus::Found => ("found", None),
         RecallStatus::Empty => ("empty", None),
         RecallStatus::Undetermined(why) => ("undetermined", Some(why)),
     };
     Ok(json!({
-        "status": status, "reason": reason, "items": items, "omitted": outcome.omitted, "indexed": outcome.indexed,
+        "status": status, "reason": reason, "message": message, "items": items, "omitted": outcome.omitted, "indexed": outcome.indexed,
         "total": outcome.total, "query_digest": outcome.query_digest, "states": states,
         "judged": {
             "by": outcome.judged_by, "rerank_floor": outcome.rerank_floor, "cosine_floor": outcome.cosine_floor,

@@ -76,6 +76,18 @@ test('createKiraTools registers the five Kira 2 tools and fails closed if invoke
   }
 })
 
+test('recall explains evidence-backed leads and preserves evidence labels in mixed found output', () => {
+  const recall = createKiraTools().find(t => t.name === 'kira_recall')!
+  assert.ok(recall.description.includes("Related notes were found, but K2 couldn't establish an evidence-backed answer. Use these as leads to check."))
+  assert.ok(recall.description.includes('found does not verify every returned claim'))
+  const reply = {
+    status: 'found',
+    message: 'Evidence labels apply to each note; found does not verify every returned claim.',
+    items: [{ id: 'supported', evidence: 'owner-words' }, { id: 'lead', evidence: 'unverified' }],
+  }
+  assert.deepEqual(JSON.parse(recall.output.render({}, reply)[0].text), reply)
+})
+
 test('truncateUtf8 respects byte boundaries without splitting multi-byte code points', () => {
   // '🌊' is 4 UTF-8 bytes; 'é' is 2 UTF-8 bytes.
   const text = 'A🌊BéC'

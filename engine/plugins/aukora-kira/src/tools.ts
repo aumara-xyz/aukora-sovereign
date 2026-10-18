@@ -169,7 +169,7 @@ export function createKiraTools(): DshToolDefinition[] {
     {
       name: 'kira_recall',
       description:
-        'Search shared memory (Kira 2) by keyword and semantic meaning. Returns a three-way outcome (found, empty, or undetermined) with verified notes and attribution.',
+        "Search shared memory (Kira 2) by keyword and semantic meaning. Returns found, empty, or undetermined, with attribution and an evidence label on each note. Evidence labels apply to each note; found does not verify every returned claim. For undetermined with reason similar-note-unverified: Related notes were found, but K2 couldn't establish an evidence-backed answer. Use these as leads to check. Other undetermined reasons name the condition that prevented an answer.",
       parameters: {
         type: 'object',
         properties: {
@@ -199,7 +199,7 @@ export function createKiraTools(): DshToolDefinition[] {
         additionalProperties: false,
       },
       output: {
-        schema: { description: 'Kira 2 recall outcome (found, empty, or undetermined) with verified notes.' },
+        schema: { description: 'Kira 2 recall status, reason and message, with per-note evidence labels. A found result can include unverified notes.' },
         render: renderOutput,
       },
       isConcurrencySafe: () => true,
