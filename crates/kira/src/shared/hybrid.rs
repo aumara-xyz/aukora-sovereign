@@ -13,6 +13,9 @@ use canon::{Refusal, Result};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+mod ranking;
+use ranking::{fair_top, Slot};
+
 /// Candidates taken from each retriever (keyword and dense).
 pub const POOL: usize = 50;
 /// Reciprocal rank fusion constant.
@@ -514,31 +517,6 @@ impl Cand {
     }
 }
 
-/// The best `limit` candidates (best first in, original order out) with the same per-author share as `pool`: no
-/// author other than the owner (or the caller's own experience) holds more than half the places while others wait;
-/// its overflow only fills places nobody else claimed.
-fn fair_top(live: Vec<Cand>, limit: usize, caller: &str) -> Vec<Cand> {
-    let share = limit / 2;
-    let mut held: BTreeMap<String, usize> = BTreeMap::new();
-    let (mut chosen, mut over) = (Vec::new(), Vec::new());
-    for (i, c) in live.iter().enumerate() {
-        if chosen.len() >= limit {
-            break;
-        }
-        let author = c.author();
-        if !c.exempt(caller) && held.get(&author).copied().unwrap_or(0) >= share {
-            over.push(i);
-        } else {
-            *held.entry(author).or_default() += 1;
-            chosen.push(i);
-        }
-    }
-    chosen.extend(over.into_iter().take(limit.saturating_sub(chosen.len())));
-    chosen.sort_unstable();
-    let mut slots: Vec<Option<Cand>> = live.into_iter().map(Some).collect();
-    chosen.into_iter().filter_map(|i| slots[i].take()).collect()
-}
-
 /// One statement (at one privacy level) after dedupe: the highest-standing note stands for it, every author is kept.
 struct Group {
     keep: Cand,
@@ -557,18 +535,6 @@ struct Group {
     web: bool,
     /// Every note of the statement with its capture, by id.
     captures: BTreeMap<String, Capture>,
-}
-
-/// Reserved lanes, filled in this order.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum Slot {
-    /// Owner-signed decisions, rulings and the charter.
-    Commitment,
-    /// Notes captured as the owner's own words.
-    OwnerWords,
-    /// The caller's own experience.
-    OwnExperience,
-    Rest,
 }
 
 /// Recall's first phase, gathered from the store: candidates and what the store said about its own health. The second
@@ -700,6 +666,9 @@ impl SharedStore {
         // stale one did: the question gets the current answer, never only the retired one.
         let now = if q.now == 0 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) } else { q.now };
         let (dead, mut live): (Vec<Cand>, Vec<Cand>) = cands.into_iter().partition(|c| retired(&c.note, now).is_some());
+        // Equal relevance must not let an arbitrary id discard an owner lane before reranking.
+        live.sort_by(|a, b| b.fused.total_cmp(&a.fused)
+            .then_with(|| a.slot(&caller).cmp(&b.slot(&caller))).then_with(|| a.id.cmp(&b.id)));
         let mut history: Vec<Cand> = dead
             .into_iter()
             .map(|mut c| {
@@ -871,27 +840,11 @@ impl Prepared {
         // Nothing is returned without an answer; with one, only notes that clear the keep test ride along.
         groups.retain(|g| found && g.carried);
 
-        // Reserved lanes. Only relevant notes claim a reserved lane; everything else competes by score.
-        let slot = |g: &Group| {
-            let meta = &g.keep.note.meta;
-            if !g.relevant {
-                Slot::Rest
-            } else if (meta.review == Review::OwnerSigned || meta.capture == Capture::OwnerTyped)
-                && matches!(meta.lane, Lane::Decision | Lane::Ruling | Lane::Charter)
-            {
-                Slot::Commitment
-            } else if matches!(meta.capture, Capture::OwnerTyped | Capture::OwnerSigned) {
-                Slot::OwnerWords
-            } else if meta.lane == Lane::Experience && hex(g.keep.note.event.pubkey.as_bytes()) == caller {
-                Slot::OwnExperience
-            } else {
-                Slot::Rest
-            }
-        };
+        // Only relevant notes claim a reserved lane; everything else competes by score.
         let mut ordered: Vec<(Slot, bool, bool, RecallItem)> = groups
             .into_iter()
             .map(|g| {
-                let lane = slot(&g);
+                let lane = if g.relevant { g.keep.slot(&caller) } else { Slot::Rest };
                 let exempt = lane == Slot::OwnExperience || g.keep.note.author_owner;
                 let also_by = g.names.into_iter().filter(|n| *n != g.keep.note.author_name).collect();
                 let also_by_ids: Vec<String> = g.ids.into_iter().filter(|id| *id != g.keep.id).collect();

@@ -7,6 +7,7 @@ use crate::shared::note::{Form, NoteDraft, Privacy, NOTE_KIND, QUARANTINE_KIND, 
 use nostr::{Event, SecretKey};
 
 mod evidence;
+mod flood;
 mod validity;
 
 /// Content words hashed into 256 buckets plus a constant bias dimension: deterministic and model-free.
@@ -427,60 +428,6 @@ fn owner_commitments_lead_and_own_experience_is_reserved() {
     assert_eq!(other.items[1].text, said);
 }
 
-/// Grok's red-team flood: 200 on-topic notes from one agent. The owner's decision and another agent's note must
-/// still come back, and a competing author keeps its half of the budget.
-#[test]
-fn a_flood_from_one_author_cannot_push_out_the_owners_decisions() {
-    let (peter, junk, codex) = (key(), key(), key());
-    let mut s = store_with(&[("peter", &peter, true), ("junk", &junk, false), ("codex", &codex, false)]);
-    let decision = "Decision: the figurine stays on the left shelf.";
-    put(&mut s, &peter, decision, Lane::Decision, Capture::OwnerTyped, Review::OwnerSigned, 1);
-    let ours = "Codex saw the figurine on the shelf by the window.";
-    note(&mut s, &codex, ours, 2);
-    for i in 0..200 {
-        note(&mut s, &junk, &format!("Figurine shelf figurine shelf figurine shelf junk {i}."), 10 + i);
-    }
-    s.index_missing(&Words, 64).unwrap();
-    let q = query("figurine shelf", "x");
-    for rr in [None, Some(&Overlap as &dyn Reranker)] {
-        let r = s.recall(&q, Some(&Words), rr).unwrap();
-        assert_eq!(r.status, RecallStatus::Found);
-        assert_eq!(r.items[0].text, decision, "the owner's decision leads");
-        assert!(r.items.iter().any(|i| i.text == ours), "another author is not crowded out either");
-        assert!(chars(&r.items) <= DEFAULT_BUDGET);
-    }
-    // A small budget that the other author can fill: the flood keeps no more than half of it.
-    for i in 0..30 {
-        note(&mut s, &codex, &format!("Codex also moved the figurine shelf item {i}."), 300 + i);
-    }
-    s.index_missing(&Words, 64).unwrap();
-    let mut q = query("figurine shelf", "x");
-    q.budget_chars = 1_200;
-    for rr in [None, Some(&Overlap as &dyn Reranker)] {
-        let r = s.recall(&q, Some(&Words), rr).unwrap();
-        let by = |name: &str| -> usize { r.items.iter().filter(|i| i.author_name == name).map(|i| i.text.chars().count()).sum() };
-        assert!(by("junk") <= q.budget_chars / 2, "the flood holds {} of {}", by("junk"), q.budget_chars);
-        assert!(by("codex") >= 300 && r.items.iter().any(|i| i.text == decision));
-        assert!(chars(&r.items) <= q.budget_chars);
-    }
-}
-
-/// An empty place protects no one: with no competing author, the flood author fills the whole budget.
-#[test]
-fn a_lone_author_still_fills_the_budget() {
-    let a = key();
-    let mut s = store_with(&[("claude", &a, false)]);
-    for i in 0..40 {
-        note(&mut s, &a, &format!("Figurine note {i}: {}", "the figurine shelf story ".repeat(4)), i);
-    }
-    s.index_missing(&Words, 64).unwrap();
-    let mut q = query("figurine story", "x");
-    q.budget_chars = 1_000;
-    for rr in [None, Some(&Overlap as &dyn Reranker)] {
-        let r = s.recall(&q, Some(&Words), rr).unwrap();
-        assert!(chars(&r.items) > 900 && chars(&r.items) <= 1_000, "got {}", chars(&r.items));
-    }
-}
 
 #[test]
 fn superseded_and_quarantined_notes_appear_only_as_corrections() {
