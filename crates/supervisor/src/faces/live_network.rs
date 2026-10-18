@@ -98,6 +98,15 @@ impl LiveNetwork {
             return Err(refuse("network-batch-invalid"));
         }
         for envelope in batch.envelopes {
+            // Skip a known wrap before taking the Aura writer lock (and its history scan) at all.
+            if self
+                .store
+                .lock()
+                .map_err(|_| refuse("network-store-unavailable"))?
+                .seen_envelope(envelope.id)?
+            {
+                continue;
+            }
             self.ledger.messaging(scope, false, |txn| {
                 let mut store = self
                     .store

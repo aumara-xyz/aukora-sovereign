@@ -12,6 +12,14 @@ pub const SEND_TARGET: &str = "messaging/send.json";
 /// The one line a contact card says, shared with `messaging::OwnerAction::card` so both build the same C6 bytes.
 /// It names the exact npub being approved, says that this approves a key and not a person, and asks the owner to
 /// compare the npub with the other person through a channel they already trust before approving.
+/// A character a contact label may not hold: controls, and the invisible and bidirectional formatting characters that
+/// could reorder or hide the npub printed beside the label on the owner's card. Shared with `messaging`.
+pub fn label_char_refused(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2028}' | '\u{2029}'
+            | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+}
+
 pub fn contact_says(add: bool, key: [u8; 32]) -> String {
     let npub = canon::provenance::Npub::from_key_bytes(key);
     if add {
@@ -48,7 +56,7 @@ pub fn contact_card(bytes: &[u8]) -> Result<Card> {
             let label = text("label")?;
             if label.is_empty()
                 || label.len() > 160
-                || label.chars().any(char::is_control)
+                || label.chars().any(label_char_refused)
                 || !matches!(value.get("pairing").map(Value::view), Some(ValueView::Null))
             {
                 return Err(invalid);
@@ -102,6 +110,13 @@ mod tests {
         add.canonical_bytes().unwrap();
         let remove = contact_card(&action("contact.remove", key)).unwrap();
         assert_eq!(remove.says, format!("Remove this Nostr key from your approved contacts: {npub}."));
+        // A label cannot reorder or hide the npub the owner compares (a plain non-ASCII label still passes).
+        let good = format!(r#"{{"key":"{key}","label":"Mira 雪","op":"contact.add","pairing":null,"schema":"aukora:messaging-action:v1"}}"#);
+        assert!(contact_card(good.as_bytes()).is_ok());
+        for bad in ["\u{202E}lim", "Mi\u{200F}ra", "a\u{2066}b", "\u{FEFF}x", "x\u{2028}y"] {
+            let bytes = format!(r#"{{"key":"{key}","label":"{bad}","op":"contact.add","pairing":null,"schema":"aukora:messaging-action:v1"}}"#);
+            assert!(contact_card(bytes.as_bytes()).is_err(), "{bad:?}");
+        }
         // A key that is not lowercase hex never reaches the wording.
         assert!(contact_card(&action("contact.add", &key.to_uppercase())).is_err());
     }

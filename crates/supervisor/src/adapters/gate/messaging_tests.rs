@@ -70,6 +70,17 @@ fn guest_proposals_cannot_reach_any_messaging_target() {
         ));
         assert!(matches!(result, Err(code) if code == codes::GATE_UNKNOWN_TARGET));
     }
+    // Nor can an engine read the owner's contact list (keys and labels) back out of the gate.
+    for target in [messaging::CONTACT_TARGET, "messaging/other.json"] {
+        let result = runtime.block_on(adapter.read(
+            PrincipalScope {
+                subject: SubjectId::parse(&format!("aukora:1:{}", "01".repeat(32))).unwrap(),
+                epoch: 1,
+            },
+            canon::fd3_payloads::Read { target: target.into() },
+        ));
+        assert!(matches!(result, Err(code) if code == codes::GATE_UNKNOWN_TARGET), "{target}");
+    }
     drop(adapter);
     std::fs::remove_dir_all(path).unwrap();
 }

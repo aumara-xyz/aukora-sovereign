@@ -31,3 +31,16 @@ fn action_card_vectors_replay_byte_for_byte() {
         assert_eq!(code.as_deref(), vector["code"].as_str(), "{name}");
     }
 }
+
+#[test]
+fn a_contact_label_cannot_hold_bidi_or_invisible_formatting() {
+    let key = nostr::SecretKey::import(zeroize::Zeroizing::new([5; 32])).unwrap().public_key().unwrap();
+    let add = |label: &str| {
+        OwnerAction::Contact(crate::ContactChange::Add(crate::ContactDraft { key, label: label.into(), pairing: None }))
+    };
+    assert!(add("Mira 雪").canonical_bytes().is_ok());
+    for bad in ["\u{202E}lim", "Mi\u{200F}ra", "a\u{2066}b", "\u{FEFF}x", "x\u{200B}y", "tab\there"] {
+        assert!(add(bad).canonical_bytes().is_err(), "{bad:?}");
+        assert!(add(bad).card().is_err(), "{bad:?}");
+    }
+}

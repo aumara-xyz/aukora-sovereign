@@ -450,6 +450,10 @@ impl GateService for GateAdapter {
     }
 
     fn read(&self, scope: PrincipalScope, request: Read) -> ServiceFuture<'_, ReadReply> {
+        // The owner's contacts (keys and labels) are the supervisor's alone: no engine read of messaging/.
+        if request.target.starts_with("messaging/") {
+            return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
+        }
         self.submit(move |gate, host| {
             host.scoped(scope, |_| {
                 let observed = gate

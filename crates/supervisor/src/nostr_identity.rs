@@ -22,9 +22,21 @@ impl NodeIdentity {
             Err(rustix::io::Errno::NOENT) => None,
             Err(_) => return Err(refuse("nostr-public-file")),
         };
-        let bytes = match crate::state::read_private(directory, KEY_FILE, 32) {
-            Ok(bytes) => Zeroizing::new(bytes),
-            Err(rustix::io::Errno::NOENT) if saved_public.is_none() => {
+        let mut existing = match crate::state::read_private(directory, KEY_FILE, 32) {
+            Ok(bytes) => Some(Zeroizing::new(bytes)),
+            Err(rustix::io::Errno::NOENT) => None,
+            Err(_) => return Err(refuse("nostr-key-file")),
+        };
+        // A crash between creating the key file and syncing its 32 bytes leaves a short file and no public companion:
+        // that key was never used or published, so it is replaced. With a public companion it is never replaced.
+        if saved_public.is_none() && existing.as_ref().is_some_and(|bytes| !importable(bytes)) {
+            rustix::fs::unlinkat(directory, KEY_FILE, rustix::fs::AtFlags::empty())
+                .map_err(|_| refuse("nostr-key-file"))?;
+            existing = None;
+        }
+        let bytes = match existing {
+            Some(bytes) => bytes,
+            None if saved_public.is_none() => {
                 // There is no export operation on SecretKey: fill and import a zeroizing seed.
                 // Invalid secp256k1 scalars are retried before any bytes reach disk.
                 let mut seed = Zeroizing::new([0; 32]);
@@ -37,7 +49,7 @@ impl NodeIdentity {
                 crate::state::write_new(directory, KEY_FILE, &seed[..])?;
                 Zeroizing::new(seed.to_vec())
             }
-            Err(_) => return Err(refuse("nostr-key-file")),
+            None => return Err(refuse("nostr-key-file")),
         };
         let seed = Zeroizing::new(
             bytes
@@ -70,6 +82,10 @@ impl NodeIdentity {
     pub fn npub(&self) -> &str {
         &self.npub
     }
+}
+
+fn importable(bytes: &[u8]) -> bool {
+    <[u8; 32]>::try_from(bytes).is_ok_and(|seed| SecretKey::import(Zeroizing::new(seed)).is_ok())
 }
 
 fn refuse(reason: &'static str) -> Refusal {
@@ -136,6 +152,21 @@ mod tests {
         NodeIdentity::open(&a.1).unwrap();
         std::fs::set_permissions(a.0.join(KEY_FILE), std::fs::Permissions::from_mode(0o644))
             .unwrap();
+        assert!(NodeIdentity::open(&a.1).is_err());
+    }
+
+    #[test]
+    fn a_short_key_file_from_an_interrupted_first_write_is_replaced_only_while_unpublished() {
+        let a = Directory::new();
+        std::fs::write(a.0.join(KEY_FILE), [7; 5]).unwrap();
+        std::fs::set_permissions(a.0.join(KEY_FILE), std::fs::Permissions::from_mode(0o600)).unwrap();
+        let fresh = NodeIdentity::open(&a.1).unwrap();
+        assert_eq!(std::fs::metadata(a.0.join(KEY_FILE)).unwrap().len(), 32);
+        assert_eq!(fresh.npub(), NodeIdentity::open(&a.1).unwrap().npub());
+        // Once the npub exists, a damaged key file refuses instead of rotating the identity.
+        std::fs::remove_file(a.0.join(KEY_FILE)).unwrap();
+        std::fs::write(a.0.join(KEY_FILE), [7; 5]).unwrap();
+        std::fs::set_permissions(a.0.join(KEY_FILE), std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(NodeIdentity::open(&a.1).is_err());
     }
 

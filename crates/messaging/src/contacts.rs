@@ -393,7 +393,7 @@ fn action_value(action: &OwnerAction) -> Result<Value> {
 fn validate_contact(draft: &ContactDraft) -> Result<()> {
     if draft.label.is_empty()
         || draft.label.len() > MAX_CONTACT_LABEL_BYTES
-        || draft.label.chars().any(char::is_control)
+        || draft.label.chars().any(gate::messaging::label_char_refused)
     {
         return Err(refusal("contact-label"));
     }
