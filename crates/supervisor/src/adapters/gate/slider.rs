@@ -82,7 +82,7 @@ impl GateAdapter {
                     previous.wire_name(),
                     setting.wire_name()
                 );
-                request.new_evidence = state.tightening;
+                request.new_evidence = state.tightening.clone();
                 let proposed = match gate.propose(txn, request.clone(), &mut NoInjection) {
                     Ok(proposal) => proposal.id,
                     Err(refusal)
@@ -99,6 +99,13 @@ impl GateAdapter {
                             Some(declined) => declined.proposal,
                             None => txn.last_expiry(digest)?.map(|(id, _)| id).ok_or(refusal)?,
                         };
+                        // The retry inherits that card's evidence. If the slider was tightened since, it no longer
+                        // names the current tightening, and approving it would leave the policy unreadable: keep the
+                        // original refusal (the same bytes can be asked for once the hold ends).
+                        let linked = txn.proposal(&declined)?;
+                        if !super::super::slider::policy_evidence_matches(txn, &linked, state.tightening.as_ref())? {
+                            return Err(refusal);
+                        }
                         propose_again_in(
                             txn,
                             gate,

@@ -143,7 +143,7 @@ pub(crate) fn current_state(txn: &mut aura::LedgerTxn<'_>) -> Result<PolicyState
 
 /// An explicit retry may wrap the original evidence in existing owner-again
 /// facts. Each link retains the policy bytes and names the current tightening.
-fn policy_evidence_matches(
+pub(crate) fn policy_evidence_matches(
     txn: &mut aura::LedgerTxn<'_>,
     stored: &aura::storage::ProposalState,
     tightening: Option<&EvidenceReference>,

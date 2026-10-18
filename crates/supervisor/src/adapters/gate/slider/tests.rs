@@ -314,6 +314,51 @@ fn an_expired_slider_card_neither_blocks_tightening_nor_an_explicit_retry() -> R
 }
 
 #[test]
+fn a_retry_of_a_card_from_before_a_tightening_is_refused_and_the_policy_stays_readable() -> Result<()> {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    struct Clock(AtomicI64);
+    impl aura::TrustedClock for Clock {
+        fn now_ms(&self) -> Result<i64> {
+            Ok(self.0.load(Ordering::SeqCst))
+        }
+    }
+    let mut rig = rig()?;
+    let clock = Arc::new(Clock(AtomicI64::new(rig.ledger.clock.now_ms()?)));
+    rig.ledger = Arc::new(HostLedger::open(
+        &rig.directory.join("aura.sqlite3"),
+        rig.ledger.signer.clone(),
+        clock.clone(),
+    )?);
+    let adapter = adapter(&mut rig);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    // A loosening card expires unanswered, then the owner tightens.
+    let _expired = pending(runtime.block_on(adapter.set_slider(rig.scope, SliderSetting::Trusted))?);
+    clock.0.fetch_add(300_001, Ordering::SeqCst);
+    assert_eq!(
+        runtime.block_on(adapter.set_slider(rig.scope, SliderSetting::AskEverything))?,
+        SliderChange::Applied(SliderSetting::AskEverything)
+    );
+    // Asking for the same loosening again within the hold would retry that old card, whose evidence predates the
+    // tightening: refused, rather than a card whose approval would make every slider read fail.
+    assert!(runtime.block_on(adapter.set_slider(rig.scope, SliderSetting::Trusted)).is_err());
+    assert_eq!(
+        runtime.block_on(adapter.slider_policy())?.setting,
+        SliderSetting::AskEverything
+    );
+    // Another level is still a fresh card naming the tightening, and approving it reads back.
+    let other = pending(runtime.block_on(adapter.set_slider(rig.scope, SliderSetting::WithinTodayLimits))?);
+    let review = runtime.block_on(adapter.review(rig.scope, other, OwnerOperation::Apply))?;
+    runtime.block_on(adapter.owner_assertion(rig.scope, other, OwnerOperation::Apply, assertion(&rig, &review, 1)))?;
+    assert_eq!(
+        runtime.block_on(adapter.slider_policy())?.setting,
+        SliderSetting::WithinTodayLimits
+    );
+    Ok(())
+}
+
+#[test]
 fn initial_policy_is_retained_before_owner_enrolment() -> Result<()> {
     let rig = rig()?;
     let fresh = HostLedger::open(
