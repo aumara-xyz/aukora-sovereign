@@ -100,13 +100,18 @@ export function cardTone(kind: CardKind, risk: ApprovalCard["risk"]): "ak-tone-r
 }
 
 /**
- * The pill beside the summary never contradicts the card's colour: a red card says CRITICAL; a blue card names its
- * kind (CONTACT, DOOR ASK, STANDING GRANT) instead of the gate's rating. The rating itself is unchanged and stays in
- * the exact card below and in the card's accessible name.
+ * The level pill matches the card's colour (Peter, 2026-10-18): red says CRITICAL, blue says ROUTINE. The gate's own
+ * rating is unchanged and stays in the exact card below and in the card's accessible name.
  */
 export function cardPill(kind: CardKind, risk: ApprovalCard["risk"]): { text: string; tone: "ak-tone-red" | "ak-tone-blue" } {
   const tone = cardTone(kind, risk);
-  return tone === "ak-tone-red" && risk === "critical" ? { text: "CRITICAL", tone } : { text: KIND_TITLE[kind].toUpperCase(), tone };
+  return { text: tone === "ak-tone-red" ? "CRITICAL" : "ROUTINE", tone };
+}
+
+/** The first sentence of `says` and the rest; joined with one space they are exactly `says`. */
+export function splitSays(says: string): readonly [string, string] {
+  const end = says.search(/[.!?] (?=[A-Z])/);
+  return end < 0 ? [says, ""] : [says.slice(0, end + 1), says.slice(end + 2)];
 }
 
 function glyph(document: Document, kind: CardKind): SVGSVGElement {
@@ -149,29 +154,37 @@ export function renderCard(document: Document, card: ApprovalCard,
   cardView.dataset.open = "yes";
   cardView.dataset.kind = kind;
   cardView.setAttribute("aria-label", `${card.risk} approval`);
+  // The summary box (Peter, 2026-10-18): the level pill on top with a small kind icon at the top right, then the
+  // card's first sentence as a larger title and the rest of what it says in smaller text under it (together exactly
+  // the signed `says`, nothing cut), then the kind and target.
   const head = document.createElement("header");
   head.className = "ak-portal__head approval-head";
-  const tile = document.createElement("span");
-  tile.className = "ak-icon-tile";
-  tile.append(glyph(document, kind));
-  const copy = document.createElement("span");
-  copy.className = "ak-portal__copy";
-  const summary = document.createElement("h2");
-  summary.className = "ak-portal__title approval-summary";
-  summary.tabIndex = -1;
-  summary.textContent = card.says;
-  const line = document.createElement("span");
-  line.className = "ak-portal__summary";
-  line.textContent = context ? `${KIND_TITLE[kind]} · ${context.target}` : KIND_TITLE[kind];
-  copy.append(summary, line);
-  const end = document.createElement("span");
-  end.className = "ak-portal__end";
+  const top = document.createElement("div");
+  top.className = "approval-top";
   const risk = document.createElement("span");
   const pill = cardPill(kind, card.risk);
   risk.className = `ak-pill approval-risk ${pill.tone}`;
   risk.textContent = pill.text;
-  end.append(risk);
-  head.append(tile, copy, end);
+  const mark = document.createElement("span");
+  mark.className = "approval-kind-icon";
+  mark.append(glyph(document, kind));
+  top.append(risk, mark);
+  const [first, rest] = splitSays(card.says);
+  const summary = document.createElement("h2");
+  summary.className = "ak-portal__title approval-summary";
+  summary.tabIndex = -1;
+  summary.textContent = first;
+  head.append(top, summary);
+  if (rest) {
+    const more = document.createElement("p");
+    more.className = "approval-says-rest";
+    more.textContent = rest;
+    head.append(more);
+  }
+  const line = document.createElement("span");
+  line.className = "ak-portal__summary";
+  line.textContent = context ? `${KIND_TITLE[kind]} · ${context.target}` : KIND_TITLE[kind];
+  head.append(line);
   const body = document.createElement("div");
   body.className = "ak-portal__body approval-body";
   const facts = document.createElement("dl");

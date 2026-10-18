@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const dir = mkdtempSync(path.join(tmpdir(), 'owner-card-tone-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 writeFileSync(path.join(dir, 'render.js'), stripTypeScriptTypes(readFileSync(path.join(root, 'ui/owner/cards/render.ts'), 'utf8')));
-const { cardKind, cardPill, cardTone } = await import(pathToFileURL(path.join(dir, 'render.js')).href);
+const { cardKind, cardPill, cardTone, splitSays } = await import(pathToFileURL(path.join(dir, 'render.js')).href);
 
 test('the node-changing kinds are red and the people-facing kinds blue, whatever the gate rated them', () => {
   const tone = (target, op, risk) => cardTone(cardKind(target, op), risk);
@@ -31,13 +31,20 @@ test('the node-changing kinds are red and the people-facing kinds blue, whatever
   assert.equal(tone('notes/today.md', 'apply', 'routine'), 'ak-tone-blue');
 });
 
-test('the pill never contradicts the colour: red cards say CRITICAL, blue cards name their kind', () => {
+test('the level pill matches the colour: red cards say CRITICAL, blue cards ROUTINE', () => {
   const pill = (target, op, risk) => cardPill(cardKind(target, op), risk);
   assert.deepEqual(pill('release', 'release', 'critical'), { text: 'CRITICAL', tone: 'ak-tone-red' });
   assert.deepEqual(pill('engine/model-key.json', 'apply', 'critical'), { text: 'CRITICAL', tone: 'ak-tone-red' });
-  assert.deepEqual(pill('messaging/contacts.json', 'apply', 'critical'), { text: 'CONTACT', tone: 'ak-tone-blue' });
-  assert.deepEqual(pill('door/ask-01.json', 'apply', 'critical'), { text: 'DOOR ASK', tone: 'ak-tone-blue' });
-  assert.deepEqual(pill('door/standing-grants.json', 'grant', 'critical'), { text: 'STANDING GRANT', tone: 'ak-tone-blue' });
+  assert.deepEqual(pill('messaging/contacts.json', 'apply', 'critical'), { text: 'ROUTINE', tone: 'ak-tone-blue' });
+  assert.deepEqual(pill('door/ask-01.json', 'apply', 'critical'), { text: 'ROUTINE', tone: 'ak-tone-blue' });
   assert.deepEqual(pill('notes/today.md', 'apply', 'critical'), { text: 'CRITICAL', tone: 'ak-tone-red' });
-  assert.deepEqual(pill('notes/today.md', 'apply', 'routine'), { text: 'CHANGE', tone: 'ak-tone-blue' });
+  assert.deepEqual(pill('notes/today.md', 'apply', 'routine'), { text: 'ROUTINE', tone: 'ak-tone-blue' });
+});
+
+test('the summary splits after its first sentence and loses nothing', () => {
+  const says = 'Approve this exact Aukora ID as a contact: npub1abc. This approves the ID, not the person. Before you approve, compare it.';
+  const [first, rest] = splitSays(says);
+  assert.equal(first, 'Approve this exact Aukora ID as a contact: npub1abc.');
+  assert.equal(`${first} ${rest}`, says);
+  assert.deepEqual(splitSays('Upgrade this node to a new release: it becomes the floor.'), ['Upgrade this node to a new release: it becomes the floor.', '']);
 });
