@@ -15,8 +15,9 @@ fn fixture() -> Fixture {
 #[test]
 fn a_corrupt_or_invalid_file_fills_every_window_and_stays_full_after_restart() {
     let f = fixture();
-    for bytes in [b"broken".as_slice(), b"{}", br#"{"version":2,"blocked_at":null,"writes":{}}"#,
-        br#"{"version":1,"writes":{}}"#] {
+    for bytes in [b"broken".as_slice(), b"{}", br#"{"version":2,"blocked_at":null,"high_water":0,"writes":{}}"#,
+        br#"{"version":1,"writes":{}}"#, br#"{"version":1,"blocked_at":null,"writes":{}}"#,
+        br#"{"version":1,"blocked_at":null,"high_water":5,"writes":{"claude":[6]}}"#] {
         write_private(&f.dir.join(FILE), bytes, false).unwrap();
         let mut budget = Budget::open(&f.dir, 100).unwrap();
         assert_eq!(budget.reserve(&f.dir, "claude", 100), Err(refuse("rate-limited")));
@@ -42,6 +43,39 @@ fn sliding_windows_expire_without_resetting_other_agents_and_ignore_uncommitted_
     restarted.reserve(&f.dir, "claude", 160).unwrap();
     assert_eq!(restarted.reserve(&f.dir, "grok", 160), Err(refuse("rate-limited")));
     restarted.reserve(&f.dir, "grok", 170).unwrap();
-    // Clock rollback cannot expire a future timestamp early.
-    assert_eq!(Budget::open(&f.dir, 90).unwrap().writes["grok"], [170]);
+    // A clock stepped back to 90: grok's stamp from 170 still counts, and every new stamp is judged at 170, so the
+    // window fills at the same RATE_WRITES and nothing is dropped from disk.
+    for _ in 1..RATE_WRITES {
+        restarted.reserve(&f.dir, "grok", 90).unwrap();
+    }
+    assert_eq!(restarted.reserve(&f.dir, "grok", 90), Err(refuse("rate-limited")));
+    let on_disk = Budget::open(&f.dir, 90).unwrap();
+    assert_eq!(on_disk.writes["grok"], vec![170; RATE_WRITES]);
+    assert_eq!(on_disk.high_water, 170);
+    // Still behind the high-water mark at 229 (59 s after 170): the window has not aged.
+    assert_eq!(restarted.reserve(&f.dir, "grok", 229), Err(refuse("rate-limited")));
+    restarted.reserve(&f.dir, "grok", 230).unwrap();
+}
+
+#[test]
+fn a_clock_stepped_forward_and_back_grants_no_second_window() {
+    let f = fixture();
+    let mut budget = Budget::open(&f.dir, 100).unwrap();
+    for _ in 0..RATE_WRITES {
+        budget.reserve(&f.dir, "claude", 100).unwrap();
+    }
+    // Another agent writes while the clock reads an hour ahead; then the clock is put back to 101.
+    budget.reserve(&f.dir, "grok", 3_700).unwrap();
+    // The hour ahead counts as an hour gone: claude gets one fresh window, and no more until the clock really passes
+    // the high-water mark by a window, however often it asks, through restarts too.
+    let mut granted = 0;
+    for at in (101..3_760).step_by(7) {
+        let mut restarted = Budget::open(&f.dir, at).unwrap();
+        if restarted.reserve(&f.dir, "claude", at).is_ok() {
+            granted += 1;
+        }
+    }
+    assert_eq!(granted, RATE_WRITES, "one window between the step back and the high-water mark");
+    assert!(Budget::open(&f.dir, 200).unwrap().writes["claude"].iter().all(|t| *t == 3_700));
+    budget.reserve(&f.dir, "claude", 3_760).unwrap();
 }

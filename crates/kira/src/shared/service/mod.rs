@@ -327,9 +327,12 @@ pub fn revoke(dir: &Path, name: &str) -> Result<()> {
         return Err(refuse("last-owner"));
     }
     state.store.revoke_agent(name, now())?;
+    authorization::probe("store-updated");
     let mut tokens = load_tokens(dir)?;
     tokens.retain(|_, holder| holder != name);
-    save_tokens(dir, &tokens)
+    save_tokens(dir, &tokens)?;
+    authorization::probe("tokens-saved");
+    Ok(())
 }
 
 /// An authenticated caller.

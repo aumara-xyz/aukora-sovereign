@@ -14,6 +14,9 @@ pub(super) struct Budget {
     /// A corrupt/unreadable budget fills every agent's window, including agents not yet registered.
     #[serde(deserialize_with = "required_time")]
     blocked_at: Option<u64>,
+    /// The latest time any reservation was judged at. Windows are judged at `max(clock, high_water)`, so a clock
+    /// stepped back never lets a stamp age early and a stamp dropped after a forward step could never count again.
+    high_water: u64,
     writes: BTreeMap<String, Vec<u64>>,
 }
 
@@ -25,16 +28,20 @@ impl Budget {
     pub(super) fn open(dir: &Path, at: u64) -> Result<Self> {
         let path = dir.join(FILE);
         if matches!(fs::symlink_metadata(&path), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
-            return Ok(Self { version: 1, blocked_at: None, writes: BTreeMap::new() });
+            return Ok(Self { version: 1, blocked_at: None, high_water: 0, writes: BTreeMap::new() });
         }
         let loaded = read_private(&path, MAX_BYTES).ok().and_then(|bytes| serde_json::from_slice::<Self>(&bytes).ok());
         if let Some(budget) = loaded.filter(|b| {
-            b.version == 1 && b.writes.iter().all(|(name, times)| valid_agent_name(name) && times.len() <= RATE_WRITES)
+            b.version == 1
+                && b.blocked_at.is_none_or(|start| start <= b.high_water)
+                && b.writes.iter().all(|(name, times)| {
+                    valid_agent_name(name) && times.len() <= RATE_WRITES && times.iter().all(|t| *t <= b.high_water)
+                })
         }) {
             return Ok(budget);
         }
         // Never interpret damage as unused quota. Save the full window so another restart cannot clear it.
-        let budget = Self { version: 1, blocked_at: Some(at), writes: BTreeMap::new() };
+        let budget = Self { version: 1, blocked_at: Some(at), high_water: at, writes: BTreeMap::new() };
         budget.save(dir)?;
         Ok(budget)
     }
@@ -51,10 +58,15 @@ impl Budget {
     pub(super) fn reserve(&mut self, dir: &Path, name: &str, at: u64) -> Result<()> {
         // Re-read the durable window: another service handle may have reserved since this one opened.
         *self = Self::open(dir, at)?;
+        // Time only moves forward here: a stamp pruned below is older than a window at a time already reached, so no
+        // later reading of the clock (stepped back or not) could count it again; and nothing ages while the clock is
+        // behind the high-water mark. A forward step expires windows exactly as waiting that long would, once.
+        let at = at.max(self.high_water);
         if self.blocked_at.is_some_and(|start| at.saturating_sub(start) < RATE_WINDOW) {
             return Err(refuse("rate-limited"));
         }
         self.blocked_at = None;
+        self.high_water = at;
         self.writes.retain(|_, times| {
             times.retain(|t| at.saturating_sub(*t) < RATE_WINDOW);
             !times.is_empty()

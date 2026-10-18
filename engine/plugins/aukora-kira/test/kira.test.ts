@@ -76,16 +76,30 @@ test('createKiraTools registers the five Kira 2 tools and fails closed if invoke
   }
 })
 
-test('recall explains evidence-backed leads and preserves evidence labels in mixed found output', () => {
+// The service side of this (a real recall mixing an owner-words note and an unverified lead, and the wording of both
+// statuses) is crates/kira/src/shared/service/tests/recall_wording.rs. Here: the tool tells the model what the
+// message means, and a service-shaped mixed `found` reply reaches the model unchanged, labels and message included.
+test('recall tool describes evidence-backed leads and renders a mixed found reply with its per-note labels intact', () => {
   const recall = createKiraTools().find(t => t.name === 'kira_recall')!
   assert.ok(recall.description.includes("Related notes were found, but K2 couldn't establish an evidence-backed answer. Use these as leads to check."))
   assert.ok(recall.description.includes('found does not verify every returned claim'))
+  const item = (id: string, evidence: string, capture: string) => ({
+    id, author: 'f'.repeat(64), author_name: 'claude', text: `note ${id}`, score: 0.5, capture, evidence,
+    state: evidence === 'unverified' ? 'proposed' : 'supported', validity: 'current', lineage: 'unsupported',
+    also_by: [], correction: null, current_id: null,
+  })
   const reply = {
     status: 'found',
+    reason: null,
     message: 'Evidence labels apply to each note; found does not verify every returned claim.',
-    items: [{ id: 'supported', evidence: 'owner-words' }, { id: 'lead', evidence: 'unverified' }],
+    items: [item('d'.repeat(64), 'owner-words', 'owner-typed'), item('e'.repeat(64), 'unverified', 'model-generated')],
+    omitted: 0, indexed: 2, total: 2, query_digest: '0'.repeat(64), states: { proposed: 1, supported: 1 },
+    judged: { by: 'keyword', rerank_floor: null, cosine_floor: null },
   }
-  assert.deepEqual(JSON.parse(recall.output.render({}, reply)[0].text), reply)
+  const rendered = JSON.parse(recall.output.render({}, reply)[0].text)
+  assert.deepEqual(rendered, reply)
+  assert.deepEqual(rendered.items.map((i: { evidence: string }) => i.evidence), ['owner-words', 'unverified'])
+  assert.equal(rendered.message, reply.message)
 })
 
 test('truncateUtf8 respects byte boundaries without splitting multi-byte code points', () => {

@@ -32,6 +32,61 @@ fn revocation_holds_the_request_guard_until_its_store_update_and_token_save_fini
     request_guard(&f.dir).unwrap();
 }
 
+/// While revoke updates the agent row and saves the tokens, an independent file description cannot take the guard.
+#[test]
+fn revocation_holds_the_guard_while_it_updates_the_store_and_saves_the_tokens() {
+    let f = fixture();
+    let path = f.dir.join("requests.lock");
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = seen.clone();
+    crate::shared::service::authorization::PROBE.with(|probe| {
+        *probe.borrow_mut() = Some(Box::new(move |stage| {
+            if stage != "lock-opened" {
+                let other = fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+                log.borrow_mut().push((stage, flock(&other, FlockOperation::NonBlockingLockExclusive)));
+            }
+        }));
+    });
+    let revoked = revoke(&f.dir, "claude");
+    crate::shared::service::authorization::PROBE.with(|probe| *probe.borrow_mut() = None);
+    revoked.unwrap();
+    let blocked = Err(rustix::io::Errno::WOULDBLOCK);
+    assert_eq!(*seen.borrow(), [("store-updated", blocked), ("tokens-saved", blocked)]);
+    assert_eq!(call(&f.state, &f.claude, "whoami", json!({}))["error"], "kira:token-refused");
+}
+
+/// A lock file swapped in between a guard's open and its lock is not the guard: it retries on the file the path names.
+#[test]
+fn a_lock_file_replaced_before_locking_is_retried_and_a_symlink_is_refused() {
+    let f = fixture();
+    let path = f.dir.join("requests.lock");
+    drop(request_guard(&f.dir).unwrap());
+    let swapped = std::rc::Rc::new(std::cell::Cell::new(false));
+    let once = swapped.clone();
+    let target = path.clone();
+    crate::shared::service::authorization::PROBE.with(|probe| {
+        *probe.borrow_mut() = Some(Box::new(move |stage| {
+            if stage == "lock-opened" && !once.replace(true) {
+                fs::remove_file(&target).unwrap();
+                write_private(&target, b"", false).unwrap();
+            }
+        }));
+    });
+    let guard = request_guard(&f.dir);
+    crate::shared::service::authorization::PROBE.with(|probe| *probe.borrow_mut() = None);
+    let guard = guard.unwrap();
+    assert!(swapped.get());
+    let (held, named) = (guard.metadata().unwrap(), fs::symlink_metadata(&path).unwrap());
+    assert_eq!((held.dev(), held.ino()), (named.dev(), named.ino()), "the guard locks the file the path names");
+    let other = fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+    assert_eq!(flock(&other, FlockOperation::NonBlockingLockExclusive), Err(rustix::io::Errno::WOULDBLOCK));
+    drop((guard, other));
+    fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(f.dir.join("elsewhere"), &path).unwrap();
+    assert_eq!(request_guard(&f.dir).err(), Some(refuse("request-lock")));
+    assert!(!f.dir.join("elsewhere").exists());
+}
+
 #[test]
 fn a_caller_admitted_before_revocation_cannot_start_a_later_recall_phase() {
     let f = fixture();
