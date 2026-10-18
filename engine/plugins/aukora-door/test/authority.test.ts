@@ -75,17 +75,28 @@ test('losing any previously active authority package refuses once and cannot rec
   }
 })
 
-test('door disposal cancels its timer and immediately refuses even before first readiness', () => {
+test('door disposal cancels its timer and says stopping once, never a terminal refusal (the crash path retries)', () => {
   for (const beforeReady of [false, true]) {
     const s = setup()
     if (beforeReady) s.change([])
     watchAuthority(s.ctx, s.parent, s.every)
     s.dispose()
     s.tick()
+    s.dispose()
     assert.equal(s.cancelled(), true)
-    assert.equal(s.messages.at(-1)?.reason, 'authority-plugin-inactive')
-    assert.equal(s.messages.filter(message => message.state === 'refused').length, 1)
+    assert.equal(s.messages.at(-1)?.state, 'stopping')
+    assert.equal(s.messages.filter(message => message.state === 'stopping').length, 1)
+    assert.equal(s.messages.filter(message => message.state === 'refused').length, 0)
   }
+})
+
+test('disposal after a refusal adds nothing', () => {
+  const s = setup()
+  watchAuthority(s.ctx, s.parent, s.every)
+  s.change([])
+  s.tick()
+  s.dispose()
+  assert.deepEqual(s.messages.map(message => message.state), ['ready', 'refused'])
 })
 
 test('an unreadable loader refuses and stops heartbeat', () => {

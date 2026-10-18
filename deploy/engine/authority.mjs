@@ -11,7 +11,7 @@ export function priorRefusal(authority, previous) {
 }
 
 export class AuthorityWatch {
-  constructor(required, { now = () => performance.now(), ready, refuse }) {
+  constructor(required, { now = () => performance.now(), ready, refuse, pause = () => {} }) {
     if (!Array.isArray(required) || required.length > 256 || !required.includes('@aukora/door')
       || !required.includes('@aukora/kira') || required.some(name => typeof name !== 'string')
       || new Set(required).size !== required.length) throw new Error('authority-runtime-config')
@@ -19,10 +19,12 @@ export class AuthorityWatch {
     this.now = now
     this.ready = ready
     this.refuse = refuse
+    this.pause = pause
     this.started = now()
     this.seen = undefined
     this.failed = false
     this.stopped = false
+    this.paused = false
   }
 
   close() { this.stopped = true }
@@ -40,9 +42,17 @@ export class AuthorityWatch {
       this.fail('authority-runtime-check')
     } else if (value.state === 'refused') {
       this.fail(value.reason === 'authority-runtime-check' ? value.reason : 'authority-plugin-inactive')
-    } else if (value.state === 'ready') {
+    } else if (value.state === 'ready' && !this.paused) {
       this.seen = this.now()
       this.ready()
+    } else if (value.state === 'ready') {
+      // Ignored once stopping: the same process is never admitted again.
+    } else if (value.state === 'stopping') {
+      // The plugin is being disposed: a supervisor stop, or the harness's crash path before it exits 1. Stop serving
+      // now, but latch nothing yet: a process that exits retries on its next start, and one that stays alive without
+      // its authority plugins is latched by tick() as authority-plugin-timeout (or -missing before first readiness).
+      this.paused = true
+      this.pause()
     } else {
       this.fail('authority-runtime-check')
     }

@@ -60,7 +60,10 @@ it. The root closure now seals `.aukora-authority.json` with the approved set ha
 marked `authority`, plus the overlay's mandatory `@aukora/door` and `@aukora/kira`. Door checks the live Cordis Loader
 entries (enabled, fiber ACTIVE) and sends their names to its parent launcher over Node IPC every second. No readiness
 within 30 s, any `disabling profile plugin` diagnostic, loss of an active authority entry, or 10 s without a heartbeat
-kills the harness. The web and model bridges forward nothing before readiness. This is an honest-loader invariant;
+kills the harness. The web and model bridges forward nothing before readiness. When Door itself is disposed (a stop,
+or the harness's crash path: an unhandled rejection disposes the root and exits 1) it says `stopping`: the bridges
+stop at once, but nothing is latched, so a crashed harness starts again; one that stays alive without its authority
+plugins is still latched by the heartbeat timeout. This is an honest-loader invariant;
 hostile code in the same process can forge IPC, so the OS wall remains the boundary.
 
 `engine-run.sh verify` also requires a fresh assertion for this exact set/release before the unit becomes active.

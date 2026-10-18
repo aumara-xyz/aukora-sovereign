@@ -22,7 +22,7 @@ interface AuthorityContext {
 export interface AuthorityMessage {
   type: 'aukora-authority'
   v: 1
-  state: 'ready' | 'refused'
+  state: 'ready' | 'refused' | 'stopping'
   plugins: string[]
   reason?: 'authority-plugin-inactive' | 'authority-runtime-check'
 }
@@ -86,7 +86,12 @@ export function watchAuthority(ctx: AuthorityContext, parent: AuthorityProcess =
     check()
     return () => {
       cancel()
-      refuse('authority-plugin-inactive')
+      // Disposal is also the harness's crash path (installFailLoud disposes the root fiber, then exits 1). Saying
+      // "stopping" makes the launcher stop serving at once without a terminal refusal, so a crash retries; a harness
+      // that stays alive without this plugin still gets latched by the launcher's heartbeat timeout.
+      if (stopped) return
+      stopped = true
+      report('stopping')
     }
   }, 'authority plugin monitor')
 }

@@ -64,6 +64,11 @@ const watch = new AuthorityWatch(authority.plugins, {
       watch.fail('authority-runtime-check')
     }
   },
+  pause() {
+    admitted = false
+    rmSync(STATUS, { force: true })
+    for (const client of clients) client.destroy()
+  },
   refuse(reason) {
     admitted = false
     process.stderr.write('entry: supervisor:' + reason + '; stopping the engine\n')

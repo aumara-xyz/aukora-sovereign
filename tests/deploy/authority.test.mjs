@@ -14,8 +14,9 @@ function rig() {
   let time = 0
   const refusals = []
   let ready = 0
-  const watch = new AuthorityWatch(plugins, { now: () => time, ready: () => ready++, refuse: code => refusals.push(code) })
-  return { watch, refusals, ready: () => ready, at: value => { time = value; watch.tick() } }
+  let paused = 0
+  const watch = new AuthorityWatch(plugins, { now: () => time, ready: () => ready++, refuse: code => refusals.push(code), pause: () => paused++ })
+  return { watch, refusals, ready: () => ready, paused: () => paused, at: value => { time = value; watch.tick() } }
 }
 test('no positive activation by the deadline stops the engine, even if DSH boots successfully', () => {
   const r = rig()
@@ -57,4 +58,19 @@ test('an intentional supervisor stop does not latch the expected disposal as a r
   r.watch.message({ type: 'aukora-authority', v: 1, state: 'refused', plugins, reason: 'authority-plugin-inactive' })
   r.at(STARTUP_MS)
   assert.deepEqual(r.refusals, [])
+})
+test('a disposing plugin stops service at once without a terminal refusal; staying alive without it still latches', () => {
+  const r = rig()
+  r.watch.message({ type: 'aukora-authority', v: 1, state: 'ready', plugins })
+  r.at(1)
+  r.watch.message({ type: 'aukora-authority', v: 1, state: 'stopping', plugins })
+  assert.equal(r.paused(), 1)
+  assert.deepEqual(r.refusals, [])
+  // A late ready after stopping never re-admits the same process.
+  r.watch.message({ type: 'aukora-authority', v: 1, state: 'ready', plugins })
+  assert.equal(r.ready(), 1)
+  r.at(HEARTBEAT_MS - 1)
+  assert.deepEqual(r.refusals, [])
+  r.at(HEARTBEAT_MS)
+  assert.deepEqual(r.refusals, ['authority-plugin-timeout'])
 })
