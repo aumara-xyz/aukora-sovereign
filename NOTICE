@@ -1,0 +1,22 @@
+AUKORA Sovereign
+Copyright (c) 2026 Aumara and contributors
+
+AUKORA Sovereign's original files, written by Aumara and its contributors, are licensed under the GNU Affero General
+Public License, version 3 or (at your option) any later version: AGPL-3.0-or-later. The full licence text is in
+LICENSE. Individual files keep the copyright and SPDX lines in their headers.
+
+Vendored third-party components keep their own licences, which are kept beside them:
+
+- three.js r180 (MIT, Three.js Authors): engine/plugins/aukora-face/apps/vendor/three/ (LICENSE, upstream-three.json)
+- jsQR (Apache-2.0): portal/vendor/LICENSE-jsQR; engine/plugins/aukora-face/messages/src/vendor/jsqr/LICENSE
+- QR Code generator library, TypeScript (MIT, Project Nayuki):
+  engine/plugins/aukora-face/aumlok/src/vendor/qrcodegen/LICENSE
+- DeepSeek Harness (MIT, DeepSeek) and its third-party notices: engine/plugins/aukora-face/licenses/DSH-MIT-LICENSE,
+  engine/plugins/aukora-face/licenses/DSH-THIRD-PARTY-NOTICES.md, engine/plugins/aukora-face/licenses/upstream/dsh/
+- npm packages bundled into the app (React, Base UI, Lucide, three.js): their licences and notices are in
+  engine/plugins/aukora-face/licenses/ and engine/plugins/aukora-face/licenses/upstream/npm/
+
+Each vendor folder's README or manifest records where its files came from. A licence kept beside a component governs
+that component; nothing in this NOTICE changes it.
+
+Patent applications covering parts of this work are described in PATENTS.md.
