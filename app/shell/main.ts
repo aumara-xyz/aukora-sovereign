@@ -243,7 +243,7 @@ export function mountShell(options: ShellOptions): ShellController {
     // Nothing waiting but something declined: open the newest declined card, where the owner may ask again.
     if (waiting === 0 && declined.length) void openOwner(`/approval/${declined[0]}`).catch(() => {});
     else options.openApprovals?.();
-  }, life.signal);
+  }, life.signal, 'owner');
   approvals.button.classList.add('approvals-entry');
   approvals.button.disabled = true;
   menu.system.append(approvals.button);

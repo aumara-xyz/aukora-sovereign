@@ -35,6 +35,16 @@ button:disabled { cursor: default; }
 .menuTab[data-menu-tab='system'] { --spatial-accent: var(--spatial-blue); }
 .menuTab[data-menu-tab='yours'] { --spatial-accent: var(--spatial-mint); }
 :root body #aukora-shell .menuPanel button:hover { transform: none; }
+/* Rule 10 (Peter, 2026-10-18 "matching my Settings screen"): every launcher is a portal button, left-justified with its
+   icon tile; the tile takes the selected tab's colour. The pinned design data keeps its own right-aligned rule. */
+.rightStack[data-menu-tab='apps'] .menuItem { --spatial-accent: var(--spatial-violet); }
+.rightStack[data-menu-tab='system'] .menuItem { --spatial-accent: var(--spatial-blue); }
+.rightStack[data-menu-tab='yours'] .menuItem { --spatial-accent: var(--spatial-mint); }
+:root body #aukora-shell .menuItem { gap: 12px; min-height: 68px; padding: 0 16px; text-align: left; }
+:root body #aukora-shell .menuCopy { align-items: flex-start; }
+:root body #aukora-shell .menuCopy :is(strong, span) { text-align: left; }
+.menuIconTile { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 10px; color: var(--spatial-accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--spatial-accent) 28%, transparent); }
+.menuIconTile .menuIcon { width: 16px; height: 16px; stroke-width: 1.4; }
 
 .owner-dialog { width: min(720px, 94vw); height: min(820px, 92dvh); padding: 0; border: 1px solid var(--spatial-border); border-radius: 22px; background: linear-gradient(var(--spatial-lane-surface), var(--spatial-lane-surface)), var(--dsw-specific-spatial-canvas); color: var(--spatial-text); }
 .owner-dialog::backdrop { background: var(--aukora-backdrop); }

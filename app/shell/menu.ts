@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import data from '../design/spatial/menu.json' with { type: 'json' };
 import type { FaceManifest } from '../faces/catalog.js';
+import { icon } from '../design/index.js';
 
 type Tab = 'apps' | 'system' | 'yours';
 const TABS: readonly Tab[] = ['apps', 'system', 'yours'];
@@ -31,9 +32,16 @@ function tabIcon(tab: Tab): SVGSVGElement {
   return icon;
 }
 
-export function menuCard(title: string, description: string, select: () => void, signal: AbortSignal) {
+// A launcher is a portal button (rule 10): its icon in a tile, then the title and one-line description, left-justified.
+export function menuCard(title: string, description: string, select: () => void, signal: AbortSignal, glyph?: string) {
   const button = element('button', 'menuItem');
   button.type = 'button';
+  if (glyph) {
+    const tile = element('span', 'menuIconTile');
+    tile.setAttribute('aria-hidden', 'true');
+    tile.append(icon(glyph, 'menuIcon'));
+    button.append(tile);
+  }
   const copy = element('span', 'menuCopy');
   const heading = element('strong', '', title);
   const subtitle = element('span', '', description);
@@ -117,7 +125,7 @@ export function createMenu(signal: AbortSignal) {
         : manifest.menu.section === 'aukora_apps' ? 'apps' : null;
       if (!tab || !Object.hasOwn(data.subtitles, manifest.id)) throw new Error('shell:unknown-face');
       const subtitle = (data.subtitles as Readonly<Record<string, string>>)[manifest.id];
-      const card = menuCard(manifest.title, subtitle, open, signal);
+      const card = menuCard(manifest.title, subtitle, open, signal, manifest.id);
       card.button.dataset.face = manifest.id;
       groups.get(tab)!.append(card.button);
       return card.button;
