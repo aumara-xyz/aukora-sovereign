@@ -91,6 +91,13 @@ def environment():
     if static not in ("", "0", "1"):
         core.refuse("spawn", "nebius-settings")
     values["static_ip"] = static != "0"
+    # An existing public allocation (AUKORA_NEBIUS_PUBLIC_ALLOCATION_ID): a VM recreated for an unclaimed node keeps its
+    # address, so its hosts are unchanged. The allocation must be free (detached from any VM) and in the VM's subnet;
+    # one assigned at create is kept by Virtual Networks when the VM is deleted.
+    allocation = os.environ.get("AUKORA_NEBIUS_PUBLIC_ALLOCATION_ID", "")
+    if allocation and (not re.fullmatch(r"vpcallocation-[a-z0-9]{1,64}", allocation) or not values["static_ip"]):
+        core.refuse("spawn", "nebius-settings")
+    values["public_allocation"] = allocation
     return values
 
 
@@ -240,6 +247,8 @@ def provision(plan, settings):
                                                     "ssh_authorized_keys": [settings["public_key"]]}, sort_keys=True) + "\n"
         nic = {"name": "eth0", "subnet_id": settings["AUKORA_NEBIUS_SUBNET_ID"], "ip_address": {},
                "public_ip_address": {"static": True} if settings["static_ip"] else {}}
+        if settings["public_allocation"]:
+            nic["public_ip_address"]["allocation_id"] = settings["public_allocation"]
         if settings["security_group"]:
             nic["security_groups"] = [{"id": settings["security_group"]}]
         interface = json.dumps([nic], separators=(",", ":"))

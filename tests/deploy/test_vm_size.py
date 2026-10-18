@@ -73,6 +73,15 @@ class VmSize(unittest.TestCase):
         self.assertFalse(self.settings(AUKORA_VM_STATIC_IP="0")["static_ip"])
         self.assertEqual(self.refused(AUKORA_VM_STATIC_IP="yes"), "spawn:nebius-settings")
 
+    def test_an_existing_allocation_is_named_exactly_and_only_with_a_static_address(self):
+        self.assertEqual(self.settings()["public_allocation"], "")
+        self.assertEqual(self.settings(AUKORA_NEBIUS_PUBLIC_ALLOCATION_ID="vpcallocation-e00abc")["public_allocation"],
+                         "vpcallocation-e00abc")
+        for bad in ("e00abc", "vpcallocation-E00", "vpcallocation-a b"):
+            self.assertEqual(self.refused(AUKORA_NEBIUS_PUBLIC_ALLOCATION_ID=bad), "spawn:nebius-settings", bad)
+        self.assertEqual(self.refused(AUKORA_NEBIUS_PUBLIC_ALLOCATION_ID="vpcallocation-e00abc", AUKORA_VM_STATIC_IP="0"),
+                         "spawn:nebius-settings")
+
     def test_the_smallest_cpu_shape_at_the_named_size(self):
         with mock.patch.object(vm, "nebius", lambda *args, **kwargs: PLATFORMS):
             self.assertEqual(vm.smallest_preset(None, "project-x", 2, 8), ("cpu-d3", "2vcpu-8gb"))
