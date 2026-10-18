@@ -239,7 +239,15 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
 - **Peer.** `SO_PEERCRED` uid must be the engine's (`model-broker-v1.json` `peer_uids`); anything else is 403 before
   the body is read. Without kernel peer credentials (not Linux) the link does not start.
 - **Key** (`KeyInbox`; at rest one 0600 file, O7 below). The owner types it at `https://<shell>/engine/model-key` (a self-contained page
-  served by the supervisor, script and style pinned by hash in its CSP); `POST /api/engine/model-key` needs the bound
+  served by the supervisor in the primitives' look, `host/engine_routes/model_key_page.rs`: the primitives, its style and
+  script inline and pinned by hash in its CSP, the field masked, never autofilled, cleared before the request leaves).
+  **Settings → Models** in the app reaches it: the harness's own Models section is off (overlay row 3: its key form would
+  store the key in the engine) and the face's section shows one DeepSeek row whose Edit opens that shell page in a new
+  tab (`engine.<shell>` → `<shell>`; the engine origin never holds a field for the key). The row's dot reads
+  `GET https://engine.<shell>/.aukora/model-key`, answered by the engine proxy itself after its usual admission (the
+  owner's engine session, re-checked against binding, shell session and release floor; GET, `Sec-Fetch-Site:
+  same-origin`); the engine never sees it. Reply: `{"state": "none" | "awaiting-approval" | "not-approved" |
+  "approved"}`, plus `"last4"` once approved; never the key, its digest or fingerprint. `POST /api/engine/model-key` needs the bound
   owner's shell session (frontdoor: same origin, JSON). The broker holds the key and proposes
   `engine/model-key.json` = `{key_sha256, kind, provider, v}`: the card shows the digest only; the page shows its
   first 12 hex digits (the fingerprint) to compare. A call uses the key only while its SHA-256 equals the approved

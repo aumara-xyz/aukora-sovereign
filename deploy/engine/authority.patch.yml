@@ -47,14 +47,17 @@
 - id: harness-dev-context
   disabled: true
 
-# 3. No first-run sign-in form; the engine holds no model key (NODE.md, "The model"). The harness's preview notice
-#    is acknowledged here: its "Continue" writes the acknowledgement to the profile's cordis.patch.yml, which is
-#    root-owned and read-only inside the wall, so it can never persist and the modal notice would cover the chat
-#    composer forever (found live, NODE.md O9). The version is the notice's copy version in 0.2.1-alpha.5
-#    (ui-settings-models onboarding-copy.ts: WELCOME_NOTICE_VERSION in the ui-settings-general section).
+# 3. The engine holds no model key (NODE.md section 7), so the harness's own Models section is off: its key form (and
+#    its first-run sign-in dialog) would store the key in the engine, and its "+ Add model provider" would put other
+#    providers' keys there too. The face's Models section takes its place (aukora-face settings/src/client/models):
+#    one DeepSeek row whose dot is the model broker's real standing and whose Edit opens the shell origin's key page.
+#    Off here, after every layer the engine can write, so the engine cannot bring the form back.
+#    The harness's preview notice (also ui-settings-models) goes with it; the acknowledgement below stays for any
+#    composition that still mounts it: its "Continue" writes to the profile's cordis.patch.yml, which is root-owned
+#    and read-only inside the wall, so the modal notice would cover the chat composer forever (found live, NODE.md
+#    O9). The version is the notice's copy version in 0.2.1-alpha.5 (ui-settings-models onboarding-copy.ts).
 - id: ui-settings-models
-  config:
-    credentialOnboarding: false
+  disabled: true
 - id: ui-settings-general
   config:
     welcomeNoticeVersion: '2026-09-28.1'

@@ -19,6 +19,8 @@
     "src/client/locales.ts",
     "src/client/settings-document-store.ts",
     "src/client/shell-contract.ts",
+    "src/client/models/ModelsSection.tsx",
+    "src/client/models/model-key.ts",
     "src/activity/types.ts",
     "src/client/pentora/AuraPentoraSurface.tsx",
     "src/client/pentora/activity.ts",

@@ -34,6 +34,7 @@ import { SettingsMenu } from './SettingsMenu.tsx'
 import { SettingsOnboarding } from './SettingsOnboarding.tsx'
 import { CloseLabel, HeaderContent } from './chrome.tsx'
 import { GeneralSection } from './GeneralSection.tsx'
+import { ModelsSection } from './models/ModelsSection.tsx'
 import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
 import type { SettingsDocumentActionInjected } from './SettingsDocumentAction.tsx'
 import { SettingsDocumentStore } from './settings-document-store.ts'
@@ -227,4 +228,15 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     children: { 'settings.general.item': { kind: 'list', scope: 'root' } },
   }, GeneralSection))
+
+  // Models on a Sovereign node (models/ModelsSection.tsx): the harness's own Models section is off (authority overlay,
+  // row 3) because its key form would keep the key in the engine. This one takes its place and order; Edit opens the
+  // node's key page on the shell origin, and the row's dot is the model broker's real standing.
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'models',
+    order: 10,
+    // English like the System-menu summaries (SettingsMenu.tsx): locales.ts is Prime's pinned copy.
+    label: 'Models',
+  }, ModelsSection))
 }

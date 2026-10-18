@@ -221,6 +221,14 @@ impl GateAdapter {
         })
     }
 
+    /// The bytes of the card still up (pending) for `target`, if there is one: what the owner has been asked and not yet
+    /// answered. Read-only; an unanswered card past its time stays pending until the gate's next sweep.
+    pub fn pending_target(&self, target: &'static str) -> ServiceFuture<'_, Option<Vec<u8>>> {
+        self.submit(move |_, host| {
+            host.transaction(|txn| pending_bytes(txn, target))
+        })
+    }
+
     /// The manifest the owner last approved: the bytes the gate's `build/manifest.json` target holds, which only an
     /// applied proposal can change. `None` before the first approval.
     pub fn approved_manifest(&self) -> ServiceFuture<'_, Option<Vec<u8>>> {
@@ -684,6 +692,11 @@ pub(crate) fn propose_again_in<S: TargetStore>(
 /// The Aura fact that records the owner asking again for something they declined or that lapsed.
 pub use gate::proposal::AGAIN_SCHEMA;
 
+/// The bytes of the pending proposal for `target`, if one is up (a target holds at most one live proposal).
+fn pending_bytes(txn: &mut aura::LedgerTxn<'_>, target: &str) -> Result<Option<Vec<u8>>> {
+    Ok(txn.pending_proposals(10_001)?.into_iter().find(|row| row.target == target).map(|row| row.new_bytes))
+}
+
 #[cfg(test)]
 mod tests {
     //! NODE.md O19 against a real Aura ledger and the gate: closing a card (it expires) is not a decline; the owner's
@@ -921,5 +934,17 @@ mod tests {
         rig.decline(first).unwrap();
         let declined = rig.ledger.transaction(|txn| txn.last_decline(digest)).unwrap();
         assert_eq!(declined.map(|row| row.proposal), Some(first));
+    }
+
+    #[test]
+    fn the_card_up_for_a_target_is_read_until_it_is_answered() {
+        let mut rig = rig("pending", 60_000);
+        let pending = |rig: &Rig| rig.ledger.transaction(|txn| pending_bytes(txn, PLUGIN)).unwrap();
+        assert_eq!(pending(&rig), None);
+        let id = rig.propose(PLUGIN, br#"{"set":"p"}"#).unwrap();
+        assert_eq!(pending(&rig).as_deref(), Some(&br#"{"set":"p"}"#[..]));
+        assert_eq!(rig.ledger.transaction(|txn| pending_bytes(txn, ASK)).unwrap(), None, "another target's card is not this one's");
+        rig.decline(id).unwrap();
+        assert_eq!(pending(&rig), None, "a declined card is no longer up");
     }
 }

@@ -213,7 +213,7 @@ removed from `checks/pins.json`.
 
 ## Composition (what `preview-face.py` writes)
 Profile `aukora`: `dsh-base`, then `@aukora/face-bundle` = dsh-web-app's `cordis.patch.yml` and presets with the rows `ui-layout`, `ui-sidebar`, `ui-workspace`, `ui-settings-general` removed
-(Prime disabled the same four), `ui-settings-models` set to `credentialOnboarding: false` (Prime's order of 2026-09-27: no first-run form opens by itself; the harness added a "Get started" sign-in dialog), and the face rows inserted.
+(Prime disabled the same four), `ui-settings-models` disabled (as on the node, authority.patch.yml row 3: its key form would keep the DeepSeek key in the engine; the face's own Models section, `settings/src/client/models`, takes its place and hands the key to the shell origin; this also covers Prime's order of 2026-09-27, no first-run form opens by itself), and the face rows inserted.
 Everything lives under the scratch install, including `DSH_HOME`.
 
 ## Verified and not verified

@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* The Sovereign Models section: the primitives' record row (ak-row) for the provider, the section title and intro take
+   the harness-skin look (skin-harness.css, `h2` and `h2 + p`). Only what the primitives do not already say is here. */
+.section { display: flex; flex-direction: column; gap: 0; width: 100%; }
+
+/* The status dot after the provider's name, in the row's tone (the harness's own row has one, green or red). */
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--ak-tone, var(--ak-muted));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ak-tone, var(--ak-muted)) 45%, transparent);
+  vertical-align: 1px;
+}
+
+.provider :global(.ak-row__body) { padding-top: 0; }
+
+.note { margin: 12px 2px 0; color: var(--ak-muted); font-size: 11px; line-height: 1.5; }

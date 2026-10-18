@@ -286,7 +286,47 @@ async fn handle(host: Arc<Host>, engine: Arc<Engine>, peer: std::net::SocketAddr
         let bearer = bearer.unwrap_or_default();
         return websocket(host, engine, request, &target, grant, bearer).await;
     }
+    if target == MODEL_KEY_STATUS {
+        return model_key_status(&host, request.method(), request.headers()).await;
+    }
     relay(&engine, request, &target).await
+}
+
+/// The Models row's read of the owner's DeepSeek key (NODE.md section 7): answered here, by the supervisor, for an
+/// admitted engine session (the owner's bound scope, re-checked above). The engine never sees this request or its
+/// reply. The reply is `{"state"}` and, once approved, `"last4"`: never the key, its digest or its fingerprint.
+pub const MODEL_KEY_STATUS: &str = "/.aukora/model-key";
+
+async fn model_key_status(host: &Host, method: &http::Method, headers: &http::HeaderMap) -> Response<Body> {
+    if !status_read_admitted(method, headers) {
+        return text(StatusCode::FORBIDDEN, "not here\n");
+    }
+    status_reply(host.model_key_status().await)
+}
+
+/// A read for the page itself: a GET from the engine origin's own script (`Sec-Fetch-Site: same-origin`, or no fetch
+/// metadata at all). A sibling origin's request carries the SameSite=Strict cookie too, but is refused here.
+fn status_read_admitted(method: &http::Method, headers: &http::HeaderMap) -> bool {
+    let mut sites = headers.get_all("sec-fetch-site").iter();
+    let same_origin = sites.next().is_none_or(|site| site.as_bytes() == b"same-origin") && sites.next().is_none();
+    method == http::Method::GET && same_origin
+}
+
+fn status_reply(status: Option<Result<crate::model_broker::KeyStatus>>) -> Response<Body> {
+    match status {
+        None => text(StatusCode::NOT_FOUND, "This node has no model broker.\n"),
+        Some(Err(_)) => text(StatusCode::SERVICE_UNAVAILABLE, "Your node is busy for a moment. Try again.\n"),
+        Some(Ok(status)) => json(&status.to_json()),
+    }
+}
+
+fn json(body: &str) -> Response<Body> {
+    let mut response = Response::new(Full::new(Bytes::from(body.to_owned())).map_err(|never| match never {}).boxed());
+    let headers = response.headers_mut();
+    headers.insert("content-type", http::HeaderValue::from_static("application/json"));
+    headers.insert("cache-control", http::HeaderValue::from_static("no-store"));
+    harden(headers);
+    response
 }
 
 /// Forward an admitted WebSocket upgrade: the harness must switch protocols first (with its own cookie and the
@@ -648,5 +688,38 @@ mod tests {
         assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
         assert!(headers.get_all("content-security-policy").iter().any(|v| v.to_str().unwrap().contains("frame-ancestors 'none'")));
         assert!(!FORWARD.contains(&"cookie") && !FORWARD.contains(&"authorization"));
+    }
+
+    #[tokio::test]
+    async fn the_key_status_is_a_same_origin_get_with_state_only_and_hardened() {
+        use crate::model_broker::KeyStatus;
+        let headers = |site: Option<&'static str>| {
+            let mut headers = http::HeaderMap::new();
+            if let Some(site) = site {
+                headers.append("sec-fetch-site", http::HeaderValue::from_static(site));
+            }
+            headers
+        };
+        assert!(status_read_admitted(&http::Method::GET, &headers(Some("same-origin"))));
+        assert!(status_read_admitted(&http::Method::GET, &headers(None)));
+        for site in ["same-site", "cross-site", "none"] {
+            assert!(!status_read_admitted(&http::Method::GET, &headers(Some(site))), "{site}");
+        }
+        assert!(!status_read_admitted(&http::Method::POST, &headers(Some("same-origin"))));
+        let mut two = headers(Some("same-origin"));
+        two.append("sec-fetch-site", http::HeaderValue::from_static("same-origin"));
+        assert!(!status_read_admitted(&http::Method::GET, &two));
+        let reply = status_reply(Some(Ok(KeyStatus::Approved { last4: "wxyz".into() })));
+        assert_eq!(reply.status(), StatusCode::OK);
+        assert_eq!(reply.headers().get("content-type").unwrap(), "application/json");
+        assert_eq!(reply.headers().get("cache-control").unwrap(), "no-store");
+        assert_eq!(reply.headers().get("x-frame-options").unwrap(), "DENY");
+        assert!(reply.headers().get("access-control-allow-origin").is_none());
+        let body = reply.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], br#"{"last4":"wxyz","state":"approved"}"#);
+        assert_eq!(status_reply(None).status(), StatusCode::NOT_FOUND);
+        assert_eq!(status_reply(Some(Err(refuse("x")))).status(), StatusCode::SERVICE_UNAVAILABLE);
+        // The route is the proxy's own: a path the harness would otherwise be asked for, never relayed.
+        assert_eq!(admit_target(&"/.aukora/model-key".parse::<http::Uri>().unwrap()).as_deref(), Some(MODEL_KEY_STATUS));
     }
 }

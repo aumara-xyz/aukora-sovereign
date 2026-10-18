@@ -82,6 +82,7 @@
     "engine/plugins/aukora-face/messages/src/client/contacts-client.ts": "Runs in the page (browser bundle), not in the engine process: fetch to the harness's own same-origin routes, which each gate on the launch token. Copied from Prime.",
     "engine/plugins/aukora-face/messages/src/confirm-contact-route.ts": "Copied from Prime. Passes process.env to the contacts writer to resolve the state directory and the controller socket path; reads no key itself.",
     "engine/plugins/aukora-face/messages/src/contacts-store.ts": "Copied from Prime. Reads the one environment variable the contacts configuration names (process.env[declared]) to locate its files. Not on the ruling list.",
+    "engine/plugins/aukora-face/settings/src/client/models/ModelsSection.tsx": "Authored. Runs in the page (browser bundle) on the engine origin, not in the engine process: one same-origin GET of /.aukora/model-key, which the supervisor's engine proxy answers itself (the engine never sees it); the reply is {state, last4?} only, never the key.",
     "engine/plugins/aukora-foundation/tsdown.config.ts": "Copied from Prime. Build-time only (never loaded by the engine): reads AUKORA_BUILD_FACE and AUKORA_ICON_DATA_URI, which build-face.py sets for the tsdown run."
   },
   "edited_copies": {
