@@ -18,7 +18,14 @@ check_properties() {
     for expected in "$@"; do
         property=${expected%%=*}
         actual=$(systemctl show --property="$property" --value "$unit" 2>/dev/null) || actual=
-        [ "$actual" = "${expected#*=}" ] || fail "$unit" "$property is '$actual', expected '${expected#*=}'"
+        wanted=${expected#*=}
+        case $property in
+            # A set: systemd prints the addresses in no fixed order (seen both ways on systemd 255.4, 2026-10-18).
+            IPAddressDeny | IPAddressAllow)
+                actual=$(printf '%s\n' $actual | sort | tr '\n' ' ')
+                wanted=$(printf '%s\n' $wanted | sort | tr '\n' ' ') ;;
+        esac
+        [ "$actual" = "$wanted" ] || fail "$unit" "$property is '$actual', expected '$wanted'"
     done
 }
 
