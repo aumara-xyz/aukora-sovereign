@@ -47,6 +47,7 @@ pub struct Grant {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Clone))]
 pub struct Access {
     tickets: HashMap<[u8; 32], Grant>,
     sessions: HashMap<[u8; 32], Grant>,
@@ -132,13 +133,14 @@ impl Access {
         // Consume first, then issue the bearer; the proxy sets the cookie only after this returns. An issuance
         // failure cannot restore the ticket. Both maps are volatile, so a crash also discards every pending ticket.
         let grant = key(ticket).and_then(|digest| self.tickets.remove(&digest)).ok_or_else(|| refuse("engine-ticket"))?;
+        let bearer = issue_secret()?;
+        let digest = key(&bearer).ok_or_else(|| refuse("engine-random"))?;
+        // Evict only once the new bearer exists: a failed issuance must not cost a live owner session.
         if self.sessions.len() >= MAX_SESSIONS {
             if let Some(oldest) = self.sessions.iter().min_by_key(|(_, grant)| grant.expires).map(|(digest, _)| *digest) {
                 self.sessions.remove(&oldest);
             }
         }
-        let bearer = issue_secret()?;
-        let digest = key(&bearer).ok_or_else(|| refuse("engine-random"))?;
         let expires = (now + lifetime_ms).min(grant.shell_end);
         let session = Grant { expires, ..grant };
         self.sessions.insert(digest, session);
@@ -220,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn ticket_is_consumed_before_issuance_and_cannot_be_retried_after_restart() {
+    fn ticket_is_consumed_before_issuance_and_a_failed_issuance_evicts_no_session() {
         let mut access = Access::default();
         let ticket = access.mint_ticket(scope(1), shell(1), FOREVER, 1_000).unwrap();
         // Fail at bearer issuance, after ticket consumption and before any cookie can be returned.
@@ -229,17 +231,27 @@ mod tests {
         assert!(access.sessions.is_empty());
         assert_eq!(access.redeem(&ticket, 2_001, 3_600_000).unwrap_err().reason, "engine-ticket");
 
-        let pending = access.mint_ticket(scope(1), shell(1), FOREVER, 2_001).unwrap();
-        let issued = access.mint_ticket(scope(1), shell(1), FOREVER, 2_001).unwrap();
-        let (bearer, _, _) = access.redeem(&issued, 2_001, 3_600_000).unwrap();
-        // Engine::load starts with fresh volatile stores: neither tickets nor sessions survive a crash.
-        drop(access);
-        let mut restarted = Access::default();
-        for ticket in [&ticket, &pending, &issued] {
-            assert_eq!(restarted.redeem(ticket, 2_002, 3_600_000).unwrap_err().reason, "engine-ticket");
+        // A full session table: a failed issuance keeps every live session, the oldest included.
+        let mut bearers = Vec::new();
+        for n in 0..MAX_SESSIONS as u64 {
+            let ticket = access.mint_ticket(scope(1), shell(1), FOREVER, 3_000 + n).unwrap();
+            bearers.push(access.redeem(&ticket, 3_000 + n, 1_000_000 + n).unwrap().0);
         }
-        assert_eq!(restarted.lookup(&bearer, 2_002), Lookup::Unknown);
-        assert!(restarted.sessions.is_empty());
+        let ticket = access.mint_ticket(scope(1), shell(1), FOREVER, 4_000).unwrap();
+        let failed = access.redeem_with_secret(&ticket, 4_000, 1_000_000, || Err(refuse("engine-random")));
+        assert_eq!(failed.unwrap_err().reason, "engine-random");
+        assert_eq!(access.sessions.len(), MAX_SESSIONS);
+        assert!(bearers.iter().all(|bearer| access.session(bearer, 4_001).is_some()), "the oldest session survives");
+        // A non-canonical bearer is an issuance failure too, and costs no session either.
+        let ticket = access.mint_ticket(scope(1), shell(1), FOREVER, 4_000).unwrap();
+        let failed = access.redeem_with_secret(&ticket, 4_000, 1_000_000, || Ok("short".into()));
+        assert_eq!(failed.unwrap_err().reason, "engine-random");
+        assert!(bearers.iter().all(|bearer| access.session(bearer, 4_001).is_some()));
+        // A successful issuance into the full table replaces exactly the oldest.
+        let ticket = access.mint_ticket(scope(1), shell(1), FOREVER, 4_000).unwrap();
+        access.redeem(&ticket, 4_000, 1_000_000).unwrap();
+        assert_eq!(access.sessions.len(), MAX_SESSIONS);
+        assert!(access.session(&bearers[0], 4_001).is_none() && access.session(&bearers[1], 4_001).is_some());
     }
 
     #[test]

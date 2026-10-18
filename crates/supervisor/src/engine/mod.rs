@@ -108,13 +108,19 @@ impl Engine {
     pub fn load(config: &crate::config::NodeConfig) -> Result<Option<Arc<Self>>> {
         let Some(text) = config.engine_config_text()? else { return Ok(None) };
         let config = EngineConfig::parse(&text, &config.shell_origin, &config.owner_origin)?;
-        Ok(Some(Arc::new(Self {
+        Ok(Some(Self::start(config)))
+    }
+
+    /// The engine state a (re)started node begins with: tickets, sessions and the harness cookie are volatile, so a
+    /// restart signs everyone out of the engine and spends every pending ticket.
+    fn start(config: EngineConfig) -> Arc<Self> {
+        Arc::new(Self {
             config,
             access: Mutex::new(access::Access::default()),
             dsh_cookie: Mutex::new(None),
             status: Mutex::new("starting"),
             sockets: Arc::new(tokio::sync::Semaphore::new(MAX_SOCKETS)),
-        })))
+        })
     }
 
     /// The engine origin's URL that redeems a fresh one-time ticket for this bound owner, minted from the shell
@@ -208,6 +214,35 @@ mod tests {
         assert!(EngineConfig::parse(&public, shell, owner).is_err());
         let extra = text("engine.n1-1-2-3-4.sslip.io", 12).replace("{\"v\":1", "{\"v\":1,\"x\":1");
         assert!(EngineConfig::parse(&extra, shell, owner).is_err());
+    }
+
+    #[test]
+    fn a_restart_spends_every_pending_ticket_and_signs_every_session_out() {
+        let (shell, owner) = ("https://n1-1-2-3-4.sslip.io", "https://owner.n1-1-2-3-4.sslip.io");
+        let config = || EngineConfig::parse(&text("engine.n1-1-2-3-4.sslip.io", 12), shell, owner).unwrap();
+        let scope = supervisor::ingress::PrincipalScope {
+            subject: canon::ids::SubjectId::from_digest(canon::digest::Digest32::from_bytes([7; 32])),
+            epoch: 1,
+        };
+        let session = canon::digest::Digest32::from_bytes([1; 32]);
+        let ticket = |engine: &Engine| {
+            let url = engine.enter_url(scope, session, u64::MAX / 2, 1_000).unwrap();
+            url.split_once(access::ENTER_PREFIX).unwrap().1.to_owned()
+        };
+        let before = Engine::start(config());
+        let (pending, issued) = (ticket(&before), ticket(&before));
+        let (bearer, _, _) = before.access.lock().unwrap().redeem(&issued, 2_000, 3_600_000).unwrap();
+        // Before the restart the pending ticket and the session are both good (checked on a copy, so neither is spent).
+        let mut old = before.access.lock().unwrap().clone();
+        assert!(matches!(old.lookup(&bearer, 2_001), access::Lookup::Live(_)));
+        assert!(old.redeem(&pending, 2_001, 3_600_000).is_ok());
+        drop(before);
+        // Engine::load builds its state through Engine::start: the restarted engine knows neither.
+        let after = Engine::start(config());
+        let mut access = after.access.lock().unwrap();
+        assert_eq!(access.redeem(&pending, 2_001, 3_600_000).unwrap_err().reason, "engine-ticket");
+        assert_eq!(access.redeem(&issued, 2_001, 3_600_000).unwrap_err().reason, "engine-ticket");
+        assert_eq!(access.lookup(&bearer, 2_001), access::Lookup::Unknown);
     }
 
     #[test]
