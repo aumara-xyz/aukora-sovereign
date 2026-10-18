@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The local OpenShell 0.1.4 gateway (docker compute driver) the engine sandbox runs under. Loopback only; its PKI
-# (made by engine_install.py with the gateway's own generate-certs) and its database live in /var/lib/aukora-openshell
-# (root 0700, the HOME below). Settings: /etc/aukora/engine/openshell-gateway.toml. The command line is the wall
-# test's (`openshell-gateway --config FILE`, the wall-test VM's start-gw.sh).
+# (made by engine_install.py with the gateway's own generate-certs) lives in /var/lib/aukora-openshell
+# (root 0700, the HOME below). Settings: /etc/aukora/engine/openshell-gateway.toml.
 [Unit]
 Description=AUKORA OpenShell gateway for the engine sandbox
 After=docker.service network-online.target aukora-engine-fence.service
@@ -12,7 +11,11 @@ StartLimitIntervalSec=0
 [Service]
 Type=exec
 Environment=OPENSHELL_TELEMETRY_ENABLED=false HOME=/var/lib/aukora-openshell
-ExecStart=/usr/local/bin/openshell-gateway --config /etc/aukora/engine/openshell-gateway.toml
+# OpenShell's own startup recovery bypasses AUKORA admission if running intent survives a gateway restart.
+# Keep only PKI/CLI registration persistent; forget sandbox intent and remove old containers before every launch.
+# --db-url sqlite::memory: is supported by the pinned 0.1.4 CLI; a TOML database_url key is rejected.
+ExecStartPre=/opt/aukora/current/deploy/engine/engine-run.sh gateway-clean
+ExecStart=/usr/local/bin/openshell-gateway --config /etc/aukora/engine/openshell-gateway.toml --db-url sqlite::memory:
 Restart=on-failure
 RestartSec=5s
 RestartSteps=6

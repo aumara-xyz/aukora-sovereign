@@ -26,17 +26,14 @@ WALLS_PENDING = set()
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FAIL = []
 
-
 def fail(rule, detail):
     FAIL.append(f"{rule}: {detail}")
-
 
 def read_source(path):
     file = ROOT / path
     if file.is_symlink() or not file.is_file():
         raise ValueError(f"{path}: missing regular source")
     return file.read_text(encoding="utf-8")
-
 
 def coverage_registry():
     """Check the closed enums and their one-to-one terminal-kind assignments."""
@@ -82,7 +79,6 @@ def coverage_registry():
     if not {row[2] for row in assignments} <= set(kinds):
         fail("coverage", "terminal kinds must exist in canon's frozen C3 registry")
 
-
 # Independent construction pins. Changing guarded code requires reviewing and updating its pin;
 # the checker never derives an expected pin from HEAD or from the file it is checking.
 LAUNCHER_PINS = {
@@ -101,6 +97,8 @@ LAUNCHER_PINS = {
     "crates/launcher/clippy.toml": "01624458119e6627b775a8f2b21e943e3f13f08c32985500b5da1d88f7cf0e38",
 }
 DEPLOY_PINS = {
+    "deploy/engine/engine-run.sh": "d89cf7aca9c8ed52a2e56a7df01eb950a5e8cba8b6a4855316d0a6b4d62bcd42",
+    "deploy/units/systemd-time-wait-sync.service": "5e02f9b7436f2873619068b1a7f24a1b2cdac7c5ad6e8bff7518dd38aff4aca2",
     "deploy/spawn/caddy.py": "65a9f8a77cab67aee3b727dbe5cd318b12fbcf3de26b39997ec298841deebb53",
     "deploy/spawn/core.py": "0fa5d0f312352b51b9414319594f56d44ed0fe96645efb9fb6d01aa9e7d14f24",
     "deploy/spawn/egress.py": "c38fde70705167d8e94fd0cc6ca9aba1fd648ea22f0f3db6c891311d694a21f3",
@@ -112,12 +110,12 @@ DEPLOY_PINS = {
     "deploy/spawn/spawn.py": "2a14406c4ffd28d415ff769ac195f47f63db2f45cb5866610584a6a0e8ff4c6c",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",
     "deploy/spawn/vm.py": "fd128c5f31fa0b710a28608ea3ecb73185b5b27c7abd5e91448ed72953014f25",
-    "deploy/upgrade/node_release.py": "5ca8c266529d618509b9aa63076f34a7e699eaaf6b8920996fab11f13966bff3",
+    "deploy/upgrade/node_release.py": "140196a0560b7a3c1ad5ea254732e63e19702efe97b78caf9950dbb9982e4bba",
     "deploy/upgrade/release_probe.py": "1113d79b3acb07d492db75a7bcc0c229e09bc4f678a8b0ab3f079d29931300b5",
     "deploy/upgrade/pointer.py": "2ab318a7fa6426c4289da676f2a81a731e77e433992e76ed519aac171aa778d1",
     "deploy/upgrade/upgrade.py": "3b87ededc203b315c39ae42945993f1b329c03caac55a2f100caa94c349e8315",
     "deploy/upgrade/upgrade.sh": "7c2175a2233530b0f79fc50baf82fee177e40c89025a6028c141c068f5c73738",
-    "scripts/reproduce.sh": "cead99fbad0e7035db4cc34a8cc1aa01f4a9586cc380455b0500b5a7709849fe",
+    "scripts/reproduce.sh": "df23625e183c35c47d1de42bf1b187091343e71ea68300092e0a6bd375813ebb",
 }
 COVERAGE_PINS = {
     "crates/gate/src/coverage.rs": "477d1e4c2a13f3738e20bb9c789cfd4558be01e9c7b1fedac93d341ccf39b25b",
@@ -970,7 +968,8 @@ check_source_pins("pin-drift", LAUNCHER_PINS, launcher_inventory)
 # 15. Row 131: inspect authorization before dispatch and forbid release authorization data in the tree.
 # Independent pins retain the reviewed helper bodies and shell entry points; deploy code is never executed here.
 deploy_inventory = [p for p in files if p.startswith(("deploy/spawn/", "deploy/upgrade/"))]
-deploy_inventory.append("scripts/reproduce.sh")
+deploy_inventory += ["scripts/reproduce.sh", "deploy/engine/engine-run.sh"]
+deploy_inventory += [p for p in files if p.startswith("deploy/units/") and (p.endswith(".conf") or p.endswith("/systemd-time-wait-sync.service"))]
 check_source_pins("deploy-guard", DEPLOY_PINS, deploy_inventory)
 check_source_pins("deploy-guard", CLAIM_PINS, CLAIM_PINS)
 check_source_pins("deploy-guard", RELEASE_POINTER_PINS, RELEASE_POINTER_PINS)

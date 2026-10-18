@@ -13,8 +13,10 @@
 #   SystemCallFilter of @mount, @privileged, @resources, @debug  the launcher mounts, maps ids and sets limits
 [Unit]
 Description=AUKORA Sovereign supervisor
-After=network-online.target aukora-egress.service
-Wants=network-online.target
+# Wait for clock sync before writing wall-clock authority history. The wait service is bounded to 90s so an
+# unreachable NTP source cannot hold boot forever; after that, boot continues and NTP keeps trying in the background.
+After=network-online.target aukora-egress.service time-sync.target systemd-time-wait-sync.service
+Wants=network-online.target time-sync.target systemd-time-wait-sync.service
 # Without the egress rules loaded the supervisor does not start.
 Requires=aukora-egress.service
 AssertPathExists=/etc/aukora/node.json

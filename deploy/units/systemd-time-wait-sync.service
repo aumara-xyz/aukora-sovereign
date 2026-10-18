@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The systemd 255 waiter with a bounded start: unreachable NTP must not hold boot indefinitely.
+# Ship the service rather than only a drop-in so older AUKORA unit installers also install the 90s bound.
+[Unit]
+Description=Wait for synchronized system clock (bounded for AUKORA)
+Documentation=man:systemd-time-wait-sync.service(8)
+ConditionCapability=CAP_SYS_TIME
+ConditionVirtualization=!container
+DefaultDependencies=no
+Before=time-sync.target shutdown.target
+Wants=time-sync.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/systemd/systemd-time-wait-sync
+TimeoutStartSec=90s
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

@@ -61,7 +61,8 @@ check_unit aukora-sovereign.service 7.5 User=aukora ProtectSystem=strict Protect
 check_unit aukora-egress.service 5.0 $egress_properties
 # shellcheck disable=SC2086
 check_unit aukora-egress-verify.service 5.0 $egress_properties
-for unit in aukora-sovereign.service aukora-egress.service aukora-egress-verify.timer; do
+check_properties systemd-time-wait-sync.service "TimeoutStartUSec=1min 30s"
+for unit in aukora-sovereign.service aukora-egress.service aukora-egress-verify.timer systemd-time-wait-sync.service; do
     systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
 done
 

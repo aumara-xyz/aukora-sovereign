@@ -34,7 +34,8 @@ UNITS = "deploy/units"
 ENGINE = "deploy/engine"
 REQUIRED = ("bin/sovereign", "bin/auma", "bin/aukora-verify", "www/release-manifest.json") + DEPLOY_FILES + (
     "deploy/units/aukora-sovereign.service", "deploy/units/aukora-egress.service", "deploy/units/egress_apply.py",
-    "deploy/units/aukora-egress-verify.service", "deploy/units/aukora-egress-verify.timer")
+    "deploy/units/aukora-egress-verify.service", "deploy/units/aukora-egress-verify.timer",
+    "deploy/units/systemd-time-wait-sync.service")
 MAX_RELEASE_BYTES = 512 * 1024 * 1024
 
 

@@ -57,7 +57,7 @@ DELIVERED = STATE + "/claim-delivered"
 HOSTS = "/etc/hosts"
 UNIT_DIR = "/etc/systemd/system"
 SERVICE = "aukora-sovereign.service"
-ENABLED = ("aukora-egress.service", "aukora-egress-verify.timer", SERVICE)
+ENABLED = ("aukora-egress.service", "aukora-egress-verify.timer", "systemd-time-wait-sync.service", SERVICE)
 SERVICE_USER = "aukora"
 FOLLOW_SECONDS = 30
 RELEASE_ID = re.compile(r"[0-9a-f]{12}-[0-9a-f]{12}\Z")
@@ -132,18 +132,19 @@ def sync_units(release_dir):
     source = os.path.join(release_dir, "deploy", "units")
     changed = False
     for name in sorted(os.listdir(source)):
-        if not name.endswith((".service", ".timer", ".template")):
+        if name.endswith((".service", ".timer", ".template")):
+            # A release path cannot hold '@': the pre-swap probe ships as NAME.template.
+            installed = name[:-len(".template")] + "@.service" if name.endswith(".template") else name
+            destination = os.path.join(UNIT_DIR, installed)
+        else:
             continue
         data = core.read_regular(os.path.join(source, name), 64 * 1024, "release")
-        # A release path cannot hold '@' (the manifest's path rule): a systemd template ships as NAME.template and is
-        # installed as NAME@.service (the pre-swap probe, NODE.md O20).
-        installed = name[:-len(".template")] + "@.service" if name.endswith(".template") else name
-        destination = os.path.join(UNIT_DIR, installed)
         try:
             current = core.read_regular(destination, 64 * 1024, "release")
         except core.Refusal:
             current = None
         if current != data:
+            os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
             core.atomic_write(destination, data, 0o644)
             changed = True
     return changed

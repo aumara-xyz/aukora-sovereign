@@ -5,6 +5,7 @@
 #   engine-run.sh           create the sandbox and stay attached to it (systemd tracks the engine's life)
 #   engine-run.sh verify    after start: the effective policy is ours, Status Effective; refuse otherwise
 #   engine-run.sh delete    after stop: remove the sandbox
+#   engine-run.sh gateway-clean  before gateway start: remove old containers without contacting the gateway
 #   engine-run.sh guard     stop the engine when the host disk is below its floor (once; `watch`: every 5 s)
 #
 # Mounts (host -> sandbox; the policy's read_only/read_write lists must name each):
@@ -134,14 +135,27 @@ for never in ("docker.sock", "/etc/aukora", "/var/lib/aukora", "/run/aukora-kira
         fail("names " + never)
 ' "$AUMA_UID" "$AUMA_GID" "$POLICY" || return 1
     # The caps are on the running container, not only in the argv (fail closed: no container, or no cap, is a refusal).
+    # OpenShell 0.1.4 creates both the workload and its companion with Docker's default restart policy (no).
+    # Check both, including stopped containers: Docker/containerd must never revive an old sandbox outside the
+    # supervisor's admission. A failed check stops the unit and ExecStopPost removes the sandbox.
     limits || return 1
-    container=$(/usr/bin/docker ps -q --filter "name=^/openshell-default--$NAME-" | while read -r id; do
-        /usr/bin/docker inspect --format '{{.Name}} {{.Id}}' "$id"; done | grep -v -- '-supervisor ' | awk '{print $2}')
-    [ "$(printf '%s\n' "$container" | grep -c .)" = 1 ] || { echo "engine-run: not exactly one sandbox container" >&2; return 1; }
-    /usr/bin/docker inspect "$container" | python3 -I -c '
+    container_ids=$(/usr/bin/docker ps -aq --filter "name=^/openshell-default--$NAME-") || return 1
+    [ -n "$container_ids" ] || { echo "engine-run: no sandbox containers" >&2; return 1; }
+    # The ids returned by Docker are intentionally separate arguments.
+    /usr/bin/docker inspect $container_ids | python3 -I -c '
 import json, sys
 memory, nano = int(sys.argv[1]) << 20, int(sys.argv[2]) * 1000000
-host = json.load(sys.stdin)[0]["HostConfig"]
+containers = json.load(sys.stdin)
+workloads = [c for c in containers if not c.get("Name", "").endswith("-supervisor")]
+if len(containers) != 2 or len(workloads) != 1 or {c.get("Name") for c in containers} != \
+        {workloads[0]["Name"], workloads[0]["Name"] + "-supervisor"} or not workloads[0].get("State", {}).get("Running"):
+    print("engine-run: not exactly one running sandbox and its companion", file=sys.stderr)
+    sys.exit(1)
+for container in containers:
+    if container.get("HostConfig", {}).get("RestartPolicy", {}).get("Name") != "no":
+        print("engine-run: a sandbox container can restart outside the supervisor", file=sys.stderr)
+        sys.exit(1)
+host = workloads[0]["HostConfig"]
 tmpfs = {m.get("Target"): (m.get("TmpfsOptions") or {}).get("SizeBytes") for m in host.get("Mounts") or [] if m.get("Type") == "tmpfs"}
 if host.get("Memory") != memory or host.get("NanoCpus") != nano or not 0 < (host.get("PidsLimit") or 0) <= 4096 \
         or tmpfs.get("/tmp") != 1 << 30:
@@ -180,6 +194,20 @@ except (OSError, ValueError, AssertionError, KeyError, TypeError, AttributeError
 # unit is failed (the supervisor counts a failed unit as possibly running and the engine origin refuses).
 # Fail closed: if docker cannot be asked, the answer is "still there".
 containers() { /usr/bin/docker ps -aq --filter "name=^/openshell-default--$NAME-" 2>/dev/null || echo docker-unreachable; }
+# OpenShell 0.1.4 restores persisted running intent at gateway startup, even when Docker's restart policy is no.
+# The gateway uses an in-memory database, and this Docker-only sweep runs before every gateway launch: an old
+# workload cannot survive a gateway crash or be rediscovered without the supervisor admitting a fresh engine.
+# >>> gateway-clean (tests/deploy/test_day2_gateway.py runs this block with a stub Docker)
+gateway_clean() {
+    ids=$(/usr/bin/docker ps -aq --filter "name=^/openshell-default--$NAME-") || return 1
+    if [ -n "$ids" ]; then
+        # Docker's ids are intentionally separate arguments; remove running and stopped containers alike.
+        /usr/bin/docker rm -f $ids >/dev/null || return 1
+    fi
+    ids=$(/usr/bin/docker ps -aq --filter "name=^/openshell-default--$NAME-") || return 1
+    [ -z "$ids" ] || { echo "engine-run: the old sandbox is still present before gateway start" >&2; return 1; }
+}
+# <<< gateway-clean
 delete() {
     /usr/local/bin/openshell sandbox delete "$NAME" >/dev/null 2>&1 || true
     # 10 s for OpenShell's own cleanup, then docker; all of it inside the unit's TimeoutStopSec (90 s, Sonnet sweep C3).
@@ -197,7 +225,8 @@ case "${1:-create}" in
     create) delete; create ;;
     verify) verify ;;
     delete) delete ;;
+    gateway-clean) gateway_clean ;;
     guard) guard ;;
     watch) while :; do guard || true; sleep 5; done ;;
-    *) echo "usage: engine-run.sh [create|verify|delete|guard|watch]" >&2; exit 2 ;;
+    *) echo "usage: engine-run.sh [create|verify|delete|gateway-clean|guard|watch]" >&2; exit 2 ;;
 esac
