@@ -558,7 +558,9 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       const recent = readMessagePage(await client.call("network", "messages.list", { before: null, limit: PAGE }, { signal }));
       if (signal.aborted) return false;
       remember(recent.items);
-      await Promise.all([previews(), first ? readMarksNow() : Promise.resolve()]);
+      // Marks are re-read with every full refresh: a contact removed and approved again between two reads comes back
+      // with the node's marks (none), not this view's old ones.
+      await Promise.all([previews(), restart ? readMarksNow() : Promise.resolve()]);
       if (signal.aborted) return false;
       busy = false;
       problem.hidden = true;

@@ -710,12 +710,26 @@ test('a send stopped by a contact change says why on its retry control', async t
 });
 
 test('a removed contact\'s archive does not come back when the contact is added again', async t => {
-  const { root, contacts, live } = mount(t, { marks: [{ npub: sam, pinned: false, archived: true }] });
+  const marks = [{ npub: sam, pinned: false, archived: true }];
+  const { root, contacts, live } = mount(t, { marks });
   for (let turn = 0; turn < 6; turn++) await settle();
   assert.deepEqual(visibleRows(root), [maya], 'archived: off the main list');
+  // The node removes the contact and, with it, the mark.
   const removed = contacts.splice(contacts.findIndex(contact => contact.npub === sam), 1)[0];
+  marks.length = 0;
   await live();
   contacts.push(removed);
   await live();
   assert.deepEqual(visibleRows(root), [maya, sam], 'added again: a fresh conversation, not archived');
+});
+
+test('a contact removed and added back between two reads takes the node\'s marks, not the old ones', async t => {
+  const marks = [{ npub: sam, pinned: false, archived: true }];
+  const { root, live } = mount(t, { marks });
+  for (let turn = 0; turn < 6; turn++) await settle();
+  assert.deepEqual(visibleRows(root), [maya]);
+  // Removed and approved again while this view was not reading: the node dropped the archive with the removal.
+  marks.length = 0;
+  await live();
+  assert.deepEqual(visibleRows(root), [maya, sam], 'the next refresh takes the node\'s marks');
 });
