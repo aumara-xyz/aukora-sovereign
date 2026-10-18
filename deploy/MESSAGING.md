@@ -19,8 +19,9 @@ What the owner is told in Messages: anyone using the signed-in shell session
 can send as the owner, and each send is recorded in Aura; a contact card
 approves an exact npub, not a person, so compare it with the other person in
 person or on a call you trust before approving; relays cannot read the text but
-see node IP addresses, recipient npubs and timing; both owners must add each
-other before messages arrive.
+see node IP addresses, recipient keys, message sizes and when each node
+connects (the time on a gift wrap is randomized); both owners must add each
+other before messages arrive. Aura records ids and times, never message text.
 
 ## Operator preparation
 

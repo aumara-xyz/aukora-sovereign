@@ -8,15 +8,15 @@ export const COPY = {
   tabs: { messages: "Messages", contacts: "Contacts", refused: "Refused" },
   blurbs: {
     messages: "Newest first. A sent message shows what the relays did with it; this screen never calls one delivered.",
-    contacts: "People you approved with your passkey. Only these can message this node.",
+    contacts: "Npubs you approved with your passkey (a key, not a person). Only these can message this node.",
     refused: "Messages turned away before Auma saw anything.",
   },
   // Dot's launch requirements (a private launch review, not published: F3-F5, F7), shown where the owner acts.
   mutual: "Share your npub with your friend, add theirs, and ask them to add yours. Messages arrive only after each of you has approved the other.",
   contactKey: "The card approves this exact npub, not the person. Before you approve, compare it with them in person or on a call you trust.",
   contactReview: "Review the Add contact card with your passkey. It approves this exact npub, not the person: compare it with them first. The contact appears here after approval.",
-  sendSession: "Anyone using your signed-in session can send messages as you. Each send is recorded in Aura.",
-  relaysSee: "Relays cannot read your text, but they see your node's IP address, the recipient's npub, and when messages are sent.",
+  sendSession: "Anyone using your signed-in session can send messages as you. Each send is recorded in Aura (not its text).",
+  relaysSee: "Relays cannot read your text, but they see your node's IP address, the recipient's key, the message size, and when your node connects to them. The time written on a wrapped message is randomized, not the send time.",
   noBackend: "No backend yet",
   absent: {
     messages: [
@@ -35,6 +35,7 @@ export const COPY = {
   reading: "Reading…",
   emptyMessages: "No messages yet.",
   emptyContacts: "No approved contacts yet. A contact is added with your passkey on an approval card.",
+  footnote: "Both owners add each other. Aura records each message and send (ids and times, never the text).",
   loadMore: "Load more",
   refresh: "Refresh",
   stalled: "Stopped: the next page did not advance.",

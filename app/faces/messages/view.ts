@@ -116,7 +116,8 @@ function pagedList<T>(client: FaceClient, signal: AbortSignal, feed: Feed<T>): P
         added++;
       }
       if (restart && feed.retain) {
-        for (const [key, row] of retained) if (!seen.has(key)) row.remove();
+        // A removed contact's row goes for good: one re-added later is drawn afresh with its new label.
+        for (const [key, row] of retained) if (!seen.has(key)) { row.remove(); retained.delete(key); }
       }
       const advances = page.next !== null && page.next !== before && added > 0;
       next = advances && seen.size < MAX_ROWS ? page.next : null;
@@ -124,7 +125,7 @@ function pagedList<T>(client: FaceClient, signal: AbortSignal, feed: Feed<T>): P
       info.textContent = summary;
     } catch (error) {
       if (signal.aborted) return;
-      if (restart) { rows.replaceChildren(); seen.clear(); next = null; summary = ""; }
+      if (restart) { rows.replaceChildren(); seen.clear(); retained.clear(); next = null; summary = ""; }
       info.textContent = summary;
       showServiceState(problem, error);
       problem.hidden = false;
@@ -215,7 +216,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     granted.has("contact.propose") ? addContact(client, signal) : null,
     h("section", { "aria-label": "Threads" }, h("h2", { class: "ak-label" }, "Threads"), book.element),
     refusalPortal.element,
-    h("p", { class: "ak-footnote" }, "Both owners add each other. Messages and sends are recorded in Aura."));
+    h("p", { class: "ak-footnote" }, COPY.footnote));
   root.append(canvas);
   book.show();
 }

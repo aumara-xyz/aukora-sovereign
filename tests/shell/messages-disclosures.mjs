@@ -32,7 +32,13 @@ test('a contact card approves an exact npub, not a person, and the owner is aske
 test('the composer says who can send and what relays see', () => {
   assert.match(COPY.sendSession, /^Anyone using your signed-in session can send messages as you\./);
   assert.match(COPY.sendSession, /recorded in Aura/);
-  for (const seen of ['IP address', "recipient's npub", 'when messages are sent']) assert.ok(COPY.relaysSee.includes(seen), seen);
+  for (const seen of ['IP address', "recipient's key", 'message size', 'when your node connects']) assert.ok(COPY.relaysSee.includes(seen), seen);
+  // The wrap's own timestamp is randomized (NIP-59), so the copy must not claim relays see the send time from it.
+  assert.match(COPY.relaysSee, /randomized, not the send time/);
+  assert.match(COPY.sendSession, /not its text/);
+  assert.match(COPY.footnote, /never the text/);
+  assert.match(actions + readFileSync(join(face, 'view.ts'), 'utf8'), /COPY\.footnote/);
+  assert.match(COPY.blurbs.contacts, /a key, not a person/);
   assert.match(COPY.relaysSee, /^Relays cannot read your text/);
   const composer = actions.slice(actions.indexOf('export function composer'));
   assert.match(composer, /COPY\.sendSession/);
@@ -49,7 +55,10 @@ test('nothing the face shows, and nothing the operator guide says, claims the se
   for (const text of sources) assert.doesNotMatch(text, /seven|7[- ]word|phrase/i);
   const guide = readFileSync(join(root, 'deploy/MESSAGING.md'), 'utf8');
   assert.match(guide, /the seven-word phrase does not derive, back up or restore\s+it\./);
+  // Every sentence of the guide that mentions the phrase and a recovery verb must negate that verb.
   for (const sentence of guide.split(/(?<=\.)\s/)) {
-    if (/seven|phrase/i.test(sentence)) assert.match(sentence, /does not|not derive|no /i, sentence);
+    if (/seven|phrase/i.test(sentence) && /deriv|back(?:s|ed)? up|restor|recover/i.test(sentence)) {
+      assert.match(sentence, /\bdoes not (?:derive|back up|restore|recover)\b/i, sentence);
+    }
   }
 });

@@ -206,6 +206,50 @@ pub fn authorize_data(release: &ApprovedRelease, value: &Value) -> Result<Author
 mod messaging_tests {
     use super::*;
 
+    fn release(faces: &[&str]) -> ApprovedRelease {
+        ApprovedRelease {
+            manifest_sha256: Digest32::sha256(b"release"),
+            entries: faces
+                .iter()
+                .map(|face| crate::assets::AssetEntry {
+                    surface: AssetSurface::Face,
+                    path: format!("app/faces/{face}/index.html"),
+                    kind: AssetKind::Html,
+                    sha256: Digest32::sha256(face.as_bytes()),
+                    byte_length: 1,
+                    preload: false,
+                })
+                .collect(),
+        }
+    }
+
+    fn body(face: &str, method: &str) -> Value {
+        canon::json::parse_strict(
+            format!(
+                r#"{{"face":"{face}","method":"{method}","params":{{"npub":"npub1x","text":"hi"}},"schema":"aukora:face-service:v3","service":"network"}}"#
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn only_the_released_messages_face_is_authorized_to_send() {
+        let with_messages = release(&["messages", "threads", "humangraph"]);
+        for method in ["send", "contact.propose"] {
+            let read = authorize_data(&with_messages, &body("messages", method)).unwrap();
+            assert_eq!((read.face(), read.service(), read.method()), ("messages", "network", method));
+            // Any other face, even one the release carries, is denied the write.
+            for face in ["threads", "humangraph", "documents", "aumlok"] {
+                assert_eq!(authorize_data(&with_messages, &body(face, method)).err(), Some(denied()), "{face} {method}");
+            }
+            // A release without the Messages face cannot send through a borrowed name.
+            assert_eq!(authorize_data(&release(&["threads"]), &body("messages", method)).err(), Some(denied()));
+        }
+        // An unknown network method is not a write either.
+        assert_eq!(authorize_data(&with_messages, &body("messages", "send.raw")).err(), Some(denied()));
+    }
+
     #[test]
     fn owner_shell_messages_has_writes_but_engine_origin_is_refused() {
         assert!(permitted("messages", "network", "contact.propose"));
