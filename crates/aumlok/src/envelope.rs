@@ -65,7 +65,7 @@ impl KdfParameters {
         Ok(())
     }
 
-    /// Enforce the security floor before accepting or opening retained ciphertext.
+    /// Enforce the security floor before producing, accepting or opening retained ciphertext.
     pub(crate) fn validate_open(self) -> Result<()> {
         self.validate()?;
         // At least 64 MiB and three passes are required for offline-guessing
@@ -428,7 +428,7 @@ pub mod owner {
         phrase: &OwnerPhrase,
         parameters: KdfParameters,
     ) -> Result<EnvelopeV1> {
-        parameters.validate()?;
+        parameters.validate_open()?;
         let mut salt = [0; SALT_BYTES];
         let mut nonce = [0; NONCE_BYTES];
         getrandom::fill(&mut salt).map_err(|_| refuse("random-unavailable"))?;
@@ -494,7 +494,7 @@ pub mod owner {
         parameters: KdfParameters,
         salt: &[u8; SALT_BYTES],
     ) -> Result<Zeroizing<[u8; ROOT_BYTES]>> {
-        parameters.validate()?;
+        parameters.validate_open()?;
         let costs = Params::new(
             parameters.memory_kib,
             parameters.time_cost,

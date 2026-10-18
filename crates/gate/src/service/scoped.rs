@@ -349,8 +349,7 @@ impl<S: TargetStore> ScopedGate<S> {
             }
             if let Some((expired, at)) = txn.last_expiry(digest)? {
                 // The same bytes whose card simply ran out of time: at most once a day, unless the owner asked again
-                // for exactly that card (Peter, 2026-10-17: no nagging, and no permanent no either). Other evidence,
-                // however valid, does not lift the day (Codex re-review, finding 3).
+                // for exactly that card. Other evidence, however valid, does not lift the day.
                 let asked = match &request.new_evidence {
                     Some(evidence) => proposal::is_owner_again(
                         &txn.record_at(evidence.source_record)?,

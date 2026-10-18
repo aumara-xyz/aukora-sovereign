@@ -595,7 +595,7 @@ pub mod owner {
         prf: Option<&OwnerPrf>,
         parameters: KdfParameters,
     ) -> Result<BackupDownload> {
-        parameters.validate()?;
+        parameters.validate_open()?;
         if request == BackupRequest::ExplicitPhraseOnlyV1 {
             return crate::envelope::owner::seal(browser, root, phrase, parameters)
                 .map(BackupDownload::PhraseOnly);

@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const dir = mkdtempSync(path.join(tmpdir(), 'owner-logout-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 for (const module of ['ui/owner/session', 'ui/owner/transport', 'ui/owner/abort', 'ui/owner/router', 'ui/owner/contracts',
-  'ui/owner/passkey/codec', 'ui/owner/cards/codec', 'app/shell/approvals', 'app/core/data']) {
+  'ui/owner/passkey/codec', 'ui/owner/cards/codec', 'app/shell/approvals', 'app/core/data', 'app/core/session-state']) {
   const output = path.join(dir, `${module}.js`);
   mkdirSync(path.dirname(output), { recursive: true });
   writeFileSync(output, stripTypeScriptTypes(readFileSync(path.join(root, `${module}.ts`), 'utf8')));

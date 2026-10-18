@@ -12,6 +12,7 @@ import type { OwnerNotice, OwnerRoute } from './owner-frame.js';
 import { createMenu, element, menuCard } from './menu.js';
 import { ownerNavigation, threadNavigation } from './navigation.js';
 import type { ThreadNavigation } from './navigation.js';
+import { signoutFailure } from '../core/session-state.js';
 
 export interface ShellOptions {
   root: HTMLElement;
@@ -32,7 +33,7 @@ export interface ShellController {
   openOwner(route: OwnerRoute, claim?: string): Promise<void>;
   readonly ownerBusy: boolean;
   setApprovalsPending(count: number): void;
-  /** Declined proposals the owner may ask for again, oldest first (at most 16). */
+  /** Declined proposals the owner may ask for again, newest first (at most 16). */
   setApprovalsDeclined(ids: readonly string[]): void;
   /** `null` while the node has not yet said; the menu's base shows Sign in or Sign out. */
   setSignedIn(signedIn: boolean | null): void;
@@ -304,7 +305,7 @@ export function mountShell(options: ShellOptions): ShellController {
       setSignedIn(false);
     } catch {
       ending = false;
-      if (!disposed) sessionNote.textContent = 'Sign out did not finish. Try again.';
+      if (!disposed) sessionNote.textContent = signoutFailure(signedIn);
     }
     renderSession();
   };

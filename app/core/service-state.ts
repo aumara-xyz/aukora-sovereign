@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { SESSION_REFUSALS } from './session-state.js';
 
 export interface ServiceState {
   readonly kind: 'unavailable' | 'session-ended' | 'failure';
@@ -8,9 +9,6 @@ export interface ServiceState {
 }
 
 const CODE = /^[a-z][a-z0-9_-]{0,31}:[a-z0-9-]{1,64}$/;
-const ENDED = new Set([
-  'frontdoor:session-required',
-]);
 const NO_MODEL = new Set([
   'broker:model-unavailable', 'broker:model-not-configured', 'broker:streaming-unavailable',
   'supervisor:model-unavailable',
@@ -40,7 +38,7 @@ export function throwServiceRefusal(value: unknown): void {
 /** Display only: a refusal is never converted to a successful service reply. */
 export function serviceState(error: unknown): ServiceState {
   const code = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  if (ENDED.has(code)) return { kind: 'session-ended', icon: '↪', label: 'Sign in again' };
+  if (SESSION_REFUSALS.has(code)) return { kind: 'session-ended', icon: '↪', label: 'Sign in again' };
   if (NO_MODEL.has(code)) return { kind: 'unavailable', icon: '◌', label: 'No model yet' };
   const retry = RETRYABLE.get(code);
   if (retry !== undefined) return { kind: 'unavailable', icon: '◌', label: retry, retryable: true };

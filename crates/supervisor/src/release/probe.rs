@@ -21,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Where root records each probe's outcome (`node_release.py probe-finish`).
+/// Where root records each probe's outcome (`release_probe.py finish`).
 const RESULTS: &str = "/var/lib/aukora-release/probe";
 /// The unit's own limit is 90 s (RuntimeMaxSec); this is how long the supervisor waits for root's record.
 const PROBE_WAIT: Duration = Duration::from_secs(150);

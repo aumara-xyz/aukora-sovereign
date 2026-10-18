@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const built = mkdtempSync(join(tmpdir(), 'shell-approvals-'));
-for (const name of ['core/data', 'shell/approvals']) {
+for (const name of ['core/data', 'core/session-state', 'shell/approvals']) {
   mkdirSync(dirname(join(built, name)), { recursive: true });
   writeFileSync(join(built, `${name}.js`), stripTypeScriptTypes(readFileSync(join(root, `app/${name}.ts`), 'utf8')));
 }
@@ -58,14 +58,14 @@ async function poll(body) {
 const approvedEvents = [['pending', 1], ['declined', [declined]], ['open', `/approval/${proposal}`]];
 
 test('an authority refusal is visible while the same response still opens an approval card', async () => {
-  for (const code of ['supervisor:authority-plugin-missing', 'supervisor:profile-plugin-disabled']) {
+  for (const code of ['supervisor:authority-plugin-missing', 'supervisor:authority-plugin-v2-missing', 'supervisor:profile-plugin-disabled']) {
     assert.deepEqual(await poll({ ...snapshot, engine_refusal: code }), [
       ['session', true], ['refusal', code], ...approvedEvents,
     ]);
   }
 });
 
-test('old responses and an engine without a refusal keep the approval flow', async () => {
+test('responses without an engine refusal keep the approval flow', async () => {
   for (const body of [snapshot, { ...snapshot, engine_refusal: null }]) {
     assert.deepEqual(await poll(body), [['session', true], ...approvedEvents]);
   }
@@ -75,4 +75,9 @@ test('a malformed engine refusal fails the response before it opens an approval 
   for (const value of [false, {}, 'supervisor:running', 'supervisor:authority-plugin-missing\n']) {
     assert.deepEqual(await poll({ ...snapshot, engine_refusal: value }), [['refusal', 'shell:approval-response-invalid']]);
   }
+});
+
+test('a response missing the declined list is refused before opening a card', async () => {
+  const { declined: _declined, ...body } = snapshot;
+  assert.deepEqual(await poll(body), [['refusal', 'app:invalid-message']]);
 });

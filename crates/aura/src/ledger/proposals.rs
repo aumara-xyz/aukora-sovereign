@@ -75,6 +75,17 @@ impl LedgerTxn<'_> {
         Ok(result)
     }
 
+    /// The most recently raised card for a target, including its terminal state. A supervisor keeper uses this to
+    /// respect the owner's answer when a request's clock-derived expiry changes but its terms do not.
+    pub fn latest_proposal(&self, target: &str) -> Result<Option<ProposalState>> {
+        self.active()?;
+        let id: Option<String> = self.transaction.query_row(
+            "SELECT id FROM authority_proposals WHERE target=?1 ORDER BY rowid DESC LIMIT 1",
+            [target], |row| row.get(0),
+        ).optional().map_err(sql)?;
+        id.map(|id| self.proposal(&ProposalId::from_hex(&id)?)).transpose()
+    }
+
     pub fn stage_authorization(&mut self, staged: StagedAuthorization) -> Result<()> {
         self.mutate(|this| {
             let auth = &staged.authorization;
@@ -170,7 +181,7 @@ impl LedgerTxn<'_> {
 
     /// The latest card for these exact bytes that simply ran out of time, when that is the latest word on them (no
     /// decline, refusal or withdrawal since): its proposal and when it expired. The gate raises the same bytes again
-    /// at most once a day unless the owner asks again (NODE.md O19, Peter 2026-10-17).
+    /// at most once a day unless the owner asks again (NODE.md O19).
     pub fn last_expiry(&self, operation: OperationDigest) -> Result<Option<(ProposalId, i64)>> {
         self.active()?;
         type Row = (String, i64, i64, Option<String>);

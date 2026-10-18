@@ -391,6 +391,8 @@ impl GateAdapter {
 
 // `door/standing-grants.json`, proposed by the door's starter keeper (gate/standing.rs).
 mod standing;
+mod retry;
+mod model_budget;
 
 impl GateService for GateAdapter {
     fn propose_site<'a>(
@@ -512,6 +514,7 @@ impl GateService for GateAdapter {
                 } else {
                     action
                 };
+                retry::review_state(txn, proposal)?;
                 let review = gate.review(txn, proposal, action, &mut NoInjection)?;
                 let authorization = txn.rebuild_authorization(&proposal, action)?;
                 if review.authorization_bytes != authorization.canonical_bytes()?
@@ -720,6 +723,8 @@ mod tests {
             Signatures::new(vec![Signature { v: 1, algorithm: AlgorithmId::Ed25519, bytes: self.0.sign(hash.as_bytes()).to_bytes().to_vec() }])
         }
     }
+
+    mod owner_state;
 
     const PLUGIN: &str = "engine/plugin-set.json";
     const ASK: &str = "door/ask-00.json";

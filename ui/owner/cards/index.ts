@@ -10,6 +10,7 @@ import type { ApprovalServiceOptions } from "./transport.js";
 import { ownerIcon } from "../icons.js";
 import { abortScope, checkAbort } from "../abort.js";
 import { renderBrowserAdvice } from "../passkey/browser.js";
+import { closedState, retryTarget } from "./state.js";
 
 export interface SupervisorApprovalActions {
   submitAuthorization(proposalId: string, action: Authorization["op"], assertion: Uint8Array, signal: AbortSignal): Promise<void>;
@@ -25,11 +26,6 @@ function failure(error: unknown): string {
     return "This approval is no longer available.";
   }
   return "Approval unavailable. Review again to check its current state.";
-}
-
-/** A card that is no longer open (declined, expired, settled): the owner may ask for it again. */
-function closed(error: unknown): boolean {
-  return error instanceof Error && /:(?:not-pending|expired|declined-unchanged)$/.test(error.message);
 }
 
 function needsReview(error: unknown): boolean {
@@ -85,15 +81,15 @@ export class ApprovalCards implements ApprovalPaneService {
     if (context.signal.aborted) { dispose(); return dispose; }
     const showFailure = (error: unknown): void => {
       if (signal.aborted) return;
-      if (closed(error)) {
-        // Declined (or otherwise closed): nothing to approve here; the owner may ask for it again (O19).
+      const closed = closedState(error);
+      if (closed) {
         review.replaceChildren(stylesheet, status, again);
         status.setAttribute("role", "status");
         status.classList.remove("owner-status");
-        status.textContent = "This request is closed. You declined it or it ran out of time.";
-        again.hidden = false;
+        status.textContent = closed.message;
+        again.hidden = !closed.again;
         again.disabled = false;
-        again.focus();
+        if (closed.again) again.focus();
         return;
       }
       status.setAttribute("role", "alert");
@@ -219,10 +215,10 @@ export class ApprovalCards implements ApprovalPaneService {
           void (async () => {
             await this.actions.decline(proposalId, signal);
             checkAbort(signal);
-            // A deliberate no. It stays declined until the owner asks again, here or under Approvals.
+            // A deliberate no. Supported supervisor requests can be asked for again here or under Approvals.
             review.replaceChildren(stylesheet, status, again);
-            status.textContent = "Declined. Nothing changes until you ask again.";
-            again.hidden = false;
+            status.textContent = retryTarget(auth.target) ? "Declined. Nothing changes until you ask again." : "Declined.";
+            again.hidden = !retryTarget(auth.target);
             again.disabled = false;
           })().catch(error => { started = false; decline.disabled = false; authorize.disabled = false; showFailure(error); });
         }, { signal });

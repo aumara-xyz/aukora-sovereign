@@ -4,7 +4,8 @@ import { ShellTransport } from '../core/transport.js';
 import { createServices } from '../core/services.js';
 import type { Dispose } from '../core/organism.js';
 import { exactKeys, objectData } from '../core/data.js';
-import { ApprovalWatch, SESSION_REFUSALS } from './approvals.js';
+import { ApprovalWatch } from './approvals.js';
+import { isEngineRefusal, SESSION_REFUSALS } from '../core/session-state.js';
 
 // The installer always serves the owner pages at `owner.` plus the shell's host (deploy/spawn/node_install.py).
 function ownerOrigin(): string {
@@ -40,10 +41,11 @@ if (root) {
     notice.hidden = true;
     const show = (error: unknown) => {
       const code = error instanceof Error ? error.message : '';
-      notice.textContent = code === 'frontdoor:session-required' || code === 'aumlok:binding-required'
-        ? 'Sign in to continue.' : /^supervisor:(?:authority-[a-z-]+|profile-plugin-disabled)$/.test(code)
-          ? `Engine stopped (${code}). Required plugins could not be verified.` : code.startsWith('shell:approval-')
-          ? 'Approvals are unavailable. Try again shortly.' : 'Connection unavailable. Try again shortly.';
+      // The approval prefix is checked first: isEngineRefusal narrows `code`, so its false branch cannot test it.
+      notice.textContent = SESSION_REFUSALS.has(code)
+        ? 'Sign in to continue.' : code.startsWith('shell:approval-')
+          ? 'Approvals are unavailable. Try again shortly.' : isEngineRefusal(code)
+            ? `Engine stopped (${code}). Required plugins could not be verified.` : 'Connection unavailable. Try again shortly.';
       notice.hidden = false;
       notice.dataset.source = 'connection';
     };

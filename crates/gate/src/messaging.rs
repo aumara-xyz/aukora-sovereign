@@ -7,11 +7,7 @@ use canon::{
 };
 
 pub const CONTACT_TARGET: &str = "messaging/contacts.json";
-pub const SEND_TARGET: &str = "messaging/send.json";
 
-/// The one line a contact card says, shared with `messaging::OwnerAction::card` so both build the same C6 bytes.
-/// It names the exact npub being approved, says that this approves a key and not a person, and asks the owner to
-/// compare the npub with the other person through a channel they already trust before approving.
 /// A character a contact label may not hold: controls, and the invisible and bidirectional formatting characters that
 /// could reorder or hide the npub printed beside the label on the owner's card. Shared with `messaging`.
 pub fn label_char_refused(c: char) -> bool {
@@ -20,6 +16,9 @@ pub fn label_char_refused(c: char) -> bool {
         || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2028}' | '\u{2029}' | '\u{2060}'..='\u{2069}')
 }
 
+/// The one line a contact card says, shared with `messaging::OwnerAction::card` so both build the same C6 bytes.
+/// It names the exact npub being approved, says that this approves a key and not a person, and asks the owner to
+/// compare the npub with the other person through a channel they already trust before approving.
 pub fn contact_says(add: bool, key: [u8; 32]) -> String {
     let npub = canon::provenance::Npub::from_key_bytes(key);
     if add {

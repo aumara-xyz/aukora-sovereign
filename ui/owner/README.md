@@ -22,8 +22,8 @@ id; the cards service loads the exact card and authorization bytes from the
 supervisor. Parent messages cannot provide those bytes. Phrase input and derivation
 stay inside the owner pane and have no parent-message representation.
 
-Workers own `passkey/`, `phrase/`, `cards/`, and `witness/`; `claim/` is reserved.
-The witness adapter runs on each initialized visit and browser restoration, reports
-rollback and fork alarms, and never changes permission to act. Panes must dispose
-resources and honor their abort signal. The router also tears down their host and
+`claim/`, `passkey/`, `phrase/`, and `cards/` provide the mounted owner panes. The
+`/signout` pane revokes the owner session and clears its cookie. The current entry
+uses `disabledOwnerWitness()`; witness checks and their rollback/fork alarms are
+not active. Panes must dispose resources and honor their abort signal. The router also tears down their host and
 listeners when closed. Frame-ancestor policy remains the frontdoor's responsibility.

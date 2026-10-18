@@ -317,7 +317,7 @@ pub(crate) fn verify_candidate(link: &Path) -> Result<Option<(PathBuf, Digest32)
 }
 
 /// `sovereign release floor --config PATH`, run by the supervisor's root pre-start step as the service user while the
-/// supervisor is stopped (it takes the state lock): print the release digest the owner's floor names, after the floor
+/// supervisor is stopped (it takes the state lock): print the owner's floor anchor JSON, after the floor
 /// is reconciled with Aura and its history checked, or refuse. The install's own starting floor is nobody's approval
 /// and prints nothing (exit 3). This is the only answer `node_release.py follow` switches on.
 pub(crate) fn floor_cli(arguments: &[std::ffi::OsString]) -> Result<()> {
@@ -395,6 +395,7 @@ pub(crate) fn check_anchor(path: Option<&Path>, state: &floor::ProtectedState) -
         }
         return Err(refuse("floor-behind-anchor"));
     }
+    ANCHOR_SAID.store(false, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 

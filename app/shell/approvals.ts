@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { decodeData, exactKeys, MAX_RPC_BYTES, objectData } from '../core/data.js';
+import { isEngineRefusal, SESSION_REFUSALS } from '../core/session-state.js';
 
 type Route = `/approval/${string}`;
 interface Options {
@@ -16,11 +17,6 @@ interface Options {
 const INTERVAL_MS = 1_200;
 const MAX_NOTIFICATIONS = 10_000;
 const MAX_DECLINED = 16;
-/** The node has no bound shell session for this browser: the owner signs in, nothing is wrong. */
-export const SESSION_REFUSALS: ReadonlySet<string> = new Set([
-  'frontdoor:session-required', 'frontdoor:session-expired', 'frontdoor:session-revoked',
-  'frontdoor:cookie-host-refused', 'aumlok:binding-required',
-]);
 
 async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: string[]; declined: string[]; engineRefusal: string | null }> {
   const response = await fetch('/api/approvals', {
@@ -51,8 +47,7 @@ async function pending(signal: AbortSignal): Promise<{ sequence: number; ids: st
   exactKeys(data, Object.hasOwn(data, 'engine_refusal')
     ? ['sequence', 'proposals', 'declined', 'engine_refusal'] : ['sequence', 'proposals', 'declined']);
   const engineRefusal = data.engine_refusal ?? null;
-  if (engineRefusal !== null && (typeof engineRefusal !== 'string'
-    || !/^supervisor:(?:authority-[a-z0-9-]+|profile-plugin-disabled)$/.test(engineRefusal))) {
+  if (engineRefusal !== null && !isEngineRefusal(engineRefusal)) {
     throw new Error('shell:approval-response-invalid');
   }
   if (typeof data.sequence !== 'number' || !Number.isSafeInteger(data.sequence) || data.sequence < 0

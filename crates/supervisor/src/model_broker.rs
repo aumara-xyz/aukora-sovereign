@@ -36,7 +36,7 @@ const TICK: Duration = Duration::from_secs(30);
 const KEY_TICK: Duration = Duration::from_secs(10);
 const PROPOSE_AGAIN: Duration = Duration::from_secs(600);
 const DAY_MS: u64 = 86_400_000;
-/// The longest a budget may run: a year (+1 for a leap year). Peter holds the real limit as the provider balance (O8).
+/// The longest a budget may run: a year (+1 for a leap year). The provider balance remains the real limit (O8).
 const MAX_VALID_DAYS: u64 = 366;
 
 fn refuse(reason: &'static str) -> Refusal {
@@ -258,13 +258,7 @@ impl ModelBroker {
         // keep_key, which re-stores a missing file only while the held key is the approved one, cannot write the old key
         // back in between), under key_step, so a save already under way finishes before the file is removed. The new
         // key is stored only after the owner approves its card; never for a declined one.
-        {
-            let _step = self.key_step.lock().map_err(|_| refuse("model-key-lock"))?;
-            self.hold(key, now)?;
-            if self.key_file.remove().is_err() {
-                eprintln!("model-broker: the stored key could not be removed");
-            }
-        }
+        self.hold_pending_key(key, now)?;
         eprintln!("model-broker: a key was entered; awaiting the owner's approval");
         Ok(KeyStage::AwaitingApproval(fingerprint))
     }
@@ -278,12 +272,15 @@ impl ModelBroker {
         Ok(standing(Some(held), approved.as_deref(), pending.as_deref()))
     }
 
-    /// Forget the key: out of memory, and the stored file removed. The owner's approval card is left as it is.
-    #[allow(dead_code)] // [not yet reached: the owner's "forget the key" action is not built]
-    pub fn clear_key(&self) -> Result<()> {
+    /// Replace the held key only after its card is up. A reconcile pass that began before this swap must finish
+    /// before the old file is removed; later passes see the new, unapproved key and cannot write the old one back.
+    fn hold_pending_key(&self, key: String, now: u64) -> Result<()> {
         let _step = self.key_step.lock().map_err(|_| refuse("model-key-lock"))?;
-        self.keys.clear()?;
-        self.key_file.remove()
+        self.hold(key, now)?;
+        if self.key_file.remove().is_err() {
+            eprintln!("model-broker: the stored key could not be removed");
+        }
+        Ok(())
     }
 
     /// One reconcile pass of the key file against the approved key digest (`None`: no approval known), journaled.
@@ -363,7 +360,7 @@ impl ModelBroker {
                 terms.models.join(", "),
                 self.config.budget.valid_days
             );
-            match self.gate.propose_model_target(scope, BUDGET_TARGET, note, bytes).await {
+            match self.gate.propose_model_budget(scope, note, bytes).await {
                 Ok(_) => eprintln!("model-broker: budget proposed; awaiting the owner's approval"),
                 Err(refusal) => eprintln!("model-broker: budget proposal not raised: {}:{}", refusal.organ, refusal.reason),
             }
@@ -467,28 +464,6 @@ mod tests {
     }
 
     #[test]
-    fn an_approved_card_stores_the_key_and_a_restart_loads_it_only_for_that_card() {
-        use std::os::unix::fs::PermissionsExt;
-        let key = "sk-0123456789abcdef0123456789abcdef";
-        let dir = std::env::temp_dir().join(format!("aukora-model-key-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let file = KeyFile::new(&dir);
-        let card = |key: &str| KeyApproval::parse(&KeyApproval::for_key(key).canonical_bytes()).unwrap().key_sha256;
-        let keys = KeyInbox::new();
-        let ticket = keys.issue(1, 1000).unwrap();
-        keys.redeem(ticket.token(), key.to_owned(), 2).unwrap();
-        assert_eq!(reconcile(&keys, &file, Some(&card(key)), 3), Step::Persisted);
-        // The supervisor restarts: the same card loads it; a card for another key removes it.
-        let restarted = KeyInbox::new();
-        assert_eq!(reconcile(&restarted, &file, Some(&card("sk-fedcba9876543210fedcba9876543210")), 4), Step::Discarded);
-        assert!(restarted.key_sha256().unwrap().is_none() && std::fs::read_dir(&dir).unwrap().next().is_none());
-        assert_eq!(reconcile(&restarted, &file, Some(&card(key)), 5), Step::Idle, "nothing stored any more");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn cards_show_dollars_and_the_shipped_defaults_are_generous_but_inside_the_checks() {
         assert_eq!(dollars(1_000_000_000), "1000.00");
         assert_eq!(dollars(2_000_000), "2.00");
@@ -542,3 +517,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod key_ordering_tests;

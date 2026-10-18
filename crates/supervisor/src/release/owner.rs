@@ -32,9 +32,8 @@ pub(crate) struct ReleaseApproval {
     node: NodeId,
     /// `/opt/aukora/offered`: beside the current-release link.
     offered: PathBuf,
-    /// The last verified offer (its resolved, immutable release folder and digest): a staged release never changes, so
-    /// the approvals poll does not hash it again.
-    verified: Arc<Mutex<Option<(PathBuf, Digest32)>>>,
+    /// Successful immutable offers are verified once; failures are retried after a pause and logged once per path.
+    verified: Arc<Mutex<Option<VerifiedOffer>>>,
     /// The pre-swap probe of each offered release: running, passed or failed (once per release; a failed release is
     /// probed again only after `PROBE_RETRY`, e.g. an approval landed while its state was copied).
     probes: Arc<Mutex<std::collections::HashMap<Digest32, (Probe, std::time::Instant)>>>,
@@ -48,6 +47,39 @@ enum Probe {
 }
 
 const PROBE_RETRY: std::time::Duration = std::time::Duration::from_secs(600);
+
+struct VerifiedOffer {
+    path: PathBuf,
+    digest: Option<Digest32>,
+    checked: std::time::Instant,
+}
+
+impl VerifiedOffer {
+    fn fresh_for(&self, path: &Path) -> bool {
+        self.path == path && (self.digest.is_some() || self.checked.elapsed() < PROBE_RETRY)
+    }
+}
+
+/// A probe still running is unknown, rather than evidence that root withdrew the offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Offer {
+    Absent,
+    Probing(Digest32),
+    Ready(Digest32),
+}
+
+impl Offer {
+    fn ready(self) -> Option<Digest32> {
+        match self {
+            Self::Ready(digest) => Some(digest),
+            _ => None,
+        }
+    }
+
+    fn retains(self, step: Step) -> bool {
+        matches!((self, step), (Self::Probing(candidate), Step::Upgrade(target)) if candidate == target)
+    }
+}
 
 /// What the release card is for, once the floor names `base`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,43 +137,76 @@ impl ReleaseFiles {
 
 impl ReleaseApproval {
     /// The offered release, verified once per staged folder and offered to the owner only once its pre-swap probe
-    /// passed (O20). A broken or partial offer, or one whose probe failed, is no offer (logged).
-    fn offered(&self) -> Option<Digest32> {
-        let (path, digest) = self.verified_offer()?;
+    /// passed (O20). A broken or partial offer, or one whose probe failed, is no offer (logged). A probe still running
+    /// retains an existing card for those bytes but cannot raise or approve a card.
+    fn offered(&self) -> Offer {
+        let Some((path, digest)) = self.verified_offer() else {
+            return Offer::Absent;
+        };
         if digest == self.installed {
-            return Some(digest);
+            return Offer::Ready(digest);
         }
-        self.probed(&path, digest).then_some(digest)
+        match self.probed(&path, digest) {
+            Probe::Passed => Offer::Ready(digest),
+            Probe::Running => Offer::Probing(digest),
+            Probe::Failed => Offer::Absent,
+        }
     }
 
     fn verified_offer(&self) -> Option<(PathBuf, Digest32)> {
+        self.verified_offer_with(verify_candidate)
+    }
+
+    fn verified_offer_with(
+        &self,
+        verify: impl FnOnce(&Path) -> Result<Option<(PathBuf, Digest32)>>,
+    ) -> Option<(PathBuf, Digest32)> {
         let resolved = std::fs::canonicalize(&self.offered).ok()?;
         let mut cache = self.verified.lock().ok()?;
-        if let Some((path, digest)) = cache.as_ref() {
-            if *path == resolved {
-                return Some((path.clone(), *digest));
+        if let Some(prior) = cache.as_ref() {
+            if prior.fresh_for(&resolved) {
+                return prior.digest.map(|digest| (prior.path.clone(), digest));
             }
         }
-        match verify_candidate(&self.offered) {
+        match verify(&self.offered) {
             Ok(Some((path, digest))) => {
-                *cache = Some((path.clone(), digest));
+                *cache = Some(VerifiedOffer {
+                    path: path.clone(),
+                    digest: Some(digest),
+                    checked: std::time::Instant::now(),
+                });
                 Some((path, digest))
             }
             Ok(None) => None,
             Err(refusal) => {
-                eprintln!("release: the offered release is refused: {}:{}", refusal.organ, refusal.reason);
+                if !cache
+                    .as_ref()
+                    .is_some_and(|prior| prior.path == resolved && prior.digest.is_none())
+                {
+                    eprintln!(
+                        "release: the offered release is refused: {}:{}",
+                        refusal.organ, refusal.reason
+                    );
+                }
+                *cache = Some(VerifiedOffer {
+                    path: resolved,
+                    digest: None,
+                    checked: std::time::Instant::now(),
+                });
                 None
             }
         }
     }
 
     /// Whether the offered release passed its probe; starts the probe (in the background) when it has not run.
-    fn probed(&self, candidate: &Path, digest: Digest32) -> bool {
-        let Ok(mut probes) = self.probes.lock() else { return false };
+    fn probed(&self, candidate: &Path, digest: Digest32) -> Probe {
+        let Ok(mut probes) = self.probes.lock() else {
+            return Probe::Failed;
+        };
         match probes.get(&digest) {
-            Some((Probe::Passed, _)) => return true,
-            Some((Probe::Running, _)) => return false,
-            Some((Probe::Failed, at)) if at.elapsed() < PROBE_RETRY => return false,
+            Some((Probe::Passed, _)) => return Probe::Passed,
+            Some((Probe::Running, _)) => return Probe::Running,
+            Some((Probe::Failed, at)) if at.elapsed() < PROBE_RETRY => return Probe::Failed,
             _ => {}
         }
         probes.insert(digest, (Probe::Running, std::time::Instant::now()));
@@ -168,8 +233,9 @@ impl ReleaseApproval {
         });
         if started.is_err() {
             probes.insert(digest, (Probe::Failed, std::time::Instant::now()));
+            return Probe::Failed;
         }
-        false
+        Probe::Running
     }
 
     pub(crate) fn ensure_proposal(&self, host: &HostLedger, scope: PrincipalScope) -> Result<()> {
@@ -179,7 +245,7 @@ impl ReleaseApproval {
             floor.reconcile(txn)?;
             floor.probe_release_guard(txn)?;
             let state = floor.snapshot()?;
-            let step = wanted_step(state.floor.digest, state.is_install_genesis(), self.installed, offered)?;
+            let step = wanted_step(state.floor.digest, state.is_install_genesis(), self.installed, offered.ready())?;
             let mut gate = ScopedGate::new(
                 NoReleaseTarget,
                 GateConfig {
@@ -202,6 +268,12 @@ impl ReleaseApproval {
                 }
                 if step.is_some_and(|step| self.check_proposal(txn, scope, &proposal, step).is_ok()) {
                     return Ok(());
+                }
+                if let Ok(target) = release_target(&proposal) {
+                    let retained = Step::Upgrade(target);
+                    if offered.retains(retained) && self.check_proposal(txn, scope, &proposal, retained).is_ok() {
+                        return Ok(());
+                    }
                 }
                 // An upgrade card for a release that is no longer offered (or another one now is): withdrawn, which
                 // is not the owner's decline.
@@ -230,7 +302,7 @@ impl ReleaseApproval {
             floor.reconcile(txn)?;
             floor.probe_release_guard(txn)?;
             let state = floor.snapshot()?;
-            let step = wanted_step(state.floor.digest, state.is_install_genesis(), self.installed, offered)?
+            let step = wanted_step(state.floor.digest, state.is_install_genesis(), self.installed, offered.ready())?
                 .ok_or(refuse("release-not-offered"))?;
             let old = gate::service::read_proposal(txn, declined)?;
             gate::service::scoped::validate_installed_release(txn, self.node, &old)?;
@@ -287,7 +359,7 @@ impl ReleaseApproval {
                 return Ok((floor.retry_installed(txn, proposal, assertion, &order, target)?, target));
             }
             // The step must still be the one this running, approved release would raise.
-            if wanted_step(state.floor.digest, state.is_install_genesis(), self.installed, offered)? != Some(step) {
+            if wanted_step(state.floor.digest, state.is_install_genesis(), self.installed, offered.ready())? != Some(step) {
                 return Err(refuse("release-not-approved"));
             }
             if stored.state != ProposalState::Pending {
@@ -416,5 +488,80 @@ mod tests {
             String::from_utf8(bytes).unwrap(),
             format!("{{\"digest\":\"{}\",\"v\":1}}", digest(9))
         );
+    }
+
+    #[test]
+    fn a_running_probe_retains_only_its_existing_upgrade_card_without_allowing_approval() {
+        let (installed, candidate, other) = (digest(1), digest(2), digest(3));
+        let offer = Offer::Probing(candidate);
+        assert_eq!(
+            wanted_step(installed, false, installed, offer.ready()).unwrap(),
+            None,
+            "no new card or approval before the probe passes"
+        );
+        assert!(
+            offer.retains(Step::Upgrade(candidate)),
+            "a restart's new probe does not withdraw the owner's card"
+        );
+        assert!(!offer.retains(Step::Upgrade(other)) && !offer.retains(Step::Genesis));
+        assert!(
+            !Offer::Absent.retains(Step::Upgrade(candidate)),
+            "a withdrawn or failed offer withdraws its card"
+        );
+        assert_eq!(
+            wanted_step(installed, false, installed, Offer::Ready(candidate).ready()).unwrap(),
+            Some(Step::Upgrade(candidate))
+        );
+    }
+    #[test]
+    fn a_broken_offer_is_not_verified_on_each_approvals_poll() {
+        use std::os::unix::fs::symlink;
+        let mut nonce = [0; 8];
+        getrandom::fill(&mut nonce).unwrap();
+        let root = std::env::temp_dir().join(format!("release-offer-cache-{}", hex::encode(nonce)));
+        std::fs::create_dir(&root).unwrap();
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let offered = root.join("offered");
+        symlink(&first, &offered).unwrap();
+        let approval = ReleaseApproval {
+            installed: digest(1),
+            floor_directory: root.join("floor"),
+            node: NodeId::from_bytes([1; 16]),
+            offered,
+            verified: Arc::new(Mutex::new(None)),
+            probes: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        };
+        let attempts = std::cell::Cell::new(0);
+        let refused = |_: &Path| {
+            attempts.set(attempts.get() + 1);
+            Err(refuse("release-manifest"))
+        };
+        for _ in 0..4 {
+            assert_eq!(approval.verified_offer_with(refused), None);
+        }
+        assert_eq!(
+            attempts.get(),
+            1,
+            "a broken immutable folder is held back between retries"
+        );
+        approval.verified.lock().unwrap().as_mut().unwrap().checked -= PROBE_RETRY;
+        assert_eq!(approval.verified_offer_with(refused), None);
+        assert_eq!(
+            attempts.get(),
+            2,
+            "a failed offer may be checked again after the pause"
+        );
+        std::fs::remove_file(&approval.offered).unwrap();
+        symlink(&second, &approval.offered).unwrap();
+        assert_eq!(approval.verified_offer_with(refused), None);
+        assert_eq!(
+            attempts.get(),
+            3,
+            "a different offered folder is checked at once"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

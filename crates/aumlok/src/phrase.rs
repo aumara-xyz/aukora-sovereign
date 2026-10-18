@@ -535,4 +535,38 @@ pub mod owner {
             self.0.as_str()
         }
     }
+
+    #[cfg(test)]
+    mod write_tests {
+        use super::*;
+        use crate::{backup::BackupRequest, envelope::{owner::IdentityRoot, KdfParameters}};
+
+        // Export only from a wasm test build. Node runs it with browser/random imports that throw, so a weak
+        // write must refuse before either API consults the browser, obtains randomness or starts encryption.
+        #[wasm_bindgen::prelude::wasm_bindgen]
+        pub fn write_kdf_floor_probe() -> bool {
+            let browser = OwnerBrowser { owner_origin: "https://owner.example".into(), shell_origin: "https://shell.example".into() };
+            let phrase = OwnerPhrase(Zeroizing::new("disposable fixture phrase".into()));
+            let root = IdentityRoot::from_secret(Zeroizing::new([0; 32]));
+            for (memory_kib, time_cost) in [(32, 1), (65_535, 3), (262_144, 2)] {
+                let costs = KdfParameters { memory_kib, time_cost, parallelism: 1 };
+                let expected = refusal("envelope-kdf-weak");
+                if crate::envelope::owner::seal(&browser, &root, &phrase, costs).err() != Some(expected) {
+                    return false;
+                }
+                for choice in [BackupRequest::ExplicitPhraseOnlyV1, BackupRequest::PasskeyBoundV2] {
+                    if crate::backup::owner::download(&browser, &root, &phrase, choice, None, costs).err() != Some(expected) {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
+
+        #[test]
+        fn both_write_apis_refuse_weak_costs_before_encryption() {
+            assert!(write_kdf_floor_probe());
+        }
+    }
+
 }

@@ -84,7 +84,7 @@ impl<S: TargetStore> ScopedGate<S> {
         if proposal.state != ProposalState::Pending {
             return Ok(true);
         }
-        if matches!(txn.read_live_review(id, OwnerOperation::Release), Ok(Some(_))) {
+        if txn.read_live_review(id, OwnerOperation::Release)?.is_some() {
             return Ok(false);
         }
         let at = now(txn)?;
