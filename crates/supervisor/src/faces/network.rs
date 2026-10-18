@@ -271,7 +271,7 @@ mod contact_card_tests {
             pairing: None,
         }));
         let says = add.card().unwrap().says;
-        assert!(says.contains("This approves the key, not the person."), "{says}");
+        assert!(says.contains("This approves the ID, not the person."), "{says}");
         assert!(says.contains("in person or on a call you trust"), "{says}");
         assert!(gate::messaging::contact_card(b"{}").is_err());
     }

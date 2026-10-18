@@ -19,9 +19,9 @@ fn action_card_vectors_replay_byte_for_byte() {
         assert_eq!(String::from_utf8(card.clone()).unwrap(), vector["card_utf8"].as_str().unwrap(), "{name}");
         assert_eq!(Digest32::sha256(&card).to_string(), vector["display_sha256"].as_str().unwrap(), "{name}");
         if matches!(action, OwnerAction::Contact(crate::ContactChange::Add(_))) {
-            // The exact npub the owner compares out of band, and a key rather than a person.
+            // The exact Aukora ID (npub) the owner compares out of band, and an ID rather than a person.
             let says = vector["card"]["says"].as_str().unwrap();
-            assert!(says.contains("npub1") && says.contains("This approves the key, not the person."), "{name}");
+            assert!(says.contains("npub1") && says.contains("This approves the ID, not the person."), "{name}");
         }
     }
     for vector in vectors["refuse"].as_array().unwrap() {

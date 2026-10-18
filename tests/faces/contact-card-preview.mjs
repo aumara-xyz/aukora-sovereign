@@ -13,7 +13,7 @@ const npub = 'npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6';
 const action = { key, label: 'Ravi', op: 'contact.add', pairing: null, schema: 'aukora:messaging-action:v1' };
 const card = {
   v: 1, risk: 'critical',
-  says: `Approve this exact Nostr key as a contact: ${npub}. This approves the key, not the person. Before you approve, compare it with them in person or on a call you trust.`,
+  says: `Approve this exact Aukora ID as a contact: ${npub}. This approves the ID, not the person. Before you approve, compare it with them in person or on a call you trust.`,
   facts: Object.keys(action).sort().map(name => [name, action[name]]),
   from_to: { contact: key }, model_note: '',
 };

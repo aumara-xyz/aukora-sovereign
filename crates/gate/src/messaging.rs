@@ -17,18 +17,18 @@ pub fn label_char_refused(c: char) -> bool {
 }
 
 /// The one line a contact card says, shared with `messaging::OwnerAction::card` so both build the same C6 bytes.
-/// It names the exact npub being approved, says that this approves a key and not a person, and asks the owner to
-/// compare the npub with the other person through a channel they already trust before approving.
+/// It names the exact Aukora ID (the npub) being approved, says that this approves an ID and not a person, and asks
+/// the owner to compare the ID with the other person through a channel they already trust before approving.
 pub fn contact_says(add: bool, key: [u8; 32]) -> String {
     let npub = canon::provenance::Npub::from_key_bytes(key);
     if add {
         format!(
-            "Approve this exact Nostr key as a contact: {}. This approves the key, not the person. Before you \
+            "Approve this exact Aukora ID as a contact: {}. This approves the ID, not the person. Before you \
              approve, compare it with them in person or on a call you trust.",
             npub.as_str()
         )
     } else {
-        format!("Remove this Nostr key from your approved contacts: {}.", npub.as_str())
+        format!("Remove this Aukora ID from your approved contacts: {}.", npub.as_str())
     }
 }
 
@@ -97,18 +97,18 @@ mod tests {
     }
 
     #[test]
-    fn a_contact_card_names_the_exact_npub_and_approves_a_key_not_a_person() {
+    fn a_contact_card_names_the_exact_aukora_id_and_approves_an_id_not_a_person() {
         // The NIP-19 example key: npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6.
         let key = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
         let npub = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";
         let add = contact_card(&action("contact.add", key)).unwrap();
         assert!(add.says.contains(npub), "{}", add.says);
-        assert!(add.says.contains("This approves the key, not the person."));
+        assert!(add.says.contains("This approves the ID, not the person."));
         assert!(add.says.contains("compare it with them in person or on a call you trust"));
         assert!(!add.says.contains('\n'));
         add.canonical_bytes().unwrap();
         let remove = contact_card(&action("contact.remove", key)).unwrap();
-        assert_eq!(remove.says, format!("Remove this Nostr key from your approved contacts: {npub}."));
+        assert_eq!(remove.says, format!("Remove this Aukora ID from your approved contacts: {npub}."));
         // A label cannot reorder or hide the npub the owner compares (a plain non-ASCII label still passes).
         let good = format!(r#"{{"key":"{key}","label":"Mira 雪","op":"contact.add","pairing":null,"schema":"aukora:messaging-action:v1"}}"#);
         assert!(contact_card(good.as_bytes()).is_ok());
