@@ -818,10 +818,11 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
     let mut status = outcome.status.clone();
     let (mut items, mut live, mut changed, mut justified) = (Vec::new(), 0usize, false, false);
     let mut states: BTreeMap<String, usize> = BTreeMap::new();
+    let at = now();
     for item in &outcome.items {
         match s.store.get(&item.id) {
             Ok(Some(note)) if visible(&caller, &note) => {
-                let dead = note.quarantined || note.superseded_by.is_some() || validity(&note.meta, now()) != "current";
+                let dead = note.quarantined || note.superseded_by.is_some() || validity(&note.meta, at) != "current";
                 if item.correction.is_none() && dead {
                     changed = true;
                     continue;
@@ -829,14 +830,14 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                 live += usize::from(item.correction.is_none());
                 // What the statement stands on is worked out again from the notes as they are now (the kept note and the
                 // repeaters that still read as visible and live): the label recall gathered before the models ran may rest
-                // on a root that has since been quarantined.
+                // on a root that has since been withdrawn or is no longer within its validity window.
                 let mut evidence = item.evidence;
                 if item.correction.is_none() && !note.quarantined {
                     let mut holders = vec![note.clone()];
                     let mut failed = false;
                     for other in &item.also_by_ids {
                         match s.store.get(other) {
-                            Ok(Some(n)) if visible(&caller, &n) && !n.quarantined && n.superseded_by.is_none() && validity(&n.meta, now()) == "current" => holders.push(n),
+                            Ok(Some(n)) if visible(&caller, &n) && !n.quarantined && n.superseded_by.is_none() && validity(&n.meta, at) == "current" => holders.push(n),
                             Ok(_) => {}
                             Err(_) => failed = true,
                         }
@@ -845,7 +846,7 @@ fn recall_answer(state: &Mutex<State>, caller: &Caller, outcome: &RecallOutcome)
                         None
                     } else {
                         let refs: Vec<&StoredNote> = holders.iter().collect();
-                        crate::shared::hybrid::group_evidence(&s.store, &refs, &|n| visible(&caller, n)).ok()
+                        crate::shared::hybrid::group_evidence(&s.store, &refs, at, &|n| visible(&caller, n)).ok()
                     };
                     match fresh {
                         Some(fresh) => evidence = fresh,

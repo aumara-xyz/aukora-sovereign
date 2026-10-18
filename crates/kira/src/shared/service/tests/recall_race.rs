@@ -4,6 +4,7 @@
 
 use super::*;
 
+mod evidence_validity;
 
 /// A recall gathered under the lock, then (as if while the models ran) the store changes, then the answer is read.
 fn recall_across(f: &Fixture, token: &str, query: &str, between: impl FnOnce()) -> Result<Value> {

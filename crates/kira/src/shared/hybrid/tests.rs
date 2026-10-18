@@ -7,6 +7,7 @@ use crate::shared::note::{Form, NoteDraft, Privacy, NOTE_KIND, QUARANTINE_KIND, 
 use nostr::{Event, SecretKey};
 
 mod evidence;
+mod validity;
 
 /// Content words hashed into 256 buckets plus a constant bias dimension: deterministic and model-free.
 struct Words;

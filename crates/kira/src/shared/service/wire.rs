@@ -94,7 +94,7 @@ pub(super) fn note_json(store: &SharedStore, caller: &Caller, note: &StoredNote,
     let (m, current) = (&note.meta, current_visible(store, caller, note)?);
     let evidence = match evidence {
         Some(evidence) => evidence,
-        None => crate::shared::hybrid::evidence_of(store, note, &|n| visible(caller, n))?,
+        None => crate::shared::hybrid::evidence_of(store, note, now(), &|n| visible(caller, n))?,
     };
     let (sources, roots) = (readable_ids(store, caller, &m.sources)?, readable_ids(store, caller, &note.roots)?);
     Ok(json!({

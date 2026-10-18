@@ -382,13 +382,13 @@ pub fn readable_roots(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(
     Ok(out)
 }
 
-/// Distinct authors of readable, non-web roots making the SAME statement. Citations record ancestry, not support:
+/// Distinct authors of current, readable, non-web roots making the SAME statement, judged at `at`. Citations record ancestry, not support:
 /// a root about something else cannot corroborate a claim. Unsourced repetitions still share one root ("repeated by").
-pub fn corroborating_authors(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(&StoredNote) -> bool) -> Result<BTreeSet<String>> {
+pub fn corroborating_authors(store: &SharedStore, note: &StoredNote, at: u64, readable: &dyn Fn(&StoredNote) -> bool) -> Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     for root in &note.roots {
         if let Some(n) = store.get(root)? {
-            if readable(&n) && n.meta.capture != Capture::WebDerived && !n.quarantined
+            if readable(&n) && n.meta.capture != Capture::WebDerived && retired(&n, at).is_none()
                 && n.meta.statement_hash == note.meta.statement_hash {
                 out.insert(hex(n.event.pubkey.as_bytes()));
             }
@@ -401,11 +401,11 @@ pub fn corroborating_authors(store: &SharedStore, note: &StoredNote, readable: &
 /// note's own provenance, and corroborated if the notes together go back to roots of at least two different authors
 /// (none web-derived). Recall computes this once while it gathers; the service computes it again from the notes it
 /// reloads, because a quarantine, a supersede or an expiry may have removed what the first answer stood on.
-pub fn group_evidence(store: &SharedStore, notes: &[&StoredNote], readable: &dyn Fn(&StoredNote) -> bool) -> Result<&'static str> {
+pub fn group_evidence(store: &SharedStore, notes: &[&StoredNote], at: u64, readable: &dyn Fn(&StoredNote) -> bool) -> Result<&'static str> {
     let mut best = Evidence::Unverified;
     let (mut authors, mut web) = (BTreeSet::new(), false);
     for note in notes {
-        let own = corroborating_authors(store, note, readable)?;
+        let own = corroborating_authors(store, note, at, readable)?;
         best = best.max(provenance(&note.meta, own.len()));
         authors.extend(own);
         web |= note.meta.capture == Capture::WebDerived;
@@ -417,8 +417,8 @@ pub fn group_evidence(store: &SharedStore, notes: &[&StoredNote], readable: &dyn
 }
 
 /// The wire label of what a single note stands on (see `RecallItem::evidence`), from the roots `readable` accepts.
-pub fn evidence_of(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(&StoredNote) -> bool) -> Result<&'static str> {
-    Ok(provenance(&note.meta, corroborating_authors(store, note, readable)?.len()).wire())
+pub fn evidence_of(store: &SharedStore, note: &StoredNote, at: u64, readable: &dyn Fn(&StoredNote) -> bool) -> Result<&'static str> {
+    Ok(provenance(&note.meta, corroborating_authors(store, note, at, readable)?.len()).wire())
 }
 
 struct Cand {
@@ -730,7 +730,7 @@ impl SharedStore {
         history.truncate(MAX_HISTORY_CANDIDATES);
         let readable = |n: &StoredNote| loader.readable(n);
         for c in live.iter_mut().chain(history.iter_mut()) {
-            c.root_authors = corroborating_authors(self, &c.note, &readable)?;
+            c.root_authors = corroborating_authors(self, &c.note, now, &readable)?;
             c.roots = readable_roots(self, &c.note, &readable)?;
         }
         Ok(Prepared {
