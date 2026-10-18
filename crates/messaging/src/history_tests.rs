@@ -513,19 +513,32 @@ fn a_refusal_that_can_clear_is_retried_a_bounded_number_of_times() -> Result<()>
     }
     let slots: i64 = b.db.query_row("SELECT count(*) FROM messaging_retry_envelope", [], |r| r.get(0)).unwrap();
     assert_eq!(slots, 0);
-    // A second skewed wrap that never clears: counted RETRY_LIMIT times, then seen.
+    // A final refusal is pinned at once.
+    let other = [0xcd; 32];
+    settle_refused(&b.db, &other, false)?;
+    assert!(b.seen_envelope(nostr::EventId::from_bytes(other))?);
+    // A second skewed wrap, refused for longer than the budget: counted RETRY_LIMIT times, then still tried on every poll
+    // but no longer counted, and never pinned, even with the refused table full; once the clock is right it arrives.
+    for n in 0..REFUSED_ENVELOPE_CAP {
+        let mut id = [0x22; 32];
+        id[..8].copy_from_slice(&n.to_be_bytes());
+        settle_refused(&b.db, &id, false)?;
+    }
     let again = a.queue_owner_send(&mut host_a, &draft(key_b.public_key()?, "Still skewed"), &key_a, NOW)?;
     a.transmit_owner(&mut host_a, &mut relay, again, 1000)?;
     let stuck = relay.0.remove(0);
     let before = total(&b);
-    for _ in 0..RETRY_LIMIT + 3 {
-        if !b.seen_envelope(stuck.id)? {
-            b.receive(&mut host_b, &stuck, &key_b, TransportKind::NostrRelays, behind)?;
-        }
+    for poll in 0..RETRY_LIMIT + 5 {
+        assert!(!b.seen_envelope(stuck.id)?, "a clearable refusal is never pinned (poll {poll})");
+        let outcome = b.receive(&mut host_b, &stuck, &key_b, TransportKind::NostrRelays, behind)?;
+        assert_eq!(matches!(outcome, IngressOutcome::Retrying(_)), poll >= RETRY_LIMIT, "poll {poll}");
     }
     assert_eq!(total(&b) - before, RETRY_LIMIT as u64);
-    assert!(b.seen_envelope(stuck.id)?);
-    // With the retry table full, a retryable refusal is never pinned early: it is counted and stays retryable.
+    match b.receive(&mut host_b, &stuck, &key_b, TransportKind::NostrRelays, NOW)? {
+        IngressOutcome::Data(data) => assert_eq!(data.text(), "Still skewed"),
+        other => panic!("unexpected {other:?}"),
+    }
+    // With the retry table full the oldest row makes room: the table stays bounded and a new wrap is tracked.
     for n in 0..REFUSED_ENVELOPE_CAP {
         let mut id = [0x11; 32];
         id[..8].copy_from_slice(&n.to_be_bytes());
@@ -533,11 +546,11 @@ fn a_refusal_that_can_clear_is_retried_a_bounded_number_of_times() -> Result<()>
     }
     let fresh = [0x99; 32];
     settle_refused(&b.db, &fresh, true)?;
+    let rows: i64 = b.db.query_row("SELECT count(*) FROM messaging_retry_envelope", [], |r| r.get(0)).unwrap();
+    assert_eq!(rows, REFUSED_ENVELOPE_CAP);
+    let tracked: bool = b.db.query_row("SELECT EXISTS(SELECT 1 FROM messaging_retry_envelope WHERE envelope=?1)", [fresh.as_slice()], |r| r.get(0)).unwrap();
+    assert!(tracked);
     assert!(!b.seen_envelope(nostr::EventId::from_bytes(fresh))?);
-    // A final refusal is pinned at once.
-    let other = [0xcd; 32];
-    settle_refused(&b.db, &other, false)?;
-    assert!(b.seen_envelope(nostr::EventId::from_bytes(other))?);
     Ok(())
 }
 

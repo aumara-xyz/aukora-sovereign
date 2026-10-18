@@ -135,6 +135,9 @@ impl ContactData {
 pub enum IngressOutcome {
     Data(ContactData),
     Refused(CountedRefusal),
+    /// Refused again for a reason that can clear, already counted `RETRY_LIMIT` times: not counted again, tried again
+    /// on the next poll.
+    Retrying(RefusalReason),
 }
 
 /// Uses the existing nonauthorizing boot.facts path, as posture observations do.
@@ -318,14 +321,13 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
 impl Messaging {
     /// The relay worker can skip an already admitted envelope in repeated relay
     /// snapshots. Explicit ingress attempts still pass through the replay fence.
-    /// A wrap already refused (and counted once) is skipped the same way; it is never retried, so a sender who was not
+    /// A wrap refused for a final reason (counted once) is skipped the same way; it is never retried, so a sender who was not
     /// yet an approved contact sends again after both owners have approved each other.
     pub fn seen_envelope(&self, envelope: EventId) -> Result<bool> {
         self.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM messaging_seen WHERE envelope=?1)
-             OR EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)
-             OR EXISTS(SELECT 1 FROM messaging_retry_envelope WHERE envelope=?1 AND tries>=?2)",
-            params![envelope.as_bytes().as_slice(), refused::RETRY_LIMIT], |row| row.get(0),
+             OR EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)",
+            [envelope.as_bytes().as_slice()], |row| row.get(0),
         ).map_err(|_| refuse("store-read"))
     }
 
@@ -392,6 +394,9 @@ impl Messaging {
                 Ok(IngressOutcome::Data(data))
             }
             Err((reason, retryable)) => {
+                if retryable && refused::retry_exhausted(&self.db, envelope.id.as_bytes())? {
+                    return Ok(IngressOutcome::Retrying(reason));
+                }
                 let context = txn.observation_context()?;
                 let observed_at_ms =
                     u64::try_from(context.at).map_err(|_| refuse("refusal-context"))?;

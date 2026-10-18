@@ -111,8 +111,8 @@ that bound; durable relay-history cursors are follow-up work before sustained
 high-volume use. Known admitted wraps, and wraps whose refusal is final (a stranger, a bad signature or encryption, another
 recipient, a replay, a bad payload; at most 4096 ids kept), are skipped during routine polling. A message sent before
 both owners approved each other is therefore not retried and must be sent again. A refusal that can clear (clock
-skew, a contact approval still syncing, a local store error) is retried and counted on later polls, at most 20 times,
-then it is final too.
+skew, a contact approval still syncing, a local store error) is never pinned: the wrap is tried again on every poll
+and arrives once the cause clears, but its refusal is counted at most 20 times.
 
 ## Privacy and storage
 
