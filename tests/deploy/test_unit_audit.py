@@ -32,7 +32,9 @@ per_unit = {'aukora-sovereign.service': {'RestartUSec': '3s', 'OOMScoreAdjust': 
             'aukora-egress.service': {'RestartUSec': '5s'},
             'aukora-release-probe@000000000000-000000000000.service': {'OOMScoreAdjust': '500'}}
 unit = sys.argv[-1]
-if unit == 'aukora-release-probe@000000000000-000000000000.service' and prop == 'PrivateNetwork' and os.environ.get('WEAKEN_PROBE'):
+if prop == 'IPAddressDeny' and os.environ.get('REVERSE_DENY'):
+    print('0.0.0.0/0 ::/0')
+elif unit == 'aukora-release-probe@000000000000-000000000000.service' and prop == 'PrivateNetwork' and os.environ.get('WEAKEN_PROBE'):
     print('no')
 else:
     print(per_unit.get(unit, {}).get(prop, values.get(prop, 'yes')))
@@ -47,6 +49,9 @@ else:
             good = subprocess.run(audit, env=env, capture_output=True, text=True)
             self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
             self.assertIn("ok   aukora-release-probe@000000000000-000000000000.service", good.stdout)
+            # systemd 255.4 prints the deny set in either order; the same set passes.
+            reversed_deny = subprocess.run(audit, env={**env, "REVERSE_DENY": "1"}, capture_output=True, text=True)
+            self.assertEqual(reversed_deny.returncode, 0, reversed_deny.stdout + reversed_deny.stderr)
             bad = subprocess.run(audit, env={**env, "WEAKEN_PROBE": "1"}, capture_output=True, text=True)
             self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
             self.assertIn("FAIL aukora-release-probe@000000000000-000000000000.service: PrivateNetwork", bad.stdout)
