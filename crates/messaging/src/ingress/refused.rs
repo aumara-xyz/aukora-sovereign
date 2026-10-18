@@ -4,7 +4,7 @@ use super::refuse;
 use canon::Result;
 use rusqlite::{params, Connection};
 
-/// Maximum refusal-count retry slots; final ids remain durable without eviction.
+/// Maximum refusal-count retry slots, without ciphertext; final ids remain durable without eviction.
 pub(crate) const REFUSED_ENVELOPE_CAP: i64 = 4096;
 /// A refusal that can clear (clock skew, a contact approval still syncing, a local store error) is retried on every
 /// poll, and counted at most this many times (about ten minutes of 30-second polls); it is never pinned.
@@ -21,8 +21,8 @@ pub(crate) fn remember_refused(db: &Connection, envelope: &[u8; 32]) -> Result<(
 }
 
 /// After a counted refusal: a final one is remembered at once. A retryable one is never pinned: its retry row counts
-/// the refusals (up to `RETRY_LIMIT`, see `retry_exhausted`), and the wrap is tried again on every poll until it is
-/// admitted, which releases the row. With the retry table full the oldest row makes room.
+/// the refusals (up to `RETRY_LIMIT`, see `retry_exhausted`). The ciphertext queue in `polling` has separate row and
+/// byte budgets. With the counter table full the oldest counter makes room; admission also releases the counter.
 pub(crate) fn settle_refused(db: &Connection, envelope: &[u8; 32], retryable: bool) -> Result<()> {
     if !retryable {
         return remember_refused(db, envelope);
@@ -49,8 +49,8 @@ pub(crate) fn settle_refused(db: &Connection, envelope: &[u8; 32], retryable: bo
     Ok(())
 }
 
-/// Whether this wrap's clearable refusal has already been counted `RETRY_LIMIT` times: it is still tried (and admitted
-/// once it clears), but no further refusal is counted for it.
+/// Whether this wrap's clearable refusal has already been counted `RETRY_LIMIT` times: while its ciphertext remains
+/// queued it is still tried (and admitted once it clears), but no further refusal is counted for it.
 pub(crate) fn retry_exhausted(db: &Connection, envelope: &[u8; 32]) -> Result<bool> {
     db.query_row(
         "SELECT EXISTS(SELECT 1 FROM messaging_retry_envelope WHERE envelope=?1 AND tries>=?2)",

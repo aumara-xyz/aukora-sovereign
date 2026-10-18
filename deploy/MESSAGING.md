@@ -116,8 +116,10 @@ interval; every fourth subsequent sweep revisits all history, covering old
 queued wraps first published after a long sender outage. Failed queries retain
 their history position and still rotate to the next relay. A cursor advances
 only after the page is admitted or durably refused.
-Clearable refusals retain their ciphertext locally and retry eight per poll,
-so pagination and restarts cannot strand them behind the relay cursor.
+Clearable refusals retain their ciphertext locally and retry eight per poll
+across pagination and restarts. This queue holds at most 4096 wraps and 16 MiB
+of ciphertext, evicting the oldest retained wraps first when either budget
+fills. An evicted wrap requires the contact to resend it.
 
 NIP-01 has inclusive, second-resolution time bounds and exact event IDs, with
 no offset or exclusion cursor. A full 128-wrap single-second boundary therefore
@@ -136,8 +138,9 @@ old 4096-ID eviction boundary: each is counted once across overlap and restart.
 This exact-once index grows with unique refused wraps, retaining only their
 32-byte IDs. A message sent before both owners approved each other is not
 retried and must be sent again. A refusal that can clear (clock skew, a contact
-approval still syncing, a local store error) is never pinned and arrives once
-the cause clears; its retained retry counter limits repeated observations.
+approval still syncing, a local store error) is never pinned. Its queued
+ciphertext retries until the cause clears or the queue budget evicts it;
+its separate retained retry counter limits repeated observations.
 
 ## Privacy and storage
 
