@@ -50,7 +50,10 @@ fn guest_proposals_cannot_reach_any_messaging_target() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
-    for target in [messaging::CONTACT_TARGET, messaging::SEND_TARGET] {
+    // The whole messaging/ namespace, not two exact names: a third messaging target is refused the same way. (The
+    // owner's contact card still proposes through propose_owner_requested: see the end of
+    // adapters::messaging::tests::one_real_contact_card_admits_owner_sends_and_verified_projection_survives_restart.)
+    for target in [messaging::CONTACT_TARGET, messaging::SEND_TARGET, "messaging/other.json", "messaging/contacts.json.new"] {
         let result = runtime.block_on(adapter.propose(
             PrincipalScope {
                 subject: SubjectId::parse(&format!("aukora:1:{}", "01".repeat(32))).unwrap(),

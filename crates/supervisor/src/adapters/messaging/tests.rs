@@ -482,5 +482,14 @@ fn one_real_contact_card_admits_owner_sends_and_verified_projection_survives_res
     assert!(network.contacts(foreign, None, 10).is_err());
     assert!(network.messages(foreign, None, None, 10).is_err());
     assert!(network.messages(rig.scope, None, Some("0"), 10).is_err());
+    // The owner's Add contact still raises its one card through the adapter (propose_owner_requested), while a guest
+    // proposal to any messaging/ target is refused (adapters::gate::messaging_tests).
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let _entered = runtime.enter();
+    let other = nostr::SecretKey::import(zeroize::Zeroizing::new([91; 32]))?.public_key()?;
+    let raised = network.propose_contact(rig.scope, other.to_npub()?.as_str(), Some("Owner C"))?;
+    assert_eq!(string(&raised, "state")?, "pending");
+    assert!(network.propose_contact(foreign, other.to_npub()?.as_str(), None).is_err());
+    assert!(network.propose_contact(rig.scope, identity.npub(), None).is_err(), "never yourself");
     Ok(())
 }
