@@ -141,13 +141,14 @@ of ciphertext, evicting the oldest retained wraps first when either budget
 fills. An evicted wrap requires the contact to resend it.
 
 NIP-01 has inclusive, second-resolution time bounds and exact event IDs, with
-no offset or exclusion cursor. A single second that fills a 128-wrap page, or
-that the client's 4 MiB input cap refuses (large wraps), cannot be paged further
-on that relay: the wraps it returned are delivered, `query-timestamp-saturated`
-is logged, and the history walk steps past that second. Wraps beyond the cap in
-that one second are not read from that relay (another relay may still carry
-them); holding the boundary instead would freeze all older history behind 128
-wraps anyone can publish. A wrap the node cannot carry (for example a second
+no offset or exclusion cursor. A single second that fills a 128-wrap page
+cannot be paged further on that relay: the 128 it returned are delivered,
+`query-timestamp-saturated` is logged, and the history walk steps past that
+second. Wraps beyond 128 in that one second are not read from that relay
+(another relay may still carry them); holding the boundary instead would freeze
+all older history behind 128 wraps anyone can publish. The client's 4 MiB input
+cap can still hold a crowded second of large wraps (about 64 at 64 KiB): that
+query is deferred and retried, and that relay's older history waits behind it. A wrap the node cannot carry (for example a second
 `p` tag) is skipped, never a refusal of its page. Independent tail queries keep
 advancing their upper bound. Relays may also return fewer events than requested,
 so history completeness cannot be guaranteed. Lossless traversal of an arbitrarily crowded

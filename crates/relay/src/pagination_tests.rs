@@ -152,6 +152,11 @@ fn a_saturated_second_is_stepped_past_without_starving_another_relay() {
         .map(|n| event(&key, recipient, 80, &n.to_string()))
         .collect();
     let other = vec![event(&key, recipient, 60, "other")];
+    // One older wrap on the flooded relay, below the crowded second.
+    let mut flooded = flooded;
+    let older = event(&key, recipient, 50, "older");
+    let older_id = older.event().id;
+    flooded.push(older);
     let keys = [
         relay_key("wss://first.example"),
         relay_key("wss://second.example"),
@@ -164,15 +169,20 @@ fn a_saturated_second_is_stepped_past_without_starving_another_relay() {
         deadline_ms: 1,
     };
     let mut seen_other = false;
+    let mut delivered = BTreeSet::new();
     for _ in 0..24 {
         let batch = receive_page(&keys, &request, 100, |index, filter| {
             Ok(query(if index == 0 { &flooded } else { &other }, filter))
         })
         .unwrap();
         seen_other |= batch.envelopes.iter().any(|e| e.id == other[0].event().id);
+        delivered.extend(batch.envelopes.iter().map(|e| e.id));
         request.cursor = batch.next_cursor;
     }
     assert!(seen_other);
+    assert!(delivered.contains(&older_id), "history below the crowded second is reached");
+    let crowded = flooded.iter().filter(|e| e.event().created_at == 80 && delivered.contains(&e.event().id)).count();
+    assert!(crowded >= 128, "the full page of that second was delivered ({crowded})");
     let cursor: serde_json::Value = serde_json::from_str(request.cursor.as_ref().unwrap()).unwrap();
     let position = cursor[2]
         .as_array()
@@ -460,39 +470,4 @@ fn an_uncarriable_wrap_is_skipped_instead_of_refusing_its_page() {
         request.cursor = batch.next_cursor;
     }
     assert!(delivered.contains(&good.event().id), "the carriable wrap behind it is delivered");
-}
-
-// Large wraps hit the client's 4 MiB input cap before the 128-item limit (64 x 64 KiB): that second is stepped past
-// too, after its smaller pages were delivered, instead of the same refused query repeating forever.
-#[test]
-fn a_second_too_large_for_the_input_cap_is_stepped_past() {
-    let key = SecretKey::generate().unwrap();
-    let recipient = key.public_key().unwrap();
-    let flood: Vec<_> = (0..100)
-        .map(|n| event(&key, recipient, 80, &n.to_string()))
-        .collect();
-    let older = vec![event(&key, recipient, 50, "older")];
-    let keys = [relay_key("wss://relay.example")];
-    let mut request = ReceiveRequest {
-        recipient,
-        cursor: None,
-        max_items: 128,
-        max_bytes: 1_048_576,
-        deadline_ms: 1,
-    };
-    let mut delivered = BTreeSet::new();
-    for _ in 0..16 {
-        let batch = receive_page(&keys, &request, 100, |_, filter| {
-            if filter.limit.unwrap_or(0) > 32 {
-                return Err(canon::Refusal { organ: "relay", reason: "query-byte-limit" });
-            }
-            let mut all = flood.clone();
-            all.extend(older.iter().cloned());
-            Ok(query(&all, filter))
-        })
-        .unwrap();
-        delivered.extend(batch.envelopes.iter().map(|e| e.id));
-        request.cursor = batch.next_cursor;
-    }
-    assert!(delivered.contains(&older[0].event().id), "history below the crowded second is reached");
 }
