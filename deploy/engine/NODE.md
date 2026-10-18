@@ -655,8 +655,9 @@ the pinned ones ends `resolve-failed` until `engine.py egress` is run again); me
 own lanes `finding`, `evidence`, `experience` (30 a day). Seven days, renewed a day before the end: one card a week.
 The door reads its grants only from the bytes that card applied. Cards on a building day: none for memory reads
 and Auma's own model-generated notes, none for the first page; after the first page, one per further page and per
-note until the owner clears the taint on `/engine/door` (P4); one for any other host, plugin, schedule, terminal or
-web-derived note. A node installed before this branch lacks the target in its inventory: the proposal is refused
+note until the owner clears the taint on `/engine/door` (P4); one for a web-derived note. Off-allowlist hosts are
+refused, and unsupported plugin, schedule or terminal crossings return `no-executor` before any owner card.
+A node installed before this branch lacks the target in its inventory: the proposal is refused
 (`door: starter grants not proposed`) and everything asks, as before. NODE (re-run genesis on the branch's release,
 `door/standing-grants.json` added to the kept inventory by hand, the door policy re-rendered from the new template,
 egress epoch 4 with the five hosts): `door: starter grants proposed` right after the bind; the card came up beside

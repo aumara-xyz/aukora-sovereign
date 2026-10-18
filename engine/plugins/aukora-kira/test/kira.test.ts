@@ -376,6 +376,74 @@ test('slot loading: an empty slot is loaded as empty, a door outage retries, a m
   assert.deepEqual(await controller.ensureSlotsLoaded(true), { selfText: '', resumeText: '', loaded: true })
 })
 
+test('slot refresh withholds a failed slot, applies the other withdrawal, and retries only the failed read', async t => {
+  for (const failedSlot of ['aukora:self', 'aukora:resume']) {
+    for (const failure of ['refusal', 'throw']) {
+      await t.test(`${failedSlot}: ${failure}`, async () => {
+        let phase = 'initial'
+        const asked: string[] = []
+        const controller = createKiraController({}, async (_name, args) => {
+          const slot = args.id as string
+          asked.push(slot)
+          if (phase === 'refresh') {
+            if (slot === failedSlot) {
+              if (failure === 'throw') throw new Error('door unavailable')
+              return { isError: true, error: { message: 'refused', info: { name: 'AukoraDoorRefusal', code: 'refused' } }, content: [] }
+            }
+            return { isError: false, value: sampleNote({ slot, superseded_by: '2'.repeat(64) }), content: [] }
+          }
+          return { isError: false, value: sampleNote({ slot, content: `${phase} ${slot}` }), content: [] }
+        })
+        await controller.ensureSlotsLoaded()
+        assert.equal(controller.slotHead(failedSlot), 'a'.repeat(64))
+        phase = 'refresh'
+        assert.deepEqual(await controller.ensureSlotsLoaded(true), { selfText: '', resumeText: '', loaded: false })
+        assert.equal(controller.selfText(), '', 'the withdrawn or unverifiable self note is withheld')
+        assert.equal(controller.resumeText(), '', 'the withdrawn or unverifiable resume note is withheld')
+        assert.equal(controller.slotHead(failedSlot), undefined, 'a failed refresh cannot supply a stale expected_head')
+        phase = 'retry'
+        asked.length = 0
+        const loaded = await controller.ensureSlotsLoaded()
+        assert.equal(loaded.loaded, true)
+        assert.deepEqual(asked, [failedSlot], 'the successful withdrawal was already applied')
+        assert.equal(controller.selfText(), failedSlot === 'aukora:self' ? `retry ${failedSlot}` : '')
+        assert.equal(controller.resumeText(), failedSlot === 'aukora:resume' ? `retry ${failedSlot}` : '')
+      })
+    }
+  }
+})
+
+test('a forced refresh waits for a partial retry and then rechecks both slots', async () => {
+  let phase = 'initial'
+  let finishRetry!: () => void
+  const retryGate = new Promise<void>(resolve => { finishRetry = resolve })
+  const asked: string[] = []
+  const controller = createKiraController({}, async (_name, args) => {
+    const slot = args.id as string
+    asked.push(slot)
+    if (phase === 'initial' && slot === 'aukora:resume') {
+      return { isError: true, error: { message: 'unavailable' }, content: [] }
+    }
+    if (phase === 'retry' && slot === 'aukora:resume') {
+      await retryGate
+      return { isError: false, value: sampleNote({ slot, content: 'resume before forced refresh' }), content: [] }
+    }
+    return { isError: false, value: sampleNote({ slot, superseded_by: phase === 'refresh' ? '2'.repeat(64) : null }), content: [] }
+  })
+  assert.equal((await controller.ensureSlotsLoaded()).loaded, false)
+  assert.equal(controller.selfText(), 'I am Auma.')
+  phase = 'retry'
+  asked.length = 0
+  const retry = controller.ensureSlotsLoaded()
+  const refresh = controller.ensureSlotsLoaded(true)
+  assert.deepEqual(asked, ['aukora:resume'], 'the forced reads wait for the earlier read to finish')
+  phase = 'refresh'
+  finishRetry()
+  await retry
+  assert.deepEqual(await refresh, { selfText: '', resumeText: '', loaded: true })
+  assert.deepEqual(asked, ['aukora:resume', 'aukora:self', 'aukora:resume'])
+})
+
 test('the plugin remembers the head of each slot it loaded, and a handoff can carry it as expected_head', async () => {
   const head = 'ab'.repeat(32)
   const controller = createKiraController({}, async (_name, args) => {

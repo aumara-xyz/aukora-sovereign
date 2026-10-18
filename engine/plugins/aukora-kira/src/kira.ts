@@ -131,7 +131,7 @@ export interface KiraController {
   preExecute(exec: ExecLike, next: () => Promise<PreDecisionLike>): Promise<PreDecisionLike>
   /** `tools/result` observer: marks the turn tainted if an external tool ran. */
   onToolResult(exec: Readonly<ExecLike>, result?: Readonly<ResultLike>): void
-  /** Load `aukora:self` and `aukora:resume` once per session through `executeTool('kira_get', { id: slot })`. */
+  /** Load slots through `kira_get`; force refreshes both, otherwise retry only unverified slots. */
   ensureSlotsLoaded(force?: boolean): Promise<{ selfText: string; resumeText: string; loaded: boolean }>
   /** Current cached text for the `aukora:self` section (<= maxSelfBytes UTF-8 bytes). */
   selfText(): string
@@ -171,7 +171,7 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
 
   let cachedSelfText = ''
   let cachedResumeText = ''
-  let slotsLoaded = false
+  const loadedSlots = new Set<string>()
   const heads = new Map<string, string>()
   let inflightLoad: Promise<{ selfText: string; resumeText: string; loaded: boolean }> | null = null
 
@@ -209,33 +209,45 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     return truncateUtf8(noteText(note), maxBytes).text
   }
 
-  const loadSlots = async (): Promise<{ selfText: string; resumeText: string; loaded: boolean }> => {
-    try {
-      const [selfText, resumeText] = await Promise.all([
-        loadSlot(config.selfSlot, config.maxSelfBytes),
-        loadSlot(config.resumeSlot, config.maxResumeBytes),
-      ])
-      if (selfText !== undefined && resumeText !== undefined) {
-        cachedSelfText = selfText
-        cachedResumeText = resumeText
-        slotsLoaded = true
-        return { selfText, resumeText, loaded: true }
+  const slotsLoaded = (): boolean => loadedSlots.has(config.selfSlot) && loadedSlots.has(config.resumeSlot)
+
+  const loadSlots = async (force: boolean): Promise<{ selfText: string; resumeText: string; loaded: boolean }> => {
+    const refresh = async (slot: string, maxBytes: number, cache: (text: string) => void): Promise<void> => {
+      if (!force && loadedSlots.has(slot)) return
+      // Withhold each slot before reading it. A failed read leaves only that slot empty and retry-needed;
+      // the other read can still apply a verified note or withdrawal, independently.
+      loadedSlots.delete(slot)
+      heads.delete(slot)
+      cache('')
+      try {
+        const text = await loadSlot(slot, maxBytes)
+        if (text !== undefined) {
+          cache(text)
+          loadedSlots.add(slot)
+        }
+      } catch {
+        // A thrown transport error has the same withheld, retry-needed state as a refusal.
       }
-    } catch {
-      // Fail closed on slot load errors: leave sections empty rather than crashing prompt assembly,
-      // and allow a later retry if the door was not yet listening.
     }
-    return { selfText: cachedSelfText, resumeText: cachedResumeText, loaded: slotsLoaded }
+    await Promise.all([
+      refresh(config.selfSlot, config.maxSelfBytes, text => { cachedSelfText = text }),
+      refresh(config.resumeSlot, config.maxResumeBytes, text => { cachedResumeText = text }),
+    ])
+    return { selfText: cachedSelfText, resumeText: cachedResumeText, loaded: slotsLoaded() }
   }
 
   const ensureSlotsLoaded = async (force = false): Promise<{ selfText: string; resumeText: string; loaded: boolean }> => {
-    if (slotsLoaded && !force) {
+    if (slotsLoaded() && !force) {
       return { selfText: cachedSelfText, resumeText: cachedResumeText, loaded: true }
     }
-    if (inflightLoad !== null && !force) {
-      return inflightLoad
+    if (inflightLoad !== null) {
+      if (!force) return inflightLoad
+      // A partial retry may not read the other slot. Queue the forced refresh after it so both are
+      // rechecked, without allowing an older read to overwrite the newer refresh's result.
+      await inflightLoad
+      return ensureSlotsLoaded(true)
     }
-    inflightLoad = loadSlots().finally(() => {
+    inflightLoad = loadSlots(force).finally(() => {
       inflightLoad = null
     })
     return inflightLoad

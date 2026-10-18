@@ -42,7 +42,8 @@ itself signs as the token's agent and never lets an agent claim more than `model
    `resume:<agent>`), so no other agent's note can become Auma's self file. The plugin injects a note only if it is
    live and carries the slot it asked for; `kira:not-found` is an empty slot, any other failure is retried next step.
    The slots are read again at `step === 1` of every turn, so a self file the owner has since superseded or
-   quarantined, or a newer resume brief, reaches the next turn; if that refresh fails the last text stays.
+   quarantined, or a newer resume brief, reaches the next turn. Each slot refreshes independently: if its read fails,
+   its text and cached head are withheld and retried next step; a successful read applies even if the other fails.
 
 ## Honest limits
 
