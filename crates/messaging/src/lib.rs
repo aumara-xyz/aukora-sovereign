@@ -8,6 +8,8 @@ mod history;
 mod store;
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod vector_tests;
 
 pub use history::{MessageDirection, MessageRecord, MessageState, OwnerSessionTxn, MESSAGE_SCHEMA};
 

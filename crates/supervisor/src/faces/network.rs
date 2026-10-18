@@ -262,7 +262,17 @@ mod contact_card_tests {
             );
             assert!(card.model_note.is_empty());
             assert_eq!(card.risk, canon::authority::CardRisk::Critical);
+            // The owner compares this npub with the other person; the card names it, not a hex form alone.
+            assert!(card.says.contains(key.to_npub().unwrap().as_str()), "{}", card.says);
         }
+        let add = OwnerAction::Contact(ContactChange::Add(ContactDraft {
+            key,
+            label: "Owner B".into(),
+            pairing: None,
+        }));
+        let says = add.card().unwrap().says;
+        assert!(says.contains("This approves the key, not the person."), "{says}");
+        assert!(says.contains("in person or on a call you trust"), "{says}");
         assert!(gate::messaging::contact_card(b"{}").is_err());
     }
 }

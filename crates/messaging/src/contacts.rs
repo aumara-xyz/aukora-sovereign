@@ -265,21 +265,22 @@ pub(crate) fn action_card(action: &OwnerAction) -> Result<Card> {
     let ValueView::Object(fields) = exact_action.view() else {
         return Err(refusal("action-invalid"));
     };
+    // Contact cards share the gate's wording: the exact npub, a key and not a person, compare it out of band.
     let (says, risk, endpoint, key) = match action {
         OwnerAction::Contact(ContactChange::Add(draft)) => (
-            "Add an approved contact",
+            gate::messaging::contact_says(true, *draft.key.as_bytes()),
             CardRisk::Critical,
             "contact",
             draft.key,
         ),
         OwnerAction::Contact(ContactChange::Remove { key }) => (
-            "Remove an approved contact",
+            gate::messaging::contact_says(false, *key.as_bytes()),
             CardRisk::Critical,
             "contact",
             *key,
         ),
         OwnerAction::Send(draft) => (
-            "Send a message to an approved contact",
+            "Send a message to an approved contact".to_owned(),
             if draft.disclosures.is_empty() {
                 CardRisk::Routine
             } else {
@@ -292,7 +293,7 @@ pub(crate) fn action_card(action: &OwnerAction) -> Result<Card> {
     Ok(Card {
         v: 1,
         risk,
-        says: says.to_owned(),
+        says,
         facts: fields.to_vec(),
         from_to: vec![(endpoint.to_owned(), key_value(key)?)],
         model_note: String::new(),

@@ -15,7 +15,7 @@
       "card": {
         "v": 1,
         "risk": "critical",
-        "says": "Add an approved contact",
+        "says": "Approve this exact Nostr key as a contact: npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d. This approves the key, not the person. Before you approve, compare it with them in person or on a call you trust.",
         "facts": [
           [
             "key",
@@ -43,8 +43,8 @@
         },
         "model_note": ""
       },
-      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"label\",\"Mira\"],[\"op\",\"contact.add\"],[\"pairing\",null],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Add an approved contact\",\"v\":1}",
-      "display_sha256": "28ccadd48a4fa9d69ad77e0fe706d1c17c1096b9620abc86e28e2aa41d6458ca"
+      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"label\",\"Mira\"],[\"op\",\"contact.add\"],[\"pairing\",null],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Approve this exact Nostr key as a contact: npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d. This approves the key, not the person. Before you approve, compare it with them in person or on a call you trust.\",\"v\":1}",
+      "display_sha256": "0b94c1feba0b099f7d79888e0401efd0fcdf44d31bca609a1e3641c2b1eadbc6"
     },
     {
       "name": "add-paired",
@@ -66,7 +66,7 @@
       "card": {
         "v": 1,
         "risk": "critical",
-        "says": "Add an approved contact",
+        "says": "Approve this exact Nostr key as a contact: npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d. This approves the key, not the person. Before you approve, compare it with them in person or on a call you trust.",
         "facts": [
           [
             "key",
@@ -100,8 +100,8 @@
         },
         "model_note": ""
       },
-      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"label\",\"Mira 雪\"],[\"op\",\"contact.add\"],[\"pairing\",{\"local_key\":\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\",\"method\":\"screen-to-screen\",\"receipt_digest\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"remote_key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"verified_at_ms\":1700000000000}],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Add an approved contact\",\"v\":1}",
-      "display_sha256": "a59c8542d2cc216bf54e5a13437e4b375f61696ffa81e2eee337428fc0205cee"
+      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"label\",\"Mira 雪\"],[\"op\",\"contact.add\"],[\"pairing\",{\"local_key\":\"c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5\",\"method\":\"screen-to-screen\",\"receipt_digest\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"remote_key\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\",\"verified_at_ms\":1700000000000}],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Approve this exact Nostr key as a contact: npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d. This approves the key, not the person. Before you approve, compare it with them in person or on a call you trust.\",\"v\":1}",
+      "display_sha256": "b7e3d45e10600fab97e052486024c489847af8999049eba64b1e4ef142775783"
     },
     {
       "name": "remove",
@@ -115,7 +115,7 @@
       "card": {
         "v": 1,
         "risk": "critical",
-        "says": "Remove an approved contact",
+        "says": "Remove this Nostr key from your approved contacts: npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d.",
         "facts": [
           [
             "key",
@@ -135,8 +135,8 @@
         },
         "model_note": ""
       },
-      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"op\",\"contact.remove\"],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Remove an approved contact\",\"v\":1}",
-      "display_sha256": "4e9ed1035dfffc4793a50818403ee9497e26b8ccefd677a6344581bbcfbb220f"
+      "card_utf8": "{\"facts\":[[\"key\",\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"],[\"op\",\"contact.remove\"],[\"schema\",\"aukora:messaging-action:v1\"]],\"from_to\":{\"contact\":\"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798\"},\"model_note\":\"\",\"risk\":\"critical\",\"says\":\"Remove this Nostr key from your approved contacts: npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d.\",\"v\":1}",
+      "display_sha256": "1617a2968837b829fcbe80f8fd5219b6379afc6b728d48b4b8f7edd1931fbe3e"
     },
     {
       "name": "send-escaped-data",
