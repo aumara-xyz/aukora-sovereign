@@ -6,6 +6,9 @@ mod engine_routes;
 pub use engine_routes::ReleaseStanding;
 mod owner_gate;
 mod pairing_routes;
+mod startup;
+use startup::require_initial_sessions;
+
 use crate::{
     adapters::{HostClock, HostLedger},
     config::NodeConfig,
@@ -84,9 +87,10 @@ impl crate::adapters::runtime::ReleaseAdmission for Mutex<Assets> {
 }
 
 pub async fn serve(config: NodeConfig) -> Result<()> {
-    let _egress = config.load_egress()?;
+    config.load_egress()?;
     let boundary = config.boundary()?;
     let state = HostState::open(&config.state_root, &config.node)?;
+    let nostr = Arc::new(crate::nostr_identity::NodeIdentity::open(state.directory())?);
     let ledger = HostLedger::open(
         &config.state_root.join("aura.sqlite3"),
         state.signer.clone(),
@@ -215,6 +219,8 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     let network = Arc::new(crate::faces::live_network::LiveNetwork::new(
         ledger.clone(),
         messaging,
+        nostr.clone(),
+        gate.clone(),
     ));
     let identity = Arc::new(Mutex::new(crate::identity::Identity::open(
         ledger.clone(),
@@ -228,7 +234,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         health.clone(),
         broker.clone(),
     )
-    .with_network(network)
+    .with_network(network.clone())
     .with_kira(kira.clone())
     .with_identity(identity.clone());
     let owner_gate = gate.clone();
@@ -273,6 +279,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     if let Some(pairing) = &pairing {
         pairing_routes::sweep_at_boot(pairing, &ledger);
     }
+    let relay_worker = crate::relay_worker::RelayWorker::start(config.clone(), network)?;
     let host = Arc::new(Host {
         pairing,
         identity,
@@ -299,31 +306,11 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
     if let Some(engine) = engine {
         crate::engine::run(host.clone(), engine);
     }
-    crate::web::serve_handoff(host).await
+    let result = startup::serve_until_shutdown(host).await;
+    relay_worker.shutdown().await;
+    result
 }
 
-fn require_initial_sessions(transaction: &aura::LedgerTxn<'_>, sessions: &File) -> Result<()> {
-    let missing = canon::Refusal {
-        organ: "supervisor",
-        reason: "sessions-missing",
-    };
-    // Claims are served only after genesis commits. An empty install context also
-    // permits restarting a first boot interrupted after node identity creation.
-    let (context, _, _) = transaction.floor_install_context().map_err(|_| missing)?;
-    if context.sequence != 1 || context.previous_hash.is_some() {
-        return Err(missing);
-    }
-    let mut entries = rustix::fs::Dir::read_from(sessions).map_err(|_| missing)?;
-    while let Some(entry) = entries.read() {
-        let entry = entry.map_err(|_| missing)?;
-        match entry.file_name().to_bytes() {
-            b"." | b".." | b"sessions.lock" => {}
-            // Retain claim databases, their sidecars and incomplete session writes.
-            _ => return Err(missing),
-        }
-    }
-    Ok(())
-}
 
 impl Host {
     pub fn dispatch_handoff(

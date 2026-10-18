@@ -102,6 +102,20 @@ impl HostFaces {
             self.recheck(scope)?;
             return super::wire::bounded(value);
         }
+        if read.service() == "network" && matches!(read.method(), "contact.propose" | "send") {
+            // Owner writes retain the shell session guard. They are dispatched
+            // on this blocking host task, outside the async read future.
+            let value = super::network::call(
+                self.network
+                    .as_deref()
+                    .ok_or(refuse("network-unavailable"))?,
+                scope,
+                read.method(),
+                read.params(),
+            )?;
+            self.recheck(scope)?;
+            return super::wire::bounded(value);
+        }
         let settings = LiveSettings {
             read,
             broker: &self.broker,
@@ -179,6 +193,12 @@ impl HostFaces {
             return Err(codes::AUMLOK_BINDING_REQUIRED);
         }
         self.recheck(scope)?;
+        let live_npub = self
+            .network
+            .as_ref()
+            .map(|network| network.node_npub())
+            .transpose()?
+            .flatten();
         let value = match (read.service(), read.method()) {
             ("gate-aura", "head") => self.ledger.with_read_ledger(|ledger| {
                 wire::object([(
@@ -221,6 +241,17 @@ impl HostFaces {
                     }
                 }
                 let label = owner.credential.owner_id;
+                let mut node_key_bound = !matches!(node_npub.view(), canon::json::ValueView::Null);
+                if let Some(npub) = &live_npub {
+                    if let canon::json::ValueView::Text(bound) = node_npub.view() {
+                        if bound != npub {
+                            return Err(refuse("identity-node-key-mismatch"));
+                        }
+                    } else {
+                        node_key_bound = false;
+                    }
+                    node_npub = wire::text(npub)?;
+                }
                 if label.trim() != label
                     || label.is_empty()
                     || label.chars().count() > 64
@@ -237,6 +268,7 @@ impl HostFaces {
                     ("contact_code", Value::null()),
                     ("label", wire::text(label)?),
                     ("node_npub", node_npub),
+                    ("node_key_bound", Value::boolean(node_key_bound)),
                     ("safety", Value::array(Vec::new())?),
                     ("subject", wire::text(owner.subject.to_string())?),
                 ])

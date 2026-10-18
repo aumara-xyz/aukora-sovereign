@@ -80,6 +80,9 @@ impl<S: TargetStore> ScopedGate<S> {
         if request.target.as_str().starts_with("sites/") {
             crate::target::sites::validate_request(&self.config, &request)?;
         }
+        if request.target.as_str() == crate::messaging::CONTACT_TARGET {
+            crate::messaging::contact_card(&request.new_bytes)?;
+        }
         let before = self.observe(&request.target)?;
         if before.digest != request.base {
             return Err(crate::refuse("stale-base"));
@@ -349,7 +352,11 @@ impl<S: TargetStore> ScopedGate<S> {
                 // for exactly that card (Peter, 2026-10-17: no nagging, and no permanent no either). Other evidence,
                 // however valid, does not lift the day (Codex re-review, finding 3).
                 let asked = match &request.new_evidence {
-                    Some(evidence) => proposal::is_owner_again(&txn.record_at(evidence.source_record)?, expired, digest)?,
+                    Some(evidence) => proposal::is_owner_again(
+                        &txn.record_at(evidence.source_record)?,
+                        expired,
+                        digest,
+                    )?,
                     None => false,
                 };
                 if !asked && now(txn)?.saturating_sub(at) < aura::ledger::DAY_MS {

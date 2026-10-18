@@ -200,7 +200,7 @@ fn private_file(file: &File, maximum: u64) -> Result<()> {
     Ok(())
 }
 
-fn read_private(
+pub(crate) fn read_private(
     directory: &File,
     name: &str,
     maximum: usize,
@@ -233,7 +233,7 @@ fn read_private(
     Ok(bytes)
 }
 
-fn write_new(directory: &File, name: &str, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_new(directory: &File, name: &str, bytes: &[u8]) -> Result<()> {
     let mut file: File = openat(
         directory,
         name,

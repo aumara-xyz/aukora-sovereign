@@ -110,6 +110,11 @@ pub fn build_card(
     mut facts: ReviewFacts,
 ) -> Result<DisplayedCard> {
     require_action(action)?;
+    if action == OwnerOperation::Apply
+        && proposal.request.target.as_str() == crate::messaging::CONTACT_TARGET
+    {
+        return exact_contact_card(proposal);
+    }
     if proposal.new_digest != Digest32::sha256(&proposal.request.new_bytes) {
         return Err(crate::refuse("authorization-mismatch"));
     }
@@ -184,6 +189,15 @@ fn validate_stored_content(proposal: &Proposal, action: OwnerOperation, card: &C
     use base64::{engine::general_purpose::STANDARD, Engine};
 
     let mismatch = || crate::refuse("authorization-mismatch");
+    if action == OwnerOperation::Apply
+        && proposal.request.target.as_str() == crate::messaging::CONTACT_TARGET
+    {
+        return if *card == crate::messaging::contact_card(&proposal.request.new_bytes)? {
+            Ok(())
+        } else {
+            Err(mismatch())
+        };
+    }
     if Digest32::sha256(&proposal.request.new_bytes) != proposal.new_digest {
         return Err(mismatch());
     }
@@ -197,12 +211,13 @@ fn validate_stored_content(proposal: &Proposal, action: OwnerOperation, card: &C
     {
         return Err(mismatch());
     }
-    let expected_label =
-        if action == OwnerOperation::Apply && proposal.request.target.as_str().starts_with("sites/") {
-            "bundle_sha256"
-        } else {
-            "new_sha256"
-        };
+    let expected_label = if action == OwnerOperation::Apply
+        && proposal.request.target.as_str().starts_with("sites/")
+    {
+        "bundle_sha256"
+    } else {
+        "new_sha256"
+    };
     let mut digests = card
         .facts
         .iter()
@@ -215,6 +230,23 @@ fn validate_stored_content(proposal: &Proposal, action: OwnerOperation, card: &C
         return Err(mismatch());
     }
     Ok(())
+}
+
+fn exact_contact_card(proposal: &Proposal) -> Result<DisplayedCard> {
+    let card = crate::messaging::contact_card(&proposal.request.new_bytes)?;
+    if proposal.risk != card.risk
+        || !proposal.request.model_note.is_empty()
+        || proposal.new_digest != Digest32::sha256(&proposal.request.new_bytes)
+    {
+        return Err(crate::refuse("authorization-mismatch"));
+    }
+    let canonical = card.canonical_bytes()?;
+    Ok(DisplayedCard {
+        digest: Digest32::sha256(&canonical),
+        card,
+        canonical,
+        proposal: Some(card_binding(proposal, OwnerOperation::Apply)),
+    })
 }
 
 pub fn authorization(
@@ -585,7 +617,9 @@ fn note_warnings(note: &str, colors: Option<(&str, &str)>) -> Vec<String> {
         uses.push(at);
         let hammered = uses.len() >= 3 && at - uses[uses.len() - 3] < SPAN;
         let already = repeated.contains(&word);
-        if (uses.len() >= 2 && PRESSURE.contains(&word)) || (hammered && !PRESSURE.contains(&word) && !already) {
+        if (uses.len() >= 2 && PRESSURE.contains(&word))
+            || (hammered && !PRESSURE.contains(&word) && !already)
+        {
             repeated.push(word);
         }
     }
@@ -845,12 +879,18 @@ mod repeat_tests {
     use super::*;
 
     fn repeat_warnings(raw: &str, colors: Option<(&str, &str)>) -> Vec<String> {
-        prepare_note(raw, colors).unwrap().warnings.into_iter().filter(|w| w.contains("APPROVE-spam")).collect()
+        prepare_note(raw, colors)
+            .unwrap()
+            .warnings
+            .into_iter()
+            .filter(|w| w.contains("APPROVE-spam"))
+            .collect()
     }
 
     #[test]
     fn the_repeat_warning_matches_every_prime_vector() {
-        let vectors: serde_json::Value = serde_json::from_str(include_str!("../vectors/card-prime.json")).unwrap();
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../vectors/card-prime.json")).unwrap();
         for case in vectors["cases"].as_array().unwrap() {
             let raw = case["raw"].as_str().unwrap();
             let old = accent(case["old"].as_str().unwrap().as_bytes());
@@ -860,7 +900,11 @@ mod repeat_tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter_map(|w| w.as_str().filter(|w| w.contains("APPROVE-spam")).map(str::to_owned))
+                .filter_map(|w| {
+                    w.as_str()
+                        .filter(|w| w.contains("APPROVE-spam"))
+                        .map(str::to_owned)
+                })
                 .collect();
             assert_eq!(repeat_warnings(raw, colors), expected, "{raw:?}");
         }
@@ -877,6 +921,9 @@ mod repeat_tests {
         assert!(repeat_warnings(budget, None).is_empty());
         // Hammering still is.
         assert_eq!(repeat_warnings("the key the key the key", None).len(), 1);
-        assert_eq!(repeat_warnings("Approve this. It is fine, approve.", None).len(), 1);
+        assert_eq!(
+            repeat_warnings("Approve this. It is fine, approve.", None).len(),
+            1
+        );
     }
 }

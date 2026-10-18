@@ -12,11 +12,15 @@ use std::collections::BTreeSet;
 const TARGET_LIMIT: usize = 128;
 
 impl NodeConfig {
-    /// Read the host-owned inventory once before the gate receives any request.
+    /// Read the host-owned inventory and add the supervisor's fixed owner contact target.
     /// If the entry exists at the initial absence check, the strict read follows:
-    /// A missing inventory refuses startup; an explicit empty array disables targets.
-    /// An initially absent entry in a verified directory instead selects no targets.
+    /// A missing inventory refuses startup; an explicit empty array disables optional targets.
+    /// An initially absent entry selects only the fixed contact target.
     pub fn gate_targets(&self) -> Result<Vec<TargetSpec>> {
+        messaging_targets(self.configured_gate_targets()?)
+    }
+
+    fn configured_gate_targets(&self) -> Result<Vec<TargetSpec>> {
         if self.gate_inventory_absent()? {
             return Ok(Vec::new());
         }
@@ -129,5 +133,59 @@ impl NodeConfig {
             Err(rustix::io::Errno::NOENT) => Ok(true),
             Err(_) => Err(super::refused("config-unreadable")),
         }
+    }
+}
+
+fn messaging_targets(mut targets: Vec<TargetSpec>) -> Result<Vec<TargetSpec>> {
+    let name = ::gate::messaging::CONTACT_TARGET;
+    for target in &targets {
+        let id = target.id.as_str();
+        if id == name {
+            if target.class != TargetClass::Content
+                || target.risk != RiskTier::Critical
+                || target.max_bytes != 8192
+            {
+                return Err(codes::SUPERVISOR_GATE_TARGETS_CLASS);
+            }
+            return Ok(targets);
+        }
+        if name
+            .strip_prefix(id)
+            .is_some_and(|tail| tail.starts_with('/'))
+            || id
+                .strip_prefix(name)
+                .is_some_and(|tail| tail.starts_with('/'))
+        {
+            return Err(codes::SUPERVISOR_GATE_TARGETS_NAME);
+        }
+    }
+    targets.push(TargetSpec {
+        id: TargetId::new(name.into())?,
+        class: TargetClass::Content,
+        risk: RiskTier::Critical,
+        max_bytes: 8192,
+    });
+    Ok(targets)
+}
+
+#[cfg(test)]
+mod messaging_tests {
+    use super::*;
+    #[test]
+    fn contacts_are_always_a_critical_exact_target_and_inventory_cannot_widen_it() {
+        let targets = messaging_targets(Vec::new()).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id.as_str(), ::gate::messaging::CONTACT_TARGET);
+        assert!(messaging_targets(targets.clone()).is_ok());
+        let mut widened = targets;
+        widened[0].risk = RiskTier::Routine;
+        assert!(messaging_targets(widened).is_err());
+        let parent = TargetSpec {
+            id: TargetId::new("messaging".into()).unwrap(),
+            class: TargetClass::Content,
+            risk: RiskTier::Critical,
+            max_bytes: 8192,
+        };
+        assert!(messaging_targets(vec![parent]).is_err());
     }
 }

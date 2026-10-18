@@ -3,6 +3,7 @@
 
 mod disk;
 mod gate;
+mod relay_policy;
 
 use canon::{
     digest::Digest32,

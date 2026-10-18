@@ -422,6 +422,7 @@ impl GateService for GateAdapter {
         if request.target.starts_with(gate::door::TARGET_PREFIX)
             || request.target.starts_with(gate::build::TARGET_PREFIX)
             || request.target.starts_with(crate::engine::TARGET_PREFIX)
+            || request.target.starts_with("messaging/")
         {
             return Box::pin(async { Err(codes::GATE_UNKNOWN_TARGET) });
         }
@@ -948,3 +949,6 @@ mod tests {
         assert_eq!(pending(&rig), None, "a declined card is no longer up");
     }
 }
+
+#[cfg(test)]
+mod messaging_tests;

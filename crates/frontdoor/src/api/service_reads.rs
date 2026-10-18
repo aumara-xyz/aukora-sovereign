@@ -109,6 +109,7 @@ fn permitted(face: &str, service: &str, method: &str) -> bool {
         (face, service, method),
         ("aumlok", "aumlok", "status")
             | ("identity", "aumlok", "identity")
+            | ("messages", "aumlok", "identity")
             | ("coherence", "gate-aura", "head")
             | ("documents", "kira", "documents.list" | "documents.read")
             | ("memory", "kira", "memory.list" | "memory.recall")
@@ -116,7 +117,7 @@ fn permitted(face: &str, service: &str, method: &str) -> bool {
             | (
                 "messages",
                 "network",
-                "contacts.list" | "messages.list" | "refusals.counts"
+                "contacts.list" | "messages.list" | "refusals.counts" | "contact.propose" | "send"
             )
             | (
                 "threads" | "sidebar" | "archived",
@@ -199,4 +200,32 @@ pub fn authorize_data(release: &ApprovedRelease, value: &Value) -> Result<Author
         manifest: release.manifest_sha256(),
         assets: release.entries().len(),
     })
+}
+
+#[cfg(test)]
+mod messaging_tests {
+    use super::*;
+
+    #[test]
+    fn owner_shell_messages_has_writes_but_engine_origin_is_refused() {
+        assert!(permitted("messages", "network", "contact.propose"));
+        assert!(permitted("messages", "network", "send"));
+        assert!(!permitted("humangraph", "network", "send"));
+        assert!(!permitted("threads", "network", "send"));
+        assert!(resolve(HostRole::Shell, Method::Post, PATH).is_ok());
+        assert_eq!(
+            resolve(HostRole::Owner, Method::Post, PATH),
+            Err(canon::codes::FRONTDOOR_HOST_REFUSED)
+        );
+        let boundary = crate::tls::CaddyBoundary {
+            shell: crate::tls::Origin::parse("https://node.example").unwrap(),
+            owner: crate::tls::Origin::parse("https://owner.node.example").unwrap(),
+            registered_site: crate::tls::Origin::parse("https://node.example").unwrap(),
+            allowed_proxy_peers: vec!["127.0.0.1".parse().unwrap()],
+        };
+        assert!(matches!(boundary.admit(crate::tls::ProxyObservation {
+            peer: "127.0.0.1".parse().unwrap(), forwarded_proto: vec!["https".into()],
+            host: vec!["engine.node.example".into()],
+        }), Err(code) if code == canon::codes::FRONTDOOR_HOST_REFUSED));
+    }
 }

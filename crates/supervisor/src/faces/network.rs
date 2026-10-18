@@ -28,6 +28,9 @@ pub enum SendState {
 }
 
 pub trait NetworkRead: Send + Sync {
+    fn node_npub(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
     fn contacts(
         &self,
         scope: PrincipalScope,
@@ -37,10 +40,22 @@ pub trait NetworkRead: Send + Sync {
     fn messages(
         &self,
         scope: PrincipalScope,
+        contact: Option<nostr::PublicKey>,
         before: Option<&str>,
         limit: usize,
     ) -> Result<Page<Message>>;
     fn refusals(&self, scope: PrincipalScope) -> Result<messaging::RefusalCounts>;
+    fn propose_contact(
+        &self,
+        _scope: PrincipalScope,
+        _npub: &str,
+        _label: Option<&str>,
+    ) -> Result<Value> {
+        Err(refuse("network-owner-actions-unavailable"))
+    }
+    fn send(&self, _scope: PrincipalScope, _npub: &str, _text: &str) -> Result<Value> {
+        Err(refuse("network-owner-actions-unavailable"))
+    }
 }
 
 pub fn call(
@@ -49,6 +64,28 @@ pub fn call(
     method: &str,
     params: &Value,
 ) -> Result<Value> {
+    if method == "contact.propose" {
+        if params.get("label").is_some() {
+            wire::exact(params, &["npub", "label"])?;
+        } else {
+            wire::exact(params, &["npub"])?;
+        }
+        let npub = wire::string(wire::field(params, "npub")?)?;
+        let label = params
+            .get("label")
+            .map(wire::optional_string)
+            .transpose()?
+            .flatten();
+        return source.propose_contact(scope, npub, label);
+    }
+    if method == "send" {
+        wire::exact(params, &["npub", "text"])?;
+        return source.send(
+            scope,
+            wire::string(wire::field(params, "npub")?)?,
+            wire::string(wire::field(params, "text")?)?,
+        );
+    }
     if method == "refusals.counts" {
         wire::exact(params, &[])?;
         let counts = source.refusals(scope)?;
@@ -82,7 +119,15 @@ pub fn call(
             ),
         ]);
     }
-    wire::exact(params, &["before", "limit"])?;
+    let contact_filter = if method == "messages.list" && params.get("npub").is_some() {
+        wire::exact(params, &["before", "limit", "npub"])?;
+        wire::optional_string(wire::field(params, "npub")?)?
+            .map(nostr::PublicKey::from_npub)
+            .transpose()?
+    } else {
+        wire::exact(params, &["before", "limit"])?;
+        None
+    };
     let before = wire::optional_string(wire::field(params, "before")?)?;
     if before.is_some_and(|value| !cursor(value)) {
         return Err(refuse("face-page-invalid"));
@@ -100,7 +145,7 @@ pub fn call(
             )
         }
         "messages.list" => {
-            let page = source.messages(scope, before, limit as usize)?;
+            let page = source.messages(scope, contact_filter, before, limit as usize)?;
             (
                 page.items.iter().map(message).collect::<Result<Vec<_>>>()?,
                 page.next,
@@ -154,7 +199,7 @@ fn contact(contact: &messaging::ApprovedContact) -> Result<Value> {
         ("pairing", pairing),
     ])
 }
-fn message(message: &Message) -> Result<Value> {
+pub(super) fn message(message: &Message) -> Result<Value> {
     if !cursor(&message.id)
         || message.text.is_empty()
         || message.text.len() > messaging::MAX_MESSAGE_BYTES
@@ -188,4 +233,36 @@ fn message(message: &Message) -> Result<Value> {
         ("state", state),
         ("code", code),
     ])
+}
+
+#[cfg(test)]
+mod contact_card_tests {
+    use messaging::{ContactChange, ContactDraft, OwnerAction};
+
+    #[test]
+    fn gate_contact_card_is_the_exact_messaging_c6_for_add_and_remove() {
+        let key = nostr::SecretKey::import(zeroize::Zeroizing::new([21; 32]))
+            .unwrap()
+            .public_key()
+            .unwrap();
+        for change in [
+            ContactChange::Add(ContactDraft {
+                key,
+                label: "Owner B".into(),
+                pairing: None,
+            }),
+            ContactChange::Remove { key },
+        ] {
+            let action = OwnerAction::Contact(change);
+            let bytes = action.canonical_bytes().unwrap();
+            let card = gate::messaging::contact_card(&bytes).unwrap();
+            assert_eq!(
+                card.canonical_bytes().unwrap(),
+                action.card().unwrap().canonical_bytes().unwrap()
+            );
+            assert!(card.model_note.is_empty());
+            assert_eq!(card.risk, canon::authority::CardRisk::Critical);
+        }
+        assert!(gate::messaging::contact_card(b"{}").is_err());
+    }
 }

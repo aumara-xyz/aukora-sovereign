@@ -7,6 +7,7 @@ pub mod broker;
 pub mod gate;
 pub mod kira;
 pub mod ledger;
+pub mod messaging;
 pub mod runtime;
 pub mod snapshot;
 

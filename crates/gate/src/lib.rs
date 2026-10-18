@@ -9,6 +9,7 @@ pub mod decision;
 pub mod door;
 pub mod health;
 pub mod install;
+pub mod messaging;
 mod observation;
 pub mod proposal;
 pub mod recovery;
