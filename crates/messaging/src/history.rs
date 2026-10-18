@@ -330,27 +330,28 @@ impl Messaging {
         Ok(())
     }
 
-    /// Stable ascending local cursor, scoped to one contact when supplied.
+    /// Newest local rows first; `before` continues toward older messages.
+    /// The stable cursor is scoped to one contact when supplied.
     /// Pending ledger reconciliation is never visible as admitted history.
     pub fn messages(
         &self,
         contact: Option<PublicKey>,
-        after: Option<u64>,
+        before: Option<u64>,
         limit: usize,
     ) -> Result<Vec<MessageRecord>> {
         page_limit(limit)?;
-        if after.is_some_and(|cursor| cursor > MAX_SAFE_INTEGER as u64) {
+        if before.is_some_and(|cursor| cursor > MAX_SAFE_INTEGER as u64) {
             return Err(refuse("page-cursor"));
         }
         let mut stmt = self.db.prepare(
             "SELECT cursor,id,contact,direction,text,created_at_ms,observed_at_ms,state,aura_sequence
-             FROM messaging_messages WHERE aura_sequence IS NOT NULL AND cursor>?1
-             AND (?2 IS NULL OR contact=?2) ORDER BY cursor LIMIT ?3",
+             FROM messaging_messages WHERE aura_sequence IS NOT NULL AND (?1 IS NULL OR cursor<?1)
+             AND (?2 IS NULL OR contact=?2) ORDER BY cursor DESC LIMIT ?3",
         ).map_err(|_| refuse("store-read"))?;
         let rows = stmt
             .query_map(
                 params![
-                    after.unwrap_or(0) as i64,
+                    before.map(|cursor| cursor as i64),
                     contact.map(|key| key.as_bytes().to_vec()),
                     limit as i64
                 ],

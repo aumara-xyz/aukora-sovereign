@@ -174,7 +174,7 @@ impl NetworkRead for LiveNetwork {
         before: Option<&str>,
         limit: usize,
     ) -> Result<Page<Message>> {
-        let after = before
+        let before = before
             .map(|cursor| {
                 let number = cursor
                     .parse::<u64>()
@@ -191,7 +191,7 @@ impl NetworkRead for LiveNetwork {
                 .lock()
                 .map_err(|_| refuse("network-store-unavailable"))?;
             let mut bytes = 0;
-            let mut cursor = after;
+            let mut cursor = before;
             let mut items = Vec::with_capacity(limit);
             let mut more = false;
             'pages: loop {

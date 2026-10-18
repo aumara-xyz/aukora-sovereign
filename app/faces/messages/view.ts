@@ -8,6 +8,7 @@ import { moment, readContactPage, readMessagePage, readRefusals, shortKey } from
 import type { Contact, Message, Page, Refusals } from "./model.js";
 import { addContact, composer, ownIdentity } from "./actions.js";
 import { portal } from "./portal.js";
+import { readAllPages } from "./paging.js";
 
 const MAX_ROWS = 1_000;
 const PAGE = 50;
@@ -73,7 +74,7 @@ function tally(count: number, empty: string, nouns: readonly [string, string], m
   return `${shown} ${count >= MAX_ROWS ? COPY.capped : COPY.stalled}`;
 }
 
-// One paged read call, newest first. The cursor is the service's own; a page that adds nothing new ends the paging.
+// Messages page newest first; contacts refresh the whole book before pruning retained rows.
 function pagedList<T>(client: FaceClient, signal: AbortSignal, feed: Feed<T>): Panel {
   const rows = h("ul", { class: "rows" });
   const info = h("p", { role: "status", class: "info" });
@@ -101,14 +102,15 @@ function pagedList<T>(client: FaceClient, signal: AbortSignal, feed: Feed<T>): P
     clearServiceState(problem);
     const before = restart ? null : next;
     try {
-      const value = await client.call("network", feed.method, { before, limit: PAGE, ...feed.params }, { signal });
-      const page = feed.read(value);
+      const fetch = async (cursor: string | null): Promise<Page<T>> => feed.read(
+        await client.call("network", feed.method, { before: cursor, limit: PAGE, ...feed.params }, { signal }));
+      const page = feed.retain ? { items: await readAllPages(fetch, feed.key), next: null } : await fetch(before);
       if (signal.aborted) return;
       if (restart) { if (!feed.retain) rows.replaceChildren(); seen.clear(); }
       let added = 0;
       for (const item of page.items) {
         const key = feed.key(item);
-        if (seen.has(key) || seen.size >= MAX_ROWS) continue;
+        if (seen.has(key) || (!feed.retain && seen.size >= MAX_ROWS)) continue;
         seen.add(key);
         const row = (feed.retain && retained.get(key)) || feed.row(item);
         if (feed.retain) retained.set(key, row);
@@ -142,7 +144,7 @@ function pagedList<T>(client: FaceClient, signal: AbortSignal, feed: Feed<T>): P
   refresh.addEventListener("click", () => { void read(true); }, { signal });
   more.addEventListener("click", () => { void read(false); }, { signal });
   const timer = setInterval(() => {
-    if (started && element.isConnected && seen.size <= PAGE && !element.closest("[hidden]") && !document.hidden) void read(true);
+    if (started && element.isConnected && (feed.retain || seen.size <= PAGE) && !element.closest("[hidden]") && !document.hidden) void read(true);
   }, 10_000);
   signal.addEventListener("abort", () => clearInterval(timer), { once: true });
   return { element, show: () => { void read(true); } };

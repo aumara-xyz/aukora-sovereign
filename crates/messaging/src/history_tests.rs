@@ -375,8 +375,8 @@ fn two_nodes_exchange_via_fake_relay_and_inbox_survives_restart() -> Result<()> 
         .is_empty());
     assert_eq!(a.messages(None, None, 0), Err(refuse("page-limit")));
     let first = b.messages(None, None, 1)?.remove(0);
-    assert_eq!(first.text, "Hello B");
-    assert_eq!(first.state, MessageState::Received);
+    assert_eq!(first.text, "Hello A");
+    assert_eq!(first.state, MessageState::Published);
     assert_eq!(b.messages(None, Some(first.cursor), 1)?.len(), 1);
     drop(b);
     let b = Messaging::open(&dir_b.0, node_b)?;
@@ -725,5 +725,76 @@ fn inbox_and_replay_reservation_recover_after_ledger_failure() -> Result<()> {
         IngressOutcome::Refused(ref counted) if counted.observation().reason==RefusalReason::Replay)
     );
     assert_eq!(host_b.committed.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn refreshed_history_starts_at_newest_page_and_continues_without_gaps() -> Result<()> {
+    let (dir_a, dir_b) = (TestDirectory::new(), TestDirectory::new());
+    let (sender, recipient) = (key(81), key(82));
+    let contact = sender.public_key()?;
+    let recipient_key = recipient.public_key()?;
+    let mut a = Messaging::open(&dir_a.0, NodeId::from_bytes([11; 16]))?;
+    let node_b = NodeId::from_bytes([12; 16]);
+    let mut b = Messaging::open(&dir_b.0, node_b)?;
+    let (mut host_a, mut host_b) = (Host::default(), Host::default());
+    host_a.add_contact(recipient_key);
+    host_b.add_contact(contact);
+    let mut relay = FakeRelay::default();
+    for n in 0..55 {
+        let id = a.queue_owner_send(
+            &mut host_a,
+            &draft(recipient_key, &format!("Message {n}")),
+            &sender,
+            NOW + n,
+        )?;
+        a.transmit_owner(&mut host_a, &mut relay, id, 1000)?;
+    }
+    for envelope in relay.receive(&receive_request(recipient_key))?.envelopes {
+        b.receive(
+            &mut host_b,
+            &envelope,
+            &recipient,
+            TransportKind::NostrRelays,
+            NOW,
+        )?;
+    }
+    let newest = b.messages(Some(contact), None, 50)?;
+    assert_eq!(newest.len(), 50);
+    assert_eq!(newest[0].text, "Message 54");
+    assert_eq!(newest[49].text, "Message 5");
+    let older = b.messages(Some(contact), Some(newest[49].cursor), 50)?;
+    assert_eq!(older.len(), 5);
+    assert_eq!(older[0].text, "Message 4");
+    assert_eq!(older[4].text, "Message 0");
+    assert!(b
+        .messages(Some(contact), Some(older[4].cursor), 50)?
+        .is_empty());
+    let id = a.queue_owner_send(
+        &mut host_a,
+        &draft(recipient_key, "Newest"),
+        &sender,
+        NOW + 55,
+    )?;
+    a.transmit_owner(&mut host_a, &mut relay, id, 1000)?;
+    let envelope = relay.0.last().unwrap();
+    b.receive(
+        &mut host_b,
+        envelope,
+        &recipient,
+        TransportKind::NostrRelays,
+        NOW,
+    )?;
+    let refreshed = b.messages(Some(contact), None, 50)?;
+    assert_eq!(refreshed.len(), 50);
+    assert_eq!(refreshed[0].text, "Newest");
+    assert_eq!(refreshed[49].text, "Message 6");
+    assert_eq!(
+        b.messages(Some(contact), Some(newest[49].cursor), 50)?,
+        older
+    );
+    drop(b);
+    let b = Messaging::open(&dir_b.0, node_b)?;
+    assert_eq!(b.messages(Some(contact), None, 50)?, refreshed);
     Ok(())
 }
