@@ -238,69 +238,6 @@ fn save_tokens(dir: &Path, tokens: &BTreeMap<String, String>) -> Result<()> {
     fs::rename(&temp, dir.join(TOKENS)).map_err(|_| refuse("state-write"))
 }
 
-/// Generates a key (file mode 0600) and registers its public key. Refuses a name that already has a key.
-fn create_agent(dir: &Path, store: &SharedStore, name: &str, scopes: &[String], owner: bool) -> Result<()> {
-    agent_name(name)?;
-    if scopes.is_empty() || scopes.iter().any(|s| s.is_empty() || s.len() > 256 || s.chars().any(char::is_control)) {
-        return Err(refuse("agent-scopes"));
-    }
-    let path = key_path(dir, name);
-    if fs::symlink_metadata(&path).is_ok() {
-        return Err(refuse("agent-exists"));
-    }
-    let material = loop {
-        let candidate = random32()?;
-        if SecretKey::import(Zeroizing::new(*candidate)).is_ok() {
-            break candidate;
-        }
-    };
-    let key = SecretKey::import(Zeroizing::new(*material))?;
-    let pubkey = hex(key.public_key()?.as_bytes());
-    write_private(&path, material.as_ref(), true)?;
-    if let Err(refusal) = store.register_agent(name, &pubkey, scopes, owner) {
-        let _ = fs::remove_file(&path);
-        return Err(refusal);
-    }
-    Ok(())
-}
-
-/// A fresh token for `name`; with `rotate`, every earlier token of that agent is removed in the same save.
-fn issue_token(dir: &Path, name: &str, rotate: bool) -> Result<String> {
-    let token = hex(random32()?.as_ref());
-    let mut tokens = load_tokens(dir)?;
-    if rotate {
-        tokens.retain(|_, holder| holder != name);
-    }
-    tokens.insert(token_hash(&token), name.to_owned());
-    save_tokens(dir, &tokens)?;
-    authorization::probe("token-issued");
-    Ok(token)
-}
-
-/// Registers an agent: a fresh key in `keys/<name>.key`, its public key in the store, and a token returned ONCE.
-pub fn register(dir: &Path, name: &str, scopes: &[String], owner: bool) -> Result<String> {
-    let state = State::open(dir)?;
-    // tokens.json is read, changed and saved under the guard revoke holds, so neither save can drop the other's.
-    let _authorization = request_guard(dir)?;
-    create_agent(dir, &state.store, name, scopes, owner)?;
-    issue_token(dir, name, false)
-}
-
-/// Issues one more token for an agent that already has a key (a lost token). Earlier tokens stay valid unless
-/// `rotate` is set, which replaces them. A revoked agent gets no token.
-pub fn reissue(dir: &Path, name: &str, rotate: bool) -> Result<String> {
-    let mut state = State::open(dir)?;
-    let _authorization = request_guard(dir)?;
-    if name == IMPORT_AGENT {
-        return Err(refuse("agent-takes-no-token"));
-    }
-    let pubkey = state.pubkey_of(name)?;
-    if state.store.agent(&pubkey)?.is_none_or(|a| a.revoked_at.is_some()) {
-        return Err(refuse("agent-revoked"));
-    }
-    issue_token(dir, name, rotate)
-}
-
 /// The gate on minting credentials (`register`, `token`): once the store has an owner, the caller must hold the
 /// owner's token file. A store with no owner yet is open, so the first owner can be created. Not isolation: a same-uid
 /// process that can read the file passes (see the trust boundary above).
@@ -974,6 +911,7 @@ mod import;
 mod mcp;
 mod peer;
 mod rate;
+mod registration;
 mod server;
 mod wire;
 
@@ -981,9 +919,14 @@ pub use cli::cli;
 pub use import::{import_epoch1, ImportReport};
 pub use mcp::{mcp, mcp_reply};
 pub use peer::Admission;
+pub use registration::{register, reissue};
+use registration::create_agent;
 pub use server::serve;
 use authorization::request_guard;
 use wire::{note_json, stub, validity, view, visible};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod registration_tests;
