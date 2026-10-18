@@ -3,6 +3,7 @@
 
 use super::*;
 
+mod argon_break1;
 mod recall_race;
 
 struct Fixture {
