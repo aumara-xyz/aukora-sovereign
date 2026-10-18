@@ -9,23 +9,8 @@ a link it verifies the exact pointer against the node's current owner binding, i
 and durably spends its sequence. Failed switches and rollback do not restore spent sequences."""
 from __future__ import annotations
 
-import fcntl
-import base64
-import grp
-import hashlib
-import http.client
-import json
-import os
-import pwd
-import re
-import select
-import shutil
-import signal
-import stat
-import subprocess
-import sys
-import tempfile
-import time
+import base64, fcntl, grp, hashlib, http.client, json, os, pwd, re, select, shutil, signal, stat  # noqa: E401
+import subprocess, sys, tempfile, time  # noqa: E401
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -162,6 +147,20 @@ def apply_units(release_dir):
     if sync_units(release_dir):
         system(["systemctl", "daemon-reload"])
     system(["systemctl", "enable"] + list(ENABLED))
+
+
+def reconcile_units():
+    """Each start reinstalls the running release's units and enables its boot set with this release's code: a switch
+    made by the previous release's follow() may predate this release's files (aukora-journald.conf, the clock waiter)."""
+    try:
+        current = link_id(CURRENT)
+        if current and sync_units(os.path.join(RELEASES, current)):
+            system(["systemctl", "daemon-reload"], check=False)
+        for unit in ENABLED if current else ():
+            if system(["systemctl", "is-enabled", "--quiet", unit], check=False).returncode:
+                system(["systemctl", "enable", unit], check=False)
+    except (core.Refusal, OSError, subprocess.SubprocessError):
+        print("node-release: the running release's units could not be reconciled", file=sys.stderr)
 
 
 def restart_supervisor(check=True):
@@ -575,13 +574,19 @@ def finish_activation(anchor, active):
 
 
 def follow():
-    """The supervisor's root pre-start step (ExecStartPre=-+): if the owner's floor names a staged release other than
-    the current one (normally the offered release the owner just approved), make it current (previous = the old one),
-    record it as active and drop the offer. The floor must be root's anchored floor or a successor of it (later version,
-    the same spent approvals and more): a restored snapshot of an older floor, even one whose own history checks out,
-    is refused, so going back to an older release takes a new owner approval naming it. Anything else leaves the links
-    alone. It never fails the start: the supervisor then serves the release it served before (and refuses to, if the
-    floor names another one or is behind the anchor)."""
+    """The supervisor's root pre-start step (ExecStartPre=-+): follow_floor, then reconcile_units. Never fails the start."""
+    outcome = follow_floor()
+    with switch_lock():
+        reconcile_units()
+    return outcome
+
+
+def follow_floor():
+    """If the owner's floor names a staged release other than the current one (normally the offered release the owner
+    just approved), make it current (previous = the old one), record it as active and drop the offer. The floor must be
+    root's anchored floor or a successor of it (later version, the same spent approvals and more): a restored snapshot
+    of an older floor is refused, so going back takes a new owner approval naming the older release. Anything else
+    leaves the links alone; the supervisor then serves (or refuses) the release it served before."""
     with switch_lock():
         active = read_active()
         recovered = finish_activation(read_anchor(), active)

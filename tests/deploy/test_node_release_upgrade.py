@@ -62,17 +62,24 @@ class Upgrade(unittest.TestCase):
             mock.patch.object(node_release, "switch_lock", contextlib.nullcontext),
             mock.patch.object(node_release, "trusted_verifier", lambda rid, active: "/bin/sovereign-" + rid),
             mock.patch.object(node_release, "sync_units", lambda directory: False),
+            # systemd itself is never asked: every call is recorded (follow() reconciles the running release's units).
+            mock.patch.object(node_release, "system", self.systemctl),
         ]
         for patch in self.patches:
             patch.start()
         self.floor = None
         self.asked = []
+        self.systemd, self.enabled = [], set(node_release.ENABLED)
         mock.patch.object(node_release, "approved_floor", self.read_floor).start()
         self.old = self.stage("a" * 40)
         self.new = self.stage("b" * 40)
         self.third = self.stage("c" * 40)
         node_release.point(node_release.CURRENT, "releases/" + self.old[0])
         node_release.write_active(self.old[0], self.old[1], self.old[2], 0, None)
+
+    def systemctl(self, argv, check=True):
+        self.systemd.append(argv)
+        return mock.Mock(returncode=0 if argv[1] != "is-enabled" or argv[-1] in self.enabled else 1)
 
     def tearDown(self):
         mock.patch.stopall()
@@ -139,6 +146,28 @@ class Upgrade(unittest.TestCase):
         self.assertEqual((active["id"], active["release"], active["commit"]), (self.new[0], self.new[2], "b" * 40))
         # Started again on the new release, the floor names it: nothing more to do.
         self.assertEqual(node_release.follow(), "unchanged")
+
+    def test_the_next_start_completes_units_an_older_installer_left_out(self):
+        # The switch was made by the previous release's follow(): its installer copied no aukora-journald.conf and
+        # enabled no clock waiter. The new release's first start installs and enables what is missing, and only that.
+        node_release.offer(self.new[0])
+        self.floor = self.make_floor(self.new, 20, [10, 20], [self.old])
+        synced = []
+        self.enabled.discard("systemd-time-wait-sync.service")
+        with mock.patch.object(node_release, "sync_units", lambda directory: synced.append(directory) or True):
+            self.assertEqual(node_release.follow(), "switched to " + self.new[0])
+        self.assertEqual(synced[-1], os.path.join(node_release.RELEASES, self.new[0]))
+        self.assertIn(["systemctl", "daemon-reload"], self.systemd)
+        self.assertIn(["systemctl", "enable", "systemd-time-wait-sync.service"], self.systemd)
+        self.assertEqual([argv for argv in self.systemd if argv[1] == "enable"],
+                         [["systemctl", "enable", "systemd-time-wait-sync.service"]])
+        # Nothing to do on a later start: no reload, no enable, and a failing systemctl never fails the start.
+        self.systemd.clear()
+        self.enabled.add("systemd-time-wait-sync.service")
+        self.assertEqual(node_release.follow(), "unchanged")
+        self.assertEqual([argv[1] for argv in self.systemd], ["is-enabled"] * len(node_release.ENABLED))
+        with mock.patch.object(node_release, "sync_units", mock.Mock(side_effect=OSError("read-only"))):
+            self.assertEqual(node_release.follow(), "unchanged")
 
     def test_an_approved_release_is_followed_even_if_the_offer_was_taken_back(self):
         node_release.offer(self.new[0])
