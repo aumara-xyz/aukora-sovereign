@@ -2,6 +2,10 @@
 //! Sender admission precedes message opening; refusal facts carry no authority.
 
 pub(crate) mod refusal_audit;
+pub(crate) mod refused;
+use refused::settle_refused;
+#[cfg(test)]
+pub(crate) use refused::{remember_refused, REFUSED_ENVELOPE_CAP, RETRY_LIMIT};
 
 use canon::{
     alg::AlgorithmId,
@@ -229,27 +233,6 @@ fn append_refusal_attempt<T: AuthorityTxn + ?Sized>(
     })
 }
 
-/// How many refused envelope ids are kept (32 bytes each); see `remembered`.
-pub(crate) const REFUSED_ENVELOPE_CAP: i64 = 4096;
-
-/// A refusal that is final for these exact wrap bytes: not an approved contact (the sender sends again once both owners
-/// approved each other), a bad signature, or a wrap for another recipient. Payload, envelope and stale-contact refusals
-/// can clear (clock skew, a contact approval still syncing, a local store error) and are retried on the next poll.
-pub(crate) const fn remembered(reason: RefusalReason) -> bool {
-    matches!(reason, RefusalReason::Stranger | RefusalReason::Signature | RefusalReason::Recipient)
-}
-
-/// Keep one refused envelope id, unless the table already holds `REFUSED_ENVELOPE_CAP`.
-pub(crate) fn remember_refused(db: &Connection, envelope: &[u8; 32]) -> Result<()> {
-    db.execute(
-        "INSERT OR IGNORE INTO messaging_refused_envelope SELECT ?1
-         WHERE (SELECT count(*) FROM messaging_refused_envelope) < ?2",
-        params![envelope.as_slice(), REFUSED_ENVELOPE_CAP],
-    )
-    .map(|_| ())
-    .map_err(|_| refuse("store-write"))
-}
-
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS messaging_seen(
@@ -279,6 +262,10 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
         -- worker's repeated snapshots never decrypt and count the same wrap again.
         CREATE TABLE IF NOT EXISTS messaging_refused_envelope(
             envelope BLOB PRIMARY KEY CHECK(length(envelope)=32)
+        );
+        CREATE TABLE IF NOT EXISTS messaging_retry_envelope(
+            envelope BLOB PRIMARY KEY CHECK(length(envelope)=32),
+            tries INTEGER NOT NULL CHECK(tries>=0)
         );
         CREATE TABLE IF NOT EXISTS messaging_pending_refusal(
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -402,7 +389,7 @@ impl Messaging {
                 self.audit_message(txn, Digest32::from_bytes(*data.event().as_bytes()))?;
                 Ok(IngressOutcome::Data(data))
             }
-            Err(reason) => {
+            Err((reason, retryable)) => {
                 let context = txn.observation_context()?;
                 let observed_at_ms =
                     u64::try_from(context.at).map_err(|_| refuse("refusal-context"))?;
@@ -440,9 +427,7 @@ impl Messaging {
                 // Only reasons that can never clear for these bytes are remembered: a payload refused for clock skew or a
                 // contact approval that is catching up stays retryable on the next poll. Bounded: past the cap a wrap is
                 // simply counted again on a later poll, never dropped.
-                if remembered(reason) {
-                    remember_refused(&transaction, envelope.id.as_bytes())?;
-                }
+                settle_refused(&transaction, envelope.id.as_bytes(), retryable)?;
                 transaction.commit().map_err(|_| refuse("store-commit"))?;
                 let counted = append_refusal_attempt(txn, observation, attempt, prior)?;
                 self.db
@@ -506,40 +491,45 @@ impl Messaging {
         recipient_key: &nostr::SecretKey,
         transport: TransportKind,
         received_at_ms: u64,
-    ) -> core::result::Result<ContactData, RefusalReason> {
+    ) -> core::result::Result<ContactData, (RefusalReason, bool)> {
         use RefusalReason as R;
+        // Each refusal says whether it can clear for these same bytes (true: retried on a later poll, a bounded
+        // number of times) or is final (remembered, never counted again): see `receive`.
+        let fin = |reason: R| (reason, false);
+        let retry = |reason: R| (reason, true);
+        let timed = |error: &canon::Refusal| error.reason.ends_with("-time-invalid");
         if transport != TransportKind::NostrRelays {
-            return Err(R::Envelope);
+            return Err(fin(R::Envelope));
         }
         if received_at_ms > MAX_SAFE_INTEGER as u64 {
-            return Err(R::Payload);
+            return Err(retry(R::Payload));
         }
         envelope
             .validate()
-            .map_err(|error| classify(error, R::Envelope))?;
-        let local = recipient_key.public_key().map_err(|_| R::Recipient)?;
+            .map_err(|error| fin(classify(error, R::Envelope)))?;
+        let local = recipient_key.public_key().map_err(|_| fin(R::Recipient))?;
         if envelope.recipient != local {
-            return Err(R::Recipient);
+            return Err(fin(R::Recipient));
         }
         let wrap = Event::decode(&envelope.bytes)
             .and_then(Event::verify)
-            .map_err(|error| classify(error, R::Signature))?;
+            .map_err(|error| fin(classify(error, R::Signature)))?;
         let now = received_at_ms / 1000;
         let seal = nostr::nip59::authenticate_sender(&wrap, recipient_key, now)
-            .map_err(|error| classify(error, R::Envelope))?;
+            .map_err(|error| (classify(error, R::Envelope), timed(&error)))?;
         let sender = *seal.sender();
         let contact = self
             .current_contact(txn, sender)
-            .map_err(|_| R::StaleContact)?
-            .ok_or(R::Stranger)?;
-        let context = txn.observation_context().map_err(|_| R::StaleContact)?;
+            .map_err(|_| retry(R::StaleContact))?
+            .ok_or(fin(R::Stranger))?;
+        let context = txn.observation_context().map_err(|_| retry(R::StaleContact))?;
         if contact.authority().epoch != context.authority.epoch
             || contact.authority().sequence >= context.authority.sequence
         {
-            return Err(R::StaleContact);
+            return Err(retry(R::StaleContact));
         }
         let rumor = nostr::nip59::open_message(&seal, recipient_key, now)
-            .map_err(|error| classify(error, R::Payload))?;
+            .map_err(|error| (classify(error, R::Payload), timed(&error)))?;
         let recipient = hex::encode(local.as_bytes());
         let nonce_valid = rumor.tags.len() == 1
             || (rumor.tags.len() == 2
@@ -549,22 +539,22 @@ impl Messaging {
                 && rumor.tags[1][1].bytes().all(|byte|
                     byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
         if !nonce_valid || rumor.tags[0] != ["p", recipient.as_str()] {
-            return Err(R::Recipient);
+            return Err(fin(R::Recipient));
         }
         if rumor.content.is_empty() || rumor.content.len() > MAX_MESSAGE_BYTES {
-            return Err(R::Payload);
+            return Err(fin(R::Payload));
         }
         let transaction = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| R::Payload)?;
+            .map_err(|_| retry(R::Payload))?;
         let duplicate: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM messaging_seen WHERE event=?1 OR seal=?2 OR envelope=?3)",
             params![rumor.id.as_bytes().as_slice(), seal.event().event().id.as_bytes().as_slice(),
                 envelope.id.as_bytes().as_slice()], |row| row.get(0),
-        ).map_err(|_| R::Payload)?;
+        ).map_err(|_| retry(R::Payload))?;
         if duplicate {
-            return Err(R::Replay);
+            return Err(fin(R::Replay));
         }
         transaction.execute(
             "INSERT INTO messaging_seen VALUES(?1,?2,?3,?4,?5,?6,?7,'nostr-relays','contact',0,?8)",
@@ -572,19 +562,19 @@ impl Messaging {
                 envelope.id.as_bytes().as_slice(), sender.as_bytes().as_slice(),
                 contact.consumed_card().to_string(), contact.authority().epoch as i64,
                 contact.authority().sequence as i64, Sha256::digest(rumor.content.as_bytes()).as_slice()],
-        ).map_err(|_| R::Payload)?;
+        ).map_err(|_| retry(R::Payload))?;
         crate::history::stage(
             &transaction,
             Digest32::from_bytes(*rumor.id.as_bytes()),
             "incoming",
             sender,
             &rumor.content,
-            rumor.created_at.checked_mul(1000).ok_or(R::Payload)?,
+            rumor.created_at.checked_mul(1000).ok_or(fin(R::Payload))?,
             received_at_ms,
             envelope,
             contact.consumed_card(),
-        ).map_err(|_| R::Payload)?;
-        transaction.commit().map_err(|_| R::Payload)?;
+        ).map_err(|_| retry(R::Payload))?;
+        transaction.commit().map_err(|_| retry(R::Payload))?;
         Ok(ContactData {
             sender,
             event: rumor.id,

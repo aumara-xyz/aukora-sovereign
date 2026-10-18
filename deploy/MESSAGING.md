@@ -108,10 +108,11 @@ The current relay adapter reads complete bounded snapshots (at most 128 gift
 wraps and 500 relay event frames per query). A relay with more matching stored
 events refuses the batch instead of dropping data. This first exchange supports
 that bound; durable relay-history cursors are follow-up work before sustained
-high-volume use. Known admitted wraps, and wraps refused for a reason that cannot clear (a stranger, a bad signature, another
-recipient; at most 4096 ids kept), are skipped during routine polling. A message sent before both owners approved each
-other is therefore not retried and must be sent again; a payload or stale-contact refusal (clock skew, an approval
-still syncing) is retried on the next poll.
+high-volume use. Known admitted wraps, and wraps whose refusal is final (a stranger, a bad signature or encryption, another
+recipient, a replay, a bad payload; at most 4096 ids kept), are skipped during routine polling. A message sent before
+both owners approved each other is therefore not retried and must be sent again. A refusal that can clear (clock
+skew, a contact approval still syncing, a local store error) is retried and counted on later polls, at most 20 times,
+then it is final too.
 
 ## Privacy and storage
 

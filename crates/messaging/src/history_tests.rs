@@ -463,14 +463,8 @@ fn stranger_is_only_counted_and_owner_session_is_required() -> Result<()> {
         .query_row("SELECT count(*) FROM messaging_refused_envelope", [], |r| r.get(0))
         .unwrap();
     assert_eq!(kept, 1);
-    // Only refusals that cannot clear are remembered; the cap bounds the table.
-    use crate::ingress::{remembered, REFUSED_ENVELOPE_CAP};
-    for reason in [RefusalReason::Stranger, RefusalReason::Signature, RefusalReason::Recipient] {
-        assert!(remembered(reason), "{reason:?}");
-    }
-    for reason in [RefusalReason::Payload, RefusalReason::StaleContact, RefusalReason::Envelope, RefusalReason::Replay] {
-        assert!(!remembered(reason), "{reason:?}");
-    }
+    // The remembered ids are bounded.
+    use crate::ingress::REFUSED_ENVELOPE_CAP;
     for n in 0..REFUSED_ENVELOPE_CAP + 5 {
         let mut id = [0xee; 32];
         id[..8].copy_from_slice(&n.to_be_bytes());
@@ -481,6 +475,52 @@ fn stranger_is_only_counted_and_owner_session_is_required() -> Result<()> {
         .query_row("SELECT count(*) FROM messaging_refused_envelope", [], |r| r.get(0))
         .unwrap();
     assert_eq!(kept, REFUSED_ENVELOPE_CAP);
+    Ok(())
+}
+
+#[test]
+fn a_refusal_that_can_clear_is_retried_a_bounded_number_of_times() -> Result<()> {
+    use crate::ingress::{refused::settle_refused, RETRY_LIMIT};
+    let (dir_a, dir_b) = (TestDirectory::new(), TestDirectory::new());
+    let (key_a, key_b) = (key(41), key(42));
+    let mut a = Messaging::open(&dir_a.0, NodeId::from_bytes([6; 16]))?;
+    let mut b = Messaging::open(&dir_b.0, NodeId::from_bytes([7; 16]))?;
+    let (mut host_a, mut host_b) = (Host::default(), Host::default());
+    host_a.add_contact(key_b.public_key()?);
+    host_b.add_contact(key_a.public_key()?);
+    a.synchronize_contact(&mut host_a, key_b.public_key()?)?;
+    b.synchronize_contact(&mut host_b, key_a.public_key()?)?;
+    let send = a.queue_owner_send(&mut host_a, &draft(key_b.public_key()?, "Skewed"), &key_a, NOW)?;
+    let mut relay = FakeRelay::default();
+    a.transmit_owner(&mut host_a, &mut relay, send, 1000)?;
+    let incoming = relay.0.remove(0);
+    // B's clock is ten days behind: the wrap is from its future. That can clear, so the same bytes stay retryable.
+    let behind = NOW - 10 * 86_400_000;
+    assert!(matches!(
+        b.receive(&mut host_b, &incoming, &key_b, TransportKind::NostrRelays, behind)?,
+        IngressOutcome::Refused(_)
+    ));
+    assert!(!b.seen_envelope(incoming.id)?, "a skewed clock does not pin a contact's message");
+    // Once the clock is right, the very same wrap is admitted.
+    match b.receive(&mut host_b, &incoming, &key_b, TransportKind::NostrRelays, NOW)? {
+        IngressOutcome::Data(data) => assert_eq!(data.text(), "Skewed"),
+        other => panic!("unexpected {other:?}"),
+    }
+    // A retryable refusal that never clears becomes final after RETRY_LIMIT counts, so no wrap is counted for ever.
+    let id = [0xab; 32];
+    for _ in 1..RETRY_LIMIT {
+        settle_refused(&b.db, &id, true)?;
+    }
+    let pinned = |b: &Messaging| -> bool {
+        b.db.query_row("SELECT EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)", [id.as_slice()], |r| r.get(0)).unwrap()
+    };
+    assert!(!pinned(&b));
+    settle_refused(&b.db, &id, true)?;
+    assert!(pinned(&b));
+    // A final refusal is pinned at once.
+    let other = [0xcd; 32];
+    settle_refused(&b.db, &other, false)?;
+    assert!(b.db.query_row("SELECT EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)", [other.as_slice()], |r| r.get::<_, bool>(0)).unwrap());
     Ok(())
 }
 
