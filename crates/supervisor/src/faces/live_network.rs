@@ -441,6 +441,9 @@ fn synchronize_contacts(
         }
         after = rows.last().map(messaging::ApprovedContact::key);
     }
+    // A marked conversation is synchronized too, so a removal clears its pin or archive even if the contact was
+    // never cached here.
+    keys.extend(store.conversation_marks()?.iter().map(|mark| mark.contact));
     keys.sort();
     keys.dedup();
     for key in keys {

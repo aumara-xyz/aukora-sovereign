@@ -708,3 +708,14 @@ test('a send stopped by a contact change says why on its retry control', async t
   const retry = byClass(find(card, item => item.dataset?.message === 'stopped'), 'bubble-retry');
   assert.equal(retry.getAttribute('aria-label'), 'Sending stopped because this contact was removed. Send again');
 });
+
+test('a removed contact\'s archive does not come back when the contact is added again', async t => {
+  const { root, contacts, live } = mount(t, { marks: [{ npub: sam, pinned: false, archived: true }] });
+  for (let turn = 0; turn < 6; turn++) await settle();
+  assert.deepEqual(visibleRows(root), [maya], 'archived: off the main list');
+  const removed = contacts.splice(contacts.findIndex(contact => contact.npub === sam), 1)[0];
+  await live();
+  contacts.push(removed);
+  await live();
+  assert.deepEqual(visibleRows(root), [maya, sam], 'added again: a fresh conversation, not archived');
+});

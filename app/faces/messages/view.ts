@@ -539,7 +539,12 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
         readContactPage(await client.call("network", "contacts.list", { before: cursor, limit: PAGE }, { signal }));
       const page = restart ? { items: await readAllPages(fetch, contact => contact.npub), next: null } : await fetch(before);
       if (signal.aborted) return false;
-      if (restart) contacts.clear();
+      if (restart) {
+        contacts.clear();
+        // A removed contact's pin or archive is gone on the node; drop it here too, so a re-added contact starts clean.
+        const current = new Set(page.items.map(contact => contact.npub));
+        if ([...marks.keys()].some(npub => !current.has(npub))) marks = new Map([...marks].filter(([npub]) => current.has(npub)));
+      }
       let added = 0;
       for (const contact of page.items) {
         if (!restart && !contacts.has(contact.npub) && contacts.size >= MAX_ROWS) continue;

@@ -948,6 +948,7 @@ fn conversation_marks_need_the_owner_session_and_an_approved_contact() -> Result
     assert!(store.synchronize_contact(&mut host, friend)?.is_none());
     assert!(store.conversation_marks()?.is_empty());
     host.add_contact(friend);
+    assert!(store.synchronize_contact(&mut host, friend)?.is_some());
     assert!(store.conversation_marks()?.is_empty());
     // A mark left behind (here: the approval gone without the store hearing of it) can still be cleared by the owner.
     store.set_conversation_mark(&mut host, mark(friend, true, false))?;

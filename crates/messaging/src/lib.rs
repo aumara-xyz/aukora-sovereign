@@ -448,20 +448,19 @@ impl Messaging {
             self.approved_outbox
                 .retain(|_, send| send.envelope.recipient != key || send.epoch == authority.epoch);
         } else {
-            self.remove_owner_contact_cache(key)?;
-            self.db
-                .execute(
-                    "DELETE FROM messaging_contacts WHERE key=?1",
-                    params![key.as_bytes().as_slice()],
-                )
-                .map_err(|_| refuse("store-write"))?;
-            // A pin or archive belongs to this approval: it neither outlives the removal nor returns on re-approval.
-            self.db
-                .execute(
-                    "DELETE FROM messaging_marks WHERE contact=?1",
-                    params![key.as_bytes().as_slice()],
-                )
-                .map_err(|_| refuse("store-write"))?;
+            // One write: the cached approval and the conversation's pin or archive go together, so a mark neither
+            // outlives the removal nor returns on re-approval (an interrupted removal is redone whole).
+            let tx = self
+                .db
+                .unchecked_transaction()
+                .map_err(|_| refuse("store-busy"))?;
+            for table in ["DELETE FROM messaging_owner_contacts WHERE key=?1",
+                "DELETE FROM messaging_contacts WHERE key=?1", "DELETE FROM messaging_marks WHERE contact=?1"]
+            {
+                tx.execute(table, params![key.as_bytes().as_slice()])
+                    .map_err(|_| refuse("store-write"))?;
+            }
+            tx.commit().map_err(|_| refuse("store-commit"))?;
             self.approved_outbox
                 .retain(|_, send| send.envelope.recipient != key);
         }
