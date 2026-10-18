@@ -209,12 +209,13 @@ impl ModelBroker {
             }
             return Err(refusal);
         }
-        // The card is up: the new key replaces the held one, and the stored one is removed at once; the new key is
-        // stored only after the owner approves its card (keep_key), and nothing is stored for a declined card.
+        // The card is up: the new key replaces the held one first, then the stored one is removed (in this order, so
+        // keep_key, which re-stores a missing file only while the held key is the approved one, cannot write the old key
+        // back in between). The new key is stored only after the owner approves its card; never for a declined one.
+        self.hold(key, now)?;
         if self.key_file.remove().is_err() {
             eprintln!("model-broker: the stored key could not be removed");
         }
-        self.hold(key, now)?;
         eprintln!("model-broker: a key was entered; awaiting the owner's approval ({fingerprint})");
         Ok(KeyStage::AwaitingApproval(fingerprint))
     }
