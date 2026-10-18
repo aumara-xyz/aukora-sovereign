@@ -22,6 +22,13 @@ if sys.argv[1] == 'is-enabled':
     if unit.startswith('aukora-release-probe@'):
         print('enabled' if os.environ.get('ENABLE_PROBE') else 'static')
     sys.exit(0)
+if sys.argv[1] == 'cat':
+    print('# /etc/systemd/system/aukora-release-probe@.service')
+    print('RestrictAddressFamilies=none')
+    if os.environ.get('RESET_FAMILIES'):
+        print('# /etc/systemd/system/aukora-release-probe@.service.d/override.conf')
+        print('RestrictAddressFamilies=')
+    sys.exit(0)
 if sys.argv[1] != 'show':
     sys.exit(0)
 prop = sys.argv[2].removeprefix('--property=')
@@ -61,6 +68,10 @@ else:
             enabled = subprocess.run(audit, env={**env, "ENABLE_PROBE": "1"}, capture_output=True, text=True)
             self.assertEqual(enabled.returncode, 1, enabled.stdout + enabled.stderr)
             self.assertIn("is not static", enabled.stdout)
+            # A drop-in that resets the address families reads back like "none" in systemctl show; the unit files tell.
+            reset = subprocess.run(audit, env={**env, "RESET_FAMILIES": "1"}, capture_output=True, text=True)
+            self.assertEqual(reset.returncode, 1, reset.stdout + reset.stderr)
+            self.assertIn("RestrictAddressFamilies is ''", reset.stdout)
             bad = subprocess.run(audit, env={**env, "WEAKEN_PROBE": "1"}, capture_output=True, text=True)
             self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
             self.assertIn("FAIL aukora-release-probe@000000000000-000000000000.service: PrivateNetwork", bad.stdout)

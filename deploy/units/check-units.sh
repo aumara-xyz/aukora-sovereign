@@ -81,6 +81,10 @@ check_unit aukora-release-probe@000000000000-000000000000.service 3.0 DynamicUse
 # Static, never enabled: unapproved release code starts only when the supervisor asks for this instance.
 probe=aukora-release-probe@000000000000-000000000000.service
 [ "$(systemctl is-enabled "$probe" 2>/dev/null)" = static ] || fail "$probe" "is not static (it must never start at boot)"
+# systemctl show prints RestrictAddressFamilies=none and an unset (or reset) list alike, as nothing: read the unit
+# files instead; the last assignment, drop-ins included, must be none.
+families=$(systemctl cat "$probe" 2>/dev/null | sed -n 's/^RestrictAddressFamilies=//p' | tail -n 1)
+[ "$families" = none ] || fail "$probe" "RestrictAddressFamilies is '$families' in its unit files, expected 'none'"
 for unit in aukora-sovereign.service aukora-egress.service aukora-egress-verify.timer systemd-time-wait-sync.service; do
     systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
 done
