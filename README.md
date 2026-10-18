@@ -1,12 +1,22 @@
 # AUKORA Sovereign
 
-## The Bitcoin of the agentic age
+## Imagine if Linux and Bitcoin had a baby
 
-Bitcoin invented almost nothing new. Digital signatures, hash chains, proof of work and peer-to-peer networking all
-existed; what was new was putting them together so that nobody needs anyone's permission or trust. AUKORA Sovereign does
-the same for AI agents: passkeys, a signed append-only ledger, a sandbox with a single door, memory that cites its
-sources, and Nostr for finding each other, all existing open-source technology, combined so that an AI can work for one
-person while that person alone holds the keys, and everything it does can be checked by anyone.
+**From Bitcoin it gets self-custody and a record anyone can check.** Your keys stay in your hands (a passkey on your
+own device and seven words you wrote down), and every decision is written into a signed, append-only ledger that a
+stranger can verify offline without trusting you, us, or the server.
+
+**From Linux it gets an open base you run yourself.** The code is AGPL-3.0, it runs on a machine you control, and
+anyone can read it, change it and build on it.
+
+**The child is a personal AI that cannot act without your provable approval.** The agent can think, remember and
+propose, even changes to itself, but anything that crosses its walls waits for your passkey, over the exact bytes
+you saw, once, with a receipt. There is no coin.
+
+Like Bitcoin, almost none of the parts are new. Hashes, signatures, Merkle trees and proof of work all existed before
+2009; the invention was putting them together so the whole thing worked without anyone's permission. AUKORA does the
+same with passkeys, a signed ledger, a sandbox with a single door, memory that cites its sources, and Nostr for
+finding each other: existing open technology, combined into the trust layer for the agentic age.
 
 AUKORA Sovereign is a personal AI node: a server you control, an AI agent (Auma) that lives on it, and a hard line
 between what that agent may **propose** and what only you may **permit**. Auma can read, write, remember and suggest
