@@ -736,7 +736,7 @@ impl SharedStore {
         if q.include_history {
             for c in &mut history {
                 if let Some(id) = c.note.current_id.as_deref() {
-                    if !self.get(id)?.is_some_and(|n| loader.readable(&n)) {
+                    if !self.get(id).inspect_err(|_| loader.integrity = true).ok().flatten().is_some_and(|n| loader.readable(&n)) {
                         c.note.current_id = None;
                     }
                 }

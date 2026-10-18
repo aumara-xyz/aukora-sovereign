@@ -132,6 +132,7 @@ test('truncateUtf8 respects byte boundaries without splitting multi-byte code po
 
 test('isLiveVerifiedNote refuses superseded, quarantined, withheld, unverified and empty notes', () => {
   assert.equal(isLiveVerifiedNote(sampleNote()), true)
+  assert.equal(isLiveVerifiedNote(sampleNote({ capture: 'web-derived' })), false, 'an old web-derived slot note is never injected')
   assert.equal(isLiveVerifiedNote(sampleNote({ superseded_by: '2'.repeat(64) })), false)
   assert.equal(isLiveVerifiedNote(sampleNote({ quarantined: true })), false)
   assert.equal(isLiveVerifiedNote(sampleNote({ withheld: true })), false)

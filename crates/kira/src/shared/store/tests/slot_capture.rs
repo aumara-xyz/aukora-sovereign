@@ -18,6 +18,8 @@ fn a_raw_signed_web_note_cannot_enter_any_slot() {
         let d = slotted(slot, vec![]);
         let mut tags = d.tags(Review::Remembered).unwrap();
         tags.iter_mut().find(|t| t[0] == Capture::TAG).unwrap()[1] = Capture::WebDerived.wire().into();
+        // A write rule, not a parse rule: such a note stored before the rule must still read and verify.
+        assert_eq!(NoteMeta::parse(&tags, &d.text).unwrap().capture, Capture::WebDerived);
         let forged_claim = Event::sign(&owner, 1, NOTE_KIND, tags, d.text).unwrap();
         assert_eq!(s.append(forged_claim).unwrap_err(), refuse("note-slot-web-derived"));
         assert!(s.slot(slot).unwrap().is_none());

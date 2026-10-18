@@ -3,7 +3,7 @@
 //! vector indexes as rebuildable side tables, and an author registry. Every returned note is re-verified, and so is
 //! every supersede or quarantine event that changes how a note reads.
 
-use super::note::{check_capture_lane, may_write_slot, NoteMeta, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
+use super::note::{check_capture_lane, check_slot_capture, may_write_slot, NoteMeta, Review, ACCEPT_KIND, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
 use canon::{Refusal, Result};
 use nostr::{Event, VerifiedEvent};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -541,6 +541,7 @@ impl SharedStore {
                 }
                 // Lanes by whitelist: commitments, the self file and the resume hold only the owner's own words.
                 check_capture_lane(meta.capture, meta.lane)?;
+                check_slot_capture(meta.capture, meta.slot.as_deref())?;
                 if meta.lane.owner_only() && !agent.owner {
                     return Err(refuse("note-capture-lane"));
                 }

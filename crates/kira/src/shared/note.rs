@@ -390,9 +390,10 @@ impl NoteMeta {
             })
             .collect::<Result<Vec<_>>>()?;
         let epoch = required(tags, "epoch")?.parse::<u32>().map_err(|_| refuse("note-tag-number"))?;
+        // check_slot_capture is a write rule (NoteDraft and SharedStore::append), not a parse rule: a slot note stored
+        // before it existed must still read and verify, or one old note would fail every recall that ranks it.
         let capture = Capture::parse(required(tags, Capture::TAG)?)?;
         let slot = single(tags, "d")?.map(str::to_owned);
-        check_slot_capture(capture, slot.as_deref())?;
         Ok(Self {
             subject: required(tags, "subject")?.to_owned(),
             scope: required(tags, "scope")?.to_owned(),

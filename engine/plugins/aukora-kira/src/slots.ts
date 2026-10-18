@@ -62,5 +62,7 @@ export function isLiveVerifiedNote(note: KiraNote): boolean {
   if (note.quarantined === true || note.withheld === true || note.correction === 'quarantined') return false
   if (typeof note.superseded_by === 'string' && note.superseded_by.length > 0) return false
   if (note.sig_verified === false) return false
+  // The service refuses web capture in a slot, but a slot note stored before that rule still reads: never inject it.
+  if (note.capture === 'web-derived') return false
   return true
 }

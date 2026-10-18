@@ -158,6 +158,37 @@ fn opted_in_history_hides_an_unreadable_current_id_in_the_store_result() {
     assert_eq!(history.items[0].current_id, None);
 }
 
+/// A replacement that fails verification makes opted-in history an integrity failure, as the default walk does; it is
+/// never the recall's error (whose refusal code would describe a note the caller asked nothing about).
+#[test]
+fn opted_in_history_with_a_forged_replacement_is_undetermined_not_an_error() {
+    let path = std::env::temp_dir().join(format!("kira-hybrid-{}.sqlite", pub_hex(&key())));
+    {
+        let a = key();
+        let mut s = SharedStore::open(&path).unwrap();
+        register(&s, &[("claude", &a, false)]);
+        let old = note(&mut s, &a, "The retired atlas was on the desk", 1);
+        let new = note(&mut s, &a, "The atlas is in the vault", 2);
+        let tags = vec![vec!["supersedes".into(), old], vec!["replacement".into(), new.clone()]];
+        s.record(Event::sign(&a, 3, SUPERSEDE_KIND, tags, String::new()).unwrap()).unwrap();
+        let stored = s.get(&new).unwrap().unwrap();
+        let mut forged = stored.event.clone();
+        forged.content = "The atlas is somewhere else".into();
+        let side = rusqlite::Connection::open(&path).unwrap();
+        side.execute("UPDATE events SET raw = ?1 WHERE seq = ?2", rusqlite::params![forged.encode().unwrap(), stored.seq]).unwrap();
+        let mut q = query("retired atlas", "x");
+        q.include_history = true;
+        let r = s.recall(&q, None, None).unwrap();
+        assert_eq!(r.status, RecallStatus::Undetermined("integrity"));
+        assert!(r.items.iter().all(|i| i.current_id.is_none()));
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = path.clone().into_os_string();
+        name.push(suffix);
+        let _ = std::fs::remove_file(name);
+    }
+}
+
 #[test]
 fn found_and_empty_with_and_without_reranker() {
     let a = key();
