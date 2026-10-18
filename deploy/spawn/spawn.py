@@ -339,7 +339,7 @@ def issue_claim(plan, node):
     plan.state.mark("claim-issued")
 
 
-def describe(action, name, options):
+def describe(action, name, options, settings=None):
     backend = options["on"]
     print("DRY RUN %s %s %s: the guard admitted the name; no host, cloud API, resolver or state directory was touched."
           % (backend, action, name))
@@ -350,10 +350,11 @@ def describe(action, name, options):
               "Caddy block (validated, reloaded, rolled back on failure); write the claim commitment; deliver the "
               "claim link to a new --claim-out file or a terminal.")
     elif action == "create":
-        print("would: with --spend-ok, create one managed VM (smallest CPU preset with 4 vCPU and 16 GiB, 80 GiB "
-              "disk); ssh as the default user; push and install as above, with Caddy on the VM; write the claim "
-              "commitment; deliver the "
-              "claim link to a new --claim-out file or a terminal.")
+        print("would: with --spend-ok, create one managed VM (smallest CPU preset with %d vCPU and %d GiB, %d GiB "
+              "disk; %s public address); ssh as the default user; push and install as above, with Caddy on the VM; "
+              "write the claim commitment; deliver the claim link to a new --claim-out file or a terminal."
+              % (settings["AUKORA_VM_VCPU"], settings["AUKORA_VM_MEMORY_GIB"], settings["AUKORA_VM_DISK_GIB"],
+                 "static" if settings["static_ip"] else "dynamic"))
     elif action == "destroy":
         print("would: remove the node's Caddy block, its ingress device, and the container or VM, only if the "
               "recorded spawn id matches; then its state directory.")
@@ -378,14 +379,13 @@ def create(admission, name, options):
             hostnames(name, public_ip, None)
         if options.get("image") and not lxd.IMAGE.match(options["image"]):
             core.refuse("spawn", "image-invalid")
+    settings = vm.environment() if backend == "nebius-vm" else None
     if options.get("dry"):
-        describe("create", name, options)
+        describe("create", name, options, settings)
         return 0
-    settings = None
     if backend == "host-lxd":
         lxd.require_root()
     else:
-        settings = vm.environment()
         vm.require_spend(options.get("spend-ok"))
     claim_output = ClaimOutput(options.get("claim-out"))
     scratch = None

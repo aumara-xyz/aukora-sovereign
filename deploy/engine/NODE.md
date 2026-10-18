@@ -50,8 +50,7 @@ owner session.
    following links, owned by aukora, mode 0600 or 0640, one link. The engine's uid is neither root nor aukora. A newly approved set restarts it. Losing any condition stops it.
 
 New or changed non-authority packages never load (the closure copies only approved bytes); they become one proposal
-(the approved set plus all of them). A card that ran out of time (closed, never answered) is raised again after 10
-minutes; a set the owner explicitly **Declined** is not raised again until the owner asks again (O19), and the engine
+(the approved set plus all of them). A card that ran out of time (closed, never answered) is held for 24 hours unless the owner asks again; a set the owner explicitly **Declined** is not raised again until the owner asks again (O19), and the engine
 says `plugin-set-declined` meanwhile.
 Hot reload and creator mode are never loaded and never approvable (`floor::plugins::is_hot_reload`).
 
@@ -59,21 +58,24 @@ Correct bytes alone are insufficient: DSH can disable an incompatible profile pl
 it. The root closure now seals `.aukora-authority.json` with the approved set hash, release id and every package
 marked `authority`, plus the overlay's mandatory `@aukora/door` and `@aukora/kira`. Door checks the live Cordis Loader
 entries (enabled, fiber ACTIVE) and sends their names to its parent launcher over Node IPC every second. No readiness
-within 30 s, any `disabling profile plugin` diagnostic, loss of an active authority entry, or 10 s without a heartbeat
-kills the harness. The web and model bridges forward nothing before readiness. When Door itself is disposed (a stop,
-or the harness's crash path: an unhandled rejection disposes the root and exits 1) it says `stopping`: the bridges
-stop at once, but nothing is latched, so a crashed harness starts again; one that stays alive without its authority
-plugins is still latched by the heartbeat timeout. This is an honest-loader invariant;
+within 30 s or 10 s without a heartbeat stops the harness and removes readiness without persisting a refusal.
+Only a fresh process may prove the full authority set live again. A disabled required authority profile row,
+a refused assertion, or loss of an active authority entry is terminal for the same set/release; unrelated disabled
+profile rows do not latch. The web and model bridges forward nothing before readiness or after stopping.
+When Door is disposed it says `stopping`: the bridges stop at once without latching, allowing a clean restart.
+This is an honest-loader invariant;
 hostile code in the same process can forge IPC, so the OS wall remains the boundary.
 
 `engine-run.sh verify` also requires a fresh assertion for this exact set/release before the unit becomes active.
-The supervisor checks freshness every 5 s, outside the wall, and stops on loss even during the release-lock grace.
+The supervisor checks freshness every 5 s outside the wall and stops on loss even during the release-lock grace.
+An absent or unreadable running-release identity also stops it.
 Refusal codes are `profile-plugin-disabled`, `authority-plugin-missing`, `authority-plugin-inactive`,
 `authority-plugin-timeout` or `authority-runtime-check`: the journal names the code and the shell's existing approvals
 poll shows it as a notice while continuing to deliver approval cards. The launcher's terminal refusal persists in
 `/run/aukora-engine/io/authority-refusal`, scoped to the failed set/release, so systemd cannot silently restart the
-same broken composition. Newly approved set/release bytes may try again; an operator explicitly retrying unchanged
-bytes removes that file while the engine is stopped. No owner approval is inferred from a retry. Kira is mandatory
+same broken composition. Historical startup/heartbeat timeout records are retryable; malformed records and explicit
+authority failures remain hard. Newly approved set/release bytes may try again; an operator explicitly retrying
+unchanged bytes after a hard refusal removes that file while the engine is stopped. No owner approval is inferred from a retry. Kira is mandatory
 at runtime even in older sets that did not mark it `authority`; fresh and changed Kira proposals now mark it.
 
 ## 3. The plugin fingerprint gate, end to end
@@ -252,7 +254,7 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   same-origin`); the engine process never sees the request, though engine-served script on that origin can read the
   reply like the face does. Reply: `{"state": "none" | "awaiting-approval" | "not-approved" |
   "approved"}` and nothing else: no character of the key (O15 keeps even its last four out of the engine), never its
-  digest or fingerprint. **Residual risk (DOT F1):** engine-served script can draw a fake status or a lookalike key
+  digest or fingerprint. **Residual risk:** engine-served script can draw a fake status or a lookalike key
   form on `engine.<shell>`, and a key typed into that form is the engine's; it cannot change the key or its approval.
   No browser rule prevents that imitation; the key page names its exact address and tells the owner never to type
   the key on a page whose address starts with `engine.` (advice, not an enforced barrier). `POST /api/engine/model-key` needs the bound
@@ -270,10 +272,12 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   is a symlink, not regular, shared, or not a key is not used (the journal says why, never the key). Entering a
   different key removes the file once that key's card is up (card first, O19: a key whose card cannot be raised, e.g.
   `awaiting-other-approval`, changes neither memory nor file); it is stored again only when that card is approved, and
-  never for a declined one; `ModelBroker::clear_key` clears memory and file together.
+  never for a declined one. There is no owner-facing forget-key action yet.
 - **Budget.** `model-broker-v1.json` holds the terms (models, prices per million tokens, total and per-call cap in
   µUSD, call count, `valid_days`). The supervisor proposes them as `engine/model-budget.json` (with an expiry) and
   spends only against the bytes the owner's passkey applied; changed terms, or one day before expiry, propose again.
+  Automatic renewal compares terms independently of expiry: a decline holds until Ask again, and an ignored card
+  waits at least 24 h after expiry. Exact passkey approval still binds the expiry.
   Each approved budget (by its SHA-256) is its own cap. Spend is kept in `/var/lib/aukora/model-broker/spend-v1.jsonl`
   (0600): a call reserves its worst case (input bounded by the request's bytes, output by `max_tokens`) before it is
   sent, and `max_tokens` is lowered so that worst case fits the per-call cap and what is left of the total; it
@@ -328,40 +332,39 @@ with the commands as written; what differed there is said. Three machines: the *
 VM** (Linux, docker.io, the wall test's VM: builds the artifacts and the release; the Mac's disk never holds the ~1 GB
 stage) and the **node** (a fresh Nebius VM made by `spawn.sh`). `R` = this repository on each machine.
 
-**A. Artifacts (once per pin set), on the artifact VM**, in `~/art` (`~/art/stage` collects the five operator files):
+**A. Artifacts (once per pin set), on the artifact VM**. Set `ARTIFACT_ROOT` to a scratch directory; `$ARTIFACT_ROOT/stage` collects the five operator files:
 1. Node: `curl -sSfLO https://nodejs.org/dist/v24.11.1/node-v24.11.1-linux-x64.tar.xz` and its `SHASUMS256.txt`;
-   `grep " node-v24.11.1-linux-x64.tar.xz$" SHASUMS256.txt | sha256sum -c`; unpack to `~/art/node24`.
-2. The harness: `mkdir ~/art/dsh && cd ~/art/dsh` (the folder must be named `dsh`: the lockfile records it), then with
-   `PATH=~/art/node24/bin:$PATH`: `npm install --save-exact --ignore-scripts --no-audit --no-fund @deepseek-ai/dsh@0.2.1-alpha.5`;
-   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -czf ~/art/stage/dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz package.json package-lock.json node_modules`.
+   `grep " node-v24.11.1-linux-x64.tar.xz$" SHASUMS256.txt | sha256sum -c`; unpack to `$ARTIFACT_ROOT/node24`.
+2. The harness: `mkdir $ARTIFACT_ROOT/dsh && cd $ARTIFACT_ROOT/dsh` (the folder must be named `dsh`: the lockfile records it), then with
+   `PATH=$ARTIFACT_ROOT/node24/bin:$PATH`: `npm install --save-exact --ignore-scripts --no-audit --no-fund @deepseek-ai/dsh@0.2.1-alpha.5`;
+   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -czf $ARTIFACT_ROOT/stage/dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz package.json package-lock.json node_modules`.
 3. OpenShell: download `openshell_0.1.4-1_amd64.deb` and `openshell-checksums-sha256.txt` from
    `https://github.com/NVIDIA/OpenShell/releases/download/v0.1.4/`, check it, `dpkg-deb -x` it, put `usr/bin/openshell` and
    `usr/bin/openshell-gateway` in a folder `openshell-0.1.4`, then
-   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - openshell-0.1.4 | gzip -n -9 > ~/art/stage/openshell-0.1.4-linux-x64.tar.gz`.
-4. Images: `sudo docker save -o ~/art/stage/openshell-sandbox-image.tar node:24-bookworm ghcr.io/nvidia/openshell/sandbox:0.1.4 ghcr.io/nvidia/openshell/supervisor:0.1.4`
+   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - openshell-0.1.4 | gzip -n -9 > $ARTIFACT_ROOT/stage/openshell-0.1.4-linux-x64.tar.gz`.
+4. Images: `sudo docker save -o $ARTIFACT_ROOT/stage/openshell-sandbox-image.tar node:24-bookworm ghcr.io/nvidia/openshell/sandbox:0.1.4 ghcr.io/nvidia/openshell/supervisor:0.1.4`
    (all three: the docker driver runs the sandbox runtime and the supervisor images beside the sandbox image, with
    `image_pull_policy = "never"`).
-5. Rust: `RUSTUP_HOME=~/art/rustup CARGO_HOME=~/art/cargohome rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown --no-self-update`;
-   in `~/art/rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu`:
-   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - . | gzip -n -9 > ~/art/stage/rust-1.99.1-x86_64-unknown-linux-gnu.tar.gz`.
+5. Rust: `RUSTUP_HOME=$ARTIFACT_ROOT/rustup CARGO_HOME=$ARTIFACT_ROOT/cargohome rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown --no-self-update`;
+   in `$ARTIFACT_ROOT/rustup/toolchains/1.99.1-x86_64-unknown-linux-gnu`:
+   `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=go-w -cf - . | gzip -n -9 > $ARTIFACT_ROOT/stage/rust-1.99.1-x86_64-unknown-linux-gnu.tar.gz`.
 6. llama.cpp: `llama-b10621-bin-ubuntu-x64.tar.gz` (a tar.gz; GitHub's asset digest is the pin). The installer
    downloads it, node and the two models itself, over HTTPS, against the pins.
 7. `python3 -B R/deploy/engine/engine.py pin FILE` for each; fill `engine-pins.json` (sha256 and bytes). A changed pin
    is a reviewed commit. Steps 2, 4 and 5 and the plugins give the same bytes when repeated.
 
-**B. Plugins.** On the Mac (the disposable harness checkout `~/face-scratch-dsh/src` at `dsh-v0.2.1-alpha.5` lives
-there), with node 24.11.1 and pnpm on PATH: `python3 engine/plugins/aukora-face/build-face.py --dsh ~/face-scratch-dsh/src`.
+**B. Plugins.** On the Mac, set `HARNESS_ROOT` to a disposable harness checkout at `dsh-v0.2.1-alpha.5`; with node 24.11.1 and pnpm on PATH: `python3 engine/plugins/aukora-face/build-face.py --dsh $HARNESS_ROOT`.
 Copy the built libs to the artifact VM's checkout of the same commit (`COPYFILE_DISABLE=1 tar -cf faces.tar
 engine/plugins/aukora-face/*/lib engine/plugins/aukora-foundation/lib`), then there:
-`python3 -B -I deploy/engine/build_plugins.py --dsh ~/art/dsh --faces engine/plugins/aukora-face --node ~/art/node24/bin/node --out ~/art/plugins-out --tar ~/art/stage/engine-plugins.tar`
-(twice into two folders and `cmp` the tars: equal). After C1, `bin/sovereign engine fingerprint --from ~/art/plugins-out`
+`python3 -B -I deploy/engine/build_plugins.py --dsh $ARTIFACT_ROOT/dsh --faces engine/plugins/aukora-face --node $ARTIFACT_ROOT/node24/bin/node --out $ARTIFACT_ROOT/plugins-out --tar $ARTIFACT_ROOT/stage/engine-plugins.tar`
+(twice into two folders and `cmp` the tars: equal). After C1, `bin/sovereign engine fingerprint --from $ARTIFACT_ROOT/plugins-out`
 from the release prints the set (thirteen names, the door `authority: true`) and its pin; `sha256` of its first line is
 the `new_sha256` the plugin-set card must show. Keep both for D4.
 
 **C. Release and node.**
 1. Commit (pins; plugins are not in git). On the artifact VM (Linux; it needs the wasm32 target for the app build:
    `rustup target add wasm32-unknown-unknown --toolchain 1.99.1`, and `cargo fetch --locked` once):
-   `PATH=~/art/node24/bin:$PATH R/scripts/reproduce.sh build COMMIT ~/art/release --twice` (about 12 minutes on 4 vCPU).
+   `PATH=$ARTIFACT_ROOT/node24/bin:$PATH R/scripts/reproduce.sh build COMMIT $ARTIFACT_ROOT/release --twice` (about 12 minutes on 4 vCPU).
    Copy `release.json` and `release.tar` (about 50 MB) to the Mac.
 2. On the Mac, with the Nebius settings (`deploy/README.md`) and
    `AUKORA_VM_HOURLY_ESTIMATE` (cpu 4 vCPU / 16 GiB: about 0.12 USD/h with the 80 GiB disk and the address),
@@ -371,8 +374,8 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
    `--provider deepseek` is required: it pins `api.deepseek.com` in the node's egress, and the engine installer refuses
    without it. The VM is the smallest CPU preset with 4 vCPU and 16 GiB, 80 GiB disk (O1). The tenant's public IPv4
    quota (3 on the rehearsal's tenant) must have room. About 4 minutes.
-3. The stage, VM to VM (never through the Mac): put a throwaway key's public half in the node's
-   `~ubuntu/.ssh/authorized_keys`, copy `~/art/stage/*` from the artifact VM to the node's private address, then on the
+3. The stage, VM to VM (never through the Mac): put a throwaway key's public half in the
+   VM user's `.ssh/authorized_keys`, copy `$ARTIFACT_ROOT/stage/*` from the artifact VM to the node's private address, then on the
    node `sudo install -d -m 0700 /root/aukora-engine-stage` and `sudo install -m 0600` each file into it; remove the key.
    On the Mac: `python3 -B deploy/engine/engine.py install NAME --stage-on-node --dry-run`, then without `--dry-run`
    (about 5 minutes). It first pins the door's allowlisted `net.hosts` in the node's egress (resolved on the Mac, a
@@ -408,8 +411,7 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
    stored key is loaded again when it is the approved one (journal: `model-broker: the stored key was loaded`); there is
    nothing to retype.
    The reply renders in the chat and the session history loads after a reload (NODE since O9, with the fake key:
-   "This turn failed · API key is invalid · AUTH"). The harness's preview notice is acknowledged by the overlay
-   (row 3): its own Continue cannot persist inside the wall.
+   "This turn failed · API key is invalid · AUTH"). The overlay disables the harness Models section (row 3), removing its preview notice; the face supplies its own Models section.
 8. Crossings: a `web_fetch` of an allowlisted host raises a door ask card (`door/ask-NN.json`: tool, class, call
    digest); approve; the repeated call runs once and returns the page (NODE since O10: example.com's HTML).
    `kira_remember` / `kira_recall` go through the door with the non-owner token after an ask card each (the starter
@@ -424,9 +426,8 @@ the `new_sha256` the plugin-set card must show. Keep both for D4.
    5 s (NODE, O12); re-bind or a release change → 403 as well.
    Runtime activation check (not yet run on the node): in a throwaway approved composition, give Door or Kira
    mismatched DSH peers. Even if DSH prints its normal launch line, no engine/model traffic may pass; expect
-   `profile-plugin-disabled` and a stopped sandbox, plus the refusal notice in the shell's Approvals poll. A missing
-   Door row must stop within 30 s (`authority-plugin-missing`); disabling any marked authority after readiness must
-   stop it too. Restore approved compatible bytes/release before retrying; never approve a faulty set on a real node.
+   `profile-plugin-disabled` and a stopped sandbox, plus the refusal notice in the shell's Approvals poll. Silent startup must stop within 30 s without a terminal latch; a missing authority entry reported by
+   Loader after readiness, or disabling a required authority row, must hard-refuse. Restore approved compatible bytes/release before retrying; never approve a faulty set on a real node.
 
 **E. Upgrade a bound node (O17).** The node keeps serving its approved release (shell, owner origin, engine) until
 the owner approves the new one; nothing switches before that.
@@ -550,11 +551,11 @@ fake DeepSeek key, headless Chrome through the SSH tunnel; screenshots kept priv
 
 | Item | Fix | Test-node evidence |
 |---|---|---|
-| **O9** WebSocket | `engine/socket.rs`: the one upgrade (`/api/remote.mux`) forwarded under the session's admission, exact Origin, frames checked; permessage-deflate offers admitted, never forwarded; the overlay acknowledges the harness's preview notice (its Continue cannot persist in the wall and the modal covered the composer) | CDP: `HandshakeResponseReceived 101 Switching Protocols`, frames both ways, no "connection lost, retry"; chat "Hello Auma, please reply with one short sentence." → the turn renders "This turn failed · API key is invalid · AUTH" (`o9-chat-reply-rendered.png`); after a reload the session's history loads (no "Loading history…"); journal `model-broker: call … provider-refused model=deepseek-flash … charged=0`. Sign-out in another tab closed the open socket 1008 3.9 s later |
+| **O9** WebSocket | `engine/socket.rs`: the one upgrade (`/api/remote.mux`) forwarded under the session's admission, exact Origin, frames checked; permessage-deflate offers admitted, never forwarded; the overlay disables the harness Models section and its preview notice; the face supplies its own Models section | CDP: `HandshakeResponseReceived 101 Switching Protocols`, frames both ways, no "connection lost, retry"; chat "Hello Auma, please reply with one short sentence." → the turn renders "This turn failed · API key is invalid · AUTH"; after a reload the session's history loads (no "Loading history…"); journal `model-broker: call … provider-refused model=deepseek-flash … charged=0`. Sign-out in another tab closed the open socket 1008 3.9 s later |
 | **O10** door egress | `engine.py egress` / `install`: door `net.hosts` pinned like the provider (egress epoch 3: `api.deepseek.com`, `example.com`); installer refuses without them | from inside the wall: `web_fetch https://example.com/` → `ask-net` → card `door/ask-00.json` approved → repeat → `decision: allow`, 67 ms, body `<!doctype html>… Example Domain`; `wikipedia.org` → `host-not-allowed`, no card; `wall-check.sh` → `wall ok` after the egress change |
 | **O11** release floor | start only on an owner-approved floor naming the running release; Unknown ≠ NotApproved (retry, hold ≤ 30 s, never start); the store waits ~1 s for a held lock; 503 not 403 on Unknown | each genesis: `awaiting-owner-binding` → bind → `awaiting-release-approval` (engine `inactive`, `/engine/open` → `supervisor:release-not-approved`) → release card → `awaiting-plugin-set-approval` → plugin set → `starting`, `running`. Root held `floor.lock` 12 s: `the release floor cannot be read now; the running engine is kept`, engine stayed `active`; held 45 s: kept, then `release-unreadable` at +31 s (stopped), `starting`/`running` when released. Release 1 still showed `floor:locked` on `GET /api/approvals`; none since the store wait |
 | **O12** shell session | tickets and engine sessions bound to the shell session's digest, ≤ its life; re-checked per request and every 5 s on a socket; `POST /api/session/end`; ended sessions answer 403 | engine origin 200 → shell `POST /api/session/end` → `{"ended":true}` → engine origin `403 This engine session ended: you signed out of your node…`; open WebSocket closed 1008 |
-| **O13** cards | spaces render as spaces; repeat warning only for pressure words or a word hammered 3× within 6 words | model-key and budget cards: plain spaces, no warning row (`o13-model-key-card.png`); the repeat rule matches every Prime vector (test) |
+| **O13** cards | spaces render as spaces; repeat warning only for pressure words or a word hammered 3× within 6 words | model-key and budget cards: plain spaces, no warning row; the repeat rule matches every Prime vector (test) |
 | **O14** own slots | a policy allow of `kira_get` `aukora:self`/`aukora:resume` skips the slider | inside the wall: both reached Kira at once (`kira:not-found`, no card); `resume:grok` and `kira_recall` → `ask-memory` |
 | **O15** provider errors | fixed message per status, the provider's text never passes | inside the wall, fake key: `401 {"error":{"message":"aukora broker: the provider refused the key (HTTP 401; the provider's own message is withheld)","type":"authentication_error"}}` |
 
@@ -581,10 +582,10 @@ not published):
 | Item | Fix | Test-node evidence |
 |---|---|---|
 | **O17** upgrades | `node_release.py offer` (link `/opt/aukora/offered`); the running release raises the upgrade card from its floor and keeps serving; approval advances the floor (the supervisor's release proposal is ordering evidence for an owner floor too: `floor` and Aura's twin); exit 75; unit pre-start `node_release.py follow` switches to the staged release the floor names (read by `sovereign release floor` as aukora); a withdrawn offer withdraws its card (not a decline) | A running with the engine `active`; B staged and offered at 13:22:06; card "Upgrade this node to a new release" (`base_sha256` = A, `release_sha256` = B) while `current` stayed A and the engine stayed `active`; approved 13:23:34 → `release: the owner approved release 4c29ddb9…; restarting to switch to it`, `engine: awaiting-release-approval`, exit `status=75/TEMPFAIL` 13:23:36, `node-release follow: switched to 8834ad96a45c-4c29ddb97c0e` 13:23:39, `engine: running` 13:23:49 (the supervisor down 3 s, the engine about 15 s); `current` = B, `previous` = A, offer gone, `active.json` = B, floor `aukora-floor-state-v2` naming B with A in its history, `admission.json` names B, the plugin set needed no new card (unchanged plugins) |
-| **O18** sign-in / sign-out | shell: one primitive button pinned at the base of the right-hand menu, "Sign in with your passkey" / "Sign out" (`POST /api/session/end`); session refusals are a calm signed-out state; the AUMLOK face's CSP (`connect-src 'self'`) no longer blanks it | on B: Sign out → the button reads "Sign in with your passkey", `/api/approvals` 400 `frontdoor:session-required` (`live-o18-signed-out.png`); clicking it opened the owner pane and signed in with the passkey, the button read "Sign out" again; on A the AUMLOK face rendered its own Sign in (it was blank before). The look needs Peter's preview (local shots `01`…`17`) |
-| **O19** declines | only the owner's Decline (`gate.refuse`, reason `owner-declined`) is a decline; an expiry or another refusal frees the same bytes; `POST /api/v1/approvals/decline` (no passkey, ends a live review) and `/again` (fact `aukora-owner-again-v1` as new evidence; release cards raised afresh); the owner card has Decline and Ask again; the shell's Approvals says "N declined · ask again"; the model key: card before key, re-entering a declined or expired key raises a fresh card, another key's card up refuses `awaiting-other-approval` (SCOUT M5; SCOUT's own branch was not visible here) | upgrade card declined (`gate.refuse` seq 25; `live-o19-declined.png`, the shell's Approvals "1 declined · ask again"); for 20 s of shell polling nothing raised it again and `current` stayed A, engine `active`; Ask again 24 s after the decline raised a fresh card (seq 26, `live-o19-asked-again.png`), which was then approved (the upgrade above). Model key: fake key entered → card; Declined → the same key entered again → a fresh pending `engine/model-key.json` card (`refused`, then `pending`). Tests: an expired card's bytes raised again, a decline held until asked again, door asks per call (supervisor `adapters::gate`, 5) |
+| **O18** sign-in / sign-out | shell: one primitive button pinned at the base of the right-hand menu, "Sign in with your passkey" / "Sign out" (`POST /api/session/end`); session refusals are a calm signed-out state; the AUMLOK face's CSP (`connect-src 'self'`) no longer blanks it | on B: Sign out → the button reads "Sign in with your passkey", `/api/approvals` 400 `frontdoor:session-required`; clicking it opened the owner pane and signed in with the passkey, the button read "Sign out" again; on A the AUMLOK face rendered its own Sign in (it was blank before). Visual owner acceptance is pending |
+| **O19** declines | only the owner's Decline (`gate.refuse`, reason `owner-declined`) is a decline; an expiry holds the same bytes for 24 h unless the owner asks again; a non-owner refusal is not a decline; `POST /api/v1/approvals/decline` (no passkey, ends a live review) and `/again` (fact `aukora-owner-again-v1` as new evidence; release cards raised afresh); owner cards offer Decline; supported `engine/` and release requests offer Ask again after a confirmed decline or expiry; the shell's Approvals says "N declined · ask again"; the model key: card before key, re-entering a declined or expired key raises a fresh card, another key's card up refuses `awaiting-other-approval` | upgrade card declined (`gate.refuse` seq 25, the shell's Approvals "1 declined · ask again"); for 20 s of shell polling nothing raised it again and `current` stayed A, engine `active`; Ask again 24 s after the decline raised a fresh card (seq 26), which was then approved (the upgrade above). Model key: fake key entered → card; Declined → the same key entered again → a fresh pending `engine/model-key.json` card (`refused`, then `pending`). Tests: an expired card's bytes raised again, a decline held until asked again, door asks per call (supervisor `adapters::gate`, 5) |
 
-Then (Codex review of the branch, Peter's decisions on O20 and the re-proposal cap), on the same test node: release
+Then (pre-swap probes and the re-proposal cap), on the same test node: release
 D (ed7a900…-16c5a08c, the fixes below) through B's own card, then E (aff2272…-b66fdcab), then back to D:
 
 | Item | Fix | Test-node evidence |
@@ -592,7 +593,7 @@ D (ed7a900…-16c5a08c, the fixes below) through B's own card, then E (aff2272�
 | **B30** (Codex HIGH) rollback by restore | root keeps `/var/lib/aukora-release/anchor.json` (root 0644, synced): the floor it last accepted; `follow` needs that floor or a successor (later version, spent approvals extended), refuses behind, divergent or a non-root anchor; the supervisor refuses to serve a floor behind it (`floor-behind-anchor`) | on D a restart anchored D's floor (`unchanged (anchored)`, seq 40, 3 spent); the D-era state was copied, E approved (anchor seq 46, 4 spent); the D-era copy was restored and the supervisor restarted: `node-release follow: refused: the floor is behind the anchored floor (restored or divergent state)`, `current` stayed E, the supervisor journaled `the floor is behind the floor root accepted …; refusing to serve it`, the engine stayed `inactive`; the real state put back: E served, engine `running` |
 | owner-approved rollback | going back is a new card from the running floor to the older release | E offered D: probe passed, card, approved, `switched to ed7a900e3be3-16c5a08c4f1e`; anchor seq 51, 5 spent, history A, B, E |
 | **O20** pre-swap probe | the offered release's own binary runs `sovereign release probe` on a copy of the state (ledger via `VACUUM INTO`); the card goes up only on `probe ok <digest>` | E offered on D: `probing the offered release b66fdcab…` then `… started on a copy of the state; its card can go up` within a second, then the card; B (no probe command) offered on E: `the offered release's probe said: supervisor:release-pointer-usage`, `… did not start …; no card`, no pending release card |
-| re-proposal cap | bytes whose card simply expired are held back 24 h (`gate:recently-expired`) unless the owner asks again for that very card (its `aukora-owner-again-v1` fact; other evidence does not lift it, Codex re-review 3); listed beside the declines | unit tests (`adapters::gate`); not exercised live |
+| re-proposal cap | bytes whose card simply expired are held back 24 h (`gate:recently-expired`) unless the owner asks again for that very card (its `aukora-owner-again-v1` fact; other evidence does not lift it); listed beside the declines | unit tests (`adapters::gate`); not exercised live |
 | Live, Zeta Harp, Lingwa faces | `connect-src 'self'` (their JSON module imports were blocked, the AUMLOK cause) | checks green; not opened on the node |
 
 Codex's re-review (probe isolation, activation intent, the cooldown's binding), on the same test node with releases
@@ -682,7 +683,7 @@ usability half: 20 real no-dep Rust projects (`cargo build --offline && cargo te
 inside the capped sandbox 20/20, median 281 ms, against 214 ms as auma on the host: 1.31x (bar 1.5x; the wall test
 had 293/228). `wall-check.sh`: `wall ok`.
 
-**P4. Door-level taint (R2), sticky.** After any `net` result (or a memory read carrying a `web-derived` note), the
+**P4. Door-level taint (R2), sticky.** After any `net` result (or a memory result carrying a `web-derived` note, including a write's returned body), the
 engine's next `net` calls and memory writes ask, whatever the slider and grants say, until the owner clears it at
 `https://<shell>/engine/door`; a `web-derived` write always asks. Per session, not per turn (Argon RT-1..RT-3), and
 since the door cannot tell sessions apart without trusting the engine, per engine: crates/supervisor/DOOR.md, "Taint".

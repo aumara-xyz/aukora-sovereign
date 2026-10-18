@@ -18,6 +18,18 @@ def browser(path, text):
     return [rule for rule, _ in walls.file_findings(path, text) if rule == "wall-browser"]
 
 
+class ForeignPaths(unittest.TestCase):
+    def test_home_and_review_paths_are_found_in_docs_and_policies(self):
+        for path in ("docs/guide.md", "deploy/policy.yaml", "deploy/overlay.yml", "src/lib.rs"):
+            for sample in ("/" + "Users/example/review.md", "/" + "home/example/review.md", "~" + "/review/notes.md", "file:///" + "Users/example/review.md"):
+                self.assertTrue(walls.foreign_path(path, sample), (path, sample))
+        self.assertFalse(walls.foreign_path("docs/guide.md", "See deploy/engine/NODE.md"))
+        self.assertFalse(walls.foreign_path("deploy/engine/engine-run.sh", "/var/lib/aukora-engine/home/profile"))
+        default = "~" + "/aukora-memory/kira"
+        self.assertFalse(walls.foreign_path("crates/kira/src/shared/service/cli.rs", default))
+        self.assertTrue(walls.foreign_path("docs/guide.md", default))
+
+
 class BrowserWall(unittest.TestCase):
     def test_react_and_dom_raw_html_sinks_are_seen(self):
         for sample in ("<div dangerouslySetInnerHTML={{ __html: s }} />",

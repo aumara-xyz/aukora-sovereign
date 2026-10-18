@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Kira 2: the shared memory every agent reads and writes (spec: ~/aukora-memory/review/KIRA2-SPEC-v0.3.md).
+//! Kira 2: the shared memory every agent reads and writes (see README.md).
 //!
 //! Memory is context, never authority. A note is a NIP-01 event signed by its author's key; the signature proves who
 //! wrote it, not that it is true. Nothing is edited or deleted: notes are superseded, expired or quarantined by

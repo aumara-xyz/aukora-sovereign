@@ -39,7 +39,7 @@ async function readStanding(signal: AbortSignal): Promise<ModelKeyStanding> {
 
 /** The broker's standing, read now, every few seconds, and again whenever this tab comes back into view. */
 function useStanding(): ModelKeyStanding {
-  const [standing, setStanding] = useState<ModelKeyStanding>({ state: 'unknown' })
+  const [standing, setStanding] = useState<ModelKeyStanding>({ state: 'reading' })
   useEffect(() => {
     const abort = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined

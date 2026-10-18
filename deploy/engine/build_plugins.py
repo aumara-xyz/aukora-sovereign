@@ -43,7 +43,7 @@ NAME = re.compile(r'^@aukora/[a-z0-9][a-z0-9.-]{0,60}$')
 # profile row whose `@deepseek-ai/dsh*` peers its version does not satisfy (dsh-app-boot preflight: one stderr line,
 # and the engine boots without that row), so a door or Kira pin left behind a harness bump would start the engine with
 # no door. A `workspace:` peer means "the running harness" (the faces) and always matches.
-DSH_VERSION = '0.2.1-alpha.5'
+DSH_VERSION = json.loads((REPO / 'deploy/engine/engine-pins.json').read_text())['artifacts']['dsh']['version']
 WORKSPACE_PEERS = ('workspace:^', 'workspace:~', 'workspace:*')
 
 

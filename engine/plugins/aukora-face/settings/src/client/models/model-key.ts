@@ -33,7 +33,9 @@ export type ModelKeyStanding =
   | { readonly state: 'approved' }
   /** 404: this composition has no broker in front of it (not a node). */
   | { readonly state: 'unavailable' }
-  /** Not read yet, or the node was busy / the reply was not one this page reads. */
+  /** No reply has been read yet. */
+  | { readonly state: 'reading' }
+  /** The read failed, the node was busy, or the reply was not one this page reads. */
   | { readonly state: 'unknown' }
 
 const BROKER_STATES = new Set(['none', 'awaiting-approval', 'not-approved', 'approved'])
@@ -101,7 +103,9 @@ export function rowView(standing: ModelKeyStanding, shell = 'your node'): RowVie
       return { tone: 'mint', pill: 'Approved', summary: 'Held by your node, outside the engine', action: 'Edit', note: `${opens} A new key stops Auma's model calls until you approve it.`, actionable: true }
     case 'unavailable':
       return { tone: 'muted', pill: 'Not on this node', summary: 'No model broker answers here', action: 'Edit', note: '', actionable: false }
-    case 'unknown':
+    case 'reading':
       return { tone: 'muted', pill: 'Reading…', summary: 'Asking your node', action: 'Edit', note: opens, actionable: true }
+    case 'unknown':
+      return { tone: 'muted', pill: 'Could not read', summary: 'Your node did not return its key status', action: 'Edit', note: `${opens} This page will try again.`, actionable: true }
   }
 }

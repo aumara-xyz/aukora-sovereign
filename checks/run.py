@@ -109,9 +109,9 @@ DEPLOY_PINS = {
     "deploy/spawn/lxd.py": "e7a85a22f6f4b0ddd7d97dd4f5b69f63995e85ec4998f0c04462a70f1b362be2",
     "deploy/spawn/node_install.py": "87d483600dac8e9efac35b4ecd214d2921d057ef9db7870706939c5940427e30",
     "deploy/spawn/release.py": "c59b7b74f77b4a743ace8082bb3ca3151930b992a8cceb43cfc99c8cda915537",
-    "deploy/spawn/spawn.py": "2a14406c4ffd28d415ff769ac195f47f63db2f45cb5866610584a6a0e8ff4c6c",
+    "deploy/spawn/spawn.py": "9cf8100fb0fc3e8859dffa144b0cb383d1400bdeaae8b82d89726a7c506aaa3a",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",
-    "deploy/spawn/vm.py": "cccba199e68c5d43bd8b77a1e6c0af5c5f360dd5dce6c9e9d200666d8747be81",
+    "deploy/spawn/vm.py": "3eb6481c40a6d02f60e326e69d960782ef1af1b4717bc1f45785342a60e8120f",
     "deploy/upgrade/node_release.py": "b33aeadbd0b9e418f705539dad3a9ee65e2b3c470a372b53e347b0e0f68ff0b8",
     "deploy/upgrade/release_probe.py": "1113d79b3acb07d492db75a7bcc0c229e09bc4f678a8b0ab3f079d29931300b5",
     "deploy/upgrade/pointer.py": "2ab318a7fa6426c4289da676f2a81a731e77e433992e76ed519aac171aa778d1",
@@ -779,12 +779,11 @@ for p in files:
     if lines > 1000 and p not in baseline["oversized_files"] and p not in copied:
         fail("file-size", f"{p} has {lines} lines")
 
-# 5. No absolute paths and no path into another repository, in code.
-pattern = re.compile(r"/Users/|aukora-(prime|genesis|contact|buzz|sovereign-archive)/")
+# 5. No local home/review paths or paths into another repository, including documentation and policy files.
 for p in files:
-    if p in scan_exempt or p.startswith("checks/") or not re.search(r"\.(rs|mjs|js|ts|py|sh|toml|json)$", p):
+    if p in scan_exempt or p.startswith("checks/") or not re.search(r"\.(rs|mjs|js|ts|py|sh|toml|json|md|ya?ml)$", p):
         continue
-    if pattern.search((ROOT / p).read_text(errors="replace")) and p not in baseline["foreign_paths"]:
+    if walls.foreign_path(p, (ROOT / p).read_text(errors="replace")) and p not in baseline["foreign_paths"]:
         fail("foreign-path", p)
 
 # 6. Dependencies as cargo itself reads them (every table form): path dependencies only as each README allows, and

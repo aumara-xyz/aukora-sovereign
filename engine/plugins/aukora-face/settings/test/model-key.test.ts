@@ -59,3 +59,11 @@ test('the row is honest about each standing and shows no part of the key', () =>
   }
   assert.match(rowView({ state: 'none' }, 'n1.example.net').note, /n1\.example\.net/, 'the exact key-page host is named')
 })
+
+test('a failed read does not keep saying it is still reading', () => {
+  assert.equal(rowView({ state: 'reading' }).pill, 'Reading…')
+  const failed = rowView(parseStanding(503, undefined))
+  assert.equal(failed.pill, 'Could not read')
+  assert.match(failed.note, /try again/)
+  assert.notEqual(failed.tone, 'mint')
+})

@@ -5,16 +5,21 @@ another size, never below 2 vCPU / 8 GiB / 60 GiB, and extra labels never replac
   python3 -B -m unittest discover -s tests/deploy -p 'test_*.py'"""
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import sys
 import tempfile
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 sys.path.insert(0, os.path.join(ROOT, "deploy", "spawn"))
 import core  # noqa: E402
 import vm  # noqa: E402
+import spawn  # noqa: E402
 
 PLATFORMS = {"items": [
     {"metadata": {"name": "cpu-e2"}, "spec": {"presets": [
@@ -62,7 +67,7 @@ class VmSize(unittest.TestCase):
             self.assertEqual(self.refused(**{key: value}), "spawn:nebius-settings", (key, value))
 
     def test_extra_labels_are_checked_and_never_replace_spawns_own(self):
-        self.assertEqual(self.settings(AUKORA_VM_LABELS="purpose=peter-node")["labels"], ["purpose=peter-node"])
+        self.assertEqual(self.settings(AUKORA_VM_LABELS="purpose=owner-node")["labels"], ["purpose=owner-node"])
         for bad in ("aukora-spawn-id=abc", "delete-after=2026-10-18", "Purpose=x", "purpose=", "a=b c", "a"):
             self.assertEqual(self.refused(AUKORA_VM_LABELS=bad), "spawn:nebius-settings", bad)
 
@@ -86,6 +91,44 @@ class VmSize(unittest.TestCase):
         with mock.patch.object(vm, "nebius", lambda *args, **kwargs: PLATFORMS):
             self.assertEqual(vm.smallest_preset(None, "project-x", 2, 8), ("cpu-d3", "2vcpu-8gb"))
             self.assertEqual(vm.smallest_preset(None, "project-x"), ("cpu-d3", "4vcpu-16gb"))
+
+    def test_dry_run_checks_vm_options_and_describes_the_selected_size(self):
+        options = {"on": "nebius-vm", "dry": True, "release": "bundle", "relay": [], "provider": []}
+        selected = {**self.base, "AUKORA_VM_VCPU": "2", "AUKORA_VM_MEMORY_GIB": "8",
+                    "AUKORA_VM_DISK_GIB": "60", "AUKORA_VM_STATIC_IP": "0"}
+        with mock.patch.dict(os.environ, selected, clear=True), mock.patch.object(spawn.release, "load"), \
+                mock.patch.object(spawn.host, "Host") as host, mock.patch.object(spawn.host, "private_dir") as state:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(spawn.create(None, "test-node", options), 0)
+            self.assertIn("2 vCPU and 8 GiB, 60 GiB disk; dynamic public address", output.getvalue())
+            host.assert_not_called()
+            state.assert_not_called()
+            for key, value in (("AUKORA_VM_VCPU", "1"), ("AUKORA_VM_LABELS", "Bad=x"),
+                               ("AUKORA_VM_STATIC_IP", "yes")):
+                with mock.patch.dict(os.environ, {key: value}), self.assertRaises(core.Refusal):
+                    spawn.create(None, "test-node", options)
+            host.assert_not_called()
+            state.assert_not_called()
+
+    def test_static_address_selection_reaches_the_create_request(self):
+        for static in (True, False):
+            settings = self.settings(AUKORA_VM_STATIC_IP="1" if static else "0")
+            plan = SimpleNamespace(host=object(), state=mock.Mock(), instance="test-node", node_id="test-spawn")
+            plan.state.has.return_value = False
+            plan.state.path = self.dir.name
+            with mock.patch.object(vm, "inventory", return_value={}), \
+                    mock.patch.object(vm, "find", side_effect=[None, "created-instance"]), \
+                    mock.patch.object(vm, "smallest_preset", return_value=("cpu", "small")), \
+                    mock.patch.object(vm, "nebius") as api, \
+                    mock.patch.object(vm, "public_ip", return_value="public-address"), \
+                    mock.patch.object(vm, "Transport") as transport:
+                vm.provision(plan, settings)
+                args = api.call_args.args
+                nic = json.loads(args[args.index("--network-interfaces") + 1])[0]
+                self.assertEqual(nic["public_ip_address"], {"static": True} if static else {})
+                self.assertIn("aukora-spawn-id=test-spawn", args)
+                transport.return_value.wait.assert_called_once()
 
 
 if __name__ == "__main__":

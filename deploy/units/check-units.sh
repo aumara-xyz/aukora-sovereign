@@ -63,6 +63,14 @@ check_unit aukora-egress.service 5.0 $egress_properties
 # shellcheck disable=SC2086
 check_unit aukora-egress-verify.service 5.0 $egress_properties
 check_properties systemd-time-wait-sync.service "TimeoutStartUSec=1min 30s"
+# Unapproved release code runs only in this isolated, bounded template. It is static, started on demand.
+check_unit aukora-release-probe@000000000000-000000000000.service 3.0 DynamicUser=yes NoNewPrivileges=yes ProtectSystem=strict \
+    ProtectHome=yes PrivateTmp=yes PrivateDevices=yes PrivateNetwork=yes PrivateIPC=yes \
+    ProtectKernelTunables=yes ProtectKernelModules=yes ProtectKernelLogs=yes ProtectControlGroups=yes \
+    ProtectClock=yes ProtectHostname=yes ProtectProc=invisible RestrictNamespaces=yes RestrictRealtime=yes \
+    RestrictSUIDSGID=yes LockPersonality=yes RemoveIPC=yes CapabilityBoundingSet= AmbientCapabilities= \
+    RestrictAddressFamilies= "IPAddressDeny=::/0 0.0.0.0/0" TasksMax=64 MemoryHigh=402653184 MemoryMax=536870912 \
+    OOMScoreAdjust=500 "RuntimeMaxUSec=1min 30s" TimeoutStopUSec=10s KillMode=control-group UMask=0077
 for unit in aukora-sovereign.service aukora-egress.service aukora-egress-verify.timer systemd-time-wait-sync.service; do
     systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
 done

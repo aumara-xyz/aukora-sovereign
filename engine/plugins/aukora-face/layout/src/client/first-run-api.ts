@@ -115,7 +115,7 @@ async function post(path: string, body: unknown, what: string): Promise<FirstRun
 /**
  * WHERE EACH STATUS TOPIC IS ANSWERED, MEASURED FROM THE FILE THAT OWNS THE ROUTE.
  *
- * A status line that reports "not known yet" for four things when the app could simply ask is honest but useless, and
+ * A status line that reports "not known yet" for each topic when the app could simply ask is honest but useless, and
  * one that reports them "on" with nothing behind it is the lie this whole screen exists to avoid. So each topic has
  * the route its own lane already serves, named with where it was read from:
  *
@@ -163,7 +163,7 @@ export async function statusFacts(): Promise<Partial<Record<keyof typeof STATUS_
   return Object.fromEntries(answers)
 }
 
-/** The live source: the four routes this face's host half serves. */
+/** The live source: the first-run routes this face's host half serves. */
 export function httpFirstRun(): FirstRunSource {
   return {
     answer: async () => {

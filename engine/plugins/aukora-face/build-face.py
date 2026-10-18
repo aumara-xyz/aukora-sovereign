@@ -26,7 +26,7 @@ importers, as `pnpm install` resolved them. Change a face's `package.json` depen
 run once with `--update-lockfile` (a normal, network-using install that rewrites the file here), review the diff, commit it.
 
 Usage:
-    python3 build-face.py --dsh ~/face-scratch-dsh/src [--only layout --only sidebar] [--types-only]
+    python3 build-face.py --dsh DSH_CHECKOUT [--only layout --only sidebar] [--types-only]
 """
 import argparse, os, shutil, subprocess, sys
 from pathlib import Path

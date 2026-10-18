@@ -8,6 +8,23 @@ Rust is stripped string-aware first (comments dropped, string and char contents 
 """
 import re
 
+# Product defaults retained in Kira's command help and the inherited Live app are not review-folder references.
+HOME_DEFAULTS = {
+    "crates/kira/src/shared/service/cli.rs": ("~" + "/aukora-memory/kira",),
+    "crates/kira/src/shared/service/mod.rs": ("~" + "/aukora-memory/kira", "~" + "/aukora-memory/archive/epoch1-2026-10-17/notes.jsonl"),
+    "engine/plugins/aukora-face/apps/src/index.ts": ("~" + "/aukora-live/room.log",),
+}
+
+
+def foreign_path(path, text):
+    """Local home/review paths, including docs and YAML; installed product defaults remain explicit exceptions."""
+    for default in HOME_DEFAULTS.get(path, ()):
+        text = text.replace(default, "")
+    home = re.search(r"(?<![A-Za-z0-9._-])/(?:Users|home)/|~/(?!\.(?:cargo|ssh|local|dsh|aukora-spawn)\b|Downloads\b)", text)
+    code = not path.endswith((".md", ".yaml", ".yml"))
+    return home is not None or (code and re.search(r"aukora-(?:prime|genesis|contact|buzz|sovereign-archive)/", text) is not None)
+
+
 ALLOW = {"net": {"frontdoor", "relay", "broker", "kira", "supervisor", "launcher"},
          "proc": {"launcher", "supervisor"},
          "unsafe": {"launcher", "supervisor", "canon", "pentora"}}

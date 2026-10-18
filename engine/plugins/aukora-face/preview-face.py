@@ -10,7 +10,7 @@ Everything it writes goes under `--install` (a scratch folder holding `npm insta
 including DSH_HOME, so nothing lands in the user's own ~/.dsh.
 
 Usage:
-    python3 preview-face.py --install ~/face-scratch-dsh [--port 3099] [--no-start] [--stub-confinement]
+    python3 preview-face.py --install DSH_INSTALL [--port 3099] [--no-start] [--stub-confinement]
 """
 import argparse, json, os, re, shutil, subprocess, sys
 from pathlib import Path

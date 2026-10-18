@@ -1,5 +1,5 @@
 # The engine's OpenShell policy (Ring 1). Source: the wall test that PASSED on 2026-10-17
-# (~/aukora-memory/review/WALL-TEST-2026-10-17.md, OpenShell 0.1.4, enforce, docker compute driver), verbatim except the
+# (NODE.md section 8 A; OpenShell 0.1.4, enforce, docker compute driver), verbatim except the
 # lines marked NODE, each of which the node needs and the wall test did not exercise:
 #   /engine-home   the harness's own home (sessions, credentials, settings). Root-owned skeleton with the sticky bit:
 #                  the engine can add its own files but cannot replace the root-owned profile, plugin closure,

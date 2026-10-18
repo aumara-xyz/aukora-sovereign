@@ -320,7 +320,7 @@ def install_artifacts(artifacts, stage):
     if not os.path.isfile(ENGINE_ROOT + "/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js"):
         core.refuse("engine-install", "dsh-layout")
     version = json.load(open(ENGINE_ROOT + "/dsh/node_modules/@deepseek-ai/dsh/package.json"))["version"]
-    if version != "0.2.1-alpha.5":
+    if version != artifacts["dsh"]["version"]:
         core.refuse("engine-install", "dsh-version")
     safe_extract(fetch("rust", artifacts["rust"], stage), "/opt/rust", links=True)
     openshell = fetch("openshell", artifacts["openshell"], stage)

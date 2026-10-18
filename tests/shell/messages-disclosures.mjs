@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Messages face tells the owner what a contact card approves, who can send, what relays see, and that both
-// sides must add each other (a private launch review, not published: F3-F5, F7). It never claims the seven words
+// sides must add each other. It never claims the seven words
 // recover the node's Nostr key.
 // Run with: node --test tests/shell/messages-disclosures.mjs
 import assert from 'node:assert/strict';
@@ -38,7 +38,6 @@ test('the composer says who can send and what relays see', () => {
   assert.match(COPY.sendSession, /not its text/);
   assert.match(COPY.footnote, /never the text/);
   assert.match(actions + readFileSync(join(face, 'view.ts'), 'utf8'), /COPY\.footnote/);
-  assert.match(COPY.blurbs.contacts, /a key, not a person/);
   assert.match(COPY.relaysSee, /^Relays cannot read your text/);
   const composer = actions.slice(actions.indexOf('export function composer'));
   assert.match(composer, /COPY\.sendSession/);

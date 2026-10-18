@@ -37,11 +37,11 @@ USER = "ubuntu"
 # AUKORA_VM_VCPU, AUKORA_VM_MEMORY_GIB and AUKORA_VM_DISK_GIB choose another size, never below 2 vCPU / 8 GiB / 60 GiB:
 # engine-run.sh sizes the sandbox's caps from the VM (2 vCPU / 8 GiB: 1.5 CPUs and about 5.2 GiB, NODE.md section 12
 # P2), and below 60 GiB the engine disk, containerd's disk and the host-disk floor leave the engine no room to start.
-MIN_VCPU = 4
-MIN_MEMORY_GIB = 16
-BOOT_DISK_GIB = "80"
+DEFAULT_VCPU = 4
+DEFAULT_MEMORY_GIB = 16
+DEFAULT_DISK_GIB = "80"
 SIZE_FLOORS = {"AUKORA_VM_VCPU": (2, 64), "AUKORA_VM_MEMORY_GIB": (8, 256), "AUKORA_VM_DISK_GIB": (60, 1024)}
-# Extra labels (AUKORA_VM_LABELS="purpose=peter-node"); the spawn id and delete-after stay spawn's own.
+# Extra labels (AUKORA_VM_LABELS="purpose=owner-node"); the spawn id and delete-after stay spawn's own.
 LABEL = re.compile(r"[a-z][a-z0-9_-]{0,62}=[a-z0-9][a-z0-9_-]{0,62}\Z")
 RESERVED_LABELS = ("aukora-spawn-id", "delete-after")
 
@@ -74,8 +74,8 @@ def environment():
     if delete_after and not re.fullmatch(r"20[0-9]{2}-[01][0-9]-[0-3][0-9]", delete_after):
         core.refuse("spawn", "nebius-settings")
     values["delete_after"] = delete_after
-    defaults = {"AUKORA_VM_VCPU": MIN_VCPU, "AUKORA_VM_MEMORY_GIB": MIN_MEMORY_GIB,
-                "AUKORA_VM_DISK_GIB": int(BOOT_DISK_GIB)}
+    defaults = {"AUKORA_VM_VCPU": DEFAULT_VCPU, "AUKORA_VM_MEMORY_GIB": DEFAULT_MEMORY_GIB,
+                "AUKORA_VM_DISK_GIB": int(DEFAULT_DISK_GIB)}
     for key, (low, high) in SIZE_FLOORS.items():
         text = os.environ.get(key, "")
         if text and (not re.fullmatch(r"[1-9][0-9]{0,3}", text) or not low <= int(text) <= high):
@@ -157,7 +157,7 @@ def find(items, instance, node_id):
     return meta["id"]
 
 
-def smallest_preset(host, parent, min_vcpu=MIN_VCPU, min_memory=MIN_MEMORY_GIB):
+def smallest_preset(host, parent, min_vcpu=DEFAULT_VCPU, min_memory=DEFAULT_MEMORY_GIB):
     """Platform and preset of the smallest CPU-only shape with at least min_vcpu vCPU and min_memory GiB."""
     listing = nebius(host, "compute", "v1", "platform", "list", "--parent-id", parent, "--all", read=True)
     candidates = []

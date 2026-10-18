@@ -13,7 +13,8 @@ Python 3.9 and the standard library run everything on the operator side; the nod
 | `spawn/caddy.py` | 24 | the node's Caddy block, validated, reloaded, rolled back |
 | `spawn/egress.py`, `units/egress_apply.py` | 70 | pin addresses per relay; load the firewall rules from the pinned file |
 | `spawn/node_install.py` | 73 | runs once as root on a new node |
-| `upgrade/upgrade.sh`, `pointer.py`, `node_release.py` | 80, 131 | verify the release pointer, stage, switch, probe, roll back |
+| `upgrade/upgrade.sh`, `pointer.py`, `node_release.py` | 80, 131 | verify the release pointer; stage, offer, withdraw and follow an owner-approved release; switch and roll back |
+| `upgrade/release_probe.py`, `units/aukora-release-probe.template` | 80 | prepare isolated state for the candidate, run its bounded pre-swap probe, record its outcome |
 | `units/*.service`, `*.timer`, `check-units.sh` | 102 | hardened units; the audit with `systemd-analyze security` |
 | `engine/` | — | the real node: the engine in OpenShell, Kira 2, the door, the engine origin; design and runbook in [engine/NODE.md](engine/NODE.md) (Nebius VM nodes only; a second step after `spawn.sh create`) |
 
@@ -80,9 +81,9 @@ The switch changes the `current` link, installs the new release's units, restart
 Nebius has no disk snapshots, only images created from disks. An image of a node disk contains the plaintext model key and owner state: treat it as a secret, including its storage and access. Before restoring state, read the anchored-floor refusal and recovery constraints in [engine/NODE.md (B30)](engine/NODE.md); an older or partial state copy can be refused. This deploy tooling does not schedule disk images or implement backups.
 
 ## Not provided here
-- The supervisor's `serve` command and its reading of `node.json`, `claim.sha256`, `egress.json` and `status.json` (rows 23, 128); the immune probes for Body checks 18 (release pointer), 19 and 20 (egress allowlist, address and TLS identity) still report unwritten until they read `active.json` and `status.json`. Nothing here measures the served TLS certificate.
+- Measurement of the served TLS certificate. The supervisor reads `node.json`, `claim.sha256`, `egress.json`, `active.json` and `status.json`; recorded node runs are in NODE.md.
 - The owner pane that signs a pointer.
 - Go Sovereign (row 74) and the move or retirement of S1 (row 103); both are later rows. OpenViking's units are `deploy/openviking/` (row 58).
-- A tested run: nothing here has been run against a host.
+- A claimed-owner qualification: disposable test-node runs are recorded in [engine/NODE.md](engine/NODE.md) §9–§10; these do not establish a run for a real owner.
 
 Two-node owner messaging: [ceremony, relay egress and operator steps](MESSAGING.md).

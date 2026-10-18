@@ -76,7 +76,7 @@ export function FirstRunSurface({ t, onStart, facts, storedKeyTail, source: give
   /** Why the screen cannot do its job, when it cannot: nothing serving, a refusal by name, or a failed call. */
   const [trouble, setTrouble] = useState<{ readonly problem: string; readonly code: string | null } | null>(null)
   const [saving, setSaving] = useState(false)
-  /** What the four routes said, or nothing at all when they could not be asked. */
+  /** What the status routes said, or nothing at all when they could not be asked. */
   // **THE STATE IS THE FACT SHAPE, BECAUSE THAT IS WHAT THE PORT RETURNS.** It was `Record<string, unknown>`, which
   // is why the spread below needed `as never` to compile — **and a cast that does not work is the compiler saying the
   // narrowing never existed rather than that it was needed.**

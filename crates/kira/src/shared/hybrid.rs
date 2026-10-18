@@ -56,7 +56,7 @@ const KEYWORD_SCAN: usize = 1_000;
 /// `found`. Import is a credential-class act (`sovereign kira import` needs the owner's token file, and no `remember`
 /// can claim the capture), so an imported note is the owner's archive, not an agent's claim. Setting this to false
 /// makes the archive `undetermined: similar-note-unverified` like any unreviewed note; the measured trade-off is in
-/// ~/aukora-memory/review/kira-hardening-2026-10-18 (the archive is the whole of epoch 1).
+/// the owner-attested imported archive (the archive is the whole of epoch 1).
 pub const IMPORT_IS_EVIDENCE: bool = true;
 const MAX_QUERY_BYTES: usize = 4_096;
 /// Dead notes kept after the prepare phase; `finish` admits the few whose current note is returned.

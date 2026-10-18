@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "note": "Every artifact the engine installer fetches on the node, by exact URL and SHA-256 (and size). `operator:FILE` artifacts come from the stage folder; the rest are downloaded by root on the node. All filled on the node rehearsal of 2026-10-17 (NODE.md section 8 A); refill with `python3 deploy/engine/engine.py pin FILE` when a pin changes. The model pins are the files Kira 2 runs on the Mac (~/aukora-memory/kira/models/*.sha256), confirmed against Hugging Face's x-linked-etag.",
+  "note": "Every artifact the engine installer fetches on the node, by exact URL and SHA-256 (and size). `operator:FILE` artifacts come from the stage folder; the rest are downloaded by root on the node. All filled on the node rehearsal of 2026-10-17 (NODE.md section 8 A); refill with `python3 deploy/engine/engine.py pin FILE` when a pin changes. The model pins are the Kira 2 model checksums, confirmed against Hugging Face's x-linked-etag.",
   "artifacts": {
     "node": {
       "url": "https://nodejs.org/dist/v24.11.1/node-v24.11.1-linux-x64.tar.xz",
@@ -10,6 +10,7 @@
       "how": "nodejs.org's own release; matched against its SHASUMS256.txt for v24.11.1 (node rehearsal 2026-10-17)"
     },
     "dsh": {
+      "version": "0.2.1-alpha.5",
       "url": "operator:dsh-engine-0.2.1-alpha.5-linux-x64.tar.gz",
       "sha256": "c83f21a7f35b05a8bec90cc4daaa481b9d25b11cd1eb63f1ca4f4a0584bf4fe4",
       "install": "/opt/aukora-engine/dsh",

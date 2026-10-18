@@ -13,6 +13,8 @@ Vendored third-party components keep their own licences, which are kept beside t
   engine/plugins/aukora-face/aumlok/src/vendor/qrcodegen/LICENSE
 - DeepSeek Harness (MIT, DeepSeek) and its third-party notices: engine/plugins/aukora-face/licenses/DSH-MIT-LICENSE,
   engine/plugins/aukora-face/licenses/DSH-THIRD-PARTY-NOTICES.md, engine/plugins/aukora-face/licenses/upstream/dsh/
+- Auma Lingwa language content (CC BY-SA 4.0, Aumara / Peter Viviani):
+  engine/plugins/aukora-face/licenses/upstream/auma-lingwa/AUMA-LANGUAGE-LICENSE.txt
 - npm packages bundled into the app (React, Base UI, Lucide, three.js): their licences and notices are in
   engine/plugins/aukora-face/licenses/ and engine/plugins/aukora-face/licenses/upstream/npm/
 

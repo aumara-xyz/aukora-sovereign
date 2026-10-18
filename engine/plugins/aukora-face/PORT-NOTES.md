@@ -63,7 +63,7 @@ selection under the same `dsh.sessions.current` key. The selection is therefore 
 - `layout/src/client/index.ts:195` `ctx.sessions.open(id)` -> `ctx.uiWorkspace.openSession(id)`; type import of `ui-workspace/client` (layout/index.ts after :11, package.json devDependency, tsconfig reference).
 - `threads/src/client/tree.ts:235,246,305,307,350,424,445` -> `currentOf(list)` (new, exported, after :38).
 - `threads/src/client/WorkspaceBrowser.tsx:260,661,767,846` -> `currentOf(list)`.
-- `apps/src/client/AumaLiveSurface.tsx:22`, `settings/src/client/AuraCoherenceSurface.tsx:450`, `settings/src/client/SettingsOnboarding.tsx:36`: inline form of the same rule.
+- `apps/src/client/AumaLiveSurface.tsx:22`, `settings/src/client/SettingsOnboarding.tsx:36`: inline form of the same rule. The former Aura coherence screen was removed; Pentora replaces it (see below).
 - `memory/src/client/index.ts:58`: `ctx.sessions.open(id)` -> `ctx.uiWorkspace.openSession(id)` (the row's comment already says it opens the conversation); type import after :10, devDependency and tsconfig reference.
 - **`threads/src/client/navigation.ts` (the largest change).** This face replaces the harness's workspace browser, so it must publish `uiWorkspace`. The face's own copy
   of the old `UiWorkspace` interface and its `declare module` merge (26-87) are replaced by the harness's `UiWorkspace`/`StartSessionOptions` types
@@ -78,7 +78,7 @@ selection under the same `dsh.sessions.current` key. The selection is therefore 
 take a trailing optional `completed` set (tree.ts:295,338,390 signatures); `WorkspaceBrowser.tsx` reads `useSessionStatus` in the three bodies that derive rows (props at 217,558,721; calls at 330,579,584,588,736; JSX at 1252,1268,1286; destructure at 804) and passes the set.
 
 ### 6. `useSessionPendingInteraction` folded into `useSessionStatus` - SOURCE `ui-session/src/client/index.ts`
-`settings/src/client/AuraCoherenceSurface.tsx:447,476`: `useSessionPendingInteraction(s => s)` + `.get(id)` -> `useSessionStatus(s => s)` + `.get(id)?.pendingInteraction`.
+The former Aura coherence screen used `useSessionStatus(s => s)` + `.get(id)?.pendingInteraction` in place of `useSessionPendingInteraction`; that screen was subsequently removed (Pentora replaces it).
 
 ### 7. `ISessions.binding(id)` only borrows an already-retained Session - SOURCE `contract/sessions.ts` (`binding`, `using`)
 Renaming a thread that is not open used to work through `binding()`. `threads/src/client/index.ts:130-133` (row rename) and `:196-198` (header rename) now hold a reference for the call:
