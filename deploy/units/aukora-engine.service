@@ -36,6 +36,9 @@ RestartSec=10s
 # No MemoryMax here: Docker owns the sandbox's one hard cap (engine-run.sh); this unit only drives the CLI.
 OOMScoreAdjust=500
 LimitCORE=0
+# Bound noisy harness output independently of the supervisor's door/gate audit stream.
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=2000
 TimeoutStartSec=180s
 # The stop bounds ExecStopPost too: OpenShell's asynchronous delete, engine-run.sh's 10 s wait and its docker rm -f
 # fallback must all fit, or a hung sandbox outlives the stop (Sonnet sweep C3).

@@ -56,6 +56,7 @@ SEQUENCE = STATE + "/sequence.json"
 DELIVERED = STATE + "/claim-delivered"
 HOSTS = "/etc/hosts"
 UNIT_DIR = "/etc/systemd/system"
+JOURNAL_CONF = "/etc/systemd/journald.conf.d/60-aukora.conf"
 SERVICE = "aukora-sovereign.service"
 ENABLED = ("aukora-egress.service", "aukora-egress-verify.timer", "systemd-time-wait-sync.service", SERVICE)
 SERVICE_USER = "aukora"
@@ -131,8 +132,11 @@ def sync_units(release_dir):
     """Install the release's unit files. Returns True if any changed (the caller reloads systemd)."""
     source = os.path.join(release_dir, "deploy", "units")
     changed = False
+    journal_changed = False
     for name in sorted(os.listdir(source)):
-        if name.endswith((".service", ".timer", ".template")):
+        if name == "aukora-journald.conf":
+            destination = JOURNAL_CONF
+        elif name.endswith((".service", ".timer", ".template")):
             # A release path cannot hold '@': the pre-swap probe ships as NAME.template.
             installed = name[:-len(".template")] + "@.service" if name.endswith(".template") else name
             destination = os.path.join(UNIT_DIR, installed)
@@ -147,6 +151,10 @@ def sync_units(release_dir):
             os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
             core.atomic_write(destination, data, 0o644)
             changed = True
+            journal_changed |= name == "aukora-journald.conf"
+    if journal_changed:
+        system(["systemctl", "restart", "systemd-journald.service"])
+        system(["journalctl", "--flush"])
     return changed
 
 

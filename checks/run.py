@@ -98,6 +98,7 @@ LAUNCHER_PINS = {
 }
 DEPLOY_PINS = {
     "deploy/engine/engine-run.sh": "0594f6375ab8e6106d0cfaf709c6b2aa26186ec31811a1a97fa2e7aa4c109fe1",
+    "deploy/units/aukora-journald.conf": "e0cc5b91f464005d415aae6f09558cd33bf4bc033e3175f734d8e6cafd7b3bb7",
     "deploy/engine/engine_oom.py": "94702147152e7e83e364b53d3b64b87b2f01df571d3db0c597b8ca6925995828",
     "deploy/units/systemd-time-wait-sync.service": "5e02f9b7436f2873619068b1a7f24a1b2cdac7c5ad6e8bff7518dd38aff4aca2",
     "deploy/spawn/caddy.py": "65a9f8a77cab67aee3b727dbe5cd318b12fbcf3de26b39997ec298841deebb53",
@@ -111,12 +112,12 @@ DEPLOY_PINS = {
     "deploy/spawn/spawn.py": "2a14406c4ffd28d415ff769ac195f47f63db2f45cb5866610584a6a0e8ff4c6c",
     "deploy/spawn/spawn.sh": "80a1598579e46acf1bc910de406af6f88b4d428dde4a8c1b5b09184a8a7a0470",
     "deploy/spawn/vm.py": "fd128c5f31fa0b710a28608ea3ecb73185b5b27c7abd5e91448ed72953014f25",
-    "deploy/upgrade/node_release.py": "140196a0560b7a3c1ad5ea254732e63e19702efe97b78caf9950dbb9982e4bba",
+    "deploy/upgrade/node_release.py": "dff3fee2593dbac0065099582544348e5aeae27a6163b8724375e88e9c64b913",
     "deploy/upgrade/release_probe.py": "1113d79b3acb07d492db75a7bcc0c229e09bc4f678a8b0ab3f079d29931300b5",
     "deploy/upgrade/pointer.py": "2ab318a7fa6426c4289da676f2a81a731e77e433992e76ed519aac171aa778d1",
     "deploy/upgrade/upgrade.py": "3b87ededc203b315c39ae42945993f1b329c03caac55a2f100caa94c349e8315",
     "deploy/upgrade/upgrade.sh": "7c2175a2233530b0f79fc50baf82fee177e40c89025a6028c141c068f5c73738",
-    "scripts/reproduce.sh": "df23625e183c35c47d1de42bf1b187091343e71ea68300092e0a6bd375813ebb",
+    "scripts/reproduce.sh": "1fb9b56f5758f7d52a2961ffba9782fde1145be6398739f5a531e32ee1e381ec",
 }
 COVERAGE_PINS = {
     "crates/gate/src/coverage.rs": "477d1e4c2a13f3738e20bb9c789cfd4558be01e9c7b1fedac93d341ccf39b25b",

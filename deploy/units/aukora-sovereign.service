@@ -42,6 +42,9 @@ KillMode=control-group
 # Protect its first 256 MiB; the engine's container cap reserves host/model headroom separately.
 OOMScoreAdjust=-900
 MemoryMin=256M
+# The door, gate and broker log here. Preserve every audit line regardless of journald's default rate limits.
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
 
 # State survives every upgrade and rollback; the runtime directory is wiped at stop and holds the cage root.
 StateDirectory=aukora
