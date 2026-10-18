@@ -2,7 +2,7 @@
 // The framework-neutral markup of the shared Spatial portal primitive.
 import { h, untrusted } from "./dom.js";
 
-function icon(kind: string): HTMLElement {
+export function portalIcon(kind: string): HTMLElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.4", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(name, value);
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -14,21 +14,21 @@ function icon(kind: string): HTMLElement {
 }
 
 export function portal(title: string, summary: string, content: HTMLElement, signal: AbortSignal,
-  opened: () => void = () => undefined, kind = "contact", tone = "mint") {
+  changed: (open: boolean) => void = () => undefined, kind = "contact", tone = "mint") {
   const body = h("div", { class: "ak-portal__body", hidden: "" }, content);
   const expander = h("span", { class: "ak-expander", "aria-hidden": "true" }, "+");
   const head = h("button", { type: "button", class: "ak-portal__head", "aria-expanded": "false" },
-    icon(kind), h("span", { class: "ak-portal__copy" },
+    portalIcon(kind), h("span", { class: "ak-portal__copy" },
       untrusted("span", { class: "ak-portal__title" }, title),
       untrusted("span", { class: "ak-portal__summary" }, summary)), expander);
   const element = h("section", { class: `ak-portal ak-tone-${tone}`, "data-open": "no" }, head, body);
-  head.addEventListener("click", () => {
-    const open = head.getAttribute("aria-expanded") !== "true";
+  const setOpen = (open: boolean) => {
     head.setAttribute("aria-expanded", String(open));
     element.dataset.open = open ? "yes" : "no";
     expander.textContent = open ? "−" : "+";
     body.hidden = !open;
-    if (open) opened();
-  }, { signal });
-  return { element, head };
+    changed(open);
+  };
+  head.addEventListener("click", () => setOpen(head.getAttribute("aria-expanded") !== "true"), { signal });
+  return { element, head, body, setOpen };
 }

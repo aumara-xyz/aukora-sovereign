@@ -40,6 +40,12 @@ export interface Refusals {
   readonly lastAuraSequence: number;
 }
 export interface Page<T> { readonly items: readonly T[]; readonly next: string | null }
+export interface Conversation {
+  readonly contact: Contact;
+  readonly latest: Message | null;
+  readonly snippet: string;
+  readonly unread: boolean;
+}
 
 const PAGE_ITEMS = 100;
 const MAX_MESSAGE_BYTES = 16_384;
@@ -153,10 +159,55 @@ export function readRefusals(value: JsonValue): Refusals {
 }
 
 export function shortKey(key: string): string {
-  return `${key.slice(0, 12)}…${key.slice(-6)}`;
+  return `${key.slice(0, 10)}…${key.slice(-4)}`;
 }
 
 export function moment(ms: number): { readonly label: string; readonly iso: string } | null {
   const date = new Date(ms);
   return Number.isFinite(date.getTime()) ? { label: clock.format(date), iso: date.toISOString() } : null;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+// IDs break equal-time ties consistently, independent of service page order or the browser's locale.
+function compareMessages(left: Message, right: Message): number {
+  return left.at - right.at || compareText(left.id, right.id);
+}
+
+export function threadMessages(messages: readonly Message[], contact: string): readonly Message[] {
+  return messages.filter(message => message.contact === contact).sort(compareMessages);
+}
+
+function snippet(text: string): string {
+  const characters = Array.from(text.replace(/\s+/gu, " ").trim());
+  return characters.length > 96 ? `${characters.slice(0, 95).join("")}…` : characters.join("");
+}
+
+// Read IDs belong to this open face, not the service: an incoming message is unread until its thread is shown.
+// Tracking IDs also catches a delayed arrival with an older or identical timestamp. Outgoing rows never count.
+export function conversationList(
+  contacts: readonly Contact[], messages: readonly Message[], readIds: ReadonlySet<string>,
+): readonly Conversation[] {
+  const byContact = new Map<string, { latest: Message; unread: boolean }>();
+  for (const message of messages) {
+    const previous = byContact.get(message.contact);
+    byContact.set(message.contact, {
+      latest: previous && compareMessages(previous.latest, message) > 0 ? previous.latest : message,
+      unread: (previous?.unread ?? false) || (message.direction === "in" && !readIds.has(message.id)),
+    });
+  }
+  return contacts.map(contact => {
+    const activity = byContact.get(contact.npub);
+    const latest = activity?.latest ?? null;
+    return { contact, latest, snippet: latest ? snippet(latest.text) : "", unread: activity?.unread ?? false };
+  }).sort((left, right) => {
+    if (left.latest && right.latest) {
+      const recent = compareMessages(right.latest, left.latest);
+      if (recent !== 0) return recent;
+    } else if (left.latest || right.latest) return left.latest ? -1 : 1;
+    return compareText(left.contact.label.toLowerCase(), right.contact.label.toLowerCase())
+      || compareText(left.contact.npub, right.contact.npub);
+  });
 }

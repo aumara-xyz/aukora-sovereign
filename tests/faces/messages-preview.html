@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Messages — local fixture preview</title>
+  <link rel="stylesheet" href="../../app/release/app/design/tokens.css">
+  <link rel="stylesheet" href="../../app/release/app/shell/shell.css">
+  <style>
+    .preview-data { position: fixed; z-index: 100; left: 50%; top: 8px; transform: translateX(-50%); max-width: calc(100% - 90px); margin: 0; padding: 3px 10px; border: 1px solid var(--spatial-gold); border-radius: 999px; background: var(--spatial-lane-surface); color: var(--spatial-gold); font: 10px/16px var(--dsw-font-family); text-align: center; }
+    .preview-data strong { font-weight: 600; letter-spacing: .08em; }
+    .preview-data output { display: block; color: var(--spatial-secondary); }
+  </style>
+  <script type="module" src="./messages-preview.mjs"></script>
+</head>
+<body data-ds-dark-theme>
+  <div id="aukora-shell"></div>
+  <p class="preview-data"><strong>PREVIEW DATA</strong><output id="preview-status" aria-live="polite">Fixture services only. Nothing is saved or sent.</output></p>
+</body>
+</html>

@@ -19,9 +19,9 @@ const { COPY, sendOutcome } = await import(pathToFileURL(join(built, 'copy.js'))
 after(() => rmSync(built, { recursive: true, force: true }));
 const actions = readFileSync(join(face, 'actions.ts'), 'utf8');
 
-test('a contact card approves an exact npub, not a person, and the owner is asked to compare it out of band', () => {
+test('a contact card approves an exact Aukora ID, not a person, and the owner is asked to compare it out of band', () => {
   for (const line of [COPY.contactKey, COPY.contactReview]) {
-    assert.match(line, /exact npub, not the person/);
+    assert.match(line, /exact Aukora ID, not the person/);
     assert.match(line, /compare it with them/);
   }
   assert.match(COPY.contactKey, /in person or on a call you trust/);

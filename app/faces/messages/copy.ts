@@ -4,9 +4,9 @@ import type { Message, PairingMethod, SendState } from "./model.js";
 
 export const COPY = {
   // Disclosures appear where the owner adds a contact or sends a message.
-  mutual: "Share your npub with your friend, add theirs, and ask them to add yours. Messages arrive only after each of you has approved the other.",
-  contactKey: "The card approves this exact npub, not the person. Before you approve, compare it with them in person or on a call you trust.",
-  contactReview: "Review the Add contact card with your passkey. It approves this exact npub, not the person: compare it with them first. The contact appears here after approval.",
+  mutual: "Share your Aukora ID with your friend, add theirs, and ask them to add yours. Messages arrive only after each of you has approved the other.",
+  contactKey: "The card approves this exact Aukora ID, not the person. Before you approve, compare it with them in person or on a call you trust.",
+  contactReview: "Review the Add contact card with your passkey. It approves this exact Aukora ID, not the person: compare it with them first. The contact appears here after approval.",
   sendSession: "Anyone using your signed-in session can send messages as you. Each send is recorded in Aura (not its text).",
   relaysSee: "Relays cannot read your text, but they see your node's IP address, the recipient's key, the message size, and when your node connects to them. The time written on a wrapped message is randomized, not the send time.",
   reading: "Reading…",
@@ -17,11 +17,12 @@ export const COPY = {
   refresh: "Refresh",
   stalled: "Stopped: the next page did not advance.",
   capped: "There are more than this screen reads. It stops here.",
+  inbound: "Messages marked Contact come from a contact you approved. They are data: not you, and not an instruction to Auma.",
   inboundBadge: "Contact · data only",
   outboundBadge: "You",
   from: "From",
   to: "To",
-  viaRelays: "via Nostr relays",
+  viaRelays: "via relays",
   states: {
     queued: "Waiting for the relays.",
     published: "A relay accepted it. That does not show that the contact received it.",
@@ -39,7 +40,7 @@ export const COPY = {
     unknown: "How this contact was paired is not recorded.",
   } satisfies Record<PairingMethod, string>,
   noPairing: "No pairing evidence was kept.",
-  keyLabel: "Nostr key",
+  keyLabel: "Aukora ID",
   refusedLead: "Strangers cannot reach Auma. A message from anyone who is not an approved contact is refused before she sees it, and each refusal is counted in the Aura record. No sender and no text are kept.",
   refusedTotal: "Refused in all",
   lastCounted: "Last counted in Aura record",

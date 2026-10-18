@@ -69,9 +69,8 @@ export function createIdentityView(root: HTMLElement): IdentityView {
   head.append(title, badge);
   const name = make("p", "name");
   const facts = make("dl", "facts");
-  const subject = fact(facts, "Aumlok ID");
-  const node = fact(facts, "Node address");
-  const agent = fact(facts, "Agent address");
+  const node = fact(facts, "Aukora ID");
+  const security = fact(facts, "AUMLOK");
   const lead = make("p", "note");
   card.append(head, name, facts, lead);
 
@@ -118,11 +117,12 @@ export function createIdentityView(root: HTMLElement): IdentityView {
       badge.textContent = next.subject === null ? "UNBOUND" : "PUBLIC";
       badge.dataset.state = next.subject === null ? "unbound" : "public";
       name.textContent = next.label;
-      subject.textContent = next.subject ?? "None yet. Bind a phrase in the AUMLOK pane first.";
       node.textContent = next.nodeNpub ?? "None yet.";
-      agent.textContent = next.agentNpub ?? "None yet.";
+      security.textContent = next.subject === null
+        ? "Not secured yet. Set your seven words in AUMLOK."
+        : "secured by your seven words";
       lead.textContent = next.nodeNpub !== null && !next.nodeKeyBound
-        ? "Node key is not yet bound by an owner-approved Nostr identity record."
+        ? "Your Aukora ID is waiting for an owner-approved binding."
         : "Public keys only. Nothing on this page can sign, approve or open anything.";
       expiresAt = null;
       lapsed = false;
@@ -157,7 +157,7 @@ export function createIdentityView(root: HTMLElement): IdentityView {
       showServiceState(badge, reason);
       badge.dataset.state = "unavailable";
       name.textContent = "";
-      for (const part of [subject, node, agent]) part.textContent = "—";
+      for (const part of [node, security]) part.textContent = "—";
       facts.hidden = true;
       lead.textContent = "";
       expiresAt = null;

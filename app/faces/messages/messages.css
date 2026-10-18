@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-html { color-scheme: dark; font-family: var(--dsw-font-family); background: transparent; }
-body { margin: 0; background: transparent; }
+html { height: 100%; color-scheme: dark; font-family: var(--dsw-font-family); background: transparent; }
+body { height: 100%; margin: 0; background: transparent; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 p { overflow-wrap: anywhere; }
@@ -14,14 +14,17 @@ textarea { display: block; min-height: 84px; resize: vertical; margin-top: 6px; 
 form { display: grid; gap: 10px; margin: 10px 0 0; }
 form label { display: grid; gap: 6px; color: var(--ak-muted); font-size: 11px; }
 form .ak-label { margin-top: 4px; }
-.identity-field { display: flex; align-items: center; gap: 10px; }
-.own-npub { display: block; flex: 1; min-width: 0; border: 1px solid var(--ak-hairline); border-radius: var(--ak-tile-radius); padding: 10px 12px; font-family: var(--ak-mono); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; user-select: all; }
+.identity-field { display: flex; align-items: center; gap: 12px; }
+.identity-text { display: grid; flex: 1; min-width: 0; gap: 8px; justify-items: start; }
+.identity-qr { display: block; width: 92px; height: 92px; flex: none; image-rendering: pixelated; }
+.own-id { display: block; width: 100%; min-width: 0; border: 1px solid var(--ak-hairline); border-radius: var(--ak-tile-radius); padding: 10px 12px; font-family: var(--ak-mono); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; user-select: all; }
 .identity-field .ak-action { flex: none; }
 .info, .aside { margin: 6px 0; color: var(--ak-muted); font-size: 11px; line-height: 18px; }
 .info:empty { display: none; }
 .problem { margin: 6px 0; color: var(--ak-red); font-size: 12px; }
 .rows { display: grid; gap: 10px; margin: 10px 0; padding: 0; list-style: none; }
-.message { padding: 10px 12px; }
+.message { width: 90%; padding: 10px 12px; }
+.message[data-direction="out"] { justify-self: end; }
 .who { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; color: var(--ak-muted); font-size: 11px; }
 .words { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ak-text); font-size: 13px; }
 .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; color: var(--ak-muted); font-size: 10.5px; }
@@ -34,4 +37,31 @@ form .ak-label { margin-top: 4px; }
 .counts { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; font-size: 11px; }
 .counts dt { color: var(--ak-text-2); }
 .counts dd { margin: 0; color: var(--ak-tone); font-variant-numeric: tabular-nums; }
-@media (max-width: 420px) { .identity-field { align-items: stretch; flex-direction: column; } .identity-field .ak-action { align-self: flex-start; } }
+.list-scene { display: flex; flex-direction: column; gap: 18px; }
+.conversation-heading { position: relative; }
+.conversation .ak-portal__title { padding-right: 136px; }
+.conversation-summary { display: flex; gap: 8px; }
+.conversation-snippet { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-time { flex: none; max-width: 43%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.conversation-copy { position: absolute; right: 42px; top: 10px; gap: 5px; max-width: 134px; }
+.conversation-copy code { overflow: hidden; text-overflow: ellipsis; font: 10px var(--ak-mono); }
+.copy-source { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); user-select: all; }
+.conversation .ak-icon-tile { position: relative; }
+.unread { position: absolute; top: -8px; right: -3px; color: var(--ak-tone); font-size: 18px; line-height: 18px; }
+.thread-details { margin: 4px 0 10px; }
+.thread-details summary { cursor: pointer; color: var(--ak-muted); font-size: 11px; }
+.thread-details .ak-fields { margin: 8px 0; }
+#face[data-view="thread"] { overflow: hidden; }
+#face[data-view="thread"] > .ak-canvas { height: 100%; min-height: 0; }
+#face[data-view="thread"] .ak-header { flex: none; }
+.thread-stage, .thread-stage > .conversation, .thread-stage .ak-portal__body, .thread-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.thread-stage .conversation-heading { flex: none; }
+.thread-stage .ak-portal__body { gap: 0; }
+.thread-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 2px 2px 10px; }
+.thread-panel .composer { flex: none; border-top: 1px solid var(--ak-hairline); padding-top: 8px; }
+@container ak-app (max-width: 340px) {
+  .identity-field { align-items: flex-start; }
+  .identity-qr { width: 68px; height: 68px; }
+  .conversation-copy { max-width: 116px; padding-inline: 8px; }
+  .conversation .ak-portal__title { padding-right: 118px; }
+}

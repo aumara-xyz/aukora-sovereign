@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The public contact card as the aumlok identity service reports it: who this node is to others (a label, the AUMLOK ID
-// and the public Nostr addresses, with the node key's binding state), the contact code the node issued, and the safety numbers to compare. Public keys
+// The public contact card as the aumlok identity service reports it: a label, the internal subject and public addresses
+// with the node key's binding state, the contact code the node issued, and the safety numbers to compare. The node's
+// public address is the Aukora ID shown to the owner; the subject only establishes whether seven words secure it. Public keys
 // and digits only; no key material, signature or secret can be in it. The face never creates, signs or verifies any of it.
 // Any other shape refuses, and a label written by someone else is shown only after it passes the same readability rules.
 import type { JsonValue } from "../../core/index.js";
