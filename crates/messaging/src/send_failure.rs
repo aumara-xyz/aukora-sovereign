@@ -19,19 +19,21 @@ impl Messaging {
             .db
             .unchecked_transaction()
             .map_err(|_| refuse("store-write"))?;
-        transaction
+        let failed = transaction
             .execute(
                 "UPDATE messaging_messages SET state=3 WHERE id=?1 AND state IN(0,2)",
                 [id.0.as_bytes().as_slice()],
             )
             .map_err(|_| refuse("store-write"))?;
-        transaction
-            .execute(
-                "INSERT INTO messaging_send_failure(id,reason) VALUES(?1,?2)
+        if failed > 0 {
+            transaction
+                .execute(
+                    "INSERT INTO messaging_send_failure(id,reason) VALUES(?1,?2)
              ON CONFLICT(id) DO UPDATE SET reason=excluded.reason",
-                params![id.0.as_bytes().as_slice(), reason],
-            )
-            .map_err(|_| refuse("store-write"))?;
+                    params![id.0.as_bytes().as_slice(), reason],
+                )
+                .map_err(|_| refuse("store-write"))?;
+        }
         transaction.commit().map_err(|_| refuse("store-write"))
     }
 

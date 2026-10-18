@@ -17,6 +17,7 @@ use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 const NOW: u64 = 1_800_000_000_000;
 
 mod retry_tests;
+mod receipt_tests;
 
 struct TestDirectory(PathBuf);
 impl TestDirectory {

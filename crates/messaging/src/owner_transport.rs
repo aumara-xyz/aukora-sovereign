@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Owner sends authorize and record under Aura; relay I/O owns no ledger lock.
 use crate::{fixed, refuse, state_number, state_text, Messaging, OutboxId};
-use canon::{authority::AuthorityTxn, digest::Digest32, Result};
+use canon::{authority::AuthorityTxn, digest::Digest32, json::Value, Result};
 use nostr::{PublicKey, Transport, TransportEnvelope, TransportKind, TransportReceipt};
 use rusqlite::params;
 
@@ -62,6 +62,29 @@ impl Messaging {
         txn: &mut A,
         id: OutboxId,
     ) -> Result<PreparedOwnerSend> {
+        let (prepared, body, state) = self.committed_owner_send(txn, id)?;
+        let Some(contact) = self.current_contact(txn, prepared.envelope.recipient)? else {
+            self.fail_contact_send(id, "contact-removed")?;
+            return Err(refuse("contact-removed"));
+        };
+        let context = txn.observation_context()?;
+        if contact.authority().epoch != context.authority.epoch
+            || contact.consumed_card().to_string() != state_text(&body, "contact_receipt")?
+        {
+            self.fail_contact_send(id, "contact-changed")?;
+            return Err(refuse("contact-changed"));
+        }
+        if state == 3 {
+            return Err(refuse("transport-rejected"));
+        }
+        Ok(prepared)
+    }
+
+    fn committed_owner_send<A: AuthorityTxn + ?Sized>(
+        &self,
+        txn: &mut A,
+        id: OutboxId,
+    ) -> Result<(PreparedOwnerSend, Value, i64)> {
         let (contact, bytes, body, state, sequence): (Vec<u8>, Vec<u8>, Vec<u8>, i64, Option<i64>) =
             self.db
                 .query_row(
@@ -90,17 +113,6 @@ impl Messaging {
             return Err(refuse("committed-send-required"));
         }
         let contact_key = PublicKey::from_bytes(fixed(contact)?)?;
-        let Some(contact) = self.current_contact(txn, contact_key)? else {
-            self.fail_contact_send(id, "contact-removed")?;
-            return Err(refuse("contact-removed"));
-        };
-        let context = txn.observation_context()?;
-        if contact.authority().epoch != context.authority.epoch
-            || contact.consumed_card().to_string() != state_text(&body, "contact_receipt")?
-        {
-            self.fail_contact_send(id, "contact-changed")?;
-            return Err(refuse("contact-changed"));
-        }
         let envelope = TransportEnvelope {
             v: nostr::transport::TRANSPORT_VERSION,
             codec: nostr::transport::EnvelopeCodec::Nip59V1,
@@ -111,43 +123,60 @@ impl Messaging {
             bytes,
         };
         envelope.validate()?;
-        if state == 3 {
-            return Err(refuse("transport-rejected"));
-        }
-        Ok(PreparedOwnerSend {
-            id,
-            envelope,
-            published: state == 1,
-        })
+        Ok((
+            PreparedOwnerSend {
+                id,
+                envelope,
+                published: state == 1,
+            },
+            body,
+            state,
+        ))
     }
 
-    /// Revalidate against the fresh live scope/contact before recording a relay
-    /// result. A contact removal or epoch change during I/O cannot revive it.
+    /// An accepted receipt describes relay I/O that already happened. Contact
+    /// changes prevent further submissions without erasing that receipt.
     pub fn record_owner_send<A: AuthorityTxn + ?Sized>(
         &mut self,
         txn: &mut A,
         prepared: &PreparedOwnerSend,
         receipt: &TransportReceipt,
     ) -> Result<()> {
-        let current = self.authorized_owner_send(txn, prepared.id)?;
+        use nostr::transport::SubmissionStatus;
+        let current = if receipt.status == SubmissionStatus::Accepted {
+            self.committed_owner_send(txn, prepared.id)?.0
+        } else {
+            self.authorized_owner_send(txn, prepared.id)?
+        };
         if current.envelope != prepared.envelope
             || receipt.envelope_id != prepared.envelope.id
             || receipt.transport != TransportKind::NostrRelays
         {
             return Err(refuse("receipt-mismatch"));
         }
-        use nostr::transport::SubmissionStatus;
         let state = match receipt.status {
             SubmissionStatus::Accepted => 1,
             SubmissionStatus::Unknown => 2,
             SubmissionStatus::Rejected => 3,
         };
-        self.db
+        let transaction = self
+            .db
+            .unchecked_transaction()
+            .map_err(|_| refuse("store-write"))?;
+        transaction
             .execute(
                 "UPDATE messaging_messages SET state=?2 WHERE id=?1",
                 params![prepared.id.0.as_bytes().as_slice(), state],
             )
             .map_err(|_| refuse("store-write"))?;
-        Ok(())
+        if receipt.status == SubmissionStatus::Accepted {
+            transaction
+                .execute(
+                    "DELETE FROM messaging_send_failure WHERE id=?1",
+                    [prepared.id.0.as_bytes().as_slice()],
+                )
+                .map_err(|_| refuse("store-write"))?;
+        }
+        transaction.commit().map_err(|_| refuse("store-write"))
     }
 }
