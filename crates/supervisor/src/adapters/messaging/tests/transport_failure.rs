@@ -97,7 +97,8 @@ fn transport_send_error_preserves_ingress_and_the_send_backoff() -> Result<()> {
     network.poll(&mut relay, NOW as u64 / 1000, deadline)?;
     assert_eq!(relay.send_deadlines.len(), 1);
     assert_eq!(relay.receive_deadlines, vec![deadline]);
-    assert!(relay.send_deadlines[0] <= deadline - 5_000);
+    // Sends get at most half of what is left when they start (binding and contact sync take a little first).
+    assert!(relay.send_deadlines[0] < deadline && deadline - relay.send_deadlines[0] >= 4_000);
     let messages = network.messages(rig.scope, Some(draft.key), None, 10)?;
     assert!(messages
         .items
