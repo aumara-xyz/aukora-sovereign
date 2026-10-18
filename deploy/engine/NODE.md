@@ -224,8 +224,9 @@ harness (auma, in the wall) --http--> 127.0.0.1:3081 (entry.mjs bridge, bytes on
   written beside itself, synced, renamed in, the folder synced). At start it is loaded only if its SHA-256 equals the
   `key_sha256` of the currently approved `engine/model-key.json`; a different digest removes the file, and a file that
   is a symlink, not regular, shared, or not a key is not used (the journal says why, never the key). Entering a
-  different key removes the file at once (it is stored again when that card is approved); `ModelBroker::clear_key`
-  clears memory and file together.
+  different key removes the file once that key's card is up (card first, O19: a key whose card cannot be raised, e.g.
+  `awaiting-other-approval`, changes neither memory nor file); it is stored again only when that card is approved, and
+  never for a declined one; `ModelBroker::clear_key` clears memory and file together.
 - **Budget.** `model-broker-v1.json` holds the terms (models, prices per million tokens, total and per-call cap in
   µUSD, call count, `valid_days`). The supervisor proposes them as `engine/model-budget.json` (with an expiry) and
   spends only against the bytes the owner's passkey applied; changed terms, or one day before expiry, propose again.
@@ -463,8 +464,7 @@ flow. On Linux under umask 002: `cargo test -p supervisor door` (108), `-p broke
 
 RAN on the wall-test VM, not the node: the DNS control (the same probe resolves without the node's resolv.conf).
 
-Not built: the face's own owner-approval surfaces pointing at the owner origin;
-`door/standing-grants.json` as a gate target (the slider runs on the starter, no grants); an inventory sync for nodes
+Not built: the face's own owner-approval surfaces pointing at the owner origin; an inventory sync for nodes
 installed before this branch (they refuse `engine-install: inventory-lacks-engine-target`). The pre-swap probe (O20)
 starts the candidate on a copy of the state but does not serve HTTP or run the engine with it.
 
@@ -670,8 +670,8 @@ hung in `nebius compute instance list` (the CLI's own call, before anything was 
 that says `ask` or `allow` for it, and DOOR.md no longer lists it among what `trusted` can clear (Peter's call to
 change; it would need an executor). Section 6 said `"standing": {}` "turns on the starter slider", which with no
 grants cleared nothing; section 9 said the door ran "asks, grants, refusals" on the node, when only asks and refusals
-ran: both corrected. Section 9's "Not built" line about `door/standing-grants.json` is superseded by P3 (left as is
-for the owner-lifecycle branch, which edits that paragraph).
+ran: both corrected. Section 9's "Not built" line about `door/standing-grants.json`, superseded by P3, was dropped
+when the owner-lifecycle branch landed on top of this one.
 
 **P6. `web_search` is not mounted.** It had no executor at the door, so it sat in Auma's catalog and failed every
 call (`no-executor`). `build_plugins.py` now writes `search: false` into dsh-tool-web's row in every preset that
