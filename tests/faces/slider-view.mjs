@@ -75,13 +75,19 @@ function mount(t, options = {}) {
       return { state: 'applied', setting };
     },
   };
+  // The shell's park/show signal (app/core/client.ts).
+  let shown = true;
+  const listeners = new Set();
+  Object.defineProperty(client, 'shown', { get: () => shown });
+  client.onShown = listener => { listeners.add(listener); return () => listeners.delete(listener); };
+  client.setShown = value => { shown = value; for (const listener of listeners) listener(value); };
   const root = new Element('main');
   mountSlider(root, client, controller.signal);
   t.after(() => { controller.abort(); Object.assign(globalThis, original); });
   const radio = value => descendants(root).find(node => node.dataset.sliderSetting === value).children[0];
   const selected = () => descendants(root).filter(node => node.getAttribute('aria-checked') === 'true');
   const status = () => root.querySelector('.slider-status').textContent;
-  return { root, calls, radio, selected, status, tick: () => tick(), approve: next => { setting = next; } };
+  return { root, calls, client, radio, selected, status, tick: () => tick(), approve: next => { setting = next; } };
 }
 
 test('slider readers reject unknown levels and incomplete or extra approval fields', () => {
@@ -150,4 +156,18 @@ test('a request in flight blocks duplicate changes and a rejected loosening neve
   reject(new Error('gate:proposal-refused')); await settle();
   assert.equal(ui.radio('risky').getAttribute('aria-checked'), 'true');
   assert.match(ui.status(), /Request refused/);
+});
+
+test('the 5 s re-read pauses while the shell parks the face and resumes when it is shown', async t => {
+  const { calls, client, tick } = mount(t);
+  await settle();
+  const reads = () => calls.filter(call => call.method === 'slider.get').length;
+  assert.equal(reads(), 1);
+  tick(); await settle();
+  assert.equal(reads(), 2, 'shown: the timer re-reads');
+  client.setShown(false);
+  tick(); tick(); await settle();
+  assert.equal(reads(), 2, 'parked: nothing is read');
+  client.setShown(true); await settle();
+  assert.equal(reads(), 3, 'shown again: one read at once');
 });

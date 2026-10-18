@@ -115,6 +115,8 @@ export function mountSlider(root: HTMLElement, client: FaceClient, signal: Abort
     buttons.push(button); rows.push(row); choices.append(row);
   });
   void refresh();
-  const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 5_000);
-  signal.addEventListener("abort", () => clearInterval(timer), { once: true });
+  // Not while the tab is hidden or the shell parks this face (visibility:hidden leaves document.hidden false).
+  const timer = setInterval(() => { if (!document.hidden && client.shown !== false) void refresh(); }, 5_000);
+  const unshown = client.onShown?.(shown => { if (shown) void refresh(); });
+  signal.addEventListener("abort", () => { clearInterval(timer); if (unshown) void unshown(); }, { once: true });
 }
