@@ -108,7 +108,7 @@ Messages manifest granting only the listed methods:
   archived marks on one approved contact's conversation; the request must come from
   a bound shell session. They are view state kept in the private messaging store
   (not an Aura record) and are never sent to the contact.
-- `network.conversations.marks {}`: every marked conversation, at most 1,000.
+- `network.conversations.marks {}`: every marked conversation, at most 500 (a full list fits one face reply).
 
 The supervisor polls only validated relay URLs and pinned addresses in its
 egress policy. TLS certificates are checked. A fresh host firewall status must

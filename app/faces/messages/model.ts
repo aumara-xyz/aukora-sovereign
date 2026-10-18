@@ -169,7 +169,7 @@ export function readRefusals(value: JsonValue): Refusals {
 }
 
 export interface Mark { readonly pinned: boolean; readonly archived: boolean }
-const MAX_MARKS = 1_000;
+const MAX_MARKS = 500;
 
 // Only marked conversations are listed; one with neither mark has no row, so a row with neither is refused.
 export function readMarks(value: JsonValue): ReadonlyMap<string, Mark> {

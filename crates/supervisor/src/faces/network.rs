@@ -411,4 +411,31 @@ mod conversation_mark_tests {
             format!(r#"{{"items":[{{"archived":false,"npub":"{npub}","pinned":true}}]}}"#)
         );
     }
+
+    #[test]
+    fn the_largest_mark_list_fits_one_face_reply() {
+        let scope = PrincipalScope {
+            subject: canon::ids::SubjectId::from_digest(canon::digest::Digest32::from_bytes(
+                [7; 32],
+            )),
+            epoch: 1,
+        };
+        let source = Marks::default();
+        for n in 0..messaging::MAX_MARKS {
+            let mut bytes = [0; 32];
+            bytes[..8].copy_from_slice(&(n as u64 + 1).to_be_bytes());
+            let key = nostr::SecretKey::import(zeroize::Zeroizing::new(bytes))
+                .unwrap()
+                .public_key()
+                .unwrap();
+            // "archived":false is the longer boolean; every row at its largest.
+            source.0.lock().unwrap().push(messaging::ConversationMark {
+                contact: key,
+                pinned: false,
+                archived: false,
+            });
+        }
+        let read = call(&source, scope, "conversations.marks", &canon::json::parse_strict(b"{}").unwrap()).unwrap();
+        assert!(read.canonical_bytes().len() <= crate::faces::MAX_REPLY_BYTES);
+    }
 }

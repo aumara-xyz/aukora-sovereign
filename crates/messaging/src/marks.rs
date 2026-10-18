@@ -9,7 +9,8 @@ use nostr::PublicKey;
 use rusqlite::params;
 
 /// At most this many marked conversations; a mark beyond it refuses rather than growing without bound.
-pub const MAX_MARKS: usize = 1_000;
+// A full list must fit one face reply (60,000 bytes; a mark is about 105 bytes of canonical JSON).
+pub const MAX_MARKS: usize = 500;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConversationMark {
