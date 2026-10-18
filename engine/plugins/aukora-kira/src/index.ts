@@ -13,7 +13,7 @@
 //     session history (`session_search`, `session_trace`, ...) or reads a `web-derived` note back from Kira, every
 //     later `kira_remember` or `memory_remember` in that session, by any agent of it (a child included), must declare
 //     `capture: "web-derived"`. A new turn or step does not clear it (the history still holds what was read); only
-//     `clearTaintAfterCompaction()`, called by a host that has proof the content left the context, does. The check
+//     the owner's door clear ends it. The durable door state survives engine restarts. The check
 //     refuses rather than rewriting the capture, because @aukora/door has already bound the exact arguments.
 //  4. Slot injection: `aukora:self` (up to 4,096 UTF-8 bytes) and `aukora:resume` (up to 2,048 UTF-8 bytes) are
 //     fetched at session start and again at step 1 of every turn via `kira_get` by slot name through the door and injected as
@@ -136,6 +136,16 @@ export function apply(ctx: Context, rawConfig: KiraPluginConfig = {}): KiraContr
   ctx.on(
     'tools/pre-execute',
     ((exec: ExecLike, next: () => Promise<PreDecisionLike>) => controller.preExecute(exec, next)) as never,
+    globalOnly,
+  )
+  ctx.on(
+    'tools/post-execute',
+    (async (exec: Readonly<ExecLike>, result: Readonly<ResultLike>, next: () => Promise<unknown>) => {
+      if (!await controller.persistResultTaint(exec, result)) {
+        return { kind: 'block', feedback: [{ type: 'text', text: 'aukora-kira: the door could not persist result taint; external content withheld (taint-unavailable)' }] }
+      }
+      return next()
+    }) as never,
     globalOnly,
   )
   ctx.on(

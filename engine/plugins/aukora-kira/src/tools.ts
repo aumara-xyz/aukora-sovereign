@@ -18,6 +18,7 @@ export const KIRA_REFUSAL_NAME = 'AukoraKiraRefusal'
 
 /** All memory tools registered by @aukora/kira. */
 export const KIRA_TOOL_NAMES = [
+  'kira_taint',
   'kira_recall',
   'kira_remember',
   'kira_get',
@@ -163,9 +164,16 @@ function failClosedExecute(toolName: KiraToolName): () => Promise<never> {
   }
 }
 
-/** Construct the five Kira 2 tool definitions for DSH's ToolRuntime. */
+/** Construct the Kira 2 tool definitions for DSH's ToolRuntime. */
 export function createKiraTools(): DshToolDefinition[] {
   return [
+    {
+      name: 'kira_taint',
+      description: 'Read the door-owned durable engine taint, or mark it before consuming external input. Only the owner can clear it.',
+      parameters: { type: 'object', properties: { mark: { type: 'boolean', const: true } }, additionalProperties: false },
+      output: { schema: { type: 'object', properties: { tainted: { type: 'boolean' } }, required: ['tainted'], additionalProperties: false }, render: renderOutput },
+      execute: failClosedExecute('kira_taint'),
+    },
     {
       name: 'kira_recall',
       description:

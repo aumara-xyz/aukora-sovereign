@@ -112,16 +112,15 @@ export interface KiraController {
    * accepted for compatibility and ignored.
    */
   isTurnTainted(agent?: object): boolean
-  /** Taint the session. */
+  /** Taint immediately in memory and queue the durable door mark; dispatch waits for it. */
   markTurnTainted(agent?: object): void
   /**
    * Deprecated no-op, kept so callers compile. A new turn, a new step and a new agent do NOT clear taint: the session
-   * history still holds what was read (Argon RT-1/RT-2). Only `clearTaintAfterCompaction` clears it.
+   * history still holds what was read (Argon RT-1/RT-2). Only the owner clears the door's taint.
    */
   clearTurnTaint(agent?: object): void
   /**
-   * Clear the session taint because the host has PROVEN the tainted content left the model's context (a compaction that
-   * dropped it). Call it only from such a signal; DSH 0.2.1-alpha.5 emits none, so nothing calls it today.
+   * Deprecated no-op: a plugin cannot clear the door. The owner's clear is read before each memory write.
    */
   clearTaintAfterCompaction(): void
   /**
@@ -131,6 +130,8 @@ export interface KiraController {
   preExecute(exec: ExecLike, next: () => Promise<PreDecisionLike>): Promise<PreDecisionLike>
   /** `tools/result` observer: marks the turn tainted if an external tool ran. */
   onToolResult(exec: Readonly<ExecLike>, result?: Readonly<ResultLike>): void
+  /** Persist result taint before DSH releases external content; false withholds the result. */
+  persistResultTaint(exec: Readonly<ExecLike>, result: Readonly<ResultLike>): Promise<boolean>
   /** Load slots through `kira_get`; force refreshes both, otherwise retry only unverified slots. */
   ensureSlotsLoaded(force?: boolean): Promise<{ selfText: string; resumeText: string; loaded: boolean }>
   /** Current cached text for the `aukora:self` section (<= maxSelfBytes UTF-8 bytes). */
@@ -164,10 +165,27 @@ function denyDecision(code: string, reason: string): PreDecisionLike {
 
 export function createKiraController(rawConfig: KiraPluginConfig, executeTool: ToolExecutor): KiraController {
   const config = resolveKiraConfig(rawConfig)
-  // One state for the whole session: a child created later, a delegation that reports back asynchronously and a call
-  // with no agent all see the same flag. It is never cleared by a new turn or step (the web content is still in the
-  // session history the model reads), only by `clearTaintAfterCompaction`.
+  // The door owns the durable state for the whole engine. This is only a conservative local cache; every write
+  // re-reads the authority, so a restarted controller inherits taint and an owner clear releases existing ones.
   let sessionTainted = false
+  let pendingMark: Promise<boolean> = Promise.resolve(true)
+  let pendingMarks = 0
+  let taintVersion = 0
+  const persistedResults = new WeakSet<object>()
+  const readTaint = async (mark = false): Promise<boolean> => {
+    const version = taintVersion
+    const marking = pendingMarks > 0
+    try {
+      const result = await executeTool('kira_taint', mark ? { mark: true } : {})
+      if (result.isError || typeof result.value !== 'object' || result.value === null || Array.isArray(result.value) || Object.keys(result.value).length !== 1) return false
+      const tainted = (result.value as { tainted?: unknown }).tainted
+      if (typeof tainted !== 'boolean' || (mark && !tainted)) return false
+      sessionTainted = tainted || version !== taintVersion || (!mark && marking)
+      return true
+    } catch {
+      return false
+    }
+  }
 
   let cachedSelfText = ''
   let cachedResumeText = ''
@@ -180,6 +198,9 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
 
   const markTurnTainted = (_agent?: object): void => {
     sessionTainted = true
+    taintVersion += 1
+    pendingMarks += 1
+    pendingMark = pendingMark.then(() => readTaint(true)).finally(() => { pendingMarks -= 1 })
   }
 
   const clearTurnTaint = (_agent?: object): void => {
@@ -261,13 +282,18 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     isTurnTainted,
     markTurnTainted,
     clearTurnTaint,
-    clearTaintAfterCompaction: () => {
-      sessionTainted = false
-    },
+    clearTaintAfterCompaction: clearTurnTaint,
 
     async preExecute(exec, next) {
       if (isTaintingTool(exec.name)) {
+        // The door already persists a successful fetch before releasing it. Marking before dispatch would make
+        // the first fetch ask for taint approval instead of using its existing policy/standing grant.
+        if (exec.name === 'web_fetch') {
+          sessionTainted = true
+          return next()
+        }
         markTurnTainted(exec.agent)
+        if (!await pendingMark) return denyDecision('taint-unavailable', 'aukora-kira: the door could not persist external-input taint; nothing ran (taint-unavailable)')
         return next()
       }
 
@@ -286,6 +312,11 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
         if (typeof args.capture !== 'string' || !ALLOWED_CAPTURES.has(args.capture)) {
           return denyDecision('capture-ceiling', `aukora-kira: capture ${JSON.stringify(args.capture)} exceeds the engine ceiling (capture-ceiling)`)
         }
+        if (!await pendingMark) {
+          markTurnTainted()
+          if (!await pendingMark) return denyDecision('taint-unavailable', 'aukora-kira: the door could not persist taint; nothing ran (taint-unavailable)')
+        }
+        if (!await readTaint()) return denyDecision('taint-unavailable', 'aukora-kira: the door taint could not be verified; nothing ran (taint-unavailable)')
         if (isTurnTainted(exec.agent) && args.capture !== 'web-derived') {
           return denyDecision(
             'turn-tainted',
@@ -298,11 +329,21 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     },
 
     onToolResult(exec, result) {
+      if (persistedResults.has(exec) || (exec.name === 'web_fetch' && result?.isError)) return
       if (isTaintingTool(exec.name)) {
         markTurnTainted(exec.agent)
       } else if (READ_TOOLS.has(exec.name) && result !== undefined && !result.isError && carriesWebDerived(result.value)) {
         markTurnTainted(exec.agent)
       }
+    },
+
+    async persistResultTaint(exec, result) {
+      if (exec.name === 'web_fetch' && result.isError) return true
+      if (!isTaintingTool(exec.name) && !(READ_TOOLS.has(exec.name) && !result.isError && carriesWebDerived(result.value))) return true
+      markTurnTainted(exec.agent)
+      const durable = await pendingMark
+      if (durable) persistedResults.add(exec)
+      return durable
     },
 
     ensureSlotsLoaded,

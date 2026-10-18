@@ -13,15 +13,25 @@ import {
   SELF_SECTION_ORDER,
   apply,
   buildRememberArgs,
-  createKiraController,
+  createKiraController as createController,
   createKiraTools,
   isLiveVerifiedNote,
   isTaintingTool,
   resolveKiraConfig,
   truncateUtf8,
 } from '../src/index.ts'
-import type { ExecLike, KiraNote } from '../src/index.ts'
+import type { ExecLike, KiraNote, KiraPluginConfig, ToolExecutor } from '../src/index.ts'
 import { createDoor } from '../../aukora-door/src/door.ts'
+
+// Unit fixtures emulate the door's read/mark-only taint crossing; the durability regressions use a disk-backed door.
+function createKiraController(config: KiraPluginConfig, execute: ToolExecutor) {
+  let tainted = false
+  return createController(config, async (name, args) => {
+    if (name !== 'kira_taint') return execute(name, args)
+    if (args.mark === true) tainted = true
+    return { isError: false, value: { tainted }, content: [] }
+  })
+}
 
 function sampleNote(overrides: Partial<KiraNote> = {}): KiraNote {
   return {
@@ -60,7 +70,7 @@ function makeExec(name: string, args: unknown, agent?: object): ExecLike {
   }
 }
 
-test('createKiraTools registers the five Kira 2 tools and fails closed if invoked without the door', async () => {
+test('createKiraTools registers Kira tools plus the door taint bridge and fails closed if invoked without the door', async () => {
   const tools = createKiraTools()
   assert.deepEqual(tools.map(t => t.name), [...KIRA_TOOL_NAMES])
   for (const tool of tools) {
@@ -149,8 +159,8 @@ test('session taint forces capture: "web-derived" on kira_remember in every late
   const cleanDecision = await controller.preExecute(makeExec('kira_remember', cleanArgs, agent), async () => ({ kind: 'allow' }))
   assert.equal(cleanDecision.kind, 'allow')
 
-  // A web_fetch call taints the turn for this agent.
-  await controller.preExecute(makeExec('web_fetch', { url: 'https://example.org/' }, agent), async () => ({ kind: 'allow' }))
+  // A session history read taints the session before it can return external content.
+  await controller.preExecute(makeExec('session_search', { query: 'earlier' }, agent), async () => ({ kind: 'allow' }))
   assert.equal(controller.isTurnTainted(agent), true)
 
   // Now model-generated is denied with turn-tainted.
@@ -170,10 +180,10 @@ test('session taint forces capture: "web-derived" on kira_remember in every late
   assert.equal(controller.isTurnTainted(agent), true)
   const nextTurnDecision = await controller.preExecute(makeExec('kira_remember', cleanArgs, agent), async () => ({ kind: 'allow' }))
   assert.equal(nextTurnDecision.kind, 'deny')
-  // Only a host that has proof the content left the context (a compaction that dropped it) clears the session.
+  // Compaction cannot override the door; only the owner clear can release the session.
   controller.clearTaintAfterCompaction()
-  assert.equal(controller.isTurnTainted(agent), false)
-  assert.equal((await controller.preExecute(makeExec('kira_remember', cleanArgs, agent), async () => ({ kind: 'allow' }))).kind, 'allow')
+  assert.equal(controller.isTurnTainted(agent), true)
+  assert.equal((await controller.preExecute(makeExec('kira_remember', cleanArgs, agent), async () => ({ kind: 'allow' }))).kind, 'deny')
 })
 
 test('one session state: a child agent, a call with no agent and the parent after an async delivery all share it (RT-1, RT-3)', async () => {
@@ -181,7 +191,7 @@ test('one session state: a child agent, a call with no agent and the parent afte
   const parent = {}
   const child = {}
   const clean = buildRememberArgs({ text: 'from a child', subject: 'test' })
-  await controller.preExecute(makeExec('web_fetch', { url: 'https://example.org/' }, parent), allow)
+  await controller.preExecute(makeExec('session_search', { query: 'earlier' }, parent), allow)
   // The child is a fresh agent object created after the parent was tainted: it inherits, it does not start clean.
   assert.equal(controller.isTurnTainted(child), true)
   assert.equal((await controller.preExecute(makeExec('kira_remember', clean, child), allow)).kind, 'deny', 'RT-1A: parent -> child laundering')
@@ -189,7 +199,7 @@ test('one session state: a child agent, a call with no agent and the parent afte
   assert.equal((await controller.preExecute(makeExec('kira_remember', clean), allow)).kind, 'deny', 'RT-3: agentless write')
   // The other direction: a child that reads the web taints the parent that is woken with its output later (RT-1B).
   const fresh = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
-  await fresh.preExecute(makeExec('web_fetch', { url: 'https://example.org/' }, child), allow)
+  await fresh.preExecute(makeExec('session_search', { query: 'earlier' }, child), allow)
   assert.equal(fresh.isTurnTainted(parent), true, 'RT-1B: the parent shares the child\'s taint when its output is delivered')
   assert.equal((await fresh.preExecute(makeExec('kira_remember', clean, parent), allow)).kind, 'deny')
   // An agentless taint (e.g. a slot read) is seen by every agent, which the old split state ignored.
@@ -245,7 +255,7 @@ const allow = async () => ({ kind: 'allow' as const })
 test('memory_remember, which the Rust door forwards to the same Kira write, is held to the same taint', async () => {
   const controller = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
   const agent = {}
-  await controller.preExecute(makeExec('web_fetch', { url: 'https://example.org/' }, agent), allow)
+  await controller.preExecute(makeExec('session_search', { query: 'earlier' }, agent), allow)
   const args = buildRememberArgs({ text: 'laundered through the alias', subject: 'test' })
   const decision = await controller.preExecute(makeExec('memory_remember', args, agent), allow)
   assert.equal(decision.kind, 'deny')
@@ -308,7 +318,7 @@ test('behind @aukora/door (prepended, first), the taint deny still decides: the 
   const controller = createKiraController({}, async () => ({ isError: false, value: {}, content: [] }))
   const agent = {}
   const chain = (exec: ExecLike) => door.preExecute(exec, () => controller.preExecute(exec, allow))
-  assert.equal((await chain(makeExec('web_fetch', { url: 'https://example.org/' }, agent))).kind, 'allow')
+  assert.equal((await chain(makeExec('session_search', { query: 'earlier' }, agent))).kind, 'allow')
   const decision = await chain(makeExec('kira_remember', buildRememberArgs({ text: 'x', subject: 'y' }), agent))
   assert.equal(decision.kind, 'deny')
   if (decision.kind === 'deny') assert.equal(decision.info?.code, 'turn-tainted')

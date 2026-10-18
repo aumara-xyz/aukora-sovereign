@@ -1,9 +1,9 @@
 # aukora-kira
 
-The DeepSeek Harness (DSH) shared-memory plugin for AUKORA (`@aukora/kira`): registers the five Kira 2 tools
-(`kira_recall`, `kira_remember`, `kira_get`, `kira_list_recent`, `kira_supersede`), enforces turn-level provenance
-taint, and injects `aukora:self` (up to 4 KiB) and `aukora:resume` (up to 2 KiB) into the system prompt at session
-start with `interpolate: false`.
+The DeepSeek Harness (DSH) shared-memory plugin for AUKORA (`@aukora/kira`): registers the Kira 2 tools
+(`kira_recall`, `kira_remember`, `kira_get`, `kira_list_recent`, `kira_supersede`) plus the read/mark-only
+`kira_taint` door bridge, enforces durable provenance taint, and injects `aukora:self` (up to 4 KiB) and
+`aukora:resume` (up to 2 KiB) into the system prompt at session start with `interpolate: false`.
 
 Built by Argon against DSH 0.2.1-alpha.5 (master `1517a4d`) and run live there (12/12 tests, a live round trip through
 the Rust door into Kira 2); landed here with the fixes listed in the commit. Paired with `@aukora/door`
@@ -20,20 +20,26 @@ itself signs as the token's agent and never lets an agent claim more than `model
 
 1. **Zero credentials in the engine.** `@aukora/kira` holds no Kira socket path and no Kira bearer token. Every `kira_*`
    tool call is classified `memory` by `@aukora/door`, which intercepts `tools/execute` before `next()` and sends the
-   canonical request to `sovereign door serve`. The Rust door attaches its own `0600` token file (refusing an owner
-   token) and forwards to the Kira 2 service.
+   canonical request to `sovereign door serve`. The Rust door handles `kira_taint` itself; for memory calls it
+   attaches its own `0600` token file (refusing an owner token) and forwards to the Kira 2 service.
 2. **Fail-closed local body.** If `@aukora/door` is not loaded or is bypassed and a `kira_*` tool body is ever invoked
    in-process, it throws `KiraDoorRequiredError` (`code: 'door-required'`).
 3. **Judge-then-lock compatibility.** `@aukora/kira` registers its `tools/pre-execute` hook with `{ global: true }`
    (without `prepend: true`), so `@aukora/door` (`{ prepend: true, global: true }`) always binds and digests first and
    then passes through to this hook; a deny here is the decision. `@aukora/kira` never mutates `exec.arguments`.
-4. **Turn-level provenance taint.** A turn is tainted when it calls `web_fetch`, `web_search` or `mcp__*`; when a Kira
+4. **Durable engine provenance taint.** The engine is tainted when it calls `web_fetch`, `web_search` or `mcp__*`; when a Kira
    result (`kira_recall`, `kira_get`, `kira_list_recent`, or `kira_supersede`, which returns the superseded note with
    its text) carries a `web-derived` note; and on every delegation (`subagent`, `subagent_fork`, `ralph`, `workflow`,
    `wait_agent`, and agent-team `spawn_*` / `team_*` tools). A child may run in a fresh process whose taint this one
-   never sees, and nothing authenticated says a child stayed clean, so every delegation counts. In a tainted turn
+   never sees, and nothing authenticated says a child stayed clean, so every delegation counts. While tainted
    `kira_remember` (and `memory_remember`, should a door still forward it) must say `capture: "web-derived"`, or it is
-   denied (`code: 'turn-tainted'`). Taint resets at `step === 1` of the agent's next turn.
+   denied (`code: 'turn-tainted'`). Session history reads (`session_search`, `session_trace`, and related read tools)
+   taint too. The plugin marks the door's durable `taint.json` before local external-input tools run and before
+   their results are released; `web_fetch` and memory reads mark it in the door before releasing content. Every
+   write re-reads the door, including after an engine restart.
+   Unavailable or malformed taint state fails closed. Only the owner action `POST /api/engine/door/clear-taint`
+   clears it, and existing controllers observe that clear on their next write. Turn, agent and compaction hooks
+   cannot clear the door. This state covers every session and child in the engine, conservatively.
 5. **Session-start `aukora:self` and `aukora:resume` injection.** At session start (`agent/created`, `agent/pre-step`,
    and the first `system-prompt/assemble`) the plugin reads each slot with one `kira_get { id: '<slot>' }` through
    `ctx.tools.execute` (so through `@aukora/door` -> Rust door -> Kira 2) and registers them as `SystemPrompt`
@@ -49,9 +55,8 @@ itself signs as the token's agent and never lets an agent claim more than `model
 
 ## Honest limits
 
-- Taint is per turn, as specified. Web text fetched in one turn stays in the model's context in later turns until
-  compaction; a later turn can file it as `model-generated`. Messages another agent sends (agent team) and files a
-  tainted agent wrote are not tracked.
+- Files a tainted agent wrote are not tracked as a separate provenance channel.
+- PL-7: Slot prompt text refreshes at the next turn's step 1; mid-turn owner changes wait, and the session's write head stays pinned. A door crash after Kira commits can return `door-connect` despite a committed write.
 - The ceilings here repeat the Rust door's; the door's are the ones that hold.
 
 ## Build & test

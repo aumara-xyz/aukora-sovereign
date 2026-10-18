@@ -166,7 +166,7 @@ impl Door {
             Err(code) => return (id, Decision::Deny(code.into())),
         };
         let action = self.policy.action(class);
-        if action == Action::Deny {
+        if action == Action::Deny && request.tool != "kira_taint" {
             // A refusal costs the engine nothing to repeat and burns no id.
             return (id, Decision::Deny(format!("{}-denied", class.name())));
         }
@@ -174,6 +174,9 @@ impl Door {
             Ok(true) => {}
             Ok(false) => return (id, Decision::Deny("replay".into())),
             Err(_) => return (id, Decision::Deny("door-state".into())),
+        }
+        if request.tool == "kira_taint" {
+            return (id, self.taint_control(&request));
         }
         // A tainted engine's net calls and memory writes, and every web-derived write, ask whatever the slider says
         // (taint.rs); they never spend a grant's count. Otherwise, with a slider, a policy allow or ask is decided per

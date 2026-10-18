@@ -22,10 +22,11 @@
 //! `web-derived`); the door's half is the one a hostile engine cannot skip.
 
 use super::classify::Class;
-use super::wire::Request;
+use super::wire::{Decision, Request};
 use super::{memory, refuse, Door};
 use canon::json::{Value, ValueView};
 use canon::Result;
+use rustix::fs::{flock, FlockOperation};
 use serde_json::Value as Json;
 use std::fs::File;
 use std::io::Write;
@@ -37,8 +38,6 @@ pub const FILE: &str = "taint.json";
 /// The taint record in the door's state folder.
 pub struct Taint {
     dir: PathBuf,
-    /// One writer at a time: two results arriving together must not race on the temporary file.
-    writing: std::sync::Mutex<()>,
 }
 
 /// What the record says.
@@ -51,11 +50,19 @@ pub enum State {
 
 impl Taint {
     pub fn new(state_dir: &Path) -> Self {
-        Self { dir: state_dir.to_owned(), writing: std::sync::Mutex::new(()) }
+        Self { dir: state_dir.to_owned() }
     }
 
     fn path(&self) -> PathBuf {
         self.dir.join(FILE)
+    }
+
+    // The owner clear uses another Taint instance: a filesystem lock orders it with every durable mark.
+    fn lock(&self) -> Result<File> {
+        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).mode(0o600)
+            .open(self.dir.join(".taint.lock")).map_err(|_| refuse("door-state"))?;
+        flock(&file, FlockOperation::LockExclusive).map_err(|_| refuse("door-state"))?;
+        Ok(file)
     }
 
     pub fn state(&self) -> State {
@@ -78,7 +85,7 @@ impl Taint {
 
     /// Set the taint (keeping the first cause and time) and make it durable before the caller releases the result.
     pub fn mark(&self, now_ms: i64, cause: &str) -> Result<()> {
-        let _writing = self.writing.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _writing = self.lock()?;
         if self.tainted() {
             return Ok(());
         }
@@ -98,6 +105,7 @@ impl Taint {
 
     /// The owner's action: the engine is clean again. Returns whether it was tainted.
     pub fn clear(&self) -> Result<bool> {
+        let _writing = self.lock()?;
         let was = self.tainted();
         match std::fs::remove_file(self.path()) {
             Ok(()) => {}
@@ -136,6 +144,19 @@ pub fn carries_web_derived(value: &Json) -> bool {
 }
 
 impl Door {
+    /// Read or add engine taint without touching Kira or owner grants. There is deliberately no clear operation.
+    pub(super) fn taint_control(&self, request: &Request) -> Decision {
+        let mark = match request.args.view() {
+            ValueView::Object(fields) if fields.is_empty() => false,
+            ValueView::Object(fields) if fields.len() == 1 && matches!(request.args.get("mark").map(Value::view), Some(ValueView::Boolean(true))) => true,
+            _ => return Decision::Deny("bad-args".into()),
+        };
+        if mark && self.taint.mark(super::standing::now_ms(), "engine-external").is_err() {
+            return Decision::Deny("door-state".into());
+        }
+        Decision::Allow { value: serde_json::json!({"tainted": self.taint.tainted()}), text: None }
+    }
+
     /// Whether this call must ask the owner whatever the policy, the slider and the grants say: a web-derived memory
     /// write always; any `net` call or memory write while the engine is tainted.
     pub(super) fn taint_asks(&self, class: Class, request: &Request) -> bool {
@@ -185,6 +206,35 @@ mod tests {
         // A record nobody can read is tainted, never clean.
         std::fs::write(dir.join(FILE), b"{torn").unwrap();
         assert_eq!(taint.state(), State::Tainted { since_ms: 0, cause: "unreadable".into() });
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn engine_taint_control_survives_restart_and_only_the_owner_clear_releases_it() {
+        let dir = temp("control");
+        let policy = format!("{{\"v\":1,\"peers\":{{\"mode\":\"peercred\",\"uids\":[1001]}},\"workspace_roots\":[],\"state_dir\":\"{}\",\"classes\":{{\"memory\":\"deny\"}}}}", dir.join("state").display());
+        let open = || Door::open(super::super::Policy::parse(&policy).unwrap()).unwrap();
+        let call = |door: &Door, id: &str, args: &str| {
+            door.judge(super::super::Peer::Uid(1001), &super::super::wire::test_line(id, "kira_taint", args, "memory")).1
+        };
+        let status = |decision: Decision| match decision {
+            Decision::Allow { value, .. } => value["tainted"].as_bool().unwrap(),
+            other => panic!("expected taint status, got {other:?}"),
+        };
+        let door = open();
+        assert!(!status(call(&door, "clean", "{}")));
+        assert!(status(call(&door, "mark", "{\"mark\":true}")));
+        // Even with memory disabled, the read/mark-only control requires no token and cannot untaint the engine.
+        assert!(matches!(call(&door, "forged-clear", "{\"mark\":false}"), Decision::Deny(code) if code == "bad-args"));
+        assert!(matches!(call(&door, "clear-op", "{\"clear\":true}"), Decision::Deny(code) if code == "bad-args"));
+        drop(door);
+        let door = open();
+        assert!(status(call(&door, "restart", "{}")));
+        // This is the separate Taint instance used by the owner POST handler.
+        assert!(Taint::new(&dir.join("state")).clear().unwrap());
+        assert!(!status(call(&door, "owner-cleared", "{}")));
+        std::fs::write(dir.join("state").join(FILE), b"{torn").unwrap();
+        assert!(status(call(&door, "unreadable", "{}")), "unreadable durable state is tainted");
         let _ = std::fs::remove_dir_all(dir);
     }
 
