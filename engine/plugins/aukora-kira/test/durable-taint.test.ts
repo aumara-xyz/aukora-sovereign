@@ -121,6 +121,11 @@ test('PL-1: first web_fetch keeps its existing policy, and successful delivery p
     })).kind, 'allow')
     assert.equal(await controller.persistResultTaint(fetch, { isError: false, value: 'page', content: [] }), true)
     assert.equal(existsSync(door.path), true)
+    // Once the page is delivered, a model-generated note is refused until the owner clears the door's record.
+    const tainted = await controller.preExecute(remember(), allow)
+    assert.equal(tainted.kind, 'deny')
+    if (tainted.kind === 'deny') assert.equal(tainted.info?.code, 'turn-tainted')
+    assert.equal(existsSync(door.path), true)
     // Result observation must not enqueue a redundant mark after the awaited post hook completed.
     door.clean()
     controller.onToolResult(fetch, { isError: false, value: 'page', content: [] })
