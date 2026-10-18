@@ -29,7 +29,7 @@ test('a contact card approves an exact Aukora ID, not a person, and the owner is
   assert.match(actions, /status\.textContent = COPY\.contactReview;/);
 });
 
-test('the composer says who can send and what relays see', () => {
+test('How it works says who can send and what relays see (Peter, 2026-10-18: only there, not under the composer)', () => {
   assert.match(COPY.sendSession, /^Anyone using your signed-in session can send messages as you\./);
   assert.match(COPY.sendSession, /recorded in Aura/);
   for (const seen of ['IP address', "recipient's key", 'message size', 'when your node connects']) assert.ok(COPY.relaysSee.includes(seen), seen);
@@ -39,9 +39,10 @@ test('the composer says who can send and what relays see', () => {
   assert.match(COPY.footnote, /never the text/);
   assert.match(actions + readFileSync(join(face, 'view.ts'), 'utf8'), /COPY\.footnote/);
   assert.match(COPY.relaysSee, /^Relays cannot read your text/);
-  const composer = actions.slice(actions.indexOf('export function composer'));
-  assert.match(composer, /COPY\.sendSession/);
-  assert.match(composer, /COPY\.relaysSee/);
+  const view = readFileSync(join(face, 'view.ts'), 'utf8');
+  const how = view.slice(view.indexOf('const how = '), view.indexOf('const picker = '));
+  assert.match(how, /COPY\.sendSession/);
+  assert.match(how, /COPY\.relaysSee/);
 });
 
 test('both owners are told to add each other', () => {

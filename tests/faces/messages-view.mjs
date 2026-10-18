@@ -207,15 +207,30 @@ test('the same conversation portal opens a chronological thread and returns to t
   assert.equal(card.parentElement, stage);
   assert.equal(list.hidden, true);
   assert.equal(stage.hidden, false);
+  // Open, the name is the header; it shows the contact's details, and Back returns to the list.
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(head.getAttribute('aria-label'), 'Maya. Show contact details');
+  assert.equal(byClass(card, 'conversation-snippet').textContent, '');
+  const info = byClass(card, 'contact-info');
+  assert.equal(info.hidden, true);
+  head.click();
+  assert.equal(info.hidden, false);
   assert.equal(head.getAttribute('aria-expanded'), 'true');
-  assert.equal(head.getAttribute('aria-label'), 'Maya. Back to conversations');
-  assert.equal(byClass(card, 'conversation-snippet').textContent, `Aukora ID ${maya.slice(0, 10)}…${maya.slice(-4)}`);
+  assert.match(info.textContent, new RegExp(maya));
+  head.click();
+  assert.equal(info.hidden, true);
+  assert.equal(root.dataset.view, 'thread', 'the name never closes the thread');
   assert.equal(back.hidden, false, 'an open thread has a clear back button');
   assert.ok(all(root, item => hasClass(item, 'drawer')).every(drawer => drawer.dataset.open === 'no'), 'opening a thread closes any panel');
   const rows = byClass(card, 'transcript').children;
   assert.deepEqual(rows.map(row => row.dataset.message), ['old', 'middle', 'new']);
   assert.deepEqual(rows.map(row => row.dataset.direction), ['in', 'out', 'in']);
-  assert.deepEqual(rows.map(row => byClass(row, 'who').textContent), ['MayaContact', 'You', 'MayaContact']);
+  // Bubbles only: theirs left, mine right; no name, pill or note on any of them.
+  assert.deepEqual(rows.map(row => row.className), ['bubble-row theirs', 'bubble-row mine', 'bubble-row theirs']);
+  assert.deepEqual(rows.map(row => byClass(row, 'bubble').textContent), ['Are you free later?', 'A walk sounds lovely.', 'See you at five?']);
+  assert.doesNotMatch(byClass(card, 'transcript').textContent, /Contact|You|relay|Maya/);
+  // This conversation's own pin, unread and archive stay in the open thread's header.
+  assert.equal(byClass(card, 'row-actions').hidden, false);
   back.click();
   assert.equal(root.dataset.view, 'list');
   assert.equal(card.parentElement, holder);
@@ -240,22 +255,22 @@ test('drafts survive close, reopen and a live re-read; Send uses the owner netwo
   const form = byClass(card, 'composer');
   const draft = find(form, element => element.tagName === 'textarea');
   draft.value = 'A draft for Maya';
-  head.click(); head.click(); await settle();
+  byClass(card, 'thread-back').click(); head.click(); await settle();
   await live();
   assert.equal(find(form, element => element.tagName === 'textarea'), draft);
   assert.equal(draft.value, 'A draft for Maya');
   draft.value = '  Meet by the water.\nSee you soon.';
   form.dispatch('submit');
   assert.equal(draft.disabled, true);
-  assert.equal(button(form, 'Send').disabled, true);
+  assert.equal(byClass(form, 'send').disabled, true);
   assert.deepEqual(calls.filter(call => call.method === 'send'), [{
     service: 'network', method: 'send', params: { npub: maya, text: '  Meet by the water.\nSee you soon.' },
   }]);
   finish({}); await settle();
   assert.equal(draft.value, '');
   assert.equal(draft.disabled, false);
-  assert.equal(button(form, 'Send').disabled, false);
-  assert.match(form.textContent, /Queued for the relays\./);
+  assert.equal(byClass(form, 'send').disabled, false);
+  assert.equal(byClass(form, 'composer-status').textContent, '', 'a sent message needs no note');
   draft.value = ' \n ';
   form.dispatch('submit');
   assert.equal(calls.filter(call => call.method === 'send').length, 1);
@@ -289,7 +304,7 @@ test('the own ID reuses QR and copy; contact approval names the exact ID and rel
   document.copied = true;
   button(own, 'Copy Aukora ID').click();
   assert.match(own.textContent, /Aukora ID copied\./);
-  const head = button(byClass(root, 'panel-row'), 'Add a contact+');
+  const head = button(byClass(root, 'panel-row'), 'Add contact+');
   head.click();
   assert.equal(head.getAttribute('aria-expanded'), 'true');
   assert.equal(byClass(root, 'drawer--contact').dataset.open, 'yes');
@@ -445,8 +460,8 @@ test('without the mark grant there is no pin or archive; the row-two panels open
   await settle();
   assert.deepEqual(byClass(conversation(root, maya), 'row-actions').children.map(child => child.getAttribute('aria-label')), ['Mark as read']);
   assert.ok(!calls.some(call => call.method === 'conversations.marks'));
-  assert.deepEqual(byClass(root, 'panel-row').children.map(child => child.textContent), ['Aukora ID+', 'More+'], 'no Add a contact without its grant');
-  const id = button(byClass(root, 'panel-row'), 'Aukora ID+');
+  assert.deepEqual(byClass(root, 'panel-row').children.map(child => child.textContent), ['Identity+', 'More+'], 'no Add contact without its grant');
+  const id = button(byClass(root, 'panel-row'), 'Identity+');
   const drawer = name => byClass(root, `drawer--${name}`);
   assert.equal(drawer('id').dataset.open, 'no');
   assert.equal(drawer('id').getAttribute('inert'), '', 'a closed panel cannot take focus');
@@ -506,4 +521,18 @@ test('new messages arrive live in the list and in the open thread, keeping the d
   assert.equal(draft.value, 'Half a thought');
   assert.ok(calls.slice(before).every(call => call.params.npub === maya), 'an open thread re-reads only itself');
   assert.equal(byClass(card, 'thread-panel').children[0].textContent.includes('Reading'), false, 'no Reading flicker');
+});
+
+test('a failed send shows one red retry, which sends the same text again', async t => {
+  const { root, messages, calls } = mount(t);
+  messages.unshift({ ...message('lost', maya, 60, 'out', 'Did this arrive?'), state: 'failed', code: 'messaging:transport-rejected' });
+  await settle();
+  const card = conversation(root);
+  byClass(card, 'ak-portal__head').click(); await settle();
+  const row = find(card, item => item.dataset?.message === 'lost');
+  const retry = byClass(row, 'bubble-retry');
+  assert.equal(retry.getAttribute('aria-label'), 'Not sent. Send again');
+  assert.equal(all(byClass(card, 'transcript'), item => hasClass(item, 'bubble-retry')).length, 1, 'only the failed one');
+  retry.click(); await settle();
+  assert.deepEqual(calls.filter(call => call.method === 'send').map(call => call.params), [{ npub: maya, text: 'Did this arrive?' }]);
 });

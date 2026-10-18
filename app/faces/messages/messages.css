@@ -25,13 +25,18 @@ form .ak-label { margin-top: 4px; }
 .info:empty { display: none; }
 .problem { margin: 6px 0; color: var(--ak-red); font-size: 12px; }
 .rows { display: grid; gap: 10px; margin: 10px 0; padding: 0; list-style: none; }
-.message { width: 90%; padding: 10px 12px; }
-.message[data-direction="out"] { justify-self: end; }
-.who { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 8px; color: var(--ak-muted); font-size: 11px; }
-.words { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ak-text); font-size: 13px; }
-.meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; color: var(--ak-muted); font-size: 10.5px; }
-.outcome { margin: 4px 0 0; color: var(--ak-text-2); font-size: 11px; }
-.outcome.failed { color: var(--ak-red); }
+/* Chat bubbles (Peter, 2026-10-18): theirs left on the surface, mine right in blue; the time only on hover or focus. */
+.transcript { gap: 6px; }
+.bubble-row { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.bubble-row.mine { align-items: flex-end; }
+.bubble { max-width: 80%; margin: 0; padding: 9px 14px; border-radius: 20px 20px 20px 6px; background: rgba(255, 255, 255, .07); color: var(--ak-text); font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-row.mine .bubble { border-radius: 20px 20px 6px 20px; background: color-mix(in srgb, var(--ak-blue) 30%, rgba(38, 43, 54, .9)); }
+.bubble-row[data-state='queued'] .bubble { opacity: .7; }
+.bubble-time { max-height: 0; overflow: hidden; color: var(--ak-muted); font-size: 10.5px; line-height: 16px; opacity: 0; transition: opacity 160ms ease, max-height 160ms ease; }
+.bubble-row:is(:hover, :focus-within) .bubble-time { max-height: 16px; margin-top: 2px; opacity: 1; }
+.bubble-retry { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-top: 3px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ak-red); cursor: pointer; }
+.bubble-retry svg { width: 14px; height: 14px; }
+.bubble-retry:focus-visible { outline: 2px solid var(--ak-red); outline-offset: 2px; }
 .key { overflow-wrap: anywhere; font-family: var(--ak-mono); font-size: 11px; }
 .key.full { user-select: all; }
 .mark { border: 1px solid var(--ak-gold); border-radius: 4px; padding: 0 3px; color: var(--ak-gold); font: 10px var(--ak-mono); white-space: nowrap; }
@@ -45,21 +50,35 @@ form .ak-label { margin-top: 4px; }
 .rows { grid-template-columns: minmax(0, 1fr); }
 .conversation-time { color: var(--ak-muted); font-size: 10.5px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .conversation-time:empty { display: none; }
-.thread-details { margin: 4px 0 10px; }
-.thread-details summary { cursor: pointer; color: var(--ak-muted); font-size: 11px; }
-.thread-details .ak-fields { margin: 8px 0; }
 #face[data-view="thread"] { overflow: hidden; }
 #face[data-view="thread"] > .ak-canvas { height: 100%; min-height: 0; }
-#face[data-view="thread"] :is(.msg-filters, .msg-panels) { display: none; }
+#face[data-view="thread"] .msg-top { display: none; }
 .thread-stage, .thread-stage > .conversation, .thread-stage .ak-portal__body, .thread-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.thread-stage .conversation-line { flex: none; padding-bottom: 8px; border-bottom: 1px solid var(--ak-hairline); }
+/* The open thread's header: Back, the name and this conversation's own pin, unread and archive, all inward of the
+   lane's top hot corners (74px squares; the canvas is inset 18px, so 66px more on each side). */
+.thread-stage .conversation-line { flex: none; gap: 6px; min-height: 74px; padding: 0 66px; border-bottom: 1px solid var(--ak-hairline); }
+#face .thread-stage .conversation-line > .ak-portal__head { height: auto; min-height: 44px; padding: 0 4px; }
+#face .thread-stage .conversation-line :is(.ak-icon-tile, .ak-expander, .conversation-snippet, .conversation-time) { display: none; }
+#face .thread-stage .conversation-line .ak-portal__title { font-size: 15px; font-weight: 600; }
+#face .thread-stage .row-actions { position: static; display: inline-flex; flex: none; transform: none; }
+.contact-info { flex: none; padding: 10px 2px 12px; border-bottom: 1px solid var(--ak-hairline); }
+.contact-info .ak-fields { margin: 0 0 8px; }
 /* The open thread has no frame of its own (Peter, 2026-10-18): its header row and the messages use the lane. */
 #face .thread-stage > .conversation { border-color: transparent; border-radius: 0; background: transparent; box-shadow: none; }
 #face .thread-stage .conversation .ak-portal__body { padding-inline: 0; }
-#face .thread-stage .conversation-line > .ak-portal__head { padding-inline: 12px 4px; }
+
 .thread-stage .ak-portal__body { gap: 0; }
 .thread-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 2px 2px 10px; }
-.thread-panel .composer { flex: none; border-top: 1px solid var(--ak-hairline); padding-top: 8px; }
+/* The Auma chat composer: one rounded box with the text and the round send arrow inside it. */
+.thread-panel .composer { flex: none; margin: 0; padding-top: 8px; gap: 4px; }
+.composer-card { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 16px; border: 1px solid var(--ak-hairline); border-radius: 22px; }
+.composer-card:focus-within { border-color: color-mix(in srgb, var(--ak-blue) 55%, transparent); }
+#face .composer-card .draft { flex: 1; min-height: 0; max-height: 12rem; margin: 0; padding: 7px 0; border: 0; border-radius: 0; background: transparent; font-size: 13.5px; line-height: 1.5; resize: none; field-sizing: content; }
+#face .composer-card .draft:focus-visible { outline: none; }
+.send { display: grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 1px solid color-mix(in srgb, var(--ak-blue) 38%, transparent); border-radius: 50%; background: transparent; color: var(--ak-blue); cursor: pointer; }
+.send:hover { border-color: color-mix(in srgb, var(--ak-blue) 70%, transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--ak-blue) 14%, transparent); }
+.send:focus-visible { outline: 2px solid var(--ak-blue); outline-offset: 2px; }
+.composer-status { margin: 0 16px; }
 
 /* Hot corners (Peter, 2026-10-18): each lane's top corners (74px squares) belong to the shell, so no control sits
    in them. Row 1 holds the title (not a control) on the left and its icon buttons right beside it, inward from the
@@ -68,12 +87,14 @@ form .ak-label { margin-top: 4px; }
 .msg-header .ak-header__title { margin: 0; }
 .msg-top { display: flex; flex-direction: column; gap: 14px; }
 #face .msg-filters { gap: 4px; }
-#face :is(.msg-filters, .row-actions) .iconButton { color: var(--ak-violet); }
+/* Grey until active (Peter, 2026-10-18): an icon takes its colour only while its filter or mark is on. */
+#face :is(.msg-filters, .row-actions) .iconButton { color: var(--ak-muted); }
+#face :is(.msg-filters, .row-actions) .iconButton:hover { color: var(--ak-text-2); }
 #face :is(.msg-filters, .row-actions) .iconButton svg { width: 16px; height: 16px; }
 #face .pinAction[aria-pressed='true'] { color: var(--ak-violet); }
 #face .unreadAction[aria-pressed='true'] { color: var(--ak-mint); }
 #face .archiveAction[aria-pressed='true'] { color: var(--ak-gold); }
-#face .plusAction[aria-expanded='true'] { background: color-mix(in srgb, currentColor 13%, transparent); }
+#face .plusAction[aria-expanded='true'] { color: var(--ak-mint); background: color-mix(in srgb, currentColor 13%, transparent); }
 
 /* Row 2: three thin buttons; each telescopes its panel down beneath the row, one at a time. */
 .panel-row { display: flex; gap: 8px; }

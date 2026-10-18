@@ -3,14 +3,16 @@
 // More, then the conversations. Opening one lifts its portal button to the top as the thread's header, with a back
 // button, the messages below it and the compose box at the bottom.
 import type { FaceClient } from "../../core/index.js";
-import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
+import { clearServiceState, showServiceState } from "../../core/service-state.js";
 import { ago } from "../threads/time.js";
 import { COPY, sendOutcome } from "./copy.js";
 import { threadGlyph } from "../threads/spatial-icons.js";
+import { icon } from "../threads/dom.js";
 import { h, untrusted } from "./dom.js";
-import { conversationList, moment, readContactPage, readMarks, readMessagePage, readRefusals, shortKey, threadMessages } from "./model.js";
+import { conversationList, moment, readContactPage, readMarks, readMessagePage, readRefusals, threadMessages } from "./model.js";
 import type { Contact, Conversation, Mark, Message } from "./model.js";
 import { addContact, composer, copyId, ownIdentity } from "./actions.js";
+import type { Composer } from "./actions.js";
 import { glyph, portal, portalIcon } from "./portal.js";
 
 const PAGE = 50;
@@ -22,14 +24,19 @@ function stamp(ms: number, compact = false): HTMLElement {
     : h("span", {}, "Time unavailable");
 }
 
-function messageRow(message: Message, name: string): HTMLElement {
-  const inbound = message.direction === "in";
-  const sentence = sendOutcome(message);
-  const outcome = sentence === null ? null : h("p", { class: `outcome ${message.state ?? ""}` }, sentence);
-  if (outcome && message.code !== null && serviceState(message.code).kind === "unavailable") showServiceState(outcome, message.code);
-  return h("li", { class: `message ak-row ak-row--static ak-tone-${inbound ? "violet" : "mint"}`, "data-direction": message.direction, "data-message": message.id },
-    h("p", { class: "who" }, untrusted("strong", {}, inbound ? name : "You"), inbound && h("span", { class: "ak-pill" }, "Contact")),
-    untrusted("p", { class: "words" }, message.text), h("p", { class: "meta" }, stamp(message.at)), outcome);
+// A chat bubble (Peter, 2026-10-18): theirs on the left, mine on the right in another colour; no name, pill or notes.
+// The time shows only on hover or focus. A failed send carries one small red retry; nothing claims delivery.
+function messageRow(message: Message, retry: ((text: string) => void) | null): HTMLElement {
+  const at = moment(message.at);
+  const failed = message.state === "failed";
+  // A send stopped by a contact change says why on the retry control (sendOutcome); other failures keep the short label.
+  const why = failed ? sendOutcome(message) : null;
+  const label = why !== null && why !== COPY.states.failed ? `${why} Send again` : "Not sent. Send again";
+  const again = failed && retry ? h("button", { type: "button", class: "bubble-retry", "aria-label": label, title: label }, icon("refresh")) : null;
+  again?.addEventListener("click", () => retry?.(message.text));
+  return h("li", { class: `bubble-row ${message.direction === "out" ? "mine" : "theirs"}`, "data-direction": message.direction, "data-message": message.id, "data-state": message.state ?? "" },
+    untrusted("p", { class: "bubble" }, message.text), again,
+    at ? h("time", { class: "bubble-time", datetime: at.iso }, at.label) : null);
 }
 
 // Per-contact pages arrive newest first; rendering sorts all loaded pages oldest first. A refresh merges the newest
@@ -41,7 +48,8 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
   const copy = h("button", { type: "button", class: "ak-action" }, "Copy Aukora ID");
   const copyStatus = h("p", { role: "status", class: "info" });
   copyId(copy, address, copyStatus, signal);
-  const details = h("details", { class: "thread-details" }, h("summary", {}, "Aukora ID and contact details"),
+  // The contact's details open from the name in the thread's header, as in a chat app.
+  const details = h("div", { class: "contact-info", hidden: "" },
     h("dl", { class: "ak-fields" }, h("dt", {}, "Aukora ID"), h("dd", {}, address)), copy, copyStatus,
     h("p", { class: "aside" }, contact.pairing ? COPY.pairing[contact.pairing.method] : COPY.noPairing));
   const rows = h("ol", { class: "rows transcript", "aria-label": "Messages in time order" });
@@ -49,8 +57,9 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
   const problem = h("p", { class: "problem", role: "alert", hidden: "" });
   const more = h("button", { type: "button", class: "ak-action", hidden: "" }, "Load earlier messages");
   const scroll = h("div", { class: "thread-scroll", tabindex: "0", "aria-label": "Conversation history" },
-    details, h("div", { class: "button-row" }, more), info, problem, rows);
-  const element = h("div", { class: "thread-panel", "aria-busy": "false" }, scroll);
+    h("div", { class: "button-row" }, more), info, problem, rows);
+  const element = h("div", { class: "thread-panel", "aria-busy": "false" }, details, scroll);
+  let writer: Composer | null = null;
   const messages = new Map<string, Message>();
   let next: string | null = null;
   let busy = false;
@@ -104,7 +113,7 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
       const ordered = threadMessages([...messages.values()], contact.npub);
       // Redraw only when a row arrived, left or changed its send state; the reader's place and selection stay.
       const shape = ordered.map(message => `${message.id}:${message.state ?? ""}`).join(",");
-      if (shape !== drawn) { drawn = shape; rows.replaceChildren(...ordered.map(message => messageRow(message, contact.label))); }
+      if (shape !== drawn) { drawn = shape; rows.replaceChildren(...ordered.map(message => messageRow(message, writer ? writer.send : null))); }
       info.textContent = ordered.length === 0 ? COPY.emptyMessages : stalled ? COPY.stalled
         : capped ? COPY.capped : resetWindow ? "Showing the latest messages. Load earlier messages to continue this conversation." : "";
       if (visible && !document.hidden && element.getClientRects().length > 0) changed(ordered);
@@ -125,7 +134,10 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
     }
   };
   more.addEventListener("click", () => { void read(false); }, { signal });
-  if (granted.has("send")) element.append(composer(client, signal, contact.npub, () => { void read(true); }));
+  if (granted.has("send")) {
+    writer = composer(client, signal, contact.npub, contact.label, () => { void read(true); });
+    element.append(writer.element);
+  }
   if (!granted.has("messages.list")) { showServiceState(problem, "app:service-unavailable"); problem.hidden = false; }
   return {
     element,
@@ -136,6 +148,8 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
         void read(true);
       }
     },
+    /** Shows or hides the contact's details; returns whether they are shown. */
+    toggleInfo(show = details.hidden !== false): boolean { details.hidden = !show; return show; },
     /** The live re-read of the newest page while this thread is open; false when it failed. */
     poll(): Promise<boolean> {
       return visible && started && element.getClientRects().length > 0 ? read(true, true) : Promise.resolve(true);
@@ -220,6 +234,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     h("p", { class: "aside" }, "Your Aukora ID is a Nostr public key. Messages travel through Nostr relays, wrapped so that only the other person can read them."),
     h("p", { class: "aside" }, COPY.contactKey),
     h("p", { class: "aside" }, COPY.relaysSee + " A relay accepting a message does not prove your friend received it."),
+    h("p", { class: "aside" }, COPY.sendSession),
     h("p", { class: "aside" }, "New messages appear here on their own. Unread marks track incoming messages loaded in this open view; opening a conversation clears its mark here, and this is not a read receipt to your friend. Pinned and archived are your own marks on this node; your friend never sees them."),
     h("p", { class: "aside" }, COPY.inbound), h("p", { class: "aside" }, COPY.footnote));
   if (granted.has("refusals.counts")) how.append(refusalsPanel(client, signal));
@@ -248,7 +263,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     return button;
   };
   const row = h("div", { class: "panel-row" },
-    toggle("contact", "Add a contact", "contact", "mint"), toggle("id", "Aukora ID", "id", "blue"), toggle("more", "More", "more", "violet"));
+    toggle("contact", "Add contact", "contact", "mint"), toggle("id", "Identity", "id", "blue"), toggle("more", "More", "more", "violet"));
   let openPanel: Panel | null = null;
   const setPanel = (next: Panel | null) => {
     openPanel = next;
@@ -365,8 +380,10 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     let current = conversation;
     const show = (open: boolean) => {
       element.dataset.open = open ? "yes" : "no";
-      head.setAttribute("aria-expanded", String(open));
-      head.setAttribute("aria-label", open ? `${contact.label}. Back to conversations` : `Open conversation with ${contact.label}`);
+      // Open, the name is the thread's header and shows the contact's details; Back returns to the list.
+      head.setAttribute("aria-expanded", "false");
+      head.setAttribute("aria-label", open ? `${contact.label}. Show contact details` : `Open conversation with ${contact.label}`);
+      panel.toggleInfo(false);
       expander.textContent = open ? "−" : "+";
       back.hidden = !open;
       body.hidden = !open;
@@ -375,7 +392,12 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       render();
       (open ? back : head).focus({ preventScroll: true });
     };
-    head.addEventListener("click", () => show(selected !== contact.npub), { signal });
+    head.addEventListener("click", () => {
+      if (selected !== contact.npub) { show(true); return; }
+      const shown = panel.toggleInfo();
+      head.setAttribute("aria-expanded", String(shown));
+      head.setAttribute("aria-label", `${contact.label}. ${shown ? "Hide" : "Show"} contact details`);
+    }, { signal });
     back.addEventListener("click", () => show(false), { signal });
     pin.addEventListener("click", () => setMark(contact.npub, { pinned: !(marks.get(contact.npub)?.pinned ?? false) }), { signal });
     archive.addEventListener("click", () => setMark(contact.npub, { archived: !(marks.get(contact.npub)?.archived ?? false) }), { signal });
@@ -395,12 +417,11 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
         const shown = selected === contact.npub;
         const isUnread = !shown && (value.unread || markedUnread.has(contact.npub));
         title.replaceChildren(...untrusted("span", {}, value.contact.label).childNodes);
-        snippet.replaceChildren(...untrusted("span", {}, shown ? `Aukora ID ${shortKey(contact.npub)}` : failed ? "Message preview unavailable" : value.snippet || "No messages yet").childNodes);
+        snippet.replaceChildren(...untrusted("span", {}, shown ? "" : failed ? "Message preview unavailable" : value.snippet || "No messages yet").childNodes);
         time.replaceChildren(...(!shown && value.latest ? [stamp(value.latest.at, true)] : []));
         pinMark.hidden = !mark.pinned;
         archiveMark.hidden = !mark.archived;
         unreadMark.hidden = !isUnread;
-        actions.hidden = shown;
         pin.setAttribute("aria-pressed", String(mark.pinned));
         pin.setAttribute("aria-label", mark.pinned ? "Unpin conversation" : "Pin conversation");
         pin.title = pin.getAttribute("aria-label") ?? "";
