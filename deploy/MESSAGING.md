@@ -110,8 +110,12 @@ its upper bound so newer arrivals cannot continually displace older messages.
 Each relay alternates history pages with an independent query of the newest
 16 wraps in the two-day timestamp window. A long history sweep cannot freeze
 that query's upper bound. Normal pages contain at most 16 wraps. A timestamp boundary is queried again
-with a limit growing to 128, and is crossed only after a short page proves it
-complete. Completed sweeps overlap the two-day NIP-59 timestamp randomization
+with a query limit growing to 128. A query result larger than the delivery
+byte budget is returned in bounded chunks; a persisted timestamp/ID marker
+resumes the same query in NIP-01 order across polls and restarts. The relay
+client separately bounds each query to 500 attempted events and 4 MiB of input.
+A short response permits best-effort traversal past that timestamp; it is not
+proof that the relay returned every stored event. Completed sweeps overlap the two-day NIP-59 timestamp randomization
 interval; every fourth subsequent sweep revisits all history, covering old
 queued wraps first published after a long sender outage. Failed queries retain
 their history position and still rotate to the next relay. A cursor advances
@@ -123,11 +127,13 @@ fills. An evicted wrap requires the contact to resend it.
 
 NIP-01 has inclusive, second-resolution time bounds and exact event IDs, with
 no offset or exclusion cursor. A full 128-wrap single-second boundary therefore
-logs `query-timestamp-saturated` and retains that boundary; it never silently
-skips the remaining events. Other relays continue receiving their polling turns.
-A same-second flood can still block older history on that relay. Eliminating
-this limitation requires an additional relay paging capability or a narrower,
-contact-specific routing filter. NIP-59 hides the real sender behind an ephemeral
+logs `query-timestamp-saturated` and retains that history boundary. Independent
+tail queries continue advancing their upper bound, including on that relay;
+without them the frozen boundary would block new inbound as well as history.
+A same-second flood can still hide wraps outside the relay response and block
+older history. Relays may also return fewer events than requested, so history
+completeness cannot be guaranteed. Lossless traversal of an arbitrarily crowded
+second requires an additional relay paging capability. NIP-59 hides the real sender behind an ephemeral
 outer key, so a per-sender cap before opening the seal would not identify
 contacts or constrain a stranger generating fresh outer keys.
 

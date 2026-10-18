@@ -272,15 +272,19 @@ fn fresh_tail_is_polled_while_frozen_history_is_still_backlogged() {
         max_bytes: 1_048_576,
         deadline_ms: 1,
     };
-    let first = receive_page(&keys, &request, 1000, |_, filter| Ok(query(&events, filter)))
-        .unwrap();
+    let first = receive_page(&keys, &request, 1000, |_, filter| {
+        Ok(query(&events, filter))
+    })
+    .unwrap();
     assert!(!first.exhausted);
     request.cursor = first.next_cursor;
     let fresh = event(&key, recipient, 1001, "new inbound during backfill");
     let fresh_id = fresh.event().id;
     events.push(fresh);
-    let tail = receive_page(&keys, &request, 1001, |_, filter| Ok(query(&events, filter)))
-        .unwrap();
+    let tail = receive_page(&keys, &request, 1001, |_, filter| {
+        Ok(query(&events, filter))
+    })
+    .unwrap();
     assert!(tail.envelopes.iter().any(|e| e.id == fresh_id));
     // The fresh query does not abandon the durable, frozen history position.
     request.cursor = tail.next_cursor;
@@ -291,4 +295,44 @@ fn fresh_tail_is_polled_while_frozen_history_is_still_backlogged() {
     })
     .unwrap();
     assert_eq!(until, Some(584));
+}
+
+#[test]
+fn large_timestamp_tie_drains_in_byte_bounded_batches_and_keeps_receiving() {
+    let key = SecretKey::generate().unwrap();
+    let recipient = key.public_key().unwrap();
+    let mut events: Vec<_> = (0..20)
+        .map(|n| event(&key, recipient, 80, &format!("{n}:{}", "x".repeat(60_000))))
+        .collect();
+    let expected: BTreeSet<_> = events.iter().map(|e| e.event().id).collect();
+    let keys = [relay_key("wss://relay.example")];
+    let mut request = ReceiveRequest {
+        recipient,
+        cursor: None,
+        max_items: 128,
+        max_bytes: 1_048_576,
+        deadline_ms: 1,
+    };
+    let mut seen = BTreeSet::new();
+    let mut finished = false;
+    for poll in 0..12 {
+        let batch = receive_page(&keys, &request, 100 + poll, |_, filter| {
+            Ok(query(&events, filter))
+        })
+        .unwrap();
+        assert!(batch.envelopes.iter().map(|e| e.bytes.len()).sum::<usize>() <= 1_048_576);
+        seen.extend(batch.envelopes.iter().map(|e| e.id));
+        request.cursor = batch.next_cursor;
+        if batch.exhausted {
+            finished = true;
+            break;
+        }
+    }
+    assert!(finished, "a tie exceeding one delivery budget must drain");
+    assert!(expected.is_subset(&seen));
+    let fresh = event(&key, recipient, 200, "after the large tie");
+    let fresh_id = fresh.event().id;
+    events.push(fresh);
+    let batch = receive_page(&keys, &request, 200, |_, filter| Ok(query(&events, filter))).unwrap();
+    assert!(batch.envelopes.iter().any(|e| e.id == fresh_id));
 }

@@ -108,6 +108,7 @@ struct Position {
     done: bool,
     recent_sweeps: u8,
     next_tail: bool,
+    resume: Option<(u64, String)>,
 }
 impl Position {
     fn new(key: String, now: u64) -> Self {
@@ -121,6 +122,7 @@ impl Position {
             done: false,
             recent_sweeps: 0,
             next_tail: false,
+            resume: None,
         }
     }
     fn encode(&self) -> Value {
@@ -133,13 +135,14 @@ impl Position {
             self.limit,
             self.done,
             self.recent_sweeps,
-            self.next_tail
+            self.next_tail,
+            self.resume
         ])
     }
     fn decode(v: &Value) -> canon::Result<Self> {
         let a = v
             .as_array()
-            .filter(|a| a.len() == 8 || a.len() == 9)
+            .filter(|a| (8..=10).contains(&a.len()))
             .ok_or(refusal("cursor-invalid"))?;
         let key = a[0]
             .as_str()
@@ -173,8 +176,15 @@ impl Position {
                 Some(v) => v.as_bool().ok_or(refusal("cursor-invalid"))?,
                 None => false,
             },
+            resume: serde_json::from_value(a.get(9).cloned().unwrap_or(Value::Null))
+                .map_err(|_| refusal("cursor-invalid"))?,
         };
-        if p.until > p.head || (!p.done && p.since > p.until) {
+        if p.until > p.head
+            || (!p.done && p.since > p.until)
+            || p.resume.as_ref().is_some_and(|(time, id)| {
+                *time > p.until || *time < p.since || id.len() != 64 || !valid_hex(id, 64)
+            })
+        {
             return Err(refusal("cursor-invalid"));
         }
         Ok(p)
@@ -281,7 +291,13 @@ pub(crate) fn receive_page(
         p.until = p.head;
         p.done = false;
     }
-    let limit = if tail { PAGE_ITEMS } else { p.limit }.min(request.max_items);
+    let limit = if tail {
+        PAGE_ITEMS
+            .min(request.max_items)
+            .min((request.max_bytes as usize / nostr::transport::MAX_ENVELOPE_BYTES).max(1) as u16)
+    } else {
+        p.limit
+    };
     let filter = Filter {
         kinds: vec![nostr::nip59::GIFT_WRAP_KIND],
         recipients: vec![request.recipient],
@@ -297,20 +313,35 @@ pub(crate) fn receive_page(
         ..Filter::default()
     };
     let page = (|| {
-        let events = query(index, &filter)?;
+        let mut events = query(index, &filter)?;
         // A relay exceeding the requested page or returning unrelated events cannot
         // move the durable cursor past unseen data.
         if events.len() > usize::from(limit) || events.iter().any(|e| !filter.matches(e.event())) {
             return Err(refusal("query-page-invalid"));
         }
+        let mut seen = BTreeSet::new();
+        if events.iter().any(|e| !seen.insert(e.event().id)) {
+            return Err(refusal("query-page-invalid"));
+        }
+        let oldest = events.iter().map(|e| e.event().created_at).min();
+        let count = events.len();
+        // A relay query has its own event/byte ceilings. Its result can exceed
+        // one delivery budget; replay that same bounded query after restart and
+        // resume in NIP-01 order rather than discarding an oversized tie forever.
+        events.sort_by_key(|e| (std::cmp::Reverse(e.event().created_at), e.event().id));
         let mut envelopes = Vec::new();
         let mut bytes = 0;
-        let mut seen = BTreeSet::new();
-        let oldest = events.iter().map(|e| e.event().created_at).min();
+        let mut resume = None;
+        let mut more = false;
         for verified in events {
             let event = verified.event();
-            if !seen.insert(event.id) {
-                return Err(refusal("query-page-invalid"));
+            let marker = (event.created_at, event.id.digest().to_string());
+            if !tail
+                && p.resume.as_ref().is_some_and(|(time, id)| {
+                    (std::cmp::Reverse(marker.0), &marker.1) <= (std::cmp::Reverse(*time), id)
+                })
+            {
+                continue;
             }
             let envelope = TransportEnvelope {
                 v: nostr::transport::TRANSPORT_VERSION,
@@ -320,15 +351,22 @@ pub(crate) fn receive_page(
                 bytes: event.encode()?,
             };
             envelope.validate()?;
-            bytes += envelope.bytes.len();
-            if bytes > request.max_bytes as usize {
+            if envelope.bytes.len() > request.max_bytes as usize {
                 return Err(refusal("batch-limit"));
             }
+            if bytes + envelope.bytes.len() > request.max_bytes as usize
+                || envelopes.len() == usize::from(request.max_items)
+            {
+                more = true;
+                break;
+            }
+            bytes += envelope.bytes.len();
             envelopes.push(envelope);
+            resume = Some(marker);
         }
-        Ok((envelopes, oldest))
+        Ok((envelopes, oldest, count, more, resume))
     })();
-    let (envelopes, oldest) = match page {
+    let (envelopes, oldest, count, more, resume) = match page {
         Ok(page) => page,
         Err(code) => {
             eprintln!(
@@ -343,9 +381,14 @@ pub(crate) fn receive_page(
     if tail {
         return finish_batch(envelopes, &positions, index, keys.len(), false);
     }
-    if envelopes.len() == usize::from(limit) {
+    if more {
+        p.resume = resume;
+        return finish_batch(envelopes, &positions, index, keys.len(), false);
+    }
+    p.resume = None;
+    if count == usize::from(limit) {
         if p.tie {
-            if limit == nostr::transport::MAX_BATCH_ITEMS || limit == request.max_items {
+            if limit == nostr::transport::MAX_BATCH_ITEMS {
                 // NIP-01 has inclusive second-resolution time bounds and exact
                 // IDs, with no exclusion or offset. Never skip a full boundary:
                 // more events can share this second. Other relays still rotate.
