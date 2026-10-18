@@ -583,7 +583,7 @@ impl SharedStore {
                     // note its readers cannot open.
                     let mut stmt = tx
                         .prepare(
-                            "SELECT e.id, e.pubkey, e.slot FROM events e JOIN ancestry a ON a.seq = e.seq AND a.root = e.id
+                            "SELECT e.id, e.pubkey, e.slot, e.capture FROM events e JOIN ancestry a ON a.seq = e.seq AND a.root = e.id
                              WHERE e.kind = ?1 AND e.statement_hash = ?2 AND e.scope = ?3 AND e.privacy = ?4 AND e.epoch = ?5
                              ORDER BY e.seq",
                         )
@@ -591,16 +591,18 @@ impl SharedStore {
                     let candidates = stmt
                         .query_map(
                             params![NOTE_KIND, meta.statement_hash.to_vec(), meta.scope, meta.privacy.wire(), meta.epoch as i64],
-                            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+                            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?)),
                         )
                         .map_err(sql)?
                         .collect::<std::result::Result<Vec<_>, _>>()
                         .map_err(sql)?;
                     drop(stmt);
+                    // A slot note never adopts a web-derived root (one stored in a slot before slots refused web capture).
                     let earlier = candidates
                         .into_iter()
-                        .find(|(_, by, slot)| may_adopt_root(meta.privacy.wire(), &author, meta.slot.as_deref(), by, slot.as_deref()))
-                        .map(|(root, _, _)| root);
+                        .filter(|(.., capture)| meta.slot.is_none() || capture.as_deref() != Some("web-derived"))
+                        .find(|(_, by, slot, _)| may_adopt_root(meta.privacy.wire(), &author, meta.slot.as_deref(), by, slot.as_deref()))
+                        .map(|(root, ..)| root);
                     roots.insert(earlier.unwrap_or_else(|| id.clone()));
                 }
                 tx.execute(

@@ -83,3 +83,16 @@ fn a_sourceless_repeat_of_a_web_note_cannot_carry_its_root_into_a_slot() {
         assert_eq!(s.verify_chain().unwrap(), 2);
     }
 }
+
+#[test]
+fn a_sourceless_slot_note_never_adopts_an_old_web_slot_root() {
+    let owner = key();
+    let mut s = store_with(&[("peter", &owner, &["*"], true)]);
+    let mut web = draft("The next trusted handoff", "builders");
+    web.capture = Capture::WebDerived;
+    let web = s.append(sign(&owner, &web, Review::Remembered, 1)).unwrap();
+    // A store from before the slot rule: the web note sits in the slot (its side column, as an old append wrote it).
+    s.db.execute("UPDATE events SET slot = ?1 WHERE seq = ?2", rusqlite::params!["resume:agent", web.seq]).unwrap();
+    let repeat = s.append(sign(&owner, &slotted("resume:agent", vec![]), Review::Remembered, 2)).unwrap();
+    assert_eq!(roots_of(&s, &repeat), [hex32(repeat.event.id.as_bytes())], "its own root, never the web note");
+}
