@@ -20,7 +20,7 @@ def foreign_path(path, text):
     """Local home/review paths, including docs and YAML; installed product defaults remain explicit exceptions."""
     for default in HOME_DEFAULTS.get(path, ()):
         text = text.replace(default, "")
-    home = re.search(r"(?<![A-Za-z0-9._-])/(?:Users|home)/|~/(?!\.(?:cargo|ssh|local|dsh|aukora-spawn)\b|Downloads\b)", text)
+    home = re.search(r"(?<![A-Za-z0-9_-])/(?:Users|home)/|~/(?!\.(?:cargo|ssh|local|dsh|aukora-spawn)\b|Downloads\b)", text)
     code = not path.endswith((".md", ".yaml", ".yml"))
     return home is not None or (code and re.search(r"aukora-(?:prime|genesis|contact|buzz|sovereign-archive)/", text) is not None)
 

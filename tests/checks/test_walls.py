@@ -21,7 +21,8 @@ def browser(path, text):
 class ForeignPaths(unittest.TestCase):
     def test_home_and_review_paths_are_found_in_docs_and_policies(self):
         for path in ("docs/guide.md", "deploy/policy.yaml", "deploy/overlay.yml", "src/lib.rs"):
-            for sample in ("/" + "Users/example/review.md", "/" + "home/example/review.md", "~" + "/review/notes.md", "file:///" + "Users/example/review.md"):
+            for sample in ("/" + "Users/example/review.md", "/" + "home/example/review.md", "~" + "/review/notes.md", "file:///" + "Users/example/review.md",
+                           "../" + "Users/example/review.md", "./" + "home/example/review.md"):
                 self.assertTrue(walls.foreign_path(path, sample), (path, sample))
         self.assertFalse(walls.foreign_path("docs/guide.md", "See deploy/engine/NODE.md"))
         self.assertFalse(walls.foreign_path("deploy/engine/engine-run.sh", "/var/lib/aukora-engine/home/profile"))
