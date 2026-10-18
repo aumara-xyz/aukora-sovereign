@@ -559,8 +559,8 @@ impl State {
         if p.text.len() > MAX_STATEMENT {
             return Err(refuse("statement-too-long"));
         }
-        self.rate(caller)?;
         let review = if p.owner_signed { Review::OwnerSigned } else { Review::Remembered };
+        let previous = p.expected_head;
         let draft = NoteDraft {
             text: p.text,
             subject: p.subject,
@@ -575,9 +575,14 @@ impl State {
             valid_to: p.valid_to,
             epoch: 2,
         };
-        let tags = draft.tags(review)?;
-        let event = Event::sign(self.key(&caller.name)?, now(), NOTE_KIND, tags, draft.text)?;
-        let note = self.store.append(event)?;
+        let mut tags = draft.tags(review)?;
+        if let Some(previous) = previous {
+            tags.push(vec!["prev_head".to_owned(), previous]);
+        }
+        let note = self.signed(caller, |s| {
+            let event = Event::sign(s.key(&caller.name)?, now(), NOTE_KIND, tags, draft.text)?;
+            s.store.append(event)
+        })?;
         if let Some(wake) = &self.wake {
             let _ = wake.send(());
         }
@@ -711,7 +716,6 @@ impl State {
                 return Err(refuse("supersede-replacement-unknown"));
             }
         }
-        self.rate(caller)?;
         let mut tags = vec![vec!["supersedes".to_owned(), p.target.clone()]];
         if let Some(replacement) = &p.replacement {
             tags.push(vec!["replacement".to_owned(), replacement.clone()]);
@@ -719,8 +723,10 @@ impl State {
         if let Some(reason) = &p.reason {
             tags.push(vec!["reason".to_owned(), reason.clone()]);
         }
-        let event = Event::sign(self.key(&caller.name)?, now(), SUPERSEDE_KIND, tags, String::new())?;
-        let id = self.store.record(event)?;
+        let id = self.signed(caller, |s| {
+            let event = Event::sign(s.key(&caller.name)?, now(), SUPERSEDE_KIND, tags, String::new())?;
+            s.store.record(event)
+        })?;
         let target = self.store.get(&p.target)?.ok_or_else(|| refuse("not-found"))?;
         let proposed = target.superseded_by.as_deref() != Some(id.as_str()) && target.author_name != caller.name && !caller.owner;
         Ok(json!({"event": id, "proposed": proposed, "target": view(&self.store, caller, &target)?}))
@@ -737,9 +743,10 @@ impl State {
         if !target.as_ref().is_some_and(|t| visible(caller, t)) {
             return Err(refuse("not-found"));
         }
-        self.rate(caller)?;
-        let event = Event::sign(self.key(&caller.name)?, now(), ACCEPT_KIND, vec![vec!["accepts".to_owned(), p.proposal.clone()]], String::new())?;
-        let id = self.store.record(event)?;
+        let id = self.signed(caller, |s| {
+            let event = Event::sign(s.key(&caller.name)?, now(), ACCEPT_KIND, vec![vec!["accepts".to_owned(), p.proposal.clone()]], String::new())?;
+            s.store.record(event)
+        })?;
         let target = self.store.get(&target.map(|t| hex(t.event.id.as_bytes())).unwrap_or_default())?.ok_or_else(|| refuse("not-found"))?;
         Ok(json!({"event": id, "target": view(&self.store, caller, &target)?}))
     }
@@ -752,10 +759,11 @@ impl State {
         if p.pubkey == caller.pubkey {
             return Err(refuse("quarantine-self"));
         }
-        self.rate(caller)?;
         let tags = vec![vec!["source".to_owned(), p.pubkey.clone()]];
-        let event = Event::sign(self.key(&caller.name)?, now(), QUARANTINE_KIND, tags, String::new())?;
-        let id = self.store.record(event)?;
+        let id = self.signed(caller, |s| {
+            let event = Event::sign(s.key(&caller.name)?, now(), QUARANTINE_KIND, tags, String::new())?;
+            s.store.record(event)
+        })?;
         Ok(json!({"event": id, "source": p.pubkey}))
     }
 }

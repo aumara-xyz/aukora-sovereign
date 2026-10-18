@@ -79,6 +79,27 @@ impl Budget {
         // File sync, atomic rename, then directory sync all complete before the caller may sign.
         self.save(dir)
     }
+
+    /// The request lock still covers the failed write, so this is exactly its last reservation. Keep the high-water
+    /// mark: refunding a refusal must never let a backwards clock reopen an expired window.
+    fn refund(&mut self, dir: &Path, name: &str) -> Result<()> {
+        self.writes.get_mut(name).and_then(Vec::pop).ok_or_else(|| refuse("rate-state"))?;
+        self.save(dir)
+    }
+}
+
+impl State {
+    /// Reserve before signing, and return the quota only if the store refused the write. A crash may conservatively
+    /// retain a reservation; it cannot produce an uncharged committed signature. Call under the request guard.
+    pub(super) fn signed<T>(&mut self, caller: &Caller, write: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        let before = self.store.append_position()?;
+        self.rate(caller)?;
+        let result = write(self);
+        if result.is_err() && self.store.append_position()? == before {
+            self.writes.refund(&self.dir, &caller.name)?;
+        }
+        result
+    }
 }
 
 #[cfg(test)]

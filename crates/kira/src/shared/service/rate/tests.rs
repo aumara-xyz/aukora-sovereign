@@ -79,3 +79,20 @@ fn a_clock_stepped_forward_and_back_grants_no_second_window() {
     assert!(Budget::open(&f.dir, 200).unwrap().writes["claude"].iter().all(|t| *t == 3_700));
     budget.reserve(&f.dir, "claude", 3_760).unwrap();
 }
+
+#[test]
+fn refund_keeps_the_durable_high_water_and_other_agents_charges() {
+    let f = fixture();
+    let mut budget = Budget::open(&f.dir, 100).unwrap();
+    budget.reserve(&f.dir, "claude", 100).unwrap();
+    budget.reserve(&f.dir, "grok", 3_700).unwrap();
+    budget.refund(&f.dir, "grok").unwrap();
+    let mut restarted = Budget::open(&f.dir, 101).unwrap();
+    assert_eq!(restarted.high_water, 3_700);
+    assert!(restarted.writes["grok"].is_empty());
+    for _ in 0..RATE_WRITES {
+        restarted.reserve(&f.dir, "claude", 101).unwrap();
+    }
+    assert_eq!(restarted.reserve(&f.dir, "claude", 3_759), Err(refuse("rate-limited")));
+    restarted.reserve(&f.dir, "claude", 3_760).unwrap();
+}

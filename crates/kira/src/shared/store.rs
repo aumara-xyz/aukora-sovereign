@@ -501,6 +501,12 @@ impl SharedStore {
 
     // ---------- append ----------
 
+    /// The durable append position, used under the request lock to distinguish a refused write from a committed
+    /// write whose response could not be read back. An uncertain commit must keep its rate reservation.
+    pub(super) fn append_position(&self) -> Result<i64> {
+        self.db.query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |row| row.get(0)).map_err(sql)
+    }
+
     /// Append one verified event. Checks the author's registration, scope, review claim, and the kind's rules.
     pub fn append(&mut self, verified: VerifiedEvent) -> Result<StoredNote> {
         let event = verified.event().clone();

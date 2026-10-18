@@ -12,6 +12,7 @@ mod slot_capture;
 mod pending_proposals;
 mod recall_wording;
 mod corrected_history;
+mod pl5;
 mod slot_retirement;
 
 struct Fixture {
