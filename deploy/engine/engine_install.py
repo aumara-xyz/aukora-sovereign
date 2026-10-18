@@ -662,6 +662,8 @@ def main(argv):
     run(["systemctl", "enable", "--now"] + [u for u in ENGINE_UNITS if u != "aukora-engine-fence.service"])
     configure_caddy(node["node"], shell_host)
     write_engine_config(shell_host)
+    # The disk guard's unit is conditioned on engine-v1.json, so the enable --now above skipped it on a fresh install.
+    run(["systemctl", "start", "aukora-engine-diskguard.service"])
     # The supervisor reads the door policy and the engine configuration at start; the engine itself waits for it.
     run(["systemctl", "restart", "aukora-sovereign.service"])
     print(json.dumps({"engine_host": "engine." + shell_host, "engine_uid": uid, "sandbox_image": image,

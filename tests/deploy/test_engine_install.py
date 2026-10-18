@@ -278,6 +278,17 @@ class AdmissionFile(unittest.TestCase):
             shutil.rmtree(scratch)
 
 
+class GuardStart(unittest.TestCase):
+    """The disk guard's unit needs engine-v1.json (ConditionPathExists), so a fresh install starts it after writing it."""
+
+    def test_the_guard_is_started_after_the_engine_config_is_written(self):
+        import inspect
+        source = inspect.getsource(engine_install.main)
+        written = source.index("write_engine_config(shell_host)")
+        started = source.index('"systemctl", "start", "aukora-engine-diskguard.service"')
+        self.assertLess(written, started)
+
+
 class EngineDisk(unittest.TestCase):
     """The engine's fixed-size disk (Auma's review R3): two fifths of the root filesystem within 8..40 GiB, and never
     so large that the host keeps less than 8 GiB free beside it."""
