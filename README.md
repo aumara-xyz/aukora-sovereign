@@ -1,6 +1,12 @@
 # AUKORA Sovereign
 
-*ROOT the earth, UNITE the people, RISE the above*
+## The Bitcoin of the agentic age
+
+Bitcoin invented almost nothing new. Digital signatures, hash chains, proof of work and peer-to-peer networking all
+existed; what was new was putting them together so that nobody needs anyone's permission or trust. AUKORA Sovereign does
+the same for AI agents: passkeys, a signed append-only ledger, a sandbox with a single door, memory that cites its
+sources, and Nostr for finding each other, all existing open-source technology, combined so that an AI can work for one
+person while that person alone holds the keys, and everything it does can be checked by anyone.
 
 AUKORA Sovereign is a personal AI node: a server you control, an AI agent (Auma) that lives on it, and a hard line
 between what that agent may **propose** and what only you may **permit**. Auma can read, write, remember and suggest
