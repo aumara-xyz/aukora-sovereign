@@ -34,6 +34,20 @@
 .approval-digest code { font-family: var(--ak-mono); overflow-wrap: anywhere; }
 .approval-model-note { margin: 0; }
 
+/* The card's tone boxes the summary and every detail beneath it (Peter, 2026-10-18): a 1px border in the tone and a
+   faint tint of it, red for a critical card and blue for a routine one. Text keeps its own colours, so it stays
+   readable on either tint. */
+.approval-card > .approval-head {
+  margin: 10px 10px 0;
+  border: 1px solid color-mix(in srgb, var(--ak-tone) 45%, transparent);
+  border-radius: var(--ak-row-radius, 12px);
+  background: color-mix(in srgb, var(--ak-tone) 9%, transparent);
+}
+.approval-card .approval-body > .ak-fields, .approval-card .approval-body > .approval-fold {
+  border-color: color-mix(in srgb, var(--ak-tone) 38%, transparent);
+  background: color-mix(in srgb, var(--ak-tone) 5%, transparent);
+}
+
 /* Folds for the exact changes, the exact card and the authorization: static record rows that open in place. */
 .approval-fold { margin-top: 6px; }
 .approval-fold > summary { list-style: none; }

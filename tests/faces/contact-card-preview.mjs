@@ -10,19 +10,26 @@ import { canonical, domainDigest, hex, sha256 } from '../../app/release/ui/owner
 // The NIP-19 example key and its npub (the same pair the gate's own test uses).
 const key = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
 const npub = 'npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6';
-const action = { key, label: 'Ravi', op: 'contact.add', pairing: null, schema: 'aukora:messaging-action:v1' };
+// ?card=routine shows a made-up routine sample instead, only to review the routine (blue) colouring: its wording is
+// not the gate's, and the gate marks most cards critical today.
+const routine = new URLSearchParams(location.search).get('card') === 'routine';
+const action = routine
+  ? { class: 'memory', per_day: 500, schema: 'aukora:preview-sample:v1' }
+  : { key, label: 'Ravi', op: 'contact.add', pairing: null, schema: 'aukora:messaging-action:v1' };
 const card = {
-  v: 1, risk: 'critical',
-  says: `Approve this exact Aukora ID as a contact: ${npub}. This approves the ID, not the person. Before you approve, compare it with them in person or on a call you trust.`,
+  v: 1, risk: routine ? 'routine' : 'critical',
+  says: routine ? 'Preview sample: let Auma keep up to 500 notes a day in Memory without asking each time, until you withdraw it.'
+    : `Approve this exact Aukora ID as a contact: ${npub}. This approves the ID, not the person. Before you approve, compare it with them in person or on a call you trust.`,
   facts: Object.keys(action).sort().map(name => [name, action[name]]),
-  from_to: { contact: key }, model_note: '',
+  from_to: routine ? { class: 'memory' } : { contact: key }, model_note: '',
 };
+const target = routine ? 'door/standing-grants.json' : 'messaging/contacts.json';
 const proposalId = '6'.repeat(32);
 const encode = value => new TextEncoder().encode(canonical(value));
 const cardBytes = encode(card);
-const operation = { v: 1, node: '7'.repeat(32), target: 'messaging/contacts.json', base_sha256: 'absent', new_sha256: hex(await sha256(encode(action))), cell: null };
+const operation = { v: 1, node: '7'.repeat(32), target, base_sha256: 'absent', new_sha256: hex(await sha256(encode(action))), cell: null };
 const authorization = {
-  ...operation, subject: `aukora:1:${'5'.repeat(64)}`, op: 'apply', proposal: proposalId,
+  ...operation, subject: `aukora:1:${'5'.repeat(64)}`, op: routine ? 'grant' : 'apply', proposal: proposalId,
   display_sha256: hex(await sha256(cardBytes)), challenge: '8'.repeat(32), expires_at: Date.now() + 300_000, epoch: 1,
   operation: hex(await domainDigest('aukora:operation-content:v1', encode(operation))),
 };

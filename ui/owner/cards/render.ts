@@ -117,8 +117,9 @@ function label(document: Document, text: string): HTMLElement {
 export function renderCard(document: Document, card: ApprovalCard,
   context?: { readonly target: string; readonly op: Authorization["op"] }): HTMLElement {
   const kind = context ? cardKind(context.target, context.op) : "change";
-  // Tone by risk: routine blue, critical gold; red only for the critical warning pill.
-  const tone = card.risk === "critical" ? "ak-tone-gold" : "ak-tone-blue";
+  // Tone by the gate's risk (Peter, 2026-10-18): critical red, routine blue. The tone boxes the summary and each
+  // detail (cards.css), and rings the passkey action.
+  const tone = card.risk === "critical" ? "ak-tone-red" : "ak-tone-blue";
   const cardView = document.createElement("article");
   cardView.className = `ak-portal ak-portal--free ${tone} approval-card approval-card-${card.risk}`;
   cardView.dataset.open = "yes";

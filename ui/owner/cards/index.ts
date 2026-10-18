@@ -157,7 +157,7 @@ export class ApprovalCards implements ApprovalPaneService {
         const authorize = document.createElement("button");
         authorize.type = "button";
         // Unmistakable: the card's tone, ringed as an opened portal, with the owner mark and the passkey cue.
-        authorize.className = `ak-action ${card.risk === "critical" ? "ak-tone-gold" : "ak-tone-blue"} approval-passkey`;
+        authorize.className = `ak-action ${card.risk === "critical" ? "ak-tone-red" : "ak-tone-blue"} approval-passkey`;
         const labels = { apply: "Approve", retire: "Retire", release: "Approve release",
           grant: "Approve grant", permission: "Approve permission" };
         const actionLabel = document.createElement("span");
