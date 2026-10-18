@@ -97,7 +97,8 @@ LAUNCHER_PINS = {
     "crates/launcher/clippy.toml": "01624458119e6627b775a8f2b21e943e3f13f08c32985500b5da1d88f7cf0e38",
 }
 DEPLOY_PINS = {
-    "deploy/engine/engine-run.sh": "d89cf7aca9c8ed52a2e56a7df01eb950a5e8cba8b6a4855316d0a6b4d62bcd42",
+    "deploy/engine/engine-run.sh": "0594f6375ab8e6106d0cfaf709c6b2aa26186ec31811a1a97fa2e7aa4c109fe1",
+    "deploy/engine/engine_oom.py": "94702147152e7e83e364b53d3b64b87b2f01df571d3db0c597b8ca6925995828",
     "deploy/units/systemd-time-wait-sync.service": "5e02f9b7436f2873619068b1a7f24a1b2cdac7c5ad6e8bff7518dd38aff4aca2",
     "deploy/spawn/caddy.py": "65a9f8a77cab67aee3b727dbe5cd318b12fbcf3de26b39997ec298841deebb53",
     "deploy/spawn/core.py": "0fa5d0f312352b51b9414319594f56d44ed0fe96645efb9fb6d01aa9e7d14f24",
@@ -135,7 +136,6 @@ CLAIM_PINS = {
 RELEASE_POINTER_PINS = {
     "crates/supervisor/src/release/pointer.rs": "189978661a121cad12c42e45ccdc54bf46ca77ef711e43c6f09dbc961360b41b",
 }
-
 
 def check_source_pins(rule, expected, inventory):
     if set(inventory) != set(expected):
@@ -968,7 +968,7 @@ check_source_pins("pin-drift", LAUNCHER_PINS, launcher_inventory)
 # 15. Row 131: inspect authorization before dispatch and forbid release authorization data in the tree.
 # Independent pins retain the reviewed helper bodies and shell entry points; deploy code is never executed here.
 deploy_inventory = [p for p in files if p.startswith(("deploy/spawn/", "deploy/upgrade/"))]
-deploy_inventory += ["scripts/reproduce.sh", "deploy/engine/engine-run.sh"]
+deploy_inventory += ["scripts/reproduce.sh", "deploy/engine/engine_oom.py", "deploy/engine/engine-run.sh"]
 deploy_inventory += [p for p in files if p.startswith("deploy/units/") and (p.endswith(".conf") or p.endswith("/systemd-time-wait-sync.service"))]
 check_source_pins("deploy-guard", DEPLOY_PINS, deploy_inventory)
 check_source_pins("deploy-guard", CLAIM_PINS, CLAIM_PINS)

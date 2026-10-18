@@ -22,18 +22,18 @@ class SandboxRestartPolicy(unittest.TestCase):
             r'"\$ENGINE_MEMORY_MIB" "\$ENGINE_CPU_MILLI"', SCRIPT, re.S).group(1)
         name = "/openshell-default--auma-engine-example"
         self.containers = [
-            {"Name": name, "State": {"Running": True}, "HostConfig": {
+            {"Id": "1" * 64, "Name": name, "State": {"Running": True}, "HostConfig": {
                 "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
-                "Memory": 5632 << 20, "NanoCpus": 1500 * 1000000, "PidsLimit": 2048,
+                "Memory": 3584 << 20, "NanoCpus": 1500 * 1000000, "PidsLimit": 2048,
                 "Mounts": [{"Type": "tmpfs", "Target": "/tmp", "TmpfsOptions": {"SizeBytes": 1 << 30}}],
             }},
-            {"Name": name + "-supervisor", "State": {"Running": True}, "HostConfig": {
+            {"Id": "2" * 64, "Name": name + "-supervisor", "State": {"Running": True}, "HostConfig": {
                 "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
             }},
         ]
 
     def run_verify(self, containers):
-        return subprocess.run([sys.executable, "-I", "-c", self.verify, "5632", "1500"],
+        return subprocess.run([sys.executable, "-I", "-c", self.verify, "3584", "1500"],
                               input=json.dumps(containers), text=True, capture_output=True)
 
     def test_checks_all_containers_including_stopped_ones(self):

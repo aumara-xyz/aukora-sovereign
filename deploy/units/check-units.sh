@@ -56,7 +56,7 @@ check_properties aukora-egress.service $retry_properties Restart=on-failure Rest
 
 check_unit aukora-sovereign.service 7.5 User=aukora ProtectSystem=strict ProtectHome=yes PrivateTmp=yes \
     ProtectKernelModules=yes ProtectClock=yes LockPersonality=yes RestrictRealtime=yes RestrictSUIDSGID=yes \
-    RemoveIPC=yes SystemCallArchitectures=native Delegate=yes UMask=0077
+    RemoveIPC=yes SystemCallArchitectures=native Delegate=yes UMask=0077 OOMScoreAdjust=-900 MemoryMin=268435456
 # shellcheck disable=SC2086
 check_unit aukora-egress.service 5.0 $egress_properties
 # shellcheck disable=SC2086
@@ -84,6 +84,12 @@ RestrictNamespaces=yes MemoryDenyWriteExecute=yes PrivateNetwork=yes CapabilityB
         # shellcheck disable=SC2086
         check_unit "$unit" 3.0 $kira_properties "IPAddressDeny=::/0 0.0.0.0/0" "RestrictAddressFamilies=AF_INET AF_UNIX"
     done
+    check_properties aukora-kira.service OOMScoreAdjust=-500
+    for unit in aukora-kira-embed.service aukora-kira-rerank.service; do
+        check_properties "$unit" OOMScoreAdjust=500 MemoryHigh=1073741824 MemoryMax=1610612736 LimitCORE=0
+    done
+    check_properties aukora-openshell-gateway.service OOMScoreAdjust=-500
+    check_properties aukora-engine.service OOMScoreAdjust=500
     check_unit aukora-openshell-gateway.service 6.0 NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes \
         PrivateTmp=yes PrivateDevices=yes RestrictNamespaces=yes "IPAddressDeny=::/0 0.0.0.0/0" \
         CapabilityBoundingSet=cap_net_bind_service

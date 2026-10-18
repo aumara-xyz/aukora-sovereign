@@ -23,6 +23,9 @@ Restart=on-failure
 RestartSec=3s
 RestartSteps=6
 RestartMaxDelaySec=300s
+# Keep memory service available before sacrificing either replaceable llama model process.
+OOMScoreAdjust=-500
+LimitCORE=0
 StateDirectory=aukora-kira
 StateDirectoryMode=0700
 ReadWritePaths=/run/aukora-kira

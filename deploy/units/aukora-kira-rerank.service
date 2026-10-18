@@ -22,6 +22,12 @@ Restart=on-failure
 RestartSec=5s
 RestartSteps=6
 RestartMaxDelaySec=300s
+# Each ~640 MB mmap plus inference buffers fits below 1 GiB in normal use; throttle there, kill at 1.5 GiB.
+# Both model maxima total 3 GiB; engine-run.sh reserves 4.5 GiB for them and the host on an 8 GiB node.
+OOMScoreAdjust=500
+MemoryHigh=1G
+MemoryMax=1536M
+LimitCORE=0
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

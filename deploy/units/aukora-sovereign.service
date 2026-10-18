@@ -38,6 +38,10 @@ RestartSteps=6
 RestartMaxDelaySec=300s
 TimeoutStopSec=10s
 KillMode=control-group
+# The door, gate and model broker share this process: keep authority ahead of replaceable workloads under OOM.
+# Protect its first 256 MiB; the engine's container cap reserves host/model headroom separately.
+OOMScoreAdjust=-900
+MemoryMin=256M
 
 # State survives every upgrade and rollback; the runtime directory is wiped at stop and holds the cage root.
 StateDirectory=aukora

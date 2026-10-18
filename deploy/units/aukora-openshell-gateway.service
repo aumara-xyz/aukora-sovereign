@@ -20,6 +20,9 @@ Restart=on-failure
 RestartSec=5s
 RestartSteps=6
 RestartMaxDelaySec=300s
+# Keep the gateway's control plane ahead of the engine workload under host memory pressure.
+OOMScoreAdjust=-500
+LimitCORE=0
 StateDirectory=aukora-openshell
 StateDirectoryMode=0700
 UMask=0077

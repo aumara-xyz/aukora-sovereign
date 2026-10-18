@@ -32,6 +32,10 @@ ExecStopPost=/opt/aukora/current/deploy/engine/engine-run.sh delete
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=10s
+# This score covers the host CLI; engine_oom.py sets +500 on the actual sandbox processes before activation.
+# No MemoryMax here: Docker owns the sandbox's one hard cap (engine-run.sh); this unit only drives the CLI.
+OOMScoreAdjust=500
+LimitCORE=0
 TimeoutStartSec=180s
 # The stop bounds ExecStopPost too: OpenShell's asynchronous delete, engine-run.sh's 10 s wait and its docker rm -f
 # fallback must all fit, or a hung sandbox outlives the stop (Sonnet sweep C3).

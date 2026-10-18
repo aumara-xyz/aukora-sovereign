@@ -31,7 +31,11 @@ RuntimeMaxSec=90s
 TimeoutStopSec=10s
 KillMode=control-group
 TasksMax=64
-MemoryMax=2G
+# Leave room for the live authority while an offered release is probed: the 1.5 GiB host reserve includes this
+# 512 MiB ceiling. Probe pressure throttles at 384 MiB; a failure is reported without sacrificing the authority.
+MemoryHigh=384M
+MemoryMax=512M
+OOMScoreAdjust=500
 
 # Nothing of the live node: its state, configuration, secrets, sockets, Kira, the engine.
 InaccessiblePaths=-/var/lib/aukora -/var/lib/private/aukora -/var/lib/aukora-release -/var/lib/aukora-kira -/var/lib/aukora-engine -/var/lib/aukora-openshell -/etc/aukora -/run/aukora -/run/aukora-door -/run/aukora-broker -/run/aukora-engine-ctl -/run/aukora-engine -/run/aukora-kira -/root

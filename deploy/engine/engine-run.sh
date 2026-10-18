@@ -41,8 +41,9 @@ MOUNTS='{"docker":{"mounts":[
 {"type":"tmpfs","target":"/tmp","size_bytes":1073741824,"mode":1023,"options":["exec"]}]}}'
 
 # Resource caps (Auma's review R3: a cargo build, a fork bomb or a memory hog must not take down the supervisor, Kira
-# or the gateway, which share the VM). The sandbox gets three quarters of the CPUs and the memory less 2.5 GiB, so on a
-# 2 vCPU / 8 GiB node it has 1.5 CPUs and about 5.2 GiB and the host keeps half a CPU and 2.5 GiB however hard the
+# or the gateway, which share the VM). The sandbox gets three quarters of the CPUs and memory less 4.5 GiB, so on a
+# 2 vCPU / 8 GiB node it has 1.5 CPUs and about 3.5 GiB. Reserve 3 GiB for both model-server maxima and 1.5 GiB for
+# the authority, OS, Docker, gateway and the 512 MiB release probe. The host keeps half a CPU however hard the
 # engine works; OpenShell 0.1.4 sets these on the sandbox container (docker NanoCpus, Memory; RAN on the rehearsal
 # node) and already caps its pids at 2048. /tmp is a tmpfs inside that memory cap, not the container's layer on the
 # host disk (OpenShell refuses a mount on /sandbox, its reserved workspace); /work and /engine-home live on the engine's own fixed-size filesystem
@@ -51,7 +52,7 @@ MOUNTS='{"docker":{"mounts":[
 limits() {
     cpus=$(nproc) && memory_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo) || return 1
     ENGINE_CPU_MILLI=$((cpus * 750))
-    ENGINE_MEMORY_MIB=$((memory_kib / 1024 - 2560))
+    ENGINE_MEMORY_MIB=$((memory_kib / 1024 - 4608))
     [ "$ENGINE_MEMORY_MIB" -ge 1536 ] || { echo "engine-run: too little memory for the engine and its host" >&2; return 1; }
 }
 
@@ -142,7 +143,7 @@ for never in ("docker.sock", "/etc/aukora", "/var/lib/aukora", "/run/aukora-kira
     container_ids=$(/usr/bin/docker ps -aq --filter "name=^/openshell-default--$NAME-") || return 1
     [ -n "$container_ids" ] || { echo "engine-run: no sandbox containers" >&2; return 1; }
     # The ids returned by Docker are intentionally separate arguments.
-    /usr/bin/docker inspect $container_ids | python3 -I -c '
+    container=$(/usr/bin/docker inspect $container_ids | python3 -I -c '
 import json, sys
 memory, nano = int(sys.argv[1]) << 20, int(sys.argv[2]) * 1000000
 containers = json.load(sys.stdin)
@@ -161,7 +162,9 @@ if host.get("Memory") != memory or host.get("NanoCpus") != nano or not 0 < (host
         or tmpfs.get("/tmp") != 1 << 30:
     print("engine-run: the sandbox container is not capped as asked", file=sys.stderr)
     sys.exit(1)
-' "$ENGINE_MEMORY_MIB" "$ENGINE_CPU_MILLI" || return 1
+print(workloads[0]["Id"])
+' "$ENGINE_MEMORY_MIB" "$ENGINE_CPU_MILLI") || return 1
+    python3 -I /opt/aukora/current/deploy/engine/engine_oom.py "$container" || return 1
     # A live positive assertion, not the absence of a warning. Until it exists the Type=exec unit stays activating
     # and the supervisor serves no engine traffic. The entry watchdog kills on silence and on any disabled row.
     for _ in $(seq 1 30); do
