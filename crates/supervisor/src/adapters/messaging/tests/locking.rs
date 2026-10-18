@@ -182,3 +182,59 @@ fn refusal_snapshot_indexes_extend_only_after_the_observation_commit() -> Result
         Ok(())
     })
 }
+
+struct InterleavingSigner {
+    ledger: Arc<HostLedger>,
+    scope: PrincipalScope,
+    remaining: std::sync::atomic::AtomicUsize,
+}
+impl aura::RecordSigner for InterleavingSigner {
+    fn public_keys(&self) -> Result<Vec<SigningKey>> {
+        use std::sync::atomic::Ordering;
+        if self
+            .remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            // Commit after each detached snapshot was copied, but before its
+            // generation can be adopted by the caller's live connection.
+            write_fact(&self.ledger, self.scope)?;
+        }
+        self.ledger.signer.public_keys()
+    }
+    fn sign_entry_hash(&self, hash: Digest32) -> Result<Signatures> {
+        self.ledger.signer.sign_entry_hash(hash)
+    }
+}
+
+#[test]
+fn changing_history_falls_back_to_a_locked_projection_and_runs_once() -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut rig = rig()?;
+    let action = contact_action(87, "Contact during traffic");
+    let OwnerAction::Contact(ContactChange::Add(draft)) = &action else {
+        unreachable!()
+    };
+    rig.approve(&action, 1)?;
+    let signer = Arc::new(InterleavingSigner {
+        ledger: Arc::clone(&rig.ledger),
+        scope: rig.scope,
+        remaining: AtomicUsize::new(3),
+    });
+    let ledger = HostLedger::open(
+        &rig.directory.join("aura.sqlite3"),
+        signer.clone(),
+        Arc::new(Clock),
+    )?;
+    let calls = AtomicUsize::new(0);
+    let keys = ledger.messaging(rig.scope, true, |txn| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        txn.contact_keys()
+    })?;
+    assert_eq!(keys, vec![draft.key]);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(signer.remaining.load(Ordering::SeqCst), 0);
+    Ok(())
+}

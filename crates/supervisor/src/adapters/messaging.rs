@@ -66,25 +66,23 @@ impl HostLedger {
                     Ok((NetworkProjection::read(snapshot, scope)?, snapshot.verified()))
                 })?;
             if let Some(result) = self.transition_verified(generation, verified, |txn| {
-                if txn.current_version()? != projection.version {
-                    return Err(refuse("snapshot-head"));
-                }
-                let mut network = NetworkTxn {
-                    inner: txn,
-                    scope,
-                    owner_session,
-                    contacts: projection.contacts,
-                    messages: projection.messages,
-                    pending_messages: BTreeMap::new(),
-                    observations: projection.observations,
-                    pending_refusals: Vec::new(),
-                };
+                let mut network = projection.enter(txn, scope, owner_session)?;
                 operation.take().expect("operation runs once")(&mut network)
             })? {
                 return Ok(result);
             }
         }
-        Err(refuse("history-changed"))
+        // Under sustained writes, serialize one verified projection instead of
+        // refusing an owner call indefinitely. BEGIN IMMEDIATE holds both the
+        // process writer and SQLite writer while the snapshot is copied.
+        self.transition(|txn| {
+            let projection =
+                aura::Ledger::read_snapshot(&self.path, self.services(), |snapshot| {
+                    NetworkProjection::read(snapshot, scope)
+                })?;
+            let mut network = projection.enter(txn, scope, owner_session)?;
+            operation.take().expect("operation runs once")(&mut network)
+        })
     }
 }
 
@@ -95,6 +93,27 @@ struct NetworkProjection {
     observations: aura::ledger::ObservationProjection,
 }
 impl NetworkProjection {
+    fn enter<'a, 'db>(
+        self,
+        txn: &'a mut aura::LedgerTxn<'db>,
+        scope: PrincipalScope,
+        owner_session: bool,
+    ) -> Result<NetworkTxn<'a, 'db>> {
+        if txn.current_version()? != self.version {
+            return Err(refuse("snapshot-head"));
+        }
+        Ok(NetworkTxn {
+            inner: txn,
+            scope,
+            owner_session,
+            contacts: self.contacts,
+            messages: self.messages,
+            pending_messages: BTreeMap::new(),
+            observations: self.observations,
+            pending_refusals: Vec::new(),
+        })
+    }
+
     fn read(snapshot: &aura::ledger::ReadSnapshot<'_>, scope: PrincipalScope) -> Result<Self> {
         let version = snapshot.current_version()?;
         if version.epoch != scope.epoch || snapshot.owner_subject()? != scope.subject {
