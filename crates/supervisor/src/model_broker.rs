@@ -164,6 +164,9 @@ pub struct ModelBroker {
     key_file: KeyFile,
     /// The last key-file line journaled, so a steady condition is said once and not every few seconds.
     key_said: Mutex<Option<String>>,
+    /// One key step at a time: a reconcile pass (which may be saving the approved key) and a new key replacing the held
+    /// one and removing the file never interleave, so a save that began before the swap cannot land after it.
+    key_step: Mutex<()>,
     gate: Arc<GateAdapter>,
     ledger: Arc<HostLedger>,
 }
@@ -211,10 +214,14 @@ impl ModelBroker {
         }
         // The card is up: the new key replaces the held one first, then the stored one is removed (in this order, so
         // keep_key, which re-stores a missing file only while the held key is the approved one, cannot write the old key
-        // back in between). The new key is stored only after the owner approves its card; never for a declined one.
-        self.hold(key, now)?;
-        if self.key_file.remove().is_err() {
-            eprintln!("model-broker: the stored key could not be removed");
+        // back in between), under key_step, so a save already under way finishes before the file is removed. The new
+        // key is stored only after the owner approves its card; never for a declined one.
+        {
+            let _step = self.key_step.lock().map_err(|_| refuse("model-key-lock"))?;
+            self.hold(key, now)?;
+            if self.key_file.remove().is_err() {
+                eprintln!("model-broker: the stored key could not be removed");
+            }
         }
         eprintln!("model-broker: a key was entered; awaiting the owner's approval ({fingerprint})");
         Ok(KeyStage::AwaitingApproval(fingerprint))
@@ -223,13 +230,17 @@ impl ModelBroker {
     /// Forget the key: out of memory, and the stored file removed. The owner's approval card is left as it is.
     #[allow(dead_code)] // [not yet reached: the owner's "forget the key" action is not built]
     pub fn clear_key(&self) -> Result<()> {
+        let _step = self.key_step.lock().map_err(|_| refuse("model-key-lock"))?;
         self.keys.clear()?;
         self.key_file.remove()
     }
 
     /// One reconcile pass of the key file against the approved key digest (`None`: no approval known), journaled.
     fn sync_key(&self, approved: Option<&str>, now: u64) -> Step {
-        let step = reconcile(&self.keys, &self.key_file, approved, now);
+        let step = match self.key_step.lock() {
+            Ok(_step) => reconcile(&self.keys, &self.key_file, approved, now),
+            Err(_) => Step::Refused("key-step-lock"),
+        };
         let line = match step {
             Step::Idle => None,
             Step::Loaded => Some("the stored key was loaded; its digest is the one you approved".to_owned()),
@@ -343,7 +354,7 @@ pub fn start_in_node(
         let listener = engine_link::bind(&config.socket, true)?;
         eprintln!("model-broker: serving on {} (DeepSeek, owner-approved key and budget only)", config.socket.display());
         tokio::spawn(engine_link::serve(link, listener));
-        Ok(Arc::new(ModelBroker { config, keys, key_file: KeyFile::new(key_dir), key_said: Mutex::new(None), gate, ledger }))
+        Ok(Arc::new(ModelBroker { config, keys, key_file: KeyFile::new(key_dir), key_said: Mutex::new(None), key_step: Mutex::new(()), gate, ledger }))
     })();
     match started {
         Ok(broker) => {
