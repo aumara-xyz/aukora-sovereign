@@ -17,7 +17,9 @@ python3 -B -m unittest discover -s tests/checks -p 'test_*.py'
 if [ "${AUKORA_SKIP_NODE_TESTS:-}" = 1 ]; then
   echo "NODE TESTS SKIPPED (AUKORA_SKIP_NODE_TESTS=1): face, deploy, owner and shell tests"
 else
-  node --test engine/plugins/aukora-face/*/test/*.test.ts tests/deploy/*.test.mjs tests/owner/*.mjs tests/shell/*.mjs
+  # tests/faces/*-preview.mjs are browser review fixtures, not tests; the app faces' view and model tests run here.
+  node --test engine/plugins/aukora-face/*/test/*.test.ts tests/deploy/*.test.mjs tests/owner/*.mjs tests/shell/*.mjs \
+    tests/app/*.mjs tests/faces/*-view.mjs tests/faces/*-model.mjs
 fi
 # The stranger's verifier: the standalone verify.py must match its sources, and the pinned vectors replay through both
 # the Rust aukora-verify and the Python twin (known divergences are listed in scripts/verifier-vectors-known.json).
