@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 use crate::shared::note::{Form, NoteDraft, Privacy, NOTE_KIND, QUARANTINE_KIND, SUPERSEDE_KIND};
 use nostr::{Event, SecretKey};
 
+mod evidence;
+
 /// Content words hashed into 256 buckets plus a constant bias dimension: deterministic and model-free.
 struct Words;
 impl Embedder for Words {
@@ -602,7 +604,11 @@ fn a_planted_unreviewed_claim_is_undetermined_not_found() {
 #[test]
 fn found_needs_owner_words_an_owner_review_an_owner_import_or_two_authors() {
     let (peter, a, b, c) = (key(), key(), key(), key());
-    let ask = |s: &SharedStore, text: &str| s.recall(&query(text, "x"), None, None).unwrap();
+    let ask = |s: &SharedStore, text: &str| {
+        let mut q = query(text, "x");
+        q.include_local = true;
+        s.recall(&q, None, None).unwrap()
+    };
     let verdict = |s: &SharedStore, text: &str| {
         let r = ask(s, text);
         (r.status, r.items.first().map_or("", |i| i.evidence))
@@ -621,19 +627,21 @@ fn found_needs_owner_words_an_owner_review_an_owner_import_or_two_authors() {
     let first = note(&mut s, &a, "The kettle lives on the top shelf.", 4);
     put_sourced(&mut s, &a, "The kettle was moved to the top shelf in May.", Capture::ModelGenerated, vec![first], 5);
     assert_eq!(verdict(&s, "where does the kettle live"), (RecallStatus::Undetermined("similar-note-unverified"), "unverified"));
-    // Two agents each observe on their own; a third note that cites both stands on two different authors.
-    let seen_a = put_sourced(&mut s, &a, "Observed the lamp by the window at noon.", Capture::ModelGenerated, vec![], 6);
-    let seen_b = put_sourced(&mut s, &b, "Saw a reading lamp near the east window.", Capture::ModelGenerated, vec![], 7);
+    // Independent roots in separate privacy levels make the same statement; a reader of both can verify support.
+    let words = "The lamp is by the east window.";
+    let seen_a = put_sourced(&mut s, &a, words, Capture::ModelGenerated, vec![], 6);
+    let seen_b = put_private(&mut s, &b, words, Lane::Evidence, Capture::ModelGenerated, Review::Remembered, Privacy::Local, 7);
     assert_eq!(verdict(&s, "where is the lamp window").0, RecallStatus::Undetermined("similar-note-unverified"), "each alone is unverified");
-    let both = put_sourced(&mut s, &c, "The lamp is by the east window.", Capture::ModelGenerated, vec![seen_a.clone(), seen_b.clone()], 8);
+    let both = put_sourced(&mut s, &c, words, Capture::ModelGenerated, vec![seen_a.clone(), seen_b.clone()], 8);
     let r = ask(&s, "where is the lamp window");
     assert_eq!(r.status, RecallStatus::Found);
-    let verified = r.items.iter().find(|i| i.id == both).unwrap();
+    let verified = r.items.iter().find(|i| i.id == both || i.also_by_ids.contains(&both)).unwrap();
     assert_eq!((verified.evidence, verified.roots), ("corroborated", 2));
     // The same two roots from ONE author is still one hand.
-    let one_a = put_sourced(&mut s, &a, "Noted the rug under the table.", Capture::ModelGenerated, vec![], 9);
-    let one_b = put_sourced(&mut s, &a, "Noted the rug is a blue rug.", Capture::ModelGenerated, vec![], 10);
-    put_sourced(&mut s, &c, "The rug under the table is blue.", Capture::ModelGenerated, vec![one_a, one_b], 11);
+    let rug = "The rug under the table is blue.";
+    let one_a = put_sourced(&mut s, &a, rug, Capture::ModelGenerated, vec![], 9);
+    let one_b = put_private(&mut s, &a, rug, Lane::Evidence, Capture::ModelGenerated, Review::Remembered, Privacy::Local, 10);
+    put_sourced(&mut s, &c, rug, Capture::ModelGenerated, vec![one_a, one_b], 11);
     assert_eq!(verdict(&s, "what colour is the rug under the table").0, RecallStatus::Undetermined("similar-note-unverified"));
     // Two authors' web-derived roots are not corroboration: web material never counts, whoever repeats it.
     let web_a = put_sourced(&mut s, &a, "The manual says the oven runs hot.", Capture::WebDerived, vec![], 12);
@@ -673,13 +681,13 @@ fn identical_unsourced_claims_are_one_root_repeated_not_support() {
     // A restatement that cites its source stays under that one root (B3).
     let again = put_sourced(&mut s, &b, "The relay endpoint rotates every Monday, as noted.", Capture::ModelGenerated, vec![ids[0].clone()], 20);
     assert_eq!(s.get(&again).unwrap().unwrap().roots, vec![ids[0].clone()]);
-    // The same statement from two authors who each cite a DIFFERENT author's observation stands on two hands.
+    // Two copies citing different observations still do not have support for this statement.
     let (seen_a, seen_b) = (seen[0].clone(), seen[1].clone());
     let by_a = put_sourced(&mut s, &a, "The gate stays latched overnight.", Capture::ModelGenerated, vec![seen_b], 30);
     let by_b = put_sourced(&mut s, &b, "The gate stays latched overnight.", Capture::ModelGenerated, vec![seen_a], 31);
     let r = s.recall(&query("is the gate latched overnight", "x"), None, None).unwrap();
     let item = r.items.iter().find(|i| i.id == by_a || i.id == by_b).unwrap();
-    assert_eq!((r.status, item.evidence), (RecallStatus::Found, "corroborated"));
+    assert_eq!((r.status, item.evidence), (RecallStatus::Undetermined("similar-note-unverified"), "unverified"));
 }
 
 /// Argon RT-5: a web-derived note with the same words as an earlier model-generated one was folded into it, and recall
@@ -709,24 +717,27 @@ fn unreadable_and_web_derived_roots_are_not_corroboration() {
     let (peter, a, b, c) = (key(), key(), key(), key());
     let mut s = store_with(&[("peter", &peter, true), ("a", &a, false), ("b", &b, false), ("c", &c, false)]);
     // Two authors' web-derived roots, cited by a note that is not itself marked web-derived.
-    let web_a = put_sourced(&mut s, &a, "The manual says the oven runs hot.", Capture::WebDerived, vec![], 1);
-    let web_b = put_sourced(&mut s, &b, "A forum post says the oven runs hot.", Capture::WebDerived, vec![], 2);
-    put_sourced(&mut s, &c, "So the oven runs hot.", Capture::ModelGenerated, vec![web_a, web_b], 3);
+    let words = "The oven runs hot.";
+    let web_a = put_sourced(&mut s, &a, words, Capture::WebDerived, vec![], 1);
+    let web_b = put_private(&mut s, &b, words, Lane::Evidence, Capture::WebDerived, Review::Remembered, Privacy::Local, 2);
+    put_sourced(&mut s, &c, words, Capture::ModelGenerated, vec![web_a, web_b], 3);
     let mut q = query("does the oven run hot", "x");
     q.include_web = true;
+    q.include_local = true;
     let r = s.recall(&q, None, None).unwrap();
-    let item = r.items.iter().find(|i| i.text == "So the oven runs hot.").unwrap();
+    let item = r.items.iter().find(|i| i.text == words && i.also_by_ids.len() == 1).unwrap();
     assert_eq!((item.evidence, r.status), ("unverified", RecallStatus::Undetermined("similar-note-unverified")));
     // A hidden root: the owner's local note and an agent's own note, cited by a third. Only one root is readable.
-    let hidden = put_private(&mut s, &peter, "The cellar key hangs by the door.", Lane::Evidence, Capture::OwnerTyped, Review::Remembered, Privacy::Local, 4);
-    let seen = put_sourced(&mut s, &a, "A key hangs near the cellar door.", Capture::ModelGenerated, vec![], 5);
-    let both = put_sourced(&mut s, &c, "The cellar key is by the door.", Capture::ModelGenerated, vec![hidden, seen], 6);
+    let words = "The cellar key is by the door.";
+    let hidden = put_private(&mut s, &peter, words, Lane::Evidence, Capture::ModelGenerated, Review::Remembered, Privacy::Local, 4);
+    let seen = put_sourced(&mut s, &a, words, Capture::ModelGenerated, vec![], 5);
+    let both = put_sourced(&mut s, &c, words, Capture::ModelGenerated, vec![hidden, seen], 6);
     let r = s.recall(&query("where is the cellar key", "x"), None, None).unwrap();
-    let item = r.items.iter().find(|i| i.id == both).unwrap();
+    let item = r.items.iter().find(|i| i.id == both || i.also_by_ids.contains(&both)).unwrap();
     assert_eq!((item.evidence, item.roots), ("unverified", 1), "a root the caller cannot read adds neither an author nor a count");
     let mut owner = query("where is the cellar key", "x");
     owner.include_local = true;
-    let item = s.recall(&owner, None, None).unwrap().items.into_iter().find(|i| i.id == both).unwrap();
+    let item = s.recall(&owner, None, None).unwrap().items.into_iter().find(|i| i.id == both || i.also_by_ids.contains(&both)).unwrap();
     assert_eq!((item.evidence, item.roots), ("corroborated", 2), "the owner can read both roots");
 }
 

@@ -547,7 +547,7 @@ impl SharedStore {
                 if meta.slot.as_deref().is_some_and(|slot| !may_write_slot(slot, &agent.name, agent.owner)) {
                     return Err(refuse("slot-refused"));
                 }
-                // Ancestry is computed here, from notes the store holds; a tag cannot declare independence.
+                // Citations union ancestry only; recall checks matching statements separately before crediting support.
                 let mut roots = BTreeSet::new();
                 for source in &meta.sources {
                     let src_seq: Option<i64> = tx

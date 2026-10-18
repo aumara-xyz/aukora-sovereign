@@ -355,7 +355,7 @@ impl Evidence {
     }
 }
 
-/// What a note stands on: owner review, the owner's words, the owner's archive import, or ancestry roots written by at
+/// What a note stands on: owner review, the owner's words, the owner's archive import, or matching roots written by at
 /// least `2` different authors (`root_authors`). Web-derived material never counts as corroborated, whoever repeats it.
 fn provenance(meta: &NoteMeta, root_authors: usize) -> Evidence {
     if meta.review == Review::OwnerSigned {
@@ -382,14 +382,14 @@ pub fn readable_roots(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(
     Ok(out)
 }
 
-/// The distinct authors whose notes `note` goes back to, counting only roots the caller can read, that are not
-/// web-derived and whose author is not quarantined: a root nobody can read, or one taken from the web, is not an
-/// independent hand however many authors repeated it.
+/// Distinct authors of readable, non-web roots making the SAME statement. Citations record ancestry, not support:
+/// a root about something else cannot corroborate a claim. Unsourced repetitions still share one root ("repeated by").
 pub fn corroborating_authors(store: &SharedStore, note: &StoredNote, readable: &dyn Fn(&StoredNote) -> bool) -> Result<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     for root in &note.roots {
         if let Some(n) = store.get(root)? {
-            if readable(&n) && n.meta.capture != Capture::WebDerived && !n.quarantined {
+            if readable(&n) && n.meta.capture != Capture::WebDerived && !n.quarantined
+                && n.meta.statement_hash == note.meta.statement_hash {
                 out.insert(hex(n.event.pubkey.as_bytes()));
             }
         }

@@ -369,15 +369,16 @@ fn an_unreviewed_agent_claim_is_undetermined_until_the_owner_or_two_authors_stan
     let r = ask(&grok);
     assert_eq!(r["result"]["status"], "found", "{r}");
     assert_eq!(r["result"]["items"][0]["evidence"], "owner-words");
-    // Two agents' separate observations plus a note that cites both are an answer too.
-    let a = call(&f.state, &claude, "remember", note("Saw the green ledger on the shelf by the door", "builders"))["result"]["id"].clone();
-    let b = call(&f.state, &grok, "remember", note("A green ledger sits near the front door", "builders"))["result"]["id"].clone();
-    let mut both = note("The green ledger is by the front door", "builders");
+    // Two independent roots stating the same claim support a reader who can open both.
+    let words = "The green ledger is by the front door";
+    let a = call(&f.state, &claude, "remember", note(words, "local"))["result"]["id"].clone();
+    let b = call(&f.state, &grok, "remember", note(words, "builders"))["result"]["id"].clone();
+    let mut both = note(words, "builders");
     both["sources"] = json!([a, b]);
     call(&f.state, &claude, "remember", both);
-    let r = call(&f.state, &grok, "recall", json!({"query": "where is the green ledger"}));
+    let r = call(&f.state, &owner, "recall", json!({"query": "where is the green ledger", "author": "claude"}));
     assert_eq!(r["result"]["status"], "found", "{r}");
-    assert!(r["result"]["items"].as_array().unwrap().iter().any(|i| i["evidence"] == "corroborated" && i["roots"].as_array().unwrap().len() == 2));
+    assert!(r["result"]["items"].as_array().unwrap().iter().any(|i| i["evidence"] == "corroborated" && i["roots"].as_array().unwrap().len() == 2), "{r}");
 }
 
 #[test]

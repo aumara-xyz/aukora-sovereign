@@ -4,10 +4,15 @@
 
 use super::*;
 
+
 /// A recall gathered under the lock, then (as if while the models ran) the store changes, then the answer is read.
 fn recall_across(f: &Fixture, token: &str, query: &str, between: impl FnOnce()) -> Result<Value> {
+    recall_across_params(f, token, json!({"query": query}), between)
+}
+
+fn recall_across_params(f: &Fixture, token: &str, params: Value, between: impl FnOnce()) -> Result<Value> {
     let caller = lock(&f.state).caller(token).unwrap();
-    let (prepared, _) = recall_gather(&f.state, &caller, parse(json!({"query": query})).unwrap()).unwrap();
+    let (prepared, _) = recall_gather(&f.state, &caller, parse(params).unwrap()).unwrap();
     between();
     let outcome = prepared.finish(None);
     recall_answer(&f.state, &caller, &outcome)
@@ -66,47 +71,52 @@ fn a_note_whose_author_is_revoked_mid_recall_reads_as_a_fresh_recall_would() {
 fn found_that_rests_on_corroboration_does_not_outlive_a_root_quarantined_in_the_gap() {
     let f = fixture();
     let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
-    // N cites two roots by different authors: corroborated, found.
-    let a = remember_id(&f, &claude, "Saw the green ledger on the shelf by the door");
-    let b = remember_id(&f, &grok, "A green ledger sits near the front door");
-    let mut n = note("The green ledger is on the shelf by the front door", "builders");
+    // N cites two independent roots stating the same claim, in separate privacy levels.
+    let words = "The green ledger is on the shelf by the front door";
+    let a = call(&f.state, &claude, "remember", note(words, "local"))["result"]["id"].as_str().unwrap().to_owned();
+    let b = remember_id(&f, &grok, words);
+    let mut n = note(words, "builders");
     n["sources"] = json!([a, b]);
     let n = call(&f.state, &owner, "remember", n)["result"]["id"].as_str().unwrap().to_owned();
     let q = "where is the green ledger";
-    let quiet = recall_across(&f, &grok, q, || {}).unwrap();
+    let quiet = recall_across(&f, &owner, q, || {}).unwrap();
     assert_eq!(quiet["status"], "found", "{quiet}");
-    assert!(quiet["items"].as_array().unwrap().iter().any(|i| i["id"] == n.as_str() && i["evidence"] == "corroborated"));
+    assert!(quiet["items"].as_array().unwrap().iter().any(|i| i["text"] == words && i["evidence"] == "corroborated"));
     // While the reranker would run, the owner quarantines one root's author. N is still a current note, but it now
     // stands on one reader-visible hand: the answer is a lead, and the label says so.
     let claude_key = lock(&f.state).pubkey_of("claude").unwrap();
-    let after = recall_across(&f, &grok, q, || {
+    let after = recall_across(&f, &owner, q, || {
         assert_eq!(call(&f.state, &owner, "quarantine_source", json!({"pubkey": claude_key}))["ok"], true);
     })
     .unwrap();
     assert_eq!((after["status"].clone(), after["reason"].clone()), (json!("undetermined"), json!("similar-note-unverified")), "{after}");
-    let shown = after["items"].as_array().unwrap().iter().find(|i| i["id"] == n.as_str()).expect("N is still current");
+    let shown = after["items"].as_array().unwrap().iter().find(|i| i["id"] == n.as_str() || i["also_by_ids"].as_array().is_some_and(|ids| ids.contains(&json!(n)))).expect("N is still current");
     assert_eq!(shown["evidence"], "unverified", "{shown}");
 }
 
-/// The same, when the corroborated copy is only a repeater folded into an earlier unsourced note and is superseded in the gap.
+/// A corroborated repeater stops justifying an earlier unsourced copy when it is withdrawn in the gap.
 #[test]
 fn found_that_rests_on_a_repeater_does_not_outlive_it() {
     let f = fixture();
     let (owner, claude, grok) = (f.owner.clone(), f.claude.clone(), f.grok.clone());
-    let a = remember_id(&f, &claude, "Saw the red ledger on the shelf by the door");
-    let b = remember_id(&f, &grok, "A red ledger sits near the front door");
     let words = "The red ledger is on the shelf by the front door";
-    // The earliest copy is plain and unsourced and stands for the statement; the corroborated one is folded into it.
-    remember_id(&f, &claude, words);
+    // Each author's local note is an independent root. The owner's plain copy is kept; its later sourced repeater
+    // supplies corroboration. Restrict candidates to the owner so the roots do not independently answer the query.
+    let a = call(&f.state, &claude, "remember", note(words, "local"))["result"]["id"].as_str().unwrap().to_owned();
+    let b = call(&f.state, &grok, "remember", note(words, "local"))["result"]["id"].as_str().unwrap().to_owned();
+    let plain = remember_id(&f, &owner, words);
     // Notes are stamped to the second and ties break by id: wait so the plain copy is certainly the earlier one.
     std::thread::sleep(std::time::Duration::from_millis(1_100));
     let mut n = note(words, "builders");
     n["sources"] = json!([a, b]);
     let n = call(&f.state, &owner, "remember", n)["result"]["id"].as_str().unwrap().to_owned();
-    let q = "where is the red ledger";
-    let quiet = recall_across(&f, &grok, q, || {}).unwrap();
+    let params = json!({"query": "where is the red ledger", "author": "peter"});
+    let quiet = recall_across_params(&f, &owner, params.clone(), || {}).unwrap();
     assert_eq!(quiet["status"], "found", "{quiet}");
-    let after = recall_across(&f, &grok, q, || {
+    let shown = quiet["items"].as_array().unwrap().iter().find(|i| i["id"] == plain.as_str()).expect("plain copy is kept");
+    assert_eq!(shown["evidence"], "corroborated", "{shown}");
+    assert_eq!(shown["also_by_ids"], json!([n]), "{shown}");
+    let after = recall_across_params(&f, &owner, params, || {
         assert_eq!(call(&f.state, &owner, "supersede", json!({"target": n}))["ok"], true);
     })
     .unwrap();
