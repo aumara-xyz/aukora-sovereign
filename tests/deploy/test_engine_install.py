@@ -12,6 +12,7 @@ coreutils (`mv -T`, `stat -c`) and is skipped elsewhere; as a non-root user it f
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
 import stat
@@ -172,6 +173,35 @@ class BuildPlugins(unittest.TestCase):
         plain.write_text("ok")
         self.build.copy_file(plain, out / "p" / "lib" / "index.js", out)
         self.assertEqual((out / "p" / "lib" / "index.js").read_text(), "ok")
+
+    def test_a_dsh_peer_that_is_not_the_pinned_harness_fails_the_build(self):
+        # The harness disables a row whose dsh peers it does not satisfy and boots without it: a door left behind a
+        # harness bump would mean an engine with no door. The build refuses instead.
+        from pathlib import Path
+        pinned = self.build.DSH_VERSION
+        cases = [
+            ({"@deepseek-ai/dsh-tools": pinned, "@deepseek-ai/cordis": "*"}, True),
+            ({"@deepseek-ai/dsh-tools": "workspace:^"}, True),
+            ({"@deepseek-ai/dsh-tools": "0.0.0-not-the-pin"}, False),
+            ({"@deepseek-ai/dsh": "^" + pinned}, False),
+            ({"@deepseek-ai/dsh-system-prompt": pinned, "@deepseek-ai/dsh-tools": "0.0.0-not-the-pin"}, False),
+        ]
+        for index, (peers, passes) in enumerate(cases):
+            manifest = Path(self.scratch) / ("package-%d.json" % index)
+            manifest.write_text(json.dumps({"name": "@aukora/p%d" % index, "peerDependencies": peers}))
+            if passes:
+                self.build.package(Path(self.out), "p%d" % index, manifest, [])
+            else:
+                with self.assertRaises(SystemExit):
+                    self.build.package(Path(self.out), "p%d" % index, manifest, [])
+        engines = Path(self.scratch) / "engines.json"
+        engines.write_text(json.dumps({"name": "@aukora/e", "engines": {"dsh": "*"}}))
+        with self.assertRaises(SystemExit):
+            self.build.package(Path(self.out), "e", engines, [])
+        # The packages this repository builds pass as they stand.
+        for folder in ("aukora-door", "aukora-kira"):
+            source = Path(ROOT) / "engine" / "plugins" / folder / "package.json"
+            self.build.package(Path(self.out), folder, source, [])
 
 
 def home_patch_block():

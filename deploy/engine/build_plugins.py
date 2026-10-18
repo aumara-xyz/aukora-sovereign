@@ -39,6 +39,12 @@ CARRY = ('assets', 'vendor')
 # The four upstream rows the face replaces (engine/plugins/aukora-face/PORT-NOTES.md, "Composition").
 REPLACED = ('ui-layout', 'ui-settings-general', 'ui-sidebar', 'ui-workspace')
 NAME = re.compile(r'^@aukora/[a-z0-9][a-z0-9.-]{0,60}$')
+# The pinned harness (engine-pins.json `dsh`). Every package's own dsh requirements must name it: the harness DISABLES a
+# profile row whose `@deepseek-ai/dsh*` peers its version does not satisfy (dsh-app-boot preflight: one stderr line,
+# and the engine boots without that row), so a door or Kira pin left behind a harness bump would start the engine with
+# no door. A `workspace:` peer means "the running harness" (the faces) and always matches.
+DSH_VERSION = '0.2.1-alpha.5'
+WORKSPACE_PEERS = ('workspace:^', 'workspace:~', 'workspace:*')
 
 
 def fail(reason):
@@ -105,6 +111,12 @@ def package(out, folder, manifest_src, files):
     manifest = json.loads(manifest_src.read_text())
     if not NAME.match(manifest.get('name', '')):
         fail('package name %r is not @aukora/...' % manifest.get('name'))
+    if 'dsh' in manifest.get('engines', {}):
+        fail('%s declares engines.dsh; pin the harness through peerDependencies' % manifest['name'])
+    for peer, wanted in sorted(manifest.get('peerDependencies', {}).items()):
+        if (peer == '@deepseek-ai/dsh' or peer.startswith('@deepseek-ai/dsh-')) and \
+                wanted != DSH_VERSION and wanted not in WORKSPACE_PEERS:
+            fail('peer-pin-drift: %s wants %s %s, the pinned harness is %s' % (manifest['name'], peer, wanted, DSH_VERSION))
     copy_file(manifest_src, dst / 'package.json', out)
     for relative, source in files:
         target = dst / relative_name(relative)
@@ -165,8 +177,8 @@ def build_bundle(dsh, face_names, foundation_name, out):
     """@aukora/face-bundle: dsh-web-app's patch and presets, the four replaced rows removed, the face rows added."""
     web = dsh / 'node_modules/@deepseek-ai/dsh-web-app'
     manifest = json.loads((web / 'package.json').read_text())
-    if manifest.get('version') != '0.2.1-alpha.5':
-        fail('dsh-web-app is %s, not the pinned 0.2.1-alpha.5' % manifest.get('version'))
+    if manifest.get('version') != DSH_VERSION:
+        fail('dsh-web-app is %s, not the pinned %s' % (manifest.get('version'), DSH_VERSION))
     patches = manifest['dsh']['bundle']['patch']
     patches = [patches] if isinstance(patches, str) else patches
     dst = out / 'aukora-face-bundle'
