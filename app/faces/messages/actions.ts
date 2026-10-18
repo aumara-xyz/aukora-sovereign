@@ -31,8 +31,7 @@ export function ownIdentity(client: FaceClient, signal: AbortSignal): HTMLElemen
   const copy = h("button", { type: "button", class: "ak-action", disabled: "" }, "Copy Aukora ID");
   const status = h("p", { class: "info", role: "status" });
   const qr = h("canvas", { class: "identity-qr", role: "img", "aria-label": "QR code of your Aukora ID", hidden: "" });
-  const element = h("section", { "aria-label": "Your Aukora ID" },
-    h("h2", { class: "ak-label" }, "Your Aukora ID"),
+  const element = h("section", { "aria-label": "Your Aukora ID", class: "id-panel" },
     h("div", { class: "identity-field" }, qr, h("div", { class: "identity-text" }, address, copy)), status);
   copyId(copy, address, status, signal);
   void client.call("aumlok", "identity", {}, { signal }).then(value => {
@@ -86,7 +85,7 @@ export function addContact(client: FaceClient, signal: AbortSignal): HTMLElement
     }).catch(error => { if (!signal.aborted) showServiceState(status, error); })
       .finally(() => { if (!signal.aborted) submit.disabled = false; });
   }, { signal });
-  return portal("Add a contact", "Aukora ID and name", form, signal).element;
+  return portal("Add a contact", "By their Aukora ID", form, signal).element;
 }
 
 export function composer(client: FaceClient, signal: AbortSignal, npub: string, sent: () => void): HTMLElement {

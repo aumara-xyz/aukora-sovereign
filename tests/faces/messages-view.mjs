@@ -17,12 +17,16 @@ try {
     'faces/messages/view', 'faces/messages/actions', 'faces/messages/portal', 'faces/messages/dom',
     'faces/messages/copy', 'faces/messages/model', 'faces/identity/card', 'faces/identity/qr', 'faces/threads/time', 'core/service-state',
     'core/session-state',
+    'faces/threads/spatial-icons', 'faces/threads/dom',
   ]) {
     const destination = join(compiled, `${path}.js`);
     await mkdir(dirname(destination), { recursive: true });
     const source = await readFile(new URL(`../../app/${path}.ts`, import.meta.url), 'utf8');
     await writeFile(destination, stripTypeScriptTypes(source));
   }
+  // The thread list's glyphs, which the filters and row actions share.
+  await mkdir(join(compiled, 'design/spatial'), { recursive: true });
+  await writeFile(join(compiled, 'design/spatial/glyphs.json'), await readFile(new URL('../../app/design/spatial/glyphs.json', import.meta.url)));
   ({ mountMessages } = await import(pathToFileURL(join(compiled, 'faces/messages/view.js')).href));
 } finally { await rm(compiled, { recursive: true, force: true }); }
 
@@ -161,11 +165,13 @@ function mount(t, options = {}) {
       }
       if (method === 'send') return options.send ? options.send(params) : {};
       if (method === 'contact.propose') return {};
+      if (method === 'conversations.marks') return { items: options.marks ?? [] };
+      if (method === 'conversation.mark') return options.mark ? options.mark(params) : {};
       if (method === 'refusals.counts') return { envelope: 0, signature: 0, recipient: 0, stranger: 0, replay: 0, payload: 0, stale_contact: 0, total: 0, last_aura_sequence: 0 };
       assert.fail(`unexpected method: ${method}`);
     },
   };
-  mountMessages(root, client, controller.signal, new Set(['contacts.list', 'messages.list', 'refusals.counts', 'contact.propose', 'send']));
+  mountMessages(root, client, controller.signal, new Set(options.granted ?? ['contacts.list', 'messages.list', 'refusals.counts', 'conversations.marks', 'contact.propose', 'send', 'conversation.mark']));
   t.after(() => { controller.abort(); assert.equal(root.children.length, 0, 'face removes its canvas on dispose'); });
   return { root, document, calls, contacts, messages };
 }
@@ -178,16 +184,19 @@ test('the same conversation portal opens a chronological thread and returns to t
   const card = conversation(root);
   const holder = card.parentElement;
   const head = byClass(card, 'ak-portal__head');
-  const mark = byClass(card, 'unread');
+  const back = byClass(card, 'thread-back');
+  const mark = byClass(card, 'unreadMarker');
   const list = byClass(root, 'list-scene');
   const stage = byClass(root, 'thread-stage');
   assert.equal(root.dataset.view, 'list');
   assert.equal(mark.hidden, false);
   assert.equal(byClass(card, 'conversation-snippet').textContent, 'See you at five?');
-  // The standard portal button: one head (icon, title, summary, then the time and the expander), nothing beside it.
-  assert.equal(card.children[0], head);
-  assert.equal(all(card, element => element.tagName === 'button').length, 1 + all(byClass(card, 'ak-portal__body'), element => element.tagName === 'button').length);
+  // The standard portal button (icon, title, summary, then the time and the expander), the back button hidden until
+  // the thread is open, and the thread list's row actions beside it.
+  assert.deepEqual(byClass(card, 'conversation-line').children.map(child => child.className), ['thread-back', 'ak-portal__head', 'row-actions']);
+  assert.equal(back.hidden, true);
   assert.ok(byClass(byClass(head, 'ak-portal__end'), 'conversation-time'));
+  assert.deepEqual(byClass(card, 'row-actions').children.map(child => child.getAttribute('aria-label')), ['Pin conversation', 'Archive conversation', 'Mark as read']);
   head.click();
   await settle();
   assert.equal(root.dataset.view, 'thread');
@@ -196,12 +205,14 @@ test('the same conversation portal opens a chronological thread and returns to t
   assert.equal(stage.hidden, false);
   assert.equal(head.getAttribute('aria-expanded'), 'true');
   assert.equal(head.getAttribute('aria-label'), 'Maya. Back to conversations');
-  assert.equal(byClass(card, 'conversation-snippet').textContent, 'Back to conversations');
+  assert.equal(byClass(card, 'conversation-snippet').textContent, `Aukora ID ${maya.slice(0, 10)}…${maya.slice(-4)}`);
+  assert.equal(back.hidden, false, 'an open thread has a clear back button');
+  assert.equal(byClass(root, 'msg-top').hidden, true, 'the thread header takes the top of the lane');
   const rows = byClass(card, 'transcript').children;
   assert.deepEqual(rows.map(row => row.dataset.message), ['old', 'middle', 'new']);
   assert.deepEqual(rows.map(row => row.dataset.direction), ['in', 'out', 'in']);
   assert.deepEqual(rows.map(row => byClass(row, 'who').textContent), ['MayaContact', 'You', 'MayaContact']);
-  head.click();
+  back.click();
   assert.equal(root.dataset.view, 'list');
   assert.equal(card.parentElement, holder);
   assert.equal(byClass(card, 'ak-portal__head'), head);
@@ -209,7 +220,8 @@ test('the same conversation portal opens a chronological thread and returns to t
   assert.equal(stage.hidden, true);
   assert.equal(head.getAttribute('aria-expanded'), 'false');
   assert.equal(mark.hidden, true, 'opening the thread clears the loaded incoming marks');
-  assert.equal(byClass(conversation(root, sam), 'unread').hidden, false, 'another contact stays unread');
+  assert.equal(byClass(conversation(root, sam), 'unreadMarker').hidden, false, 'another contact stays unread');
+  assert.equal(back.hidden, true);
   assert.equal(root.children.length, 1, 'navigation keeps the same centre canvas');
 });
 
@@ -368,4 +380,72 @@ test('a capped thread still accepts new arrivals and retains a thousand newest r
   assert.equal(rows[0].dataset.message, 'message-2');
   assert.equal(rows.at(-1).dataset.message, 'message-1001');
   assert.equal(earlier.hidden, true);
+});
+
+const visibleRows = root => byClass(root, 'conversations').children.map(item => item.children[0].dataset.contact);
+const filterButton = (root, label) => find(root, item => item.tagName === 'button' && item.getAttribute('aria-label') === label);
+
+test('the filters, search and the owner marks choose which conversations show', async t => {
+  const writes = [];
+  const { root, calls } = mount(t, { marks: [{ npub: sam, pinned: true, archived: false }], mark: params => { writes.push(params); return {}; } });
+  await settle();
+  // A pinned conversation leads the list.
+  assert.deepEqual(visibleRows(root), [sam, maya]);
+  assert.equal(byClass(conversation(root, sam), 'pinMarker').hidden, false);
+  filterButton(root, 'Pinned conversations').click();
+  assert.deepEqual(visibleRows(root), [sam]);
+  assert.equal(filterButton(root, 'Pinned conversations').getAttribute('aria-pressed'), 'true');
+  assert.equal(filterButton(root, 'All conversations').getAttribute('aria-pressed'), 'false');
+  filterButton(root, 'All conversations').click();
+  // Archiving writes both marks for that one npub and moves it to the Archived filter.
+  find(conversation(root, maya), item => item.getAttribute('aria-label') === 'Archive conversation').click();
+  await settle();
+  assert.deepEqual(writes, [{ npub: maya, pinned: false, archived: true }]);
+  assert.deepEqual(visibleRows(root), [sam]);
+  filterButton(root, 'Archived conversations').click();
+  assert.deepEqual(visibleRows(root), [maya]);
+  assert.equal(byClass(conversation(root, maya), 'archiveMarker').hidden, false);
+  filterButton(root, 'All conversations').click();
+  // Search reads names and the loaded message text.
+  const query = byClass(root, 'msg-search__input');
+  query.value = 'book'; query.dispatch('input');
+  assert.deepEqual(visibleRows(root), [sam]);
+  query.value = 'nobody'; query.dispatch('input');
+  assert.deepEqual(visibleRows(root), []);
+  assert.match(byClass(root, 'msg-list').textContent, /No conversation matches “nobody”/);
+  query.value = ''; query.dispatch('input');
+  assert.ok(calls.some(call => call.method === 'conversations.marks'));
+});
+
+test('a refused mark is put back; mark as unread and read stay in this view', async t => {
+  const { root } = mount(t, { mark: () => { throw new Error('network:owner-shell-session-required'); } });
+  await settle();
+  const card = conversation(root, maya);
+  find(card, item => item.getAttribute('aria-label') === 'Pin conversation').click();
+  assert.equal(byClass(card, 'pinMarker').hidden, false, 'the mark shows at once');
+  await settle();
+  assert.equal(byClass(card, 'pinMarker').hidden, true, 'and is put back when the node refuses it');
+  assert.equal(byClass(root, 'msg-list').children.find(item => item.className === 'problem').hidden, false);
+  const unread = find(card, item => item.getAttribute('aria-label') === 'Mark as read');
+  unread.click();
+  assert.equal(byClass(card, 'unreadMarker').hidden, true);
+  assert.equal(unread.getAttribute('aria-label'), 'Mark as unread');
+  unread.click();
+  assert.equal(byClass(card, 'unreadMarker').hidden, false);
+});
+
+test('without the mark grant there is no pin or archive, and the Aukora ID drops down from the header', async t => {
+  const { root, calls } = mount(t, { granted: ['contacts.list', 'messages.list', 'send'] });
+  await settle();
+  assert.deepEqual(byClass(conversation(root, maya), 'row-actions').children.map(child => child.getAttribute('aria-label')), ['Mark as read']);
+  assert.ok(!calls.some(call => call.method === 'conversations.marks'));
+  const toggle = byClass(root, 'id-toggle');
+  const drop = byClass(root, 'id-drop');
+  assert.equal(drop.hidden, true);
+  toggle.click();
+  assert.equal(drop.hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.match(drop.textContent, new RegExp(owner));
+  toggle.click();
+  assert.equal(drop.hidden, true);
 });

@@ -5,6 +5,7 @@
 //   messages.list   {before, limit} -> {items:[{id, direction:"in"|"out", contact:npub, at, text, transport,
 //                    state:null|"queued"|"published"|"unconfirmed"|"failed", code:null|refusal}], next}
 //   contacts.list   {before, limit} -> {items:[{npub, label, pairing:null|{method, verified_at}}], next}
+//   conversations.marks {}          -> {items:[{npub, pinned, archived}]} (the owner's own view marks)
 //   refusals.counts {}              -> {envelope, signature, recipient, stranger, replay, payload, stale_contact,
 //                    total, last_aura_sequence}
 // An inbound row has no state and no code. An outbound row has a state, and a code exactly when it failed.
@@ -156,6 +157,25 @@ export function readRefusals(value: JsonValue): Refusals {
     + counts.payload + counts.staleContact;
   if (!Number.isSafeInteger(sum) || sum !== counts.total) throw invalid();
   return counts;
+}
+
+export interface Mark { readonly pinned: boolean; readonly archived: boolean }
+const MAX_MARKS = 1_000;
+
+// Only marked conversations are listed; one with neither mark has no row, so a row with neither is refused.
+export function readMarks(value: JsonValue): ReadonlyMap<string, Mark> {
+  const reply = object(value);
+  if (Object.keys(reply).length !== 1 || !Array.isArray(reply.items) || reply.items.length > MAX_MARKS) throw invalid();
+  const marks = new Map<string, Mark>();
+  for (const item of reply.items) {
+    const row = object(item);
+    if (Object.keys(row).length !== 3 || typeof row.pinned !== "boolean" || typeof row.archived !== "boolean"
+      || !(row.pinned || row.archived)) throw invalid();
+    const key = npub(row.npub);
+    if (marks.has(key)) throw invalid();
+    marks.set(key, { pinned: row.pinned, archived: row.archived });
+  }
+  return marks;
 }
 
 export function shortKey(key: string): string {

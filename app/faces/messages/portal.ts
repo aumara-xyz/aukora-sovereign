@@ -2,15 +2,28 @@
 // The framework-neutral markup of the shared Spatial portal primitive.
 import { h, untrusted } from "./dom.js";
 
-export function portalIcon(kind: string): HTMLElement {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.4", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(name, value);
+// Glyphs on a 24 grid, drawn with the icon tile's 1.4 stroke and round caps (rule 10).
+const PATHS: Readonly<Record<string, string>> = {
+  shield: "M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z M9 12l2 2 4-4",
+  contact: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M20 8v6 M17 11h6",
+  message: "M4 4h16v12H8l-4 4z M8 8h8 M8 12h5",
+  id: "M3 6h18v12H3z M7 10.5a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0 M6 15c.6-1.4 3.4-1.4 4 0 M13 10h5 M13 13h4",
+  more: "M6 12h.01 M12 12h.01 M18 12h.01",
+  all: "M5 7h14 M5 12h14 M5 17h14",
+  back: "M15 5l-7 7 7 7",
+};
+
+export function glyph(kind: string): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg") as SVGSVGElement;
+  for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": kind === "more" ? "2.6" : "1.4", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(name, value);
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", kind === "shield" ? "M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z M9 12l2 2 4-4"
-    : kind === "contact" ? "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M20 8v6 M17 11h6"
-      : "M4 4h16v12H8l-4 4z M8 8h8 M8 12h5");
+  path.setAttribute("d", PATHS[kind] ?? PATHS.message);
   svg.append(path);
-  return h("span", { class: "ak-icon-tile" }, svg);
+  return svg;
+}
+
+export function portalIcon(kind: string): HTMLElement {
+  return h("span", { class: "ak-icon-tile" }, glyph(kind));
 }
 
 export function portal(title: string, summary: string, content: HTMLElement, signal: AbortSignal,

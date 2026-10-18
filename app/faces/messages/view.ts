@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Messages stays inside its centre lane. A conversation's own portal header opens and closes its thread.
+// Messages stays inside its centre lane: a header with the filters and the owner's Aukora ID, search, Add a contact and
+// More, then the conversations. Opening one lifts its portal button to the top as the thread's header, with a back
+// button, the messages below it and the compose box at the bottom.
 import type { FaceClient } from "../../core/index.js";
 import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
 import { ago } from "../threads/time.js";
 import { COPY, sendOutcome } from "./copy.js";
+import { threadGlyph } from "../threads/spatial-icons.js";
 import { h, untrusted } from "./dom.js";
-import { conversationList, moment, readContactPage, readMessagePage, readRefusals, threadMessages } from "./model.js";
-import type { Contact, Conversation, Message } from "./model.js";
+import { conversationList, moment, readContactPage, readMarks, readMessagePage, readRefusals, shortKey, threadMessages } from "./model.js";
+import type { Contact, Conversation, Mark, Message } from "./model.js";
 import { addContact, composer, copyId, ownIdentity } from "./actions.js";
-import { portal, portalIcon } from "./portal.js";
+import { glyph, portal, portalIcon } from "./portal.js";
 
 const PAGE = 50;
 const MAX_ROWS = 1_000;
@@ -47,7 +50,7 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
   const more = h("button", { type: "button", class: "ak-action", hidden: "" }, "Load earlier messages");
   const refresh = h("button", { type: "button", class: "ak-action" }, COPY.refresh);
   const scroll = h("div", { class: "thread-scroll", tabindex: "0", "aria-label": "Conversation history" },
-    details, h("div", { class: "actions" }, more, refresh), info, problem, rows);
+    details, h("div", { class: "button-row" }, more, refresh), info, problem, rows);
   const element = h("div", { class: "thread-panel", "aria-busy": "false" }, scroll);
   const messages = new Map<string, Message>();
   let next: string | null = null;
@@ -155,39 +158,84 @@ function refusalsPanel(client: FaceClient, signal: AbortSignal): HTMLElement {
   return portal("Refused messages", "Only counts are kept", detail, signal, open => { if (open) void read(); }, "shield", "gold").element;
 }
 
+type Filter = "all" | "pinned" | "unread" | "archived";
+// The same icon toggles, glyphs and pressed colours as Auma's thread list; "all" clears the others.
+const FILTERS: ReadonlyArray<readonly [Filter, string]> = [
+  ["all", "All conversations"], ["pinned", "Pinned conversations"],
+  ["unread", "Unread conversations"], ["archived", "Archived conversations"],
+];
+const EMPTY: Readonly<Record<Filter, string>> = {
+  all: COPY.emptyContacts, pinned: "No pinned conversations.", unread: "No unread conversations.",
+  archived: "No archived conversations.",
+};
+const NO_MARK: Mark = { pinned: false, archived: false };
+
 interface ConversationCard {
   readonly holder: HTMLElement;
-  update(conversation: Conversation, failed: boolean): void;
+  readonly element: HTMLElement;
+  update(conversation: Conversation, mark: Mark, failed: boolean): void;
   refresh(): void;
+  close(): void;
+}
+
+function iconButton(kind: "all" | "pin" | "unread" | "archive", label: string, extra = ""): HTMLButtonElement {
+  return h("button", { type: "button", class: `iconButton ${kind}Action ${extra}`.trim(), "aria-label": label, title: label, "aria-pressed": "false" },
+    kind === "all" ? glyph("all") : threadGlyph(kind));
+}
+
+function marker(kind: "pin" | "unread" | "archive", label: string): HTMLElement {
+  return h("span", { class: `marker ${kind}Marker`, title: label, hidden: "" }, threadGlyph(kind), h("span", { class: "visually-hidden" }, label));
 }
 
 export function mountMessages(root: HTMLElement, client: FaceClient, signal: AbortSignal, granted: ReadonlySet<string>): void {
   const contacts = new Map<string, Contact>();
   const messages = new Map<string, Message>();
   const readIds = new Set<string>();
+  const markedUnread = new Set<string>();
+  let marks: ReadonlyMap<string, Mark> = new Map();
   const previewed = new Set<string>();
   const previewFailures = new Set<string>();
   const cards = new Map<string, ConversationCard>();
-  const rows = h("ul", { class: "rows conversations", "aria-label": "Conversations" });
+  const canMark = granted.has("conversation.mark");
+  let filter: Filter = "all";
+
+  // Header: the title, the filters, then the owner's Aukora ID as a compact blue portal that drops its panel down.
+  const filterButtons = new Map(FILTERS.map(([id, label]) => [id, iconButton(id === "pinned" ? "pin" : id === "archived" ? "archive" : id, label)]));
+  const idExpander = h("span", { class: "ak-expander", "aria-hidden": "true" }, "+");
+  const idToggle = h("button", { type: "button", class: "id-toggle ak-tone-blue", "aria-expanded": "false", "aria-controls": "own-aukora-id" },
+    glyph("id"), h("span", {}, "Aukora ID"), idExpander);
+  const idPanel = h("div", { class: "id-drop ak-tone-blue", id: "own-aukora-id", hidden: "" }, ownIdentity(client, signal));
+  const header = h("header", { class: "ak-header msg-header" },
+    h("h1", { class: "ak-header__title" }, "Messages"),
+    h("div", { class: "msg-header__tools" }, h("span", { class: "actions msg-filters", role: "group", "aria-label": "Show" }, ...filterButtons.values()), idToggle));
+
+  // Search, then Add a contact beside More (How it works, Refresh and the rarely used).
+  const query = h("input", { type: "search", class: "msg-search__input", placeholder: "Search names and messages", "aria-label": "Search conversations", autocomplete: "off", spellcheck: "false", maxlength: "200" });
+  const clearSearch = h("button", { type: "button", class: "iconButton msg-search__clear", "aria-label": "Clear search", title: "Clear search", hidden: "" }, threadGlyph("close"));
+  const search = h("div", { class: "msg-search" }, threadGlyph("search"), query, clearSearch);
   const info = h("p", { role: "status", class: "info" });
   const problem = h("p", { role: "alert", class: "problem", hidden: "" });
-  const more = h("button", { type: "button", class: "ak-action", hidden: "" }, "More contacts");
+  const rows = h("ul", { class: "rows conversations", "aria-label": "Conversations" });
+  const moreContacts = h("button", { type: "button", class: "ak-action", hidden: "" }, "More contacts");
   const refresh = h("button", { type: "button", class: "ak-action" }, COPY.refresh);
   const how = h("div", {},
+    h("p", { class: "aside" }, "Your Aukora ID is a Nostr public key. Messages travel through Nostr relays, wrapped so that only the other person can read them."),
     h("p", { class: "aside" }, COPY.contactKey),
     h("p", { class: "aside" }, COPY.relaysSee + " A relay accepting a message does not prove your friend received it."),
-    h("p", { class: "aside" }, "Unread marks track incoming messages loaded in this open view. Opening a conversation clears its mark here; this is not a read receipt to your friend."),
+    h("p", { class: "aside" }, "Unread marks track incoming messages loaded in this open view. Opening a conversation clears its mark here; this is not a read receipt to your friend. Pinned and archived are your own marks on this node; your friend never sees them."),
     h("p", { class: "aside" }, COPY.inbound), h("p", { class: "aside" }, COPY.footnote));
   if (granted.has("refusals.counts")) how.append(refusalsPanel(client, signal));
-  const list = h("div", { class: "list-scene" }, ownIdentity(client, signal),
+  const morePanel = h("div", { class: "more-panel" },
+    portal("How it works", "Approvals, privacy and relays", how, signal, () => undefined, "shield", "blue").element,
+    h("div", { class: "button-row" }, refresh));
+  const tools = h("div", { class: "msg-tools" },
     granted.has("contact.propose") ? addContact(client, signal) : null,
-    h("section", {}, h("h2", { class: "ak-label" }, "Conversations"), info, problem, rows,
-      h("div", { class: "actions" }, more, refresh)),
-    portal("How it works", "Approvals, privacy and relays", how, signal, () => undefined, "shield", "blue").element);
+    portal("More", "Help, refresh", morePanel, signal, () => undefined, "more", "blue").element);
+  const list = h("div", { class: "list-scene" }, search, tools,
+    h("section", { class: "msg-list", "aria-label": "Conversations" }, info, problem, rows, h("div", { class: "button-row" }, moreContacts)));
   const stage = h("div", { class: "thread-stage", hidden: "" });
-  const canvas = h("div", { class: "ak-canvas" },
-    h("header", { class: "ak-header" }, h("div", { class: "ak-header__copy" },
-      h("p", { class: "ak-header__eyebrow" }, "Aukora"), h("h1", { class: "ak-header__title" }, "Messages"))), list, stage);
+  const top = h("div", { class: "msg-top" }, header, idPanel);
+  const canvas = h("div", { class: "ak-canvas" }, top, list, stage);
   root.dataset.view = "list";
   root.append(canvas);
   let selected: string | null = null;
@@ -197,66 +245,164 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
   const seen = (items: readonly Message[]) => {
     remember(items);
     for (const message of items) if (message.direction === "in") readIds.add(message.id);
+    if (selected) markedUnread.delete(selected);
     render();
+  };
+
+  idToggle.addEventListener("click", () => {
+    const open = idPanel.hidden;
+    idPanel.hidden = !open;
+    idToggle.setAttribute("aria-expanded", String(open));
+    idExpander.textContent = open ? "−" : "+";
+  }, { signal });
+  for (const [id, button] of filterButtons) button.addEventListener("click", () => { filter = id; render(); }, { signal });
+  query.addEventListener("input", () => { clearSearch.hidden = query.value === ""; render(); }, { signal });
+  query.addEventListener("keydown", event => { if (event.key === "Escape" && query.value) { event.preventDefault(); query.value = ""; clearSearch.hidden = true; render(); } }, { signal });
+  clearSearch.addEventListener("click", () => { query.value = ""; clearSearch.hidden = true; render(); query.focus(); }, { signal });
+
+  const setMark = (npub: string, change: Partial<Mark>) => {
+    const before = marks.get(npub) ?? NO_MARK;
+    const after = { ...before, ...change };
+    const updated = new Map(marks);
+    if (after.pinned || after.archived) updated.set(npub, after); else updated.delete(npub);
+    marks = updated;
+    render();
+    void client.call("network", "conversation.mark", { npub, pinned: after.pinned, archived: after.archived }, { signal }).catch(error => {
+      if (signal.aborted) return;
+      // The node refused: put the mark back as it was and say why.
+      const restored = new Map(marks);
+      if (before.pinned || before.archived) restored.set(npub, before); else restored.delete(npub);
+      marks = restored;
+      showServiceState(problem, error);
+      problem.hidden = false;
+      render();
+    });
+  };
+
+  const open = (npub: string, card: ConversationCard, show: boolean) => {
+    const from = card.element.getBoundingClientRect?.().top;
+    selected = show ? npub : null;
+    top.hidden = show;
+    list.hidden = show;
+    stage.hidden = !show;
+    root.dataset.view = show ? "thread" : "list";
+    (show ? stage : card.holder).append(card.element);
+    if (show) markedUnread.delete(npub);
+    // The portal button slides up into place as the thread's header (none under reduced motion, see messages.css).
+    const to = card.element.getBoundingClientRect?.().top;
+    if (show && from !== undefined && to !== undefined && from !== to) {
+      card.element.animate?.([{ transform: `translateY(${from - to}px)` }, { transform: "none" }], { duration: 260, easing: "cubic-bezier(.16,1,.3,1)" });
+    }
   };
 
   const create = (conversation: Conversation): ConversationCard => {
     const contact = conversation.contact;
     const title = untrusted("span", { class: "ak-portal__title" }, contact.label);
+    const pinMark = marker("pin", "Pinned");
+    const unreadMark = marker("unread", "Unread");
+    const archiveMark = marker("archive", "Archived");
     const snippet = h("span", { class: "ak-portal__summary conversation-snippet", dir: "auto" });
     const time = h("span", { class: "conversation-time" });
-    const unread = h("span", { class: "unread", "aria-label": "Unread", title: "Unread in this view", hidden: "" }, "•");
-    const mark = portalIcon("message");
-    mark.append(unread);
     const expander = h("span", { class: "ak-expander", "aria-hidden": "true" }, "+");
-    // The same portal button as every other: icon, title and one-line summary, then the time as its badge and the
-    // expander. The contact's Aukora ID and its copy button live inside the open conversation.
-    const head = h("button", { type: "button", class: "ak-portal__head", "aria-expanded": "false" }, mark,
-      h("span", { class: "ak-portal__copy" }, title, snippet), h("span", { class: "ak-portal__end" }, time, expander));
+    const head = h("button", { type: "button", class: "ak-portal__head", "aria-expanded": "false" }, portalIcon("message"),
+      h("span", { class: "ak-portal__copy" }, h("span", { class: "conversation-title" }, title, pinMark, unreadMark, archiveMark), snippet),
+      h("span", { class: "ak-portal__end" }, time, expander));
+    const back = h("button", { type: "button", class: "thread-back", "aria-label": "Back to conversations", title: "Back to conversations", hidden: "" }, glyph("back"), h("span", {}, "Back"));
+    const pin = iconButton("pin", "Pin conversation");
+    const archive = iconButton("archive", "Archive conversation");
+    const unread = iconButton("unread", "Mark as unread");
+    const actions = h("span", { class: "row-actions" }, ...(canMark ? [pin, archive] : []), unread);
     const panel = threadPanel(client, signal, contact, granted, seen);
     const body = h("div", { class: "ak-portal__body", hidden: "" }, panel.element);
     const element = h("section", { class: "ak-portal ak-tone-mint conversation", "data-open": "no", "data-contact": contact.npub },
-      head, body);
+      h("div", { class: "conversation-line" }, back, head, actions), body);
     const holder = h("li", {}, element);
-    head.addEventListener("click", () => {
-      const open = selected !== contact.npub;
-      selected = open ? contact.npub : null;
-      element.dataset.open = open ? "yes" : "no";
-      head.setAttribute("aria-expanded", String(open));
-      head.setAttribute("aria-label", open ? `${contact.label}. Back to conversations` : `Open conversation with ${contact.label}`);
-      expander.textContent = open ? "−" : "+";
-      body.hidden = !open;
-      list.hidden = open;
-      stage.hidden = !open;
-      root.dataset.view = open ? "thread" : "list";
-      (open ? stage : holder).append(element);
-      panel.show(open);
+    let current = conversation;
+    const toggle = (show: boolean) => {
+      element.dataset.open = show ? "yes" : "no";
+      head.setAttribute("aria-expanded", String(show));
+      head.setAttribute("aria-label", show ? `${contact.label}. Back to conversations` : `Open conversation with ${contact.label}`);
+      expander.textContent = show ? "−" : "+";
+      back.hidden = !show;
+      body.hidden = !show;
+      open(contact.npub, card, show);
+      panel.show(show);
       render();
-      head.focus({ preventScroll: true });
+      (show ? back : head).focus({ preventScroll: true });
+    };
+    head.addEventListener("click", () => toggle(selected !== contact.npub), { signal });
+    back.addEventListener("click", () => toggle(false), { signal });
+    element.addEventListener("keydown", event => { if (event.key === "Escape" && selected === contact.npub) { event.preventDefault(); toggle(false); } }, { signal });
+    pin.addEventListener("click", () => setMark(contact.npub, { pinned: !(marks.get(contact.npub)?.pinned ?? false) }), { signal });
+    archive.addEventListener("click", () => setMark(contact.npub, { archived: !(marks.get(contact.npub)?.archived ?? false) }), { signal });
+    unread.addEventListener("click", () => {
+      if (current.unread || markedUnread.has(contact.npub)) {
+        markedUnread.delete(contact.npub);
+        for (const message of messages.values()) if (message.contact === contact.npub && message.direction === "in") readIds.add(message.id);
+      } else markedUnread.add(contact.npub);
+      render();
     }, { signal });
-    return {
-      holder, refresh: panel.refresh,
-      update(value, failed) {
-        const open = selected === contact.npub;
+    const card: ConversationCard = {
+      holder, element, refresh: panel.refresh, close: () => toggle(false),
+      update(value, mark, failed) {
+        current = value;
+        const shown = selected === contact.npub;
+        const isUnread = !shown && (value.unread || markedUnread.has(contact.npub));
         title.replaceChildren(...untrusted("span", {}, value.contact.label).childNodes);
-        snippet.replaceChildren(...untrusted("span", {}, open ? "Back to conversations" : failed ? "Message preview unavailable" : value.snippet || "No messages yet").childNodes);
-        time.replaceChildren(...(!open && value.latest ? [stamp(value.latest.at, true)] : []));
-        unread.hidden = open || !value.unread;
+        snippet.replaceChildren(...untrusted("span", {}, shown ? `Aukora ID ${shortKey(contact.npub)}` : failed ? "Message preview unavailable" : value.snippet || "No messages yet").childNodes);
+        time.replaceChildren(...(!shown && value.latest ? [stamp(value.latest.at, true)] : []));
+        pinMark.hidden = !mark.pinned;
+        archiveMark.hidden = !mark.archived;
+        unreadMark.hidden = !isUnread;
+        actions.hidden = shown;
+        pin.setAttribute("aria-pressed", String(mark.pinned));
+        pin.setAttribute("aria-label", mark.pinned ? "Unpin conversation" : "Pin conversation");
+        pin.title = pin.getAttribute("aria-label") ?? "";
+        archive.setAttribute("aria-pressed", String(mark.archived));
+        archive.setAttribute("aria-label", mark.archived ? "Move back from the archive" : "Archive conversation");
+        archive.title = archive.getAttribute("aria-label") ?? "";
+        unread.setAttribute("aria-pressed", String(isUnread));
+        unread.setAttribute("aria-label", isUnread ? "Mark as read" : "Mark as unread");
+        unread.title = unread.getAttribute("aria-label") ?? "";
       },
     };
+    return card;
   };
 
+  function matches(conversation: Conversation, mark: Mark, needle: string): boolean {
+    const isUnread = conversation.unread || markedUnread.has(conversation.contact.npub);
+    const shown = filter === "archived" ? mark.archived : !mark.archived
+      && (filter === "all" || (filter === "pinned" && mark.pinned) || (filter === "unread" && isUnread));
+    if (!shown || needle === "") return shown;
+    if (conversation.contact.label.toLocaleLowerCase().includes(needle)) return true;
+    for (const message of messages.values()) {
+      if (message.contact === conversation.contact.npub && message.text.toLocaleLowerCase().includes(needle)) return true;
+    }
+    return false;
+  }
+
   function render(): void {
-    const conversations = conversationList([...contacts.values()], [...messages.values()], readIds);
-    const wanted = conversations.map(value => {
+    for (const [id, button] of filterButtons) button.setAttribute("aria-pressed", String(id === filter));
+    const needle = query.value.trim().toLocaleLowerCase();
+    const all = conversationList([...contacts.values()], [...messages.values()], readIds);
+    // Pinned conversations lead; within each group the newest activity comes first.
+    const ordered = [...all.filter(value => marks.get(value.contact.npub)?.pinned), ...all.filter(value => !marks.get(value.contact.npub)?.pinned)];
+    const wanted: HTMLElement[] = [];
+    for (const value of ordered) {
       let card = cards.get(value.contact.npub);
       if (!card) { card = create(value); cards.set(value.contact.npub, card); }
-      card.update(value, previewFailures.has(value.contact.npub));
-      return card.holder;
-    });
-    // Keep focused portal/copy controls in place across polling and unread updates.
+      const mark = marks.get(value.contact.npub) ?? NO_MARK;
+      card.update(value, mark, previewFailures.has(value.contact.npub));
+      if (matches(value, mark, needle) || selected === value.contact.npub) wanted.push(card.holder);
+    }
+    // Keep focused portal and action controls in place across polling and unread updates.
     for (let at = 0; at < wanted.length; at++) if (rows.children[at] !== wanted[at]) rows.insertBefore(wanted[at], rows.children[at] ?? null);
+    while (rows.children.length > wanted.length) rows.children[wanted.length].remove();
     for (const [id, card] of cards) if (!contacts.has(id) && selected !== id) { card.holder.remove(); cards.delete(id); }
+    if (!busy || contacts.size > 0) {
+      info.textContent = contacts.size === 0 ? COPY.emptyContacts : wanted.length > 0 ? ""
+        : needle ? `No conversation matches “${query.value.trim()}”.` : EMPTY[filter];
+    }
   }
 
   const previews = async () => {
@@ -279,14 +425,20 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     await Promise.all([worker(), worker(), worker(), worker()]);
   };
 
+  const readMarksNow = async () => {
+    if (!granted.has("conversations.marks")) return;
+    try { marks = readMarks(await client.call("network", "conversations.marks", {}, { signal })); }
+    catch (error) { if (!signal.aborted) { showServiceState(problem, error); problem.hidden = false; } }
+  };
+
   const read = async (restart: boolean, manual = false): Promise<void> => {
     if (busy || signal.aborted) return;
     if (!granted.has("contacts.list") || !granted.has("messages.list")) {
       showServiceState(problem, "app:service-unavailable"); problem.hidden = false; return;
     }
     busy = true;
-    refresh.disabled = more.disabled = true;
-    info.textContent = COPY.reading;
+    refresh.disabled = moreContacts.disabled = true;
+    if (contacts.size === 0) info.textContent = COPY.reading;
     problem.hidden = true;
     clearServiceState(problem);
     const before = restart ? null : next;
@@ -307,25 +459,27 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       const recent = readMessagePage(await client.call("network", "messages.list", { before: null, limit: PAGE }, { signal }));
       if (signal.aborted) return;
       remember(recent.items);
-      await previews();
+      await Promise.all([previews(), restart ? readMarksNow() : Promise.resolve()]);
       if (signal.aborted) return;
+      busy = false;
       render();
-      info.textContent = contacts.size === 0 ? COPY.emptyContacts : !advances && page.next !== null ? COPY.stalled
-        : contacts.size >= MAX_ROWS && page.next !== null ? COPY.capped : "";
+      if (contacts.size > 0 && !advances && page.next !== null) info.textContent = COPY.stalled;
+      else if (contacts.size >= MAX_ROWS && page.next !== null) info.textContent = COPY.capped;
     } catch (error) {
-      if (!signal.aborted) { render(); info.textContent = ""; showServiceState(problem, error); problem.hidden = false; }
+      if (!signal.aborted) { busy = false; render(); info.textContent = ""; showServiceState(problem, error); problem.hidden = false; }
     } finally {
       busy = false;
-      if (!signal.aborted) { refresh.disabled = more.disabled = false; more.hidden = next === null; }
+      if (!signal.aborted) { refresh.disabled = moreContacts.disabled = false; moreContacts.hidden = next === null; }
     }
   };
   refresh.addEventListener("click", () => { void read(true, true); }, { signal });
-  more.addEventListener("click", () => { void read(false); }, { signal });
+  moreContacts.addEventListener("click", () => { void read(false); }, { signal });
   const timer = setInterval(() => {
     if (document.hidden || root.getClientRects().length === 0) return;
     if (selected) cards.get(selected)?.refresh();
     else if (contacts.size <= PAGE) void read(true);
   }, 10_000);
   signal.addEventListener("abort", () => { clearInterval(timer); canvas.remove(); }, { once: true });
+  render();
   void read(true);
 }

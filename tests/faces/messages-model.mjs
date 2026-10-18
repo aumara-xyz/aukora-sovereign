@@ -14,7 +14,7 @@ const source = await readFile(new URL('../../app/faces/messages/model.ts', impor
 const compiled = await mkdtemp(join(tmpdir(), 'messages-model-'));
 const modulePath = join(compiled, 'model.mjs');
 await writeFile(modulePath, stripTypeScriptTypes(source));
-const { conversationList, threadMessages } = await import(pathToFileURL(modulePath).href);
+const { conversationList, readMarks, threadMessages } = await import(pathToFileURL(modulePath).href);
 await rm(compiled, { recursive: true, force: true });
 const contact = (npub, label) => Object.freeze({ npub, label, pairing: null });
 const message = (id, contact, at, direction = 'in', text = id) => Object.freeze({
@@ -83,4 +83,18 @@ test('messages for contacts outside the approved contact list do not make new co
   assert.equal(list.length, 1);
   assert.equal(list[0].latest, null);
   assert.equal(list[0].unread, false);
+});
+
+test('the owner marks read back exactly, and a row with neither mark or a repeated npub is refused', () => {
+  const key = digit => `npub1${digit.repeat(58)}`;
+  const marks = readMarks({ items: [{ npub: key('q'), pinned: true, archived: false }, { npub: key('p'), pinned: false, archived: true }] });
+  assert.deepEqual([...marks], [[key('q'), { pinned: true, archived: false }], [key('p'), { pinned: false, archived: true }]]);
+  for (const bad of [
+    { items: [{ npub: key('q'), pinned: false, archived: false }] },
+    { items: [{ npub: key('q'), pinned: true, archived: false }, { npub: key('q'), pinned: false, archived: true }] },
+    { items: [{ npub: key('q'), pinned: 1, archived: false }] },
+    { items: [{ npub: key('q'), pinned: true, archived: false, label: 'x' }] },
+    { items: [], next: null },
+    { items: [{ npub: 'npub1nope', pinned: true, archived: false }] },
+  ]) assert.throws(() => readMarks(bad), /app:invalid-reply/);
 });

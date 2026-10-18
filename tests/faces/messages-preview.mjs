@@ -64,6 +64,9 @@ const refusals = freeze({
   total: 0, last_aura_sequence: 0,
 });
 
+// The owner's own marks: Anastasia pinned, Jun archived. Kept in this page only.
+const marks = new Map(empty ? [] : [[ana, { pinned: true, archived: false }], [jun, { pinned: false, archived: true }]]);
+
 function unavailable() { throw new Error('preview:service-unavailable'); }
 const body = {
   call(method, params) {
@@ -88,6 +91,13 @@ const network = {
       return { items, next: start + items.length < thread.length ? items.at(-1).id : null };
     }
     if (method === 'refusals.counts') return refusals;
+    if (method === 'conversations.marks') return { items: [...marks].map(([key, mark]) => ({ npub: key, ...mark })) };
+    if (method === 'conversation.mark') {
+      if (params.pinned || params.archived) marks.set(params.npub, { pinned: params.pinned, archived: params.archived });
+      else marks.delete(params.npub);
+      status.textContent = 'Mark kept in this page only. Nothing saved.';
+      return {};
+    }
     if (method === 'contact.propose') {
       status.textContent = 'Contact approval simulated. Nothing saved; no passkey approval requested.';
       return { proposal_id: '6'.repeat(32) };

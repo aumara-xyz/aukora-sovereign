@@ -11,7 +11,7 @@ export const COPY = {
   relaysSee: "Relays cannot read your text, but they see your node's IP address, the recipient's key, the message size, and when your node connects to them. The time written on a wrapped message is randomized, not the send time.",
   reading: "Reading…",
   emptyMessages: "No messages yet.",
-  emptyContacts: "No approved contacts yet. A contact is added with your passkey on an approval card.",
+  emptyContacts: "No contacts yet. Share your Aukora ID (top right) with a friend, then add theirs with Add a contact. Each of you approves the other with a passkey.",
   footnote: "Both owners add each other. Aura records each message and send (ids and times, never the text).",
   loadMore: "Load more",
   refresh: "Refresh",
