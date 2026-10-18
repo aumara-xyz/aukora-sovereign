@@ -52,15 +52,16 @@ form .ak-label { margin-top: 4px; }
 .conversation-time:empty { display: none; }
 /* The lane's top 74px is one band across the lanes (Peter, 2026-10-18): the Messages header and the open thread's
    header both sit at the very top of the lane, 74px tall, and their divider lands exactly where Auma's chat bar
-   draws its own, in the same colour. Controls in that band stay inward of the hot corners (84px from each side). */
-#face.ak-app { --msg-band-line: color-mix(in srgb, var(--ak-blue) 38%, transparent); padding: 0 18px 18px; }
+   draws its own, in the same colour. Controls in that band sit just inward of the 74px hot corners: 80px from each
+   lane edge, a 6px safety margin. */
+#face.ak-app { --msg-band-line: color-mix(in srgb, var(--ak-blue) 38%, transparent); --msg-corner-clear: 80px; padding: 0 18px 18px; }
 #face[data-view="thread"] { overflow: hidden; padding: 0; }
 #face[data-view="thread"] > .ak-canvas { height: 100%; min-height: 0; }
 #face[data-view="thread"] .msg-top { display: none; }
 .thread-stage, .thread-stage > .conversation, .thread-stage .ak-portal__body, .thread-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 /* The open thread's header: Back, the name and this conversation's own pin, unread and archive, all inward of the
    lane's top hot corners (74px squares; the canvas is inset 18px, so 66px more on each side). */
-.thread-stage .conversation-line { flex: none; gap: 6px; box-sizing: border-box; height: 74px; padding: 0 84px; border-bottom: 1px solid var(--msg-band-line); }
+.thread-stage .conversation-line { flex: none; gap: 6px; box-sizing: border-box; height: 74px; padding: 0 var(--msg-corner-clear); }
 #face .thread-stage .conversation-line > .ak-portal__head { height: auto; min-height: 44px; padding: 0 4px; }
 #face .thread-stage .conversation-line :is(.ak-icon-tile, .ak-expander, .conversation-snippet, .conversation-time) { display: none; }
 #face .thread-stage .conversation-line .ak-portal__title { font-size: 15px; font-weight: 600; }
@@ -91,7 +92,9 @@ form .ak-label { margin-top: 4px; }
 /* Hot corners (Peter, 2026-10-18): each lane's top corners (74px squares) belong to the shell, so no control sits
    in them. Row 1 holds the title (not a control) on the left and its icon buttons right beside it, inward from the
    right corner; row 2 starts below the corners. */
-#face .msg-header { flex-direction: row; justify-content: space-between; align-items: center; gap: 14px; box-sizing: border-box; height: 74px; margin: 0 -18px; padding: 0 84px 0 18px; border-bottom: 1px solid var(--msg-band-line); }
+#face .msg-header { position: relative; flex-direction: row; justify-content: space-between; align-items: center; gap: 14px; box-sizing: border-box; height: 74px; margin: 0 -18px; padding: 0 var(--msg-corner-clear) 0 18px; border-bottom: 0; }
+/* The band's divider, inset 18px from each lane edge like the lane's content (the menu's launchers sit 17px in). */
+:is(#face .msg-header, .thread-stage .conversation-line)::after { content: ""; position: absolute; right: 18px; bottom: 0; left: 18px; height: 1px; background: var(--msg-band-line); pointer-events: none; }
 .msg-header .ak-header__title { margin: 0; }
 .msg-top { display: flex; flex-direction: column; gap: 14px; }
 #face .msg-filters { gap: 4px; }
