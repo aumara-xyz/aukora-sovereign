@@ -1,14 +1,14 @@
-# The real node: everything on one Nebius VM
+# The node: everything on one Nebius VM (design, runbook and the test-node record)
 
 One VM runs the Rust authority (Ring 3), Kira 2, and the DeepSeek Harness 0.2.1-alpha.5 inside OpenShell (Ring 1),
 with the door as the engine's only way out. This file is the design and the runbook. NORTH-STAR.md Part 1 is the plan;
-the wall is the one that passed the wall test (`~/aukora-memory/review/WALL-TEST-2026-10-17.md`, OpenShell 0.1.4,
+the wall is the one that passed the wall test (a builders' private report of 2026-10-17, not published; OpenShell 0.1.4,
 enforce, docker compute driver).
 
-Marks: **RAN** = executed for this branch (on the Mac unless stated); **NODE** = ran on the first real node, Claude's
-rehearsal of 2026-10-17 (`aukora-rehearsal`, Nebius cpu 4 vCPU / 16 GiB, release acc7a35; report
-`~/aukora-memory/review/node-bringup-2026-10-17.patch`); **LINUX** = runs only on the node, not run yet;
-**GUESS** = not verified against the real tool.
+Marks: **RAN** = executed for this branch (on the Mac unless stated); **NODE** = ran on the builders' disposable test
+node (not an owner's node), Claude's rehearsal of 2026-10-17 (`aukora-rehearsal`, Nebius cpu 4 vCPU / 16 GiB, release
+acc7a35; report private, not published); **LINUX** = runs only on the node, not run yet; **GUESS** = not verified
+against the real tool.
 
 ## 1. What runs where
 
@@ -177,8 +177,8 @@ cannot be squatted; each model file is hashed against its pin before its server 
 kira:kira-clients folder (new `--group-socket` flag; every request still needs a token). Two agents are registered at
 install: **auma** (scope `auma`, non-owner; token `/etc/aukora/door-kira.token`, aukora 0600: only the door reads it)
 and **owner** (`--owner`; token `/root/aukora-kira-owner.token`, root 0600: the owner's tools only, never the door, never
-the engine). Models: llama.cpp b10621 CPU build, the two GGUF files pinned by SHA-256 (the Mac's own, from
-`~/aukora-memory/kira/models/*.sha256`), each server started with `--alias <sha256>` so Kira refuses a swapped file.
+the engine). Models: llama.cpp b10621 CPU build, the two GGUF files pinned by SHA-256 (the builders' own
+copies; the digests are in `engine-pins.json`), each server started with `--alias <sha256>` so Kira refuses a swapped file.
 
 The door: the in-node door (`sovereign serve` reads `door-policy-v1.json`), so `ask` becomes a real gate proposal. The
 policy is the wall test's, verbatim, except: `memory` is `allow` with the Kira socket and token (the wall test had no
@@ -495,11 +495,11 @@ the registered gateway `aukora`), **O3** (mTLS user auth, `allow_unauthenticated
 O17, O18, O19 and O20 (the pre-swap probe, Peter's decision) are closed by the owner-lifecycle branch (node/owner-lifecycle, 2026-10-17); see the table at the
 end of this section.
 
-Closed by the blockers branch (node/blockers, 2026-10-17), each verified LIVE on the rehearsal node (`aukora-rehearsal`,
+Closed by the blockers branch (node/blockers, 2026-10-17), each verified on the rehearsal (test) node (`aukora-rehearsal`,
 re-run genesis three times: releases 424b87a…-82ada51f, 28b6fc8…-a35e16a7, 6a64be9…-ea0195a3; software passkey,
-fake DeepSeek key, headless Chrome through the SSH tunnel; shots in `~/aukora-memory/review/node-blockers-2026-10-17-shots/`):
+fake DeepSeek key, headless Chrome through the SSH tunnel; screenshots kept privately, not published):
 
-| Item | Fix | Live evidence |
+| Item | Fix | Test-node evidence |
 |---|---|---|
 | **O9** WebSocket | `engine/socket.rs`: the one upgrade (`/api/remote.mux`) forwarded under the session's admission, exact Origin, frames checked; permessage-deflate offers admitted, never forwarded; the overlay acknowledges the harness's preview notice (its Continue cannot persist in the wall and the modal covered the composer) | CDP: `HandshakeResponseReceived 101 Switching Protocols`, frames both ways, no "connection lost, retry"; chat "Hello Auma, please reply with one short sentence." → the turn renders "This turn failed · API key is invalid · AUTH" (`o9-chat-reply-rendered.png`); after a reload the session's history loads (no "Loading history…"); journal `model-broker: call … provider-refused model=deepseek-flash … charged=0`. Sign-out in another tab closed the open socket 1008 3.9 s later |
 | **O10** door egress | `engine.py egress` / `install`: door `net.hosts` pinned like the provider (egress epoch 3: `api.deepseek.com`, `example.com`); installer refuses without them | from inside the wall: `web_fetch https://example.com/` → `ask-net` → card `door/ask-00.json` approved → repeat → `decision: allow`, 67 ms, body `<!doctype html>… Example Domain`; `wikipedia.org` → `host-not-allowed`, no card; `wall-check.sh` → `wall ok` after the egress change |
@@ -509,11 +509,11 @@ fake DeepSeek key, headless Chrome through the SSH tunnel; shots in `~/aukora-me
 | **O14** own slots | a policy allow of `kira_get` `aukora:self`/`aukora:resume` skips the slider | inside the wall: both reached Kira at once (`kira:not-found`, no card); `resume:grok` and `kira_recall` → `ask-memory` |
 | **O15** provider errors | fixed message per status, the provider's text never passes | inside the wall, fake key: `401 {"error":{"message":"aukora broker: the provider refused the key (HTTP 401; the provider's own message is withheld)","type":"authentication_error"}}` |
 
-Also from the Sonnet sweep of d453016 (`~/aukora-memory/review/SONNET-SWEEP-d453016-2026-10-17.md`), on release
+Also from a model review of d453016 (a builders' private report, not published), on release
 bbe36d9…-95d2ffc1 (a fourth genesis; the new polkit rule copied by hand to `/etc/polkit-1/rules.d/50-aukora-engine.rules`,
 as `engine_install.py` writes it only at install):
 
-| Item | Fix | Live evidence |
+| Item | Fix | Test-node evidence |
 |---|---|---|
 | **C2** failed unit stuck | admitted + failed: `reset-failed` then the normal start, backoff 30 s doubling to 10 min; not admitted + failed: start `aukora-engine-cleanup.service` (root oneshot: `engine-run.sh delete`, then `reset-failed`); polkit allows exactly those | root SIGKILLed the engine until systemd said "Start request repeated too quickly" (unit `failed`, Result=signal): the same tick the journal said `the engine unit failed; resetting and starting it again (next try in 30 s)`, and `running` followed; a second start-limit hit recovered the same way. The not-admitted cleanup path is unit-tested only (backoff) and its unit is `static` (`check-units.sh`: units ok) |
 | **C3** stop fallback | `engine-run.sh delete` waits 10 s, then `docker rm -f`; `TimeoutStopSec=90s` | root blocked its own connections to the gateway (:690) so OpenShell's delete could not run, then a changed door byte stopped the engine: both sandbox containers removed by the docker fallback, the unit `inactive` (not failed) 13 s after "Stopping"; the rule removed, the byte restored, `running` again. With the old 30 s wait inside a 30 s stop bound the fallback could never run |
@@ -524,21 +524,21 @@ Tests (Linux, the node, umask 002): `cargo test -p supervisor -p broker -p gate 
 170 + 1 ignored, broker 13, gate 17, floor 7, frontdoor 4), `tests/deploy` (8); `scripts/check.sh` CONSTRUCTION GREEN
 on the node (the Mac stayed under its disk floor).
 
-Closed by the owner-lifecycle branch (node/owner-lifecycle, 2026-10-17), verified LIVE on the rehearsal node (genesis 7
+Closed by the owner-lifecycle branch (node/owner-lifecycle, 2026-10-17), verified on the rehearsal (test) node (genesis 7
 with release 82254d3…-83c97646 (A), then upgraded in place to 8834ad9…-4c29ddb9 (B); software passkey, fake key,
-headless Chrome through the SSH tunnel; shots in `~/aukora-memory/review/node-owner-lifecycle-2026-10-17-shots/`,
-`live-*` from the node, the rest from a local preview):
+headless Chrome through the SSH tunnel; screenshots kept privately,
+not published):
 
-| Item | Fix | Live evidence |
+| Item | Fix | Test-node evidence |
 |---|---|---|
 | **O17** upgrades | `node_release.py offer` (link `/opt/aukora/offered`); the running release raises the upgrade card from its floor and keeps serving; approval advances the floor (the supervisor's release proposal is ordering evidence for an owner floor too: `floor` and Aura's twin); exit 75; unit pre-start `node_release.py follow` switches to the staged release the floor names (read by `sovereign release floor` as aukora); a withdrawn offer withdraws its card (not a decline) | A running with the engine `active`; B staged and offered at 13:22:06; card "Upgrade this node to a new release" (`base_sha256` = A, `release_sha256` = B) while `current` stayed A and the engine stayed `active`; approved 13:23:34 → `release: the owner approved release 4c29ddb9…; restarting to switch to it`, `engine: awaiting-release-approval`, exit `status=75/TEMPFAIL` 13:23:36, `node-release follow: switched to 8834ad96a45c-4c29ddb97c0e` 13:23:39, `engine: running` 13:23:49 (the supervisor down 3 s, the engine about 15 s); `current` = B, `previous` = A, offer gone, `active.json` = B, floor `aukora-floor-state-v2` naming B with A in its history, `admission.json` names B, the plugin set needed no new card (unchanged plugins) |
 | **O18** sign-in / sign-out | shell: one primitive button pinned at the base of the right-hand menu, "Sign in with your passkey" / "Sign out" (`POST /api/session/end`); session refusals are a calm signed-out state; the AUMLOK face's CSP (`connect-src 'self'`) no longer blanks it | on B: Sign out → the button reads "Sign in with your passkey", `/api/approvals` 400 `frontdoor:session-required` (`live-o18-signed-out.png`); clicking it opened the owner pane and signed in with the passkey, the button read "Sign out" again; on A the AUMLOK face rendered its own Sign in (it was blank before). The look needs Peter's preview (local shots `01`…`17`) |
 | **O19** declines | only the owner's Decline (`gate.refuse`, reason `owner-declined`) is a decline; an expiry or another refusal frees the same bytes; `POST /api/v1/approvals/decline` (no passkey, ends a live review) and `/again` (fact `aukora-owner-again-v1` as new evidence; release cards raised afresh); the owner card has Decline and Ask again; the shell's Approvals says "N declined · ask again"; the model key: card before key, re-entering a declined or expired key raises a fresh card, another key's card up refuses `awaiting-other-approval` (SCOUT M5; SCOUT's own branch was not visible here) | upgrade card declined (`gate.refuse` seq 25; `live-o19-declined.png`, the shell's Approvals "1 declined · ask again"); for 20 s of shell polling nothing raised it again and `current` stayed A, engine `active`; Ask again 24 s after the decline raised a fresh card (seq 26, `live-o19-asked-again.png`), which was then approved (the upgrade above). Model key: fake key entered → card; Declined → the same key entered again → a fresh pending `engine/model-key.json` card (`refused`, then `pending`). Tests: an expired card's bytes raised again, a decline held until asked again, door asks per call (supervisor `adapters::gate`, 5) |
 
-Then (Codex review of the branch, Peter's decisions on O20 and the re-proposal cap), LIVE on the same node: release
+Then (Codex review of the branch, Peter's decisions on O20 and the re-proposal cap), on the same test node: release
 D (ed7a900…-16c5a08c, the fixes below) through B's own card, then E (aff2272…-b66fdcab), then back to D:
 
-| Item | Fix | Live evidence |
+| Item | Fix | Test-node evidence |
 |---|---|---|
 | **B30** (Codex HIGH) rollback by restore | root keeps `/var/lib/aukora-release/anchor.json` (root 0644, synced): the floor it last accepted; `follow` needs that floor or a successor (later version, spent approvals extended), refuses behind, divergent or a non-root anchor; the supervisor refuses to serve a floor behind it (`floor-behind-anchor`) | on D a restart anchored D's floor (`unchanged (anchored)`, seq 40, 3 spent); the D-era state was copied, E approved (anchor seq 46, 4 spent); the D-era copy was restored and the supervisor restarted: `node-release follow: refused: the floor is behind the anchored floor (restored or divergent state)`, `current` stayed E, the supervisor journaled `the floor is behind the floor root accepted …; refusing to serve it`, the engine stayed `inactive`; the real state put back: E served, engine `running` |
 | owner-approved rollback | going back is a new card from the running floor to the older release | E offered D: probe passed, card, approved, `switched to ed7a900e3be3-16c5a08c4f1e`; anchor seq 51, 5 spent, history A, B, E |
@@ -546,10 +546,10 @@ D (ed7a900…-16c5a08c, the fixes below) through B's own card, then E (aff2272�
 | re-proposal cap | bytes whose card simply expired are held back 24 h (`gate:recently-expired`) unless the owner asks again for that very card (its `aukora-owner-again-v1` fact; other evidence does not lift it, Codex re-review 3); listed beside the declines | unit tests (`adapters::gate`); not exercised live |
 | Live, Zeta Harp, Lingwa faces | `connect-src 'self'` (their JSON module imports were blocked, the AUMLOK cause) | checks green; not opened on the node |
 
-Codex's re-review (probe isolation, activation intent, the cooldown's binding), LIVE on the same node with releases
+Codex's re-review (probe isolation, activation intent, the cooldown's binding), on the same test node with releases
 F (d985805…-9080a0fd), H (c8e92b3…-73e7ff7a) and I (473b7ab…-ed80b9b0):
 
-| Item | Live evidence |
+| Item | Test-node evidence |
 |---|---|
 | probe in its own unit (Codex HIGH) | `systemd-analyze security aukora-release-probe@…`: 0.5 SAFE. A FAKE staged release whose `bin/sovereign` is a hostile script, started in the unit: it ran as a throwaway uid (62669) with only its copy (`aura-signing-key aura.sqlite3 browser-sessions floor node-identity-v1 targets`); `live state unreadable`, `live signing key unreadable`, `/etc/aukora hidden`, `door and broker sockets hidden`, `no TCP connection`, `no socket of any family`, `release state not writable`; it forked a `setsid sleep 1000` survivor and printed the expected success line, then hung: at 90 s `Failed with result 'timeout'`, survivors 0 (the cgroup was killed), root's record `passed: false, result: timeout`, the copy and the configuration copy gone. A good candidate (D) in the unit: `probe ok <digest>`, `passed: true` |
 | supervisor ↔ unit | F offered H: the supervisor started `aukora-release-probe@…` through polkit, root recorded passed, the card went up, approved, `switched to c8e92b338716-…`; H's follow installed the template from H's release; H offered I through that installed unit: `release-probe: passed`, card, approved, `switched to 473b7abc3995-…`, anchor seq 65, 8 spent, no activation intent left |
@@ -582,7 +582,7 @@ could not measure without a real key.
 
 ## 12. Pre-launch hardening (node/pre-launch, 2026-10-18)
 
-From Auma's own red-team of the node (`~/aukora-memory/review/AUMA-DEEP-REVIEW-2026-10-17.md`), one commit each.
+From Auma's own red-team of the node (a private report, not published), one commit each.
 
 **P1. The passkey and the engine origin (R6).** The relying-party id is the owner host, exactly (`CeremonyContext`:
 `owner.<shell>`, the RP the passkey was created for), never the shell host. WebAuthn lets a page name its own host or

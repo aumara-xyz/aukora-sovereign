@@ -1,7 +1,7 @@
 # Spatial app design rules (Peter, 2026-10-16) — read before ANY UI task
 
 Source of truth: Peter's Spatial app (Prime plugins/aukora-face, pilot build 3673b98). Sovereign's desktop IS that app;
-AUKORA Light's look derives from it. Never the reverse. Reference screenshots: ~/aukora-memory/review/spatial-reference/.
+AUKORA Light's look derives from it. Never the reverse. Reference screenshots are kept privately and are not published.
 1. One surface. Every lane, panel and face uses the SAME background as the right menu lane. Never darker, never lighter,
    never a separate flat panel. (2026-10-16: the threads and centre lanes were wrong; the menu lane is right.)
 2. One button. Every button, card and tab: the same surface background with a thin coloured border. Colours: mint

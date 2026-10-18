@@ -160,7 +160,7 @@ Not a port of Prime: a new System app asked for by Peter ("it shows all in porta
 - **Read-only by construction.** It runs in the engine's origin. No function in the folder writes, fetches or approves; the only control that leads anywhere is
   `OwnerAction`, a plain link to the owner origin (`/approval/<proposal>`, `/passkey`, `/phrase/refresh`, `/witness`, or the owner origin's front page where no route exists yet).
 - Wiring is a swap of `readSovereigntyStub` for a reader returning the same `SovereigntySnapshot`. The source of every field, what is stub and the open questions are in
-  Peter's review folder (`SOVEREIGNTY-APP-SPEC.md`). `app/APP-LOCK.json` still lists eight System entries; Sovereignty is not in it (an open question, not a silent change).
+  a private design note, not published. `app/APP-LOCK.json` still lists eight System entries; Sovereignty is not in it (an open question, not a silent change).
 
 ## The spatial primitives (2026-10-17, face/sovereignty): Peter's standard, locked
 

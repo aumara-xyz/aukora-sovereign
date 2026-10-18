@@ -70,7 +70,7 @@ chokepoint) and a restricted socket set (door + broker). *Why:* [REVERSAL 2].
 The clean-room builder primitive **does** exist (`cage.rs:232 run_disposable`) but is **disabled by default** (`:239`)
 and runs one inert preselected command with no shell (`:199`) — T1 widens/configures it, it is not a build container yet.
 **Argon's 5 seam bugs** (frame cliff, judge-then-swap, FD3 envelope, reverse-proxy routing, UI clickjack) are tracked
-in OVERNIGHT-2 §Argon-seams and must be closed as part of the door/adapter work.
+in an earlier private review and must be closed as part of the door/adapter work.
 **DELETE** "`bridge/` is retired" only if it conflicts (KEEP otherwise). **KEEP** "FD 4 carries data only".
 
 ### C. Plugin admission (NEW subsection — closes the SCOUT/HMR hole)
@@ -113,13 +113,13 @@ in OVERNIGHT-2 §Argon-seams and must be closed as part of the door/adapter work
 **KEEP** rows 123 (Marmot), 132–134 (bitchat) as LATER.
 
 ### F. Kira 2: one shared memory for every agent (REWRITE of rows 57–61, the Kira section, decision 8) — v3
-> Full design: `review/KIRA2-SPEC-v0.3.md`. This section only says what it does to the plan.
+> Full design: the Kira 2 spec v0.3 (private, not yet published). This section only says what it does to the plan.
 
 **CHANGE [REVERSAL 4, refined]:** the shared brain is **Kira 2**, not OpenViking. Every agent (Claude, Codex, Grok,
 Argon, Mistral, Dot, then Auma through the door) reads and writes **one signed, append-only memory** through one
 service; Auma has **read and write in her own attributed scope** (`remember` is own-scope only) — not read-only.
 **OpenViking is archived, not deleted** (do not upgrade 0.4.21 for this purpose; AGPLv3, no provenance, no read-only key,
-an LLM that rewrites memory on session commit — SOURCE: review/MEMORY-BRAIN-RESEARCH.md, SCOUT round 2 §8).
+an LLM that rewrites memory on session commit — SOURCE: a private research note, SCOUT round 2 §8).
 > **What it is.** A SQLite file with FTS5 + dense embeddings + a cross-encoder, notes as Nostr events signed per agent,
 > six tools (`remember`, `recall`, `get`, `list_recent`, `supersede`, `quarantine_source`), six permissions with the
 > exact wire names (`store`, `disclose-to-context`, `dataset`, `export`, `train`, `activate`), all default-deny, a
@@ -152,7 +152,7 @@ charters and the plan need chunking.
 >   This is the decision gate for the whole engine choice. (Ready now; RAN on the box.) **Runs in parallel with step 1;
 >   neither blocks the other** (Kira 2 does not depend on the engine).
 > **1. PHASE 1 — KIRA 2: memory first, every agent on one memory** (row 142, sub-items K2-01..K2-17, section J; spec
->   `review/KIRA2-SPEC-v0.3.md`). Order: K1 inventory/snapshot/manifest (Peter approves) → K2 append/verify/tools/owner
+>   the private Kira 2 spec v0.3). Order: K1 inventory/snapshot/manifest (Peter approves) → K2 append/verify/tools/owner
 >   channel + the **figurine test early, FTS-only** → K3 permissions + quarantine + fail-closed egress guard → K4 hybrid
 >   + rerank recall, locked threshold, Test 4 (paired non-inferiority, ≥300 questions) → K5 `self`/`resume` slots + the
 >   DSH client plugin + door forwarder → K6 wire every agent through the stdio bridge, atomic cutover, Pentora health +
@@ -870,7 +870,7 @@ Rows 140 to 142 carry Part 1 into the register. Part 1 wins where it differs fro
 |---|---|---|---|---|---|
 | 140 | Plan v1 / one system: Auma builds, fully governed | BUILD | PLAN-v1; Peter, 2026-10-16 (issue #140); Part 1 of this file | NORTH-STAR.md Part 1, engine/, crates/supervisor, crates/gate, crates/laya | M1 |
 | 141 | The door: Rust `sovereign door serve`, or inside the node when door-policy-v1.json exists; non-local tool calls arrive as one canonical line on a unix socket; peer (SO_PEERCRED) and rate checked, strict parse, digest recomputed, class re-derived, default-deny per-class policy, call id consumed durably when it would allow or ask, and only the door's own executors run crossings (allowlisted fetch, memory forwarding with its own token). An ask is a gate proposal naming the exact call digest, approved by passkey and spent once. | BUILD | engine/plugins/aukora-door/PROTOCOL.md, crates/supervisor/DOOR.md | crates/supervisor/src/door, crates/gate/src/door.rs | M2 |
-| 142 | Kira 2 shared memory: one memory for every agent, with per-agent principals, cited hybrid recall and signed heads; Part 1 section J lists its sub-items K2-01 to K2-17 | BUILD | review/KIRA2-SPEC-v0.3.md (Kira 2 spec v0.3); rows 57 to 61 | crates/kira/src/shared | M1 |
+| 142 | Kira 2 shared memory: one memory for every agent, with per-agent principals, cited hybrid recall and signed heads; Part 1 section J lists its sub-items K2-01 to K2-17 | BUILD | Kira 2 spec v0.3 (private); rows 57 to 61 | crates/kira/src/shared | M1 |
 
 ## Who does what
 - **Peter:** the UX, the passkey, the spend, the decisions below, and "done". He talks only with the conductor.

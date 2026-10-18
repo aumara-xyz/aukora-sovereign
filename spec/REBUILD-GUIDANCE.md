@@ -6,7 +6,7 @@
 **Status:** guidance, not gospel. Every design choice below is a proposal for the builders to test, adapt or reject with a written reason. Evidence labels: **TESTED** means measured in a simulation or CPU study (same author unless stated, not independent replication). **SOURCE** means read in code. **PROPOSAL** means not yet built or tested.
 
 **Read with:**
-- Codex's Rebuild Constitution packet (`START-HERE.md`, `CLAUDE-HANDOFF.md`, the 522-row carry list CSV). Peter needs to save it from ChatGPT to `~/Downloads`.
+- Codex's Rebuild Constitution packet (`START-HERE.md`, `CLAUDE-HANDOFF.md`, the 522-row carry list CSV). It has not been saved into this repository yet.
 - `reference/PLAN-COVERAGE.md` and `reference/old-plans/` in the archived repository.
 - This week's research reports.
 
