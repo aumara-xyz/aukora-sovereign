@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { canonical } from "../cards/codec.js";
+
 export interface AssertionMaterial {
   readonly kind: "passkey";
   readonly credential_id: string;
@@ -108,13 +110,12 @@ export function registrationMaterial(credential: PublicKeyCredential): Registrat
 }
 
 export function assertionBytes(assertion: AssertionMaterial): Uint8Array {
-  const canonical = {
+  return new TextEncoder().encode(canonical({
     authenticator_data: assertion.authenticator_data,
     client_data_json: assertion.client_data_json,
     credential_id: assertion.credential_id,
     kind: assertion.kind,
     signature: assertion.signature,
     user_handle: assertion.user_handle,
-  };
-  return new TextEncoder().encode(JSON.stringify(canonical));
+  }));
 }
