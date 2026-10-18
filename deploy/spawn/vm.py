@@ -33,10 +33,17 @@ SIGN_IN_HINT = ("the Nebius CLI needs you to sign in again (its token expired). 
 IMAGE_FAMILY = "ubuntu24.04-driverless"
 USER = "ubuntu"
 # The real node (deploy/engine/NODE.md, O1): two resident 0.6 GB models, docker with the sandbox image, the harness and
-# the engine's own builds need at least 4 vCPU, 16 GiB and an 80 GiB disk (cpu-e2 4vcpu-16gb on the node rehearsal).
+# the engine's own builds. The default is the rehearsal's 4 vCPU, 16 GiB and 80 GiB disk (cpu-d3 4vcpu-16gb).
+# AUKORA_VM_VCPU, AUKORA_VM_MEMORY_GIB and AUKORA_VM_DISK_GIB choose another size, never below 2 vCPU / 8 GiB / 60 GiB:
+# engine-run.sh sizes the sandbox's caps from the VM (2 vCPU / 8 GiB: 1.5 CPUs and about 5.2 GiB, NODE.md section 12
+# P2), and below 60 GiB the engine disk, containerd's disk and the host-disk floor leave the engine no room to start.
 MIN_VCPU = 4
 MIN_MEMORY_GIB = 16
 BOOT_DISK_GIB = "80"
+SIZE_FLOORS = {"AUKORA_VM_VCPU": (2, 64), "AUKORA_VM_MEMORY_GIB": (8, 256), "AUKORA_VM_DISK_GIB": (60, 1024)}
+# Extra labels (AUKORA_VM_LABELS="purpose=peter-node"); the spawn id and delete-after stay spawn's own.
+LABEL = re.compile(r"[a-z][a-z0-9_-]{0,62}=[a-z0-9][a-z0-9_-]{0,62}\Z")
+RESERVED_LABELS = ("aukora-spawn-id", "delete-after")
 
 
 def environment():
@@ -67,6 +74,17 @@ def environment():
     if delete_after and not re.fullmatch(r"20[0-9]{2}-[01][0-9]-[0-3][0-9]", delete_after):
         core.refuse("spawn", "nebius-settings")
     values["delete_after"] = delete_after
+    defaults = {"AUKORA_VM_VCPU": MIN_VCPU, "AUKORA_VM_MEMORY_GIB": MIN_MEMORY_GIB,
+                "AUKORA_VM_DISK_GIB": int(BOOT_DISK_GIB)}
+    for key, (low, high) in SIZE_FLOORS.items():
+        text = os.environ.get(key, "")
+        if text and (not re.fullmatch(r"[1-9][0-9]{0,3}", text) or not low <= int(text) <= high):
+            core.refuse("spawn", "nebius-settings")
+        values[key] = int(text) if text else defaults[key]
+    extra = [item for item in os.environ.get("AUKORA_VM_LABELS", "").split(",") if item]
+    if len(extra) > 8 or any(LABEL.match(item) is None or item.split("=", 1)[0] in RESERVED_LABELS for item in extra):
+        core.refuse("spawn", "nebius-settings")
+    values["labels"] = extra
     return values
 
 
@@ -126,8 +144,8 @@ def find(items, instance, node_id):
     return meta["id"]
 
 
-def smallest_preset(host, parent):
-    """Platform and preset of the smallest CPU-only shape with at least MIN_VCPU vCPU and MIN_MEMORY_GIB GiB."""
+def smallest_preset(host, parent, min_vcpu=MIN_VCPU, min_memory=MIN_MEMORY_GIB):
+    """Platform and preset of the smallest CPU-only shape with at least min_vcpu vCPU and min_memory GiB."""
     listing = nebius(host, "compute", "v1", "platform", "list", "--parent-id", parent, "--all", read=True)
     candidates = []
     for platform in listing.get("items", []) if isinstance(listing, dict) else []:
@@ -140,7 +158,7 @@ def smallest_preset(host, parent):
                 gpu = int(resources.get("gpu_count", 0))
             except (KeyError, TypeError, ValueError):
                 continue
-            if platform_name and preset.get("name") and gpu == 0 and cpu >= MIN_VCPU and memory >= MIN_MEMORY_GIB:
+            if platform_name and preset.get("name") and gpu == 0 and cpu >= min_vcpu and memory >= min_memory:
                 candidates.append((cpu, memory, platform_name, preset["name"]))
     if not candidates:
         core.refuse("spawn", "cpu-preset")
@@ -210,7 +228,8 @@ def provision(plan, settings):
     if instance_id is None:
         if state.has("allocating"):
             core.refuse("spawn", "allocation-unknown")
-        platform, preset = smallest_preset(host, parent)
+        platform, preset = smallest_preset(host, parent, settings["AUKORA_VM_VCPU"], settings["AUKORA_VM_MEMORY_GIB"])
+        print("Nebius VM: %s %s, %d GiB disk." % (platform, preset, settings["AUKORA_VM_DISK_GIB"]), file=sys.stderr)
         user_data = "#cloud-config\n" + json.dumps({"users": ["default"], "ssh_pwauth": False,
                                                     "ssh_authorized_keys": [settings["public_key"]]}, sort_keys=True) + "\n"
         nic = {"name": "eth0", "subnet_id": settings["AUKORA_NEBIUS_SUBNET_ID"], "ip_address": {}, "public_ip_address": {}}
@@ -220,13 +239,16 @@ def provision(plan, settings):
         labels = "aukora-spawn-id=" + plan.node_id
         if settings["delete_after"]:
             labels += ",delete-after=" + settings["delete_after"]
+        for item in settings["labels"]:
+            labels += "," + item
         state.mark("allocating")
         try:
             nebius(host, "compute", "v1", "instance", "create", "--parent-id", parent, "--name", instance,
                    "--labels", labels, "--resources-platform", platform,
                    "--resources-preset", preset, "--boot-disk-attach-mode", "read_write",
                    "--boot-disk-managed-disk-name", instance + "-boot",
-                   "--boot-disk-managed-disk-size-gibibytes", BOOT_DISK_GIB, "--boot-disk-managed-disk-type",
+                   "--boot-disk-managed-disk-size-gibibytes", str(settings["AUKORA_VM_DISK_GIB"]),
+                   "--boot-disk-managed-disk-type",
                    "network_ssd", "--boot-disk-managed-disk-source-image-family-image-family", settings["family"],
                    "--boot-disk-managed-disk-source-image-family-parent-id", settings["AUKORA_NEBIUS_IMAGE_PARENT_ID"],
                    "--network-interfaces", interface, "--cloud-init-user-data", user_data)
