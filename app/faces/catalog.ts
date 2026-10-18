@@ -203,6 +203,7 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
           "refusals.counts",
           "conversations.marks",
           "contact.propose",
+          "contact.remove",
           "send",
           "conversation.mark"
         ],
@@ -328,7 +329,9 @@ export const FACE_CATALOG: readonly FaceManifest[] = [
     "capabilities": {
       "body": {
         "methods": [
-          "settings.general"
+          "settings.general",
+          "slider.get",
+          "slider.set"
         ],
         "topics": []
       }

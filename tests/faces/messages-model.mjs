@@ -14,7 +14,7 @@ const source = await readFile(new URL('../../app/faces/messages/model.ts', impor
 const compiled = await mkdtemp(join(tmpdir(), 'messages-model-'));
 const modulePath = join(compiled, 'model.mjs');
 await writeFile(modulePath, stripTypeScriptTypes(source));
-const { conversationList, readMarks, threadMessages } = await import(pathToFileURL(modulePath).href);
+const { conversationList, readContactChange, readMarks, threadMessages } = await import(pathToFileURL(modulePath).href);
 await rm(compiled, { recursive: true, force: true });
 const contact = (npub, label) => Object.freeze({ npub, label, pairing: null });
 const message = (id, contact, at, direction = 'in', text = id) => Object.freeze({
@@ -97,4 +97,13 @@ test('the owner marks read back exactly, and a row with neither mark or a repeat
     { items: [], next: null },
     { items: [{ npub: 'npub1nope', pinned: true, archived: false }] },
   ]) assert.throws(() => readMarks(bad), /app:invalid-reply/);
+});
+
+test('contact changes distinguish applied actions from pending owner cards and refuse ambiguous replies', () => {
+  assert.deepEqual(readContactChange({ state: 'applied' }), { state: 'applied' });
+  assert.deepEqual(readContactChange({ state: 'pending', proposal_id: 'card' }), { state: 'pending', proposalId: 'card' });
+  for (const bad of [
+    {}, { proposal_id: 'card' }, { state: 'pending' }, { state: 'pending', proposal_id: '' },
+    { state: 'applied', proposal_id: 'card' }, { state: 'rejected' }, { state: 'pending', proposal_id: 'card', extra: true },
+  ]) assert.throws(() => readContactChange(bad), /app:invalid-reply/);
 });

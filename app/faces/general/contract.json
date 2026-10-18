@@ -22,6 +22,13 @@
     "service-unavailable": "release card shows a muted icon and Not yet, with its data hidden; malformed replies remain refusals",
     "phone": "cards stack and fact rows become one column at 480 px and below"
   },
-  "face_holds": "a digest and a count; it has no field that saves a setting and no control that approves one",
-  "authority": "none"
+  "face_holds": "A release digest and count, and the current Laya setting. It can request owner-session slider changes, but cannot approve a loosening.",
+  "authority": "The host verifies the signed-in owner session and enforces passkey approval for loosening.",
+  "slider": {
+    "read": "body.slider.get {} -> exactly setting (ask, risky, limits or trusted)",
+    "set": "body.slider.set {setting} -> exactly state:applied and setting; or state:pending, proposal_id and the current setting",
+    "screen": "rule 10 portal button with four levels, one description each; details under How it works; only applied replies and current reads select a new level",
+    "authority": "owner session required; tightening immediate and recorded in Aura; loosening requires the existing owner passkey approval card",
+    "refresh": "on load and every five seconds while visible; a failed read clears the selected level and disables changes"
+  }
 }

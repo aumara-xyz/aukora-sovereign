@@ -6,6 +6,7 @@ import { encodeQr } from "../identity/qr.js";
 import { COPY } from "./copy.js";
 import { icon } from "../threads/dom.js";
 import { h } from "./dom.js";
+import { readContactChange } from "./model.js";
 
 const encoder = new TextEncoder();
 const MAX_TEXT_BYTES = 16_384;
@@ -62,30 +63,52 @@ export function ownIdentity(client: FaceClient, signal: AbortSignal): HTMLElemen
   return element;
 }
 
-export function addContact(client: FaceClient, signal: AbortSignal): HTMLFormElement {
+export function addContact(client: FaceClient, signal: AbortSignal, added: () => void): HTMLFormElement {
   const npub = h("input", { type: "text", name: "npub", required: "", pattern: NPUB, maxlength: "63", placeholder: "npub1…", autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Contact Aukora ID" });
   const name = h("input", { type: "text", name: "label", maxlength: String(MAX_LABEL_BYTES), placeholder: "Name (optional)", autocomplete: "off", "aria-label": "Contact name (optional)" });
-  const submit = h("button", { type: "submit", class: "ak-action" }, "Review contact");
+  const submit = h("button", { type: "submit", class: "ak-action" }, "Add contact");
   const status = h("p", { role: "status", class: "info", "aria-live": "polite" });
   const form = h("form", { class: "contact-form" },
     h("label", {}, "Aukora ID", npub), h("label", {}, "Name", name),
     h("p", { class: "aside" }, COPY.contactKey),
-    h("div", { class: "ak-actionrow" }, submit, h("span", { class: "ak-action__note" }, "One passkey approval")), status);
+    h("div", { class: "ak-actionrow" }, submit), status);
   form.addEventListener("submit", event => {
     event.preventDefault();
     if (submit.disabled || !form.reportValidity()) return;
     clearServiceState(status);
     if (encoder.encode(name.value).length > MAX_LABEL_BYTES) { status.textContent = "Use a shorter name (160 bytes maximum)."; return; }
     submit.disabled = true;
-    status.textContent = "Opening approval…";
-    void client.call("network", "contact.propose", { npub: npub.value.trim(), label: name.value.trim() || null }, { signal }).then(() => {
+    status.textContent = "Adding contact…";
+    void client.call("network", "contact.propose", { npub: npub.value.trim(), label: name.value.trim() || null }, { signal }).then(value => {
       if (signal.aborted) return;
-      status.textContent = COPY.contactReview;
+      const change = readContactChange(value);
+      status.textContent = change.state === "applied" ? "Contact added." : COPY.contactReview;
       form.reset();
+      if (change.state === "applied") added();
     }).catch(error => { if (!signal.aborted) showServiceState(status, error); })
       .finally(() => { if (!signal.aborted) submit.disabled = false; });
   }, { signal });
   return form;
+}
+
+export function removeContact(client: FaceClient, signal: AbortSignal, npub: string, removed: () => void): HTMLElement {
+  const submit = h("button", { type: "button", class: "ak-action" }, "Remove contact");
+  const status = h("p", { role: "status", class: "info", "aria-live": "polite" });
+  const element = h("div", { class: "remove-contact" }, h("div", { class: "ak-actionrow" }, submit), status);
+  submit.addEventListener("click", () => {
+    if (submit.disabled) return;
+    clearServiceState(status);
+    submit.disabled = true;
+    status.textContent = "Removing contact…";
+    void client.call("network", "contact.remove", { npub }, { signal }).then(value => {
+      if (signal.aborted) return;
+      const change = readContactChange(value);
+      status.textContent = change.state === "applied" ? "Contact removed." : COPY.contactRemoveReview;
+      if (change.state === "applied") removed();
+    }).catch(error => { if (!signal.aborted) showServiceState(status, error); })
+      .finally(() => { if (!signal.aborted) submit.disabled = false; });
+  }, { signal });
+  return element;
 }
 
 export interface Composer {

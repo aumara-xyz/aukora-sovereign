@@ -3,5 +3,5 @@ import { mountGeneral } from "./face.js";
 import { openSettings } from "./kit.js";
 
 openSettings("general", "General",
-  "How this app and node are set up: the release being served, the language and appearance, and the limits the app keeps. Nothing here changes the node.",
+  "Your Laya slider, the release being served, and this app's language, appearance and limits.",
   host => mountGeneral(host));

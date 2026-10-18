@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Messages add contact — fixture preview</title>
+  <link rel="stylesheet" href="../../app/release/app/design/tokens.css">
+  <link rel="stylesheet" href="../../app/release/app/design/spatial/theme.css">
+  <link rel="stylesheet" href="../../app/release/app/faces/messages/primitives.css">
+  <link rel="stylesheet" href="../../app/release/app/faces/messages/messages.css">
+  <style>
+    body { max-width: 620px; margin: auto; background: var(--dsw-specific-spatial-canvas) fixed; }
+    #face { background: var(--dsw-specific-spatial-lane); }
+    .preview-note { margin: 16px 24px; color: var(--ak-gold); font: 11px/18px var(--ak-mono); }
+  </style>
+  <script type="module" src="./messages-flow-preview.mjs"></script>
+</head>
+<body data-ds-dark-theme>
+  <p class="preview-note">PREVIEW DATA · Nothing is saved, sent or approved.</p>
+  <main id="face" class="ak-app ak-tone-mint" aria-label="Messages"></main>
+</body>
+</html>

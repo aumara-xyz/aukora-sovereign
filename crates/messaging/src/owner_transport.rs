@@ -69,7 +69,7 @@ impl Messaging {
         };
         let context = txn.observation_context()?;
         if contact.authority().epoch != context.authority.epoch
-            || contact.consumed_card().to_string() != state_text(&body, "contact_receipt")?
+            || contact.authorization_receipt().to_string() != state_text(&body, "contact_receipt")?
         {
             self.fail_contact_send(id, "contact-changed")?;
             return Err(refuse("contact-changed"));

@@ -182,6 +182,41 @@ impl LiveNetwork {
     }
 }
 
+impl LiveNetwork {
+    fn contact_change(
+        &self,
+        scope: PrincipalScope,
+        action: messaging::OwnerAction,
+    ) -> Result<Value> {
+        let applied = self
+            .ledger
+            .messaging(scope, true, |txn| txn.apply_owner_contact(&action))?;
+        if applied {
+            // Aura is durable first; a failed cache update is safely replayed on the next read.
+            self.ledger.messaging(scope, false, |txn| {
+                let mut store = self
+                    .store
+                    .lock()
+                    .map_err(|_| refuse("network-store-unavailable"))?;
+                synchronize_contacts(&mut store, txn)
+            })?;
+            return wire::object([("state", wire::text("applied")?)]);
+        }
+        let id = tokio::runtime::Handle::try_current()
+            .map_err(|_| refuse("face-runtime-unavailable"))?
+            .block_on(self.gate.propose_owner_requested(
+                scope,
+                messaging::CONTACT_TARGET,
+                String::new(),
+                action.canonical_bytes()?,
+            ))?;
+        wire::object([
+            ("proposal_id", wire::text(id.to_string())?),
+            ("state", wire::text("pending")?),
+        ])
+    }
+}
+
 impl NetworkRead for LiveNetwork {
     fn node_npub(&self) -> Result<Option<String>> {
         Ok(Some(self.identity.npub().to_owned()))
@@ -333,19 +368,16 @@ impl NetworkRead for LiveNetwork {
                 pairing: None,
             },
         ));
-        let bytes = action.canonical_bytes()?;
-        let id = tokio::runtime::Handle::try_current()
-            .map_err(|_| refuse("face-runtime-unavailable"))?
-            .block_on(self.gate.propose_owner_requested(
-                scope,
-                messaging::CONTACT_TARGET,
-                String::new(),
-                bytes,
-            ))?;
-        wire::object([
-            ("proposal_id", wire::text(id.to_string())?),
-            ("state", wire::text("pending")?),
-        ])
+        self.contact_change(scope, action)
+    }
+
+    fn remove_contact(&self, scope: PrincipalScope, npub: &str) -> Result<Value> {
+        self.contact_change(
+            scope,
+            messaging::OwnerAction::Contact(messaging::ContactChange::Remove {
+                key: nostr::PublicKey::from_npub(npub)?,
+            }),
+        )
     }
 
     fn conversation_marks(

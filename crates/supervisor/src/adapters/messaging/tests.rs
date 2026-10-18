@@ -64,13 +64,13 @@ impl aura::TrustedClock for Clock {
     }
 }
 
-struct Rig {
-    directory: PathBuf,
-    ledger: Arc<HostLedger>,
-    gate: Option<ScopedGate<ConfinedStore>>,
-    owner: Ed25519Key,
-    credential: CredentialId,
-    scope: PrincipalScope,
+pub(crate) struct Rig {
+    pub(crate) directory: PathBuf,
+    pub(crate) ledger: Arc<HostLedger>,
+    pub(crate) gate: Option<ScopedGate<ConfinedStore>>,
+    pub(crate) owner: Ed25519Key,
+    pub(crate) credential: CredentialId,
+    pub(crate) scope: PrincipalScope,
 }
 impl Drop for Rig {
     fn drop(&mut self) {
@@ -78,7 +78,7 @@ impl Drop for Rig {
     }
 }
 
-fn rig() -> Result<Rig> {
+pub(crate) fn rig() -> Result<Rig> {
     let mut nonce = [0; 16];
     getrandom::fill(&mut nonce).unwrap();
     let directory = std::env::temp_dir().join(format!("messaging-gate-{}", hex::encode(nonce)));
@@ -184,12 +184,15 @@ fn rig() -> Result<Rig> {
         ledger.binding()?,
         supervisor::ingress::BindingState::Bound(scope)
     );
-    let targets = vec![TargetSpec {
-        id: TargetId::new(messaging::CONTACT_TARGET.into())?,
-        class: TargetClass::Content,
-        risk: gate::RiskTier::Critical,
-        max_bytes: 8192,
-    }];
+    let targets = vec![
+        TargetSpec {
+            id: TargetId::new(messaging::CONTACT_TARGET.into())?,
+            class: TargetClass::Content,
+            risk: gate::RiskTier::Critical,
+            max_bytes: 8192,
+        },
+        laya::SliderPolicy::target_spec()?,
+    ];
     let store = ConfinedStore::open(
         File::open(directory.join("targets")).unwrap(),
         targets.clone(),
@@ -248,7 +251,7 @@ fn registration(
     }
 }
 
-fn assertion_bytes(
+pub(crate) fn assertion_bytes(
     owner: &Ed25519Key,
     challenge: [u8; 32],
     counter: u32,
@@ -282,7 +285,7 @@ fn contact_action(seed: u8, label: &str) -> OwnerAction {
 }
 
 impl Rig {
-    fn approve(&mut self, action: &OwnerAction, counter: u32) -> Result<ProposalId> {
+    pub(crate) fn approve(&mut self, action: &OwnerAction, counter: u32) -> Result<ProposalId> {
         let contacts_before = self.ledger.messaging(self.scope, false, |txn| txn.contact_keys())?;
         let target = TargetId::new(messaging::CONTACT_TARGET.into())?;
         let gate = self.gate.as_mut().unwrap();
@@ -367,7 +370,7 @@ fn one_real_contact_card_admits_owner_sends_and_verified_projection_survives_res
             store.synchronize_contact(txn, draft.key)
         })?
         .unwrap();
-    assert_eq!(contact.proposal(), proposal);
+    assert_eq!(contact.proposal(), Some(proposal));
     assert_eq!(contact.label(), "Owner B");
     assert_eq!(store.contacts(None, 10)?, vec![contact.clone()]);
     let sender = nostr::SecretKey::import(zeroize::Zeroizing::new([88; 32]))?;
@@ -480,14 +483,24 @@ fn one_real_contact_card_admits_owner_sends_and_verified_projection_survives_res
     assert!(network.contacts(foreign, None, 10).is_err());
     assert!(network.messages(foreign, None, None, 10).is_err());
     assert!(network.messages(rig.scope, None, Some("0"), 10).is_err());
-    // The owner's Add contact still raises its one card through the adapter (propose_owner_requested), while a guest
-    // proposal to any messaging/ target is refused (adapters::gate::messaging_tests).
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    // At the starter slider, Add contact is an authenticated owner-session action.
+    // Guest proposals to every messaging/ target are still refused (adapters::gate::messaging_tests).
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     let _entered = runtime.enter();
     let other = nostr::SecretKey::import(zeroize::Zeroizing::new([91; 32]))?.public_key()?;
     let raised = network.propose_contact(rig.scope, other.to_npub()?.as_str(), Some("Owner C"))?;
-    assert_eq!(string(&raised, "state")?, "pending");
-    assert!(network.propose_contact(foreign, other.to_npub()?.as_str(), None).is_err());
-    assert!(network.propose_contact(rig.scope, identity.npub(), None).is_err(), "never yourself");
+    assert_eq!(string(&raised, "state")?, "applied");
+    assert!(network
+        .propose_contact(foreign, other.to_npub()?.as_str(), None)
+        .is_err());
+    assert!(
+        network
+            .propose_contact(rig.scope, identity.npub(), None)
+            .is_err(),
+        "never yourself"
+    );
     Ok(())
 }

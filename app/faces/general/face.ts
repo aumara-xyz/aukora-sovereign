@@ -6,11 +6,13 @@ import type { ServiceFaceHost } from "./kit.js";
 import { follow } from "./kit.js";
 import { parseGeneral } from "./release.js";
 import { createGeneralView } from "./view.js";
+import { mountSlider } from "./slider.js";
 
 export const REFRESH_MS = 60_000;
 
 export function mountGeneral(host: ServiceFaceHost): void {
   const { client } = host;
+  mountSlider(host.root, client, host.signal);
   follow(host, stage => {
     const view = createGeneralView(stage);
     return {

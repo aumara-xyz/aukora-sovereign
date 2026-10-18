@@ -87,7 +87,9 @@ impl<S: TargetStore> ScopedGate<S> {
         if before.digest != request.base {
             return Err(crate::refuse("stale-base"));
         }
-        if before.bytes.as_deref() == Some(request.new_bytes.as_slice()) {
+        if before.bytes.as_deref() == Some(request.new_bytes.as_slice())
+            && !slider_reapproval(txn, &request)?
+        {
             return Err(crate::refuse("unchanged"));
         }
         let digest = proposal::content_digest(self.config.node, &request)?;
@@ -365,6 +367,34 @@ impl<S: TargetStore> ScopedGate<S> {
         }
         Ok(())
     }
+}
+
+/// Reinstating the policy bytes after an owner-session tightening still takes a
+/// fresh passkey card. The referenced fact is authenticated by Aura, and door
+/// targets remain unavailable to the guest proposal route.
+fn slider_reapproval(txn: &LedgerTxn<'_>, request: &ProposalRequest) -> Result<bool> {
+    use canon::{authority::{Kind, Phase}, json::ValueView};
+    if request.target.as_str() != "door/slider-policy.json" {
+        return Ok(false);
+    }
+    let Some(evidence) = &request.new_evidence else { return Ok(false) };
+    let row = txn.floor_record_at_sequence(evidence.source_record.sequence)?
+        .ok_or(crate::refuse("new-evidence"))?;
+    if row.authority != evidence.source_record || row.hash != evidence.digest
+        || row.kind != Kind::BootFacts || row.phase != Phase::Fact
+        || row.operation.is_some()
+    {
+        return Ok(false);
+    }
+    let body = aura::record::AuthorityBodyV1::parse(&row.body)?.payload;
+    if row.actor == "owner" && matches!(body.get("schema").map(|value| value.view()), Some(ValueView::Text("aukora-slider-tighten-v1"))) {
+        return Ok(true);
+    }
+    let Some(ValueView::Text(id)) = body.get("declined").map(|value| value.view()) else { return Ok(false) };
+    let id = ProposalId::from_hex(id)?;
+    let previous = txn.proposal(&id)?;
+    Ok(previous.target == request.target.as_str() && previous.new_bytes == request.new_bytes
+        && proposal::is_owner_again(&row, id, previous.operation_digest)?)
 }
 
 fn declined_body(proposal: &Proposal) -> Result<Value> {

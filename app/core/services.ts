@@ -10,12 +10,13 @@ import type { DataTransport } from './transport.js';
 const COMMANDS = new Set(['session.create', 'session.open', 'session.list', 'chat.turn', 'model.cancel']);
 const READS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
   body: Object.freeze({
-    'settings.general': 'general', 'settings.presets': 'presets',
+    'settings.general': 'general', 'settings.presets': 'presets', 'slider.get': 'general', 'slider.set': 'general',
   }),
   broker: Object.freeze({ 'model.report': 'models' }),
   network: Object.freeze({
     'contacts.list': 'messages', 'messages.list': 'messages', 'refusals.counts': 'messages',
-    'conversations.marks': 'messages', 'contact.propose': 'messages', send: 'messages', 'conversation.mark': 'messages',
+    'conversations.marks': 'messages', 'contact.propose': 'messages', 'contact.remove': 'messages',
+    send: 'messages', 'conversation.mark': 'messages',
   }),
   kira: Object.freeze({
     'memory.list': 'memory', 'memory.recall': 'memory',

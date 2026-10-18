@@ -165,7 +165,8 @@ function mount(t, options = {}) {
         return { items: scoped.slice(0, params.limit), next: null };
       }
       if (method === 'send') return options.send ? options.send(params) : {};
-      if (method === 'contact.propose') return {};
+      if (method === 'contact.propose') return options.contactAdd ? options.contactAdd(params, contacts) : { state: 'pending', proposal_id: '6'.repeat(32) };
+      if (method === 'contact.remove') return options.contactRemove ? options.contactRemove(params, contacts) : { state: 'pending', proposal_id: '6'.repeat(32) };
       if (method === 'conversations.marks') return { items: options.marks ?? [] };
       if (method === 'conversation.mark') return options.mark ? options.mark(params) : {};
       if (method === 'refusals.counts') return { envelope: 0, signature: 0, recipient: 0, stranger: 0, replay: 0, payload: 0, stale_contact: 0, total: 0, last_aura_sequence: 0 };
@@ -175,7 +176,7 @@ function mount(t, options = {}) {
   // The face re-reads on its own every few seconds; the tests move that clock by hand.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const live = async () => { t.mock.timers.tick(6_000); for (let turn = 0; turn < 6; turn++) await settle(); };
-  mountMessages(root, client, controller.signal, new Set(options.granted ?? ['contacts.list', 'messages.list', 'refusals.counts', 'conversations.marks', 'contact.propose', 'send', 'conversation.mark']));
+  mountMessages(root, client, controller.signal, new Set(options.granted ?? ['contacts.list', 'messages.list', 'refusals.counts', 'conversations.marks', 'contact.propose', 'contact.remove', 'send', 'conversation.mark']));
   t.after(() => { controller.abort(); assert.equal(root.children.length, 0, 'face removes its canvas on dispose'); });
   return { root, document, calls, contacts, messages, live };
 }
@@ -291,7 +292,7 @@ test('a refused send keeps the draft and an explicit refusal', async t => {
   assert.doesNotMatch(form.textContent, /Queued for the relays/);
 });
 
-test('the own ID reuses QR and copy; contact approval names the exact ID and relay visibility', async t => {
+test('the own ID reuses QR and copy; AskEverything retains the contact-card approval wording', async t => {
   const { root, document, calls } = mount(t);
   await settle();
   const own = find(root, element => element.getAttribute('aria-label') === 'Your Aukora ID' && element.tagName === 'section');
@@ -309,8 +310,10 @@ test('the own ID reuses QR and copy; contact approval names the exact ID and rel
   assert.equal(head.getAttribute('aria-expanded'), 'true');
   assert.equal(byClass(root, 'drawer--contact').dataset.open, 'yes');
   const form = byClass(root, 'contact-form');
-  assert.match(form.textContent, /The card approves this exact Aukora ID, not the person\./);
+  assert.match(form.textContent, /Adding a contact trusts this exact Aukora ID, not the person\./);
   assert.match(form.textContent, /compare it with them in person or on a call you trust\./);
+  assert.equal(button(form, 'Add contact').disabled, false);
+  assert.doesNotMatch(form.textContent, /passkey|approval|card/);
   find(form, element => element.name === 'npub').value = key('r');
   find(form, element => element.name === 'label').value = '  Lee  ';
   form.dispatch('submit'); await settle();
@@ -322,6 +325,60 @@ test('the own ID reuses QR and copy; contact approval names the exact ID and rel
   assert.equal(all(root, element => element.dataset.contact !== undefined).length, 2, 'no contact is inserted before approval');
   assert.match(root.textContent, /they see your node's IP address, the recipient's key, the message size, and when your node connects to them\./);
   assert.doesNotMatch(root.textContent, /Nostr ID|Copy npub|Your npub/);
+});
+
+test('a direct contact add shows a short success and refreshes contacts immediately', async t => {
+  const added = key('r');
+  const { root, calls } = mount(t, { contactAdd(params, contacts) {
+    contacts.push({ npub: params.npub, label: params.label, pairing: null });
+    return { state: 'applied' };
+  } });
+  await settle();
+  const form = byClass(root, 'contact-form');
+  find(form, element => element.name === 'npub').value = added;
+  find(form, element => element.name === 'label').value = 'Lee';
+  const before = calls.length;
+  form.dispatch('submit'); await settle();
+  assert.match(form.textContent, /Contact added\./);
+  assert.doesNotMatch(form.textContent, /passkey|approval|card/);
+  assert.ok(calls.slice(before).some(call => call.method === 'contacts.list'), 'the face re-reads without waiting for its poll');
+  assert.ok(conversation(root, added));
+  assert.equal(find(form, element => element.name === 'npub').value, '');
+});
+
+test('a malformed contact result keeps the draft and never claims success', async t => {
+  const { root } = mount(t, { contactAdd: () => ({ proposal_id: '6'.repeat(32) }) });
+  await settle();
+  const form = byClass(root, 'contact-form');
+  const npub = find(form, element => element.name === 'npub');
+  npub.value = key('r');
+  form.dispatch('submit'); await settle();
+  assert.equal(npub.value, key('r'));
+  assert.doesNotMatch(form.textContent, /Contact added\.|Review the Add contact/);
+  assert.equal(button(form, 'Add contact').disabled, false);
+});
+
+test('a direct removal returns to the refreshed list; AskEverything keeps the contact until approval', async t => {
+  let ask = true;
+  const { root, calls } = mount(t, { contactRemove(params, contacts) {
+    if (ask) return { state: 'pending', proposal_id: '6'.repeat(32) };
+    contacts.splice(contacts.findIndex(contact => contact.npub === params.npub), 1);
+    return { state: 'applied' };
+  } });
+  await settle();
+  const card = conversation(root);
+  byClass(card, 'ak-portal__head').click(); await settle();
+  const action = byClass(card, 'remove-contact');
+  button(action, 'Remove contact').click(); await settle();
+  assert.match(action.textContent, /Review the Remove contact card with your passkey/);
+  assert.equal(root.dataset.view, 'thread');
+  assert.ok(conversation(root));
+  ask = false;
+  button(action, 'Remove contact').click(); await settle();
+  assert.equal(root.dataset.view, 'list');
+  assert.ok(!all(root, item => item.dataset.contact === maya).length);
+  assert.match(root.textContent, /Contact removed\./);
+  assert.deepEqual(calls.filter(call => call.method === 'contact.remove').map(call => call.params), [{ npub: maya }, { npub: maya }]);
 });
 
 test('an exhausted older cursor stays exhausted when an overlapping newest page refreshes', async t => {

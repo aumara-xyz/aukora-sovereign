@@ -568,7 +568,7 @@ impl Messaging {
             "INSERT INTO messaging_seen VALUES(?1,?2,?3,?4,?5,?6,?7,'nostr-relays','contact',0,?8)",
             params![rumor.id.as_bytes().as_slice(), seal.event().event().id.as_bytes().as_slice(),
                 envelope.id.as_bytes().as_slice(), sender.as_bytes().as_slice(),
-                contact.consumed_card().to_string(), contact.authority().epoch as i64,
+                contact.authorization_receipt().to_string(), contact.authority().epoch as i64,
                 contact.authority().sequence as i64, Sha256::digest(rumor.content.as_bytes()).as_slice()],
         ).map_err(|_| retry(R::Payload))?;
         crate::history::stage(
@@ -580,7 +580,7 @@ impl Messaging {
             rumor.created_at.checked_mul(1000).ok_or(fin(R::Payload))?,
             received_at_ms,
             envelope,
-            contact.consumed_card(),
+            contact.authorization_receipt(),
         ).map_err(|_| retry(R::Payload))?;
         transaction.commit().map_err(|_| retry(R::Payload))?;
         Ok(ContactData {
@@ -588,7 +588,7 @@ impl Messaging {
             event: rumor.id,
             text: rumor.content,
             transport,
-            contact_receipt: contact.consumed_card(),
+            contact_receipt: contact.authorization_receipt(),
         })
     }
 

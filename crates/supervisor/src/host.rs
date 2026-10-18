@@ -159,6 +159,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         ledger.clone(),
     )?);
     gate.configure_targets(config.gate_targets()?)?;
+    ledger.initialize_slider(crate::door::configured_slider(&config))?;
     // The door for the engine's crossings, when this node has a policy for it: its asks become gate proposals.
     crate::door::start_in_node(&config, ledger.clone(), gate.clone());
     if let BindingState::Bound(scope) = ledger.binding()? {
@@ -234,6 +235,7 @@ pub async fn serve(config: NodeConfig) -> Result<()> {
         health.clone(),
         broker.clone(),
     )
+    .with_gate(gate.clone())
     .with_network(network.clone())
     .with_kira(kira.clone())
     .with_identity(identity.clone());

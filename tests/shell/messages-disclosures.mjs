@@ -26,7 +26,8 @@ test('a contact card approves an exact Aukora ID, not a person, and the owner is
   }
   assert.match(COPY.contactKey, /in person or on a call you trust/);
   assert.match(actions, /COPY\.contactKey\b/);
-  assert.match(actions, /status\.textContent = COPY\.contactReview;/);
+  assert.match(actions, /change\.state === "applied" \? "Contact added\." : COPY\.contactReview/);
+  assert.doesNotMatch(COPY.emptyContacts + COPY.contactKey, /passkey/);
 });
 
 test('How it works says who can send and what relays see (Peter, 2026-10-18: only there, not under the composer)', () => {

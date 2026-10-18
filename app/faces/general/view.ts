@@ -2,7 +2,7 @@
 // The General screen. The first card is the release the node reports serving, the only part that comes from the node; a
 // failed read empties it and says so. The other cards are plain facts about this release (language, appearance, the
 // limits the app keeps, how a setting changes) and are printed whether or not the node answers, because none of them is a
-// claim about the node. Nothing on the page saves, approves or changes anything.
+// claim about the node. The owner slider is mounted separately and reads the door's current policy.
 import { FD4_LIMITS, MAX_RPC_BYTES, RPC_DEADLINE_MS } from "../../core/index.js";
 import { showServiceState } from "../../core/service-state.js";
 import { card, count, facts, groups, make, mark, note, plural } from "./kit.js";
@@ -41,7 +41,7 @@ export function createGeneralView(root: HTMLElement): GeneralView {
 
   const change = card(root, "change", "How settings change");
   change.body.append(make("p", "lead",
-    "This page only reads. It has no field that saves a setting and no button that approves one. A change to this node is proposed as exact bytes, and it takes effect only when your passkey approves those bytes in the owner pane."));
+    "The Laya slider above tightens immediately; loosening requires your passkey in the owner pane. Other protected changes are proposed as exact bytes for your passkey to approve."));
 
   return {
     show(report) {

@@ -4,7 +4,8 @@ use super::HostLedger;
 use canon::{
     alg::{AlgorithmId, PublicKey as SigningKey, Signature},
     authority::{
-        AuthorityAppendContext, AuthorityRecord, AuthorityTxn, AuthorityVersion, FactRecord, Kind,
+        AuthorityAppendContext, AuthorityRecord, AuthorityTxn, AuthorityVersion, FactKind, FactRecord,
+        Kind,
         LifecycleRecord, ObservationContext, OwnerAuthorization, OwnerBinding, OwnerOperation,
         PendingAuthorityRecord, Phase, StandingUseContext, VerifiedProof, VerifiedStandingUse,
     },
@@ -20,7 +21,9 @@ use std::collections::BTreeMap;
 use supervisor::ingress::PrincipalScope;
 
 #[cfg(test)]
-mod tests;
+mod owner_contact_tests;
+#[cfg(test)]
+pub(crate) mod tests;
 
 pub struct NetworkTxn<'a, 'db> {
     inner: &'a mut aura::LedgerTxn<'db>,
@@ -142,6 +145,13 @@ impl NetworkProjection {
             } else if row.kind == Kind::BootFacts
                 && row.phase == Phase::Fact
                 && row.operation.is_none()
+                && row.actor == "owner"
+                && string(&body, "schema").ok() == Some(messaging::OWNER_CONTACT_SCHEMA)
+            {
+                project_owner_contact(&mut result.contacts, scope, &row, &body)?;
+            } else if row.kind == Kind::BootFacts
+                && row.phase == Phase::Fact
+                && row.operation.is_none()
                 && row.actor == "messaging"
                 && string(&body, "schema").ok() == Some("aukora:messaging-event:v1")
             {
@@ -219,12 +229,119 @@ impl NetworkProjection {
 }
 
 impl NetworkTxn<'_, '_> {
+    /// Returns false only when the current slider requires the existing owner card.
+    /// Scope, selected setting and append share the host's Aura writer lock.
+    pub fn apply_owner_contact(&mut self, action: &OwnerAction) -> Result<bool> {
+        use messaging::OwnerSessionTxn;
+        self.check_owner_session()?;
+        let OwnerAction::Contact(change) = action else {
+            return Err(refuse("owner-contact-action-required"));
+        };
+        let bytes = action.canonical_bytes()?;
+        match change {
+            ContactChange::Add(draft) if draft.pairing.is_some() => {
+                return Err(refuse("pairing-unavailable"))
+            }
+            ContactChange::Remove { key } if self.load_contact(*key)?.is_none() => {
+                return Err(refuse("contact-missing"))
+            }
+            _ => {}
+        }
+        let setting = super::slider::current_policy(self.inner)?.setting;
+        if setting == laya::SliderSetting::AskEverything {
+            return Ok(false);
+        }
+        let context = self.inner.observation_context()?;
+        let body = Value::object(vec![
+            ("schema".into(), text(messaging::OWNER_CONTACT_SCHEMA)?),
+            ("subject".into(), text(self.scope.subject.to_string())?),
+            ("setting".into(), text(setting.wire_name())?),
+            ("action".into(), text(hex::encode(bytes))?),
+        ])?;
+        let row = self.inner.append_fact(FactRecord {
+            v: 1,
+            algorithm: AlgorithmId::Sha256,
+            authority: context.authority,
+            at: context.at,
+            kind: FactKind::BootFacts,
+            actor: "owner".into(),
+            body: body.clone(),
+        })?;
+        self.inner.commit_observations()?;
+        project_owner_contact(&mut self.contacts, self.scope, &row, &body)?;
+        Ok(true)
+    }
+
     pub fn contact_keys(&self) -> Result<Vec<nostr::PublicKey>> {
         self.contacts
             .keys()
             .map(|key| nostr::PublicKey::from_hex(key))
             .collect()
     }
+}
+
+/// An owner-session contact change recorded in Aura while the slider allowed it (no card); shared by the detached
+/// projection and the live writer so both derive the same contact state.
+fn project_owner_contact(
+    contacts: &mut BTreeMap<String, Value>,
+    scope: PrincipalScope,
+    row: &AuthorityRecord,
+    body: &Value,
+) -> Result<()> {
+    let ValueView::Object(fields) = body.view() else {
+        return Err(refuse("owner-contact-record"));
+    };
+    if fields.len() != 4
+        || row.kind != Kind::BootFacts
+        || row.phase != Phase::Fact
+        || row.operation.is_some()
+        || row.actor != "owner"
+        || string(body, "schema")? != messaging::OWNER_CONTACT_SCHEMA
+        || string(body, "subject")? != scope.subject.to_string()
+        || !matches!(string(body, "setting")?, "risky" | "limits" | "trusted")
+        || row.authority.epoch != scope.epoch
+    {
+        return Err(refuse("owner-contact-record"));
+    }
+    let encoded = string(body, "action")?;
+    if encoded.len() > 16_384 {
+        return Err(refuse("owner-contact-record"));
+    }
+    let bytes = hex::decode(encoded).map_err(|_| refuse("owner-contact-record"))?;
+    if hex::encode(&bytes) != encoded {
+        return Err(refuse("owner-contact-record"));
+    }
+    match OwnerAction::decode(&bytes)? {
+        OwnerAction::Contact(ContactChange::Add(draft)) => {
+            let state = Value::object(vec![
+                (
+                    "schema".into(),
+                    text("aukora:messaging-owner-contact-state:v1")?,
+                ),
+                ("action".into(), text(encoded)?),
+                ("epoch".into(), number(row.authority.epoch)?),
+                ("sequence".into(), number(row.authority.sequence)?),
+                (
+                    "previous_hash".into(),
+                    row.authority
+                        .previous_hash
+                        .map(|hash| text(hash.to_string()))
+                        .transpose()?
+                        .unwrap_or_else(Value::null),
+                ),
+                ("receipt".into(), text(row.hash.to_string())?),
+                ("record".into(), row.body.clone()),
+            ])?;
+            messaging::contact_from_state(&state, draft.key)?;
+            contacts
+                .insert(hex::encode(draft.key.as_bytes()), state);
+        }
+        OwnerAction::Contact(ContactChange::Remove { key }) => {
+            contacts.remove(&hex::encode(key.as_bytes()));
+        }
+        OwnerAction::Send(_) => return Err(refuse("owner-contact-record")),
+    }
+    Ok(())
 }
 
 impl AuthorityTxn for NetworkTxn<'_, '_> {

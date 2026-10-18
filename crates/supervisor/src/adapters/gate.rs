@@ -393,6 +393,7 @@ impl GateAdapter {
 mod standing;
 mod retry;
 mod model_budget;
+pub mod slider;
 
 impl GateService for GateAdapter {
     fn propose_site<'a>(

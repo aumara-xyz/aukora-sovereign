@@ -17,7 +17,7 @@ impl NodeConfig {
     /// A missing inventory refuses startup; an explicit empty array disables optional targets.
     /// An initially absent entry selects only the fixed contact target.
     pub fn gate_targets(&self) -> Result<Vec<TargetSpec>> {
-        messaging_targets(self.configured_gate_targets()?)
+        slider_target(messaging_targets(self.configured_gate_targets()?)?)
     }
 
     fn configured_gate_targets(&self) -> Result<Vec<TargetSpec>> {
@@ -165,6 +165,24 @@ fn messaging_targets(mut targets: Vec<TargetSpec>) -> Result<Vec<TargetSpec>> {
         risk: RiskTier::Critical,
         max_bytes: 8192,
     });
+    Ok(targets)
+}
+
+fn slider_target(mut targets: Vec<TargetSpec>) -> Result<Vec<TargetSpec>> {
+    let spec = laya::SliderPolicy::target_spec()?;
+    let name = spec.id.as_str();
+    for target in &targets {
+        let id = target.id.as_str();
+        if id == name {
+            return if target == &spec { Ok(targets) } else { Err(codes::SUPERVISOR_GATE_TARGETS_CLASS) };
+        }
+        if name.strip_prefix(id).is_some_and(|tail| tail.starts_with('/'))
+            || id.strip_prefix(name).is_some_and(|tail| tail.starts_with('/'))
+        {
+            return Err(codes::SUPERVISOR_GATE_TARGETS_NAME);
+        }
+    }
+    targets.push(spec);
     Ok(targets)
 }
 

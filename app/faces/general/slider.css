@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Rule 10's shared portal and record rows; only spacing within this settings control lives here. */
+.slider-control { max-width: 680px; margin-block: 20px; }
+.slider-content { display: grid; gap: 12px; }
+.slider-status { margin: 0; font-size: 13px; }
+.slider-status:empty { display: none; }
+.slider-help { color: var(--ak-text-2); font-size: 13px; }
+.slider-help summary { cursor: pointer; color: var(--ak-blue); }
+.slider-help p { font-size: inherit; margin: 10px 0 0; }
+.slider-control button:disabled { cursor: default; }

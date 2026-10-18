@@ -112,7 +112,7 @@ impl Messaging {
             now_ms,
             now_ms,
             &envelope,
-            contact.consumed_card(),
+            contact.authorization_receipt(),
         )?;
         self.audit_message(txn, id)?;
         Ok(OutboxId(id))

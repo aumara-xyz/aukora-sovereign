@@ -123,6 +123,8 @@ struct Counts {
 
 /// Where the grants come from on the node: the bytes the owner's passkey applied to `door/standing-grants.json`.
 pub type GrantSource = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
+/// The in-node policy comes from the same verified Aura view as owner actions.
+pub type PolicySource = Box<dyn Fn() -> Option<SliderPolicy> + Send + Sync>;
 
 /// How long the gate's grants are trusted before the gate is asked again (a revoke or a new card lands within it).
 const SOURCE_FRESH: std::time::Duration = std::time::Duration::from_secs(2);
@@ -133,6 +135,7 @@ pub struct Standing {
     counts: Mutex<Counts>,
     /// When set, the grants are the gate target's applied bytes, not `files.grants`.
     source: Option<GrantSource>,
+    policy_source: Option<PolicySource>,
     from_source: Mutex<Option<(std::time::Instant, GrantSet)>>,
 }
 
@@ -178,6 +181,14 @@ fn read_text(path: &Path) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     files::open_trusted(path, MAX_FILE, 0o022, "door-standing").ok()?.read_to_end(&mut bytes).ok()?;
     Some(bytes)
+}
+
+pub(super) fn configured_policy(files: Option<&StandingFiles>) -> SliderPolicy {
+    match files.and_then(|files| files.policy.as_ref()) {
+        None => slider::starter(),
+        Some(path) => read_text(path).ok_or_else(|| refuse("door-standing")).and_then(|bytes| SliderPolicy::parse(&bytes)),
+    }
+    .unwrap_or(SliderPolicy { setting: SliderSetting::AskEverything, classes: Vec::new() })
 }
 
 impl Standing {
@@ -243,15 +254,11 @@ impl Standing {
         sync_dir(state_dir)?;
         let void_through = (ambiguous || void_today).then_some(today.max(slider::day_of(last_ms)));
         let counts = Counts { usage, log: Log::new(log), bytes: kept.len() as u64, log_day: slider::day_of(last_ms), dirty: false, void_through, last_ms };
-        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(counts), source: None, from_source: Mutex::new(None) })
+        Ok(Self { files: files.clone(), loaded: Mutex::new(None), counts: Mutex::new(counts), source: None, policy_source: None, from_source: Mutex::new(None) })
     }
 
     fn load(&self, policy_stamp: Stamp, grants_stamp: Stamp) -> Loaded {
-        let policy = match &self.files.policy {
-            None => slider::starter(),
-            Some(path) => read_text(path).ok_or_else(|| refuse("door-standing")).and_then(|bytes| SliderPolicy::parse(&bytes)),
-        }
-        .unwrap_or_else(|_| SliderPolicy { setting: SliderSetting::AskEverything, classes: Vec::new() });
+        let policy = configured_policy(Some(&self.files));
         let grants = self.files.grants.as_ref().and_then(|path| read_text(path)).and_then(|bytes| GrantSet::parse(&bytes).ok()).unwrap_or_default();
         Loaded { policy_stamp, grants_stamp, policy, grants }
     }
@@ -259,6 +266,10 @@ impl Standing {
     /// Take the grants from the gate (the in-node door): only owner-applied bytes; anything unreadable is no grants.
     pub fn grants_from(&mut self, source: GrantSource) {
         self.source = Some(source);
+    }
+
+    pub fn policy_from(&mut self, source: PolicySource) {
+        self.policy_source = Some(source);
     }
 
     fn source_grants(&self, source: &GrantSource) -> GrantSet {
@@ -282,7 +293,12 @@ impl Standing {
         if (loaded.policy_stamp, loaded.grants_stamp) != stamps {
             *loaded = self.load(stamps.0, stamps.1);
         }
-        let policy = loaded.policy.clone();
+        // No policy cache: a tightening applies to the next crossing, including
+        // the second judgment after a slow preflight.
+        let policy = match &self.policy_source {
+            Some(source) => source().unwrap_or(SliderPolicy { setting: SliderSetting::AskEverything, classes: Vec::new() }),
+            None => loaded.policy.clone(),
+        };
         let grants = match &self.source {
             Some(source) => {
                 drop(guard);

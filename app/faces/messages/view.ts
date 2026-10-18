@@ -11,7 +11,7 @@ import { icon } from "../threads/dom.js";
 import { h, untrusted } from "./dom.js";
 import { conversationList, moment, readContactPage, readMarks, readMessagePage, readRefusals, threadMessages } from "./model.js";
 import type { Contact, Conversation, Mark, Message } from "./model.js";
-import { addContact, composer, copyId, ownIdentity } from "./actions.js";
+import { addContact, composer, copyId, ownIdentity, removeContact } from "./actions.js";
 import type { Composer } from "./actions.js";
 import { glyph, portal, portalIcon } from "./portal.js";
 
@@ -43,7 +43,7 @@ function messageRow(message: Message, retry: ((text: string) => void) | null): H
 // page while it overlaps the loaded history. A larger burst starts a fresh contiguous window; the compose draft stays.
 // No success state claims delivery to the other person.
 function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, granted: ReadonlySet<string>,
-  changed: (messages: readonly Message[]) => void) {
+  changed: (messages: readonly Message[]) => void, removed: () => void) {
   const address = h("code", { class: "key full" }, contact.npub);
   const copy = h("button", { type: "button", class: "ak-action" }, "Copy Aukora ID");
   const copyStatus = h("p", { role: "status", class: "info" });
@@ -52,6 +52,7 @@ function threadPanel(client: FaceClient, signal: AbortSignal, contact: Contact, 
   const details = h("div", { class: "contact-info", hidden: "" },
     h("dl", { class: "ak-fields" }, h("dt", {}, "Aukora ID"), h("dd", {}, address)), copy, copyStatus,
     h("p", { class: "aside" }, contact.pairing ? COPY.pairing[contact.pairing.method] : COPY.noPairing));
+  if (granted.has("contact.remove")) details.append(removeContact(client, signal, contact.npub, removed));
   const rows = h("ol", { class: "rows transcript", "aria-label": "Messages in time order" });
   const info = h("p", { class: "info", role: "status" });
   const problem = h("p", { class: "problem", role: "alert", hidden: "" });
@@ -239,8 +240,17 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     h("p", { class: "aside" }, COPY.inbound), h("p", { class: "aside" }, COPY.footnote));
   if (granted.has("refusals.counts")) how.append(refusalsPanel(client, signal));
   const picker = h("ul", { class: "picker", "aria-label": "Choose a contact" });
+  const contactStatus = h("p", { role: "status", class: "info", "aria-live": "polite", hidden: "" });
+  const contactsChanged = (removed?: string) => {
+    if (removed) {
+      if (selected === removed) cards.get(removed)?.open();
+      contactStatus.textContent = "Contact removed.";
+      contactStatus.hidden = false;
+    }
+    void read(true);
+  };
   const panelContent: ReadonlyArray<readonly [Panel, HTMLElement | null]> = [
-    ["contact", granted.has("contact.propose") ? addContact(client, signal) : null],
+    ["contact", granted.has("contact.propose") ? addContact(client, signal, contactsChanged) : null],
     ["id", ownIdentity(client, signal)],
     ["more", how],
     ["pick", h("div", {}, h("p", { class: "ak-label" }, "New message to"), picker)],
@@ -288,13 +298,14 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
   const list = h("div", { class: "list-scene" }, search,
     h("section", { class: "msg-list", "aria-label": "Conversations" }, info, problem, rows, h("div", { class: "button-row" }, moreContacts)));
   const stage = h("div", { class: "thread-stage", hidden: "" });
-  const top = h("div", { class: "msg-top" }, header, h("div", { class: "msg-panels" }, row, ...drawers.values()));
+  const top = h("div", { class: "msg-top" }, header, h("div", { class: "msg-panels" }, row, ...drawers.values()), contactStatus);
   const canvas = h("div", { class: "ak-canvas" }, top, list, stage);
   root.dataset.view = "list";
   root.append(canvas);
   let selected: string | null = null;
   let next: string | null = null;
   let busy = false;
+  let pendingRead = false;
   const remember = (items: readonly Message[]) => { for (const message of items) messages.set(message.id, message); };
   const seen = (items: readonly Message[]) => {
     remember(items);
@@ -372,7 +383,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     const archive = iconButton("archive", "Archive conversation");
     const unread = iconButton("unread", "Mark as unread");
     const actions = h("span", { class: "row-actions" }, ...(canMark ? [pin, archive] : []), unread);
-    const panel = threadPanel(client, signal, contact, granted, seen);
+    const panel = threadPanel(client, signal, contact, granted, seen, () => contactsChanged(contact.npub));
     const body = h("div", { class: "ak-portal__body", hidden: "" }, panel.element);
     const element = h("section", { class: "ak-portal ak-tone-mint conversation", "data-open": "no", "data-contact": contact.npub },
       h("div", { class: "conversation-line" }, back, head, actions), body);
@@ -511,7 +522,8 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
   // `first` is the opening read (previews for every contact and the owner marks); a live re-read takes the newest
   // contacts and messages and previews only contacts it has not seen. Returns false when the read failed.
   const read = async (restart: boolean, first = false): Promise<boolean> => {
-    if (busy || signal.aborted) return true;
+    if (signal.aborted) return true;
+    if (busy) { pendingRead ||= restart; return true; }
     if (!granted.has("contacts.list") || !granted.has("messages.list")) {
       showServiceState(problem, "app:service-unavailable"); problem.hidden = false; return false;
     }
@@ -550,7 +562,10 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
       return false;
     } finally {
       busy = false;
-      if (!signal.aborted) { moreContacts.disabled = false; moreContacts.hidden = next === null; }
+      if (!signal.aborted) {
+        moreContacts.disabled = false; moreContacts.hidden = next === null;
+        if (pendingRead) { pendingRead = false; void read(true); }
+      }
     }
   };
   moreContacts.addEventListener("click", () => { void read(false); }, { signal });

@@ -44,6 +44,41 @@ fn read_crossing() -> Crossing {
 }
 
 #[test]
+fn configured_policy_import_uses_the_existing_trusted_file_checks() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = temp("initial-policy");
+    let path = dir.join("slider.json");
+    let mut policy = slider::starter().unwrap();
+    policy.setting = SliderSetting::WithinTodayLimits;
+    policy.classes.iter_mut().find(|rule| rule.class == CrossingClass::Net).unwrap().per_day = 7;
+    write_private(&path, &policy.canonical_bytes().unwrap());
+    let files = StandingFiles { policy: Some(path.clone()), grants: None };
+    assert_eq!(configured_policy(Some(&files)), policy);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+    assert_eq!(configured_policy(Some(&files)).setting, SliderSetting::AskEverything);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn policy_source_tightening_is_immediate_and_an_unavailable_source_asks() {
+    let dir = temp("policy-source");
+    let (path, _) = grant_file(&dir, CrossingClass::Memory, &["read"], 20);
+    let mut standing = open_standing(&dir, Some(path), None);
+    let source = Arc::new(Mutex::new(Some(slider::starter().unwrap())));
+    let read = source.clone();
+    standing.policy_from(Box::new(move || read.lock().unwrap().clone()));
+    assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Clear));
+    // Tighten during the preflight: the final judgment must use the new floor.
+    assert!(matches!(standing.settle(&read_crossing(), now_ms(), || {
+        source.lock().unwrap().as_mut().unwrap().setting = SliderSetting::AskEverything;
+        Ok(())
+    }), Settled::Ask));
+    *source.lock().unwrap() = None;
+    assert!(matches!(standing.settle(&read_crossing(), now_ms(), || Ok(())), Settled::Ask));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn nothing_clears_without_a_grant_even_at_only_risky_things() {
     let dir = temp("nogrant");
     let standing = open_standing(&dir, None, None);

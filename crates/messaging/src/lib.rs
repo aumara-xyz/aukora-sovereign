@@ -11,6 +11,7 @@ mod owner_transport;
 pub use owner_transport::PreparedOwnerSend;
 mod polling;
 mod marks;
+mod owner_contacts;
 mod store;
 #[cfg(test)]
 mod history_tests;
@@ -19,6 +20,7 @@ mod vector_tests;
 
 pub use history::{MessageDirection, MessageRecord, MessageState, OwnerSessionTxn, MESSAGE_SCHEMA};
 pub use marks::{ConversationMark, MAX_MARKS};
+pub use owner_contacts::OWNER_CONTACT_SCHEMA;
 
 use canon::json::{Value, ValueView};
 use canon::{
@@ -232,8 +234,9 @@ pub trait MessagingTxn: AuthorityTxn {
     /// Stage only the action rebuilt from the gate's locked proposal. The proof
     /// must name this transaction, exact action bytes, epoch and displayed card.
     /// A rollback must discard both state changes and the canon authority steps.
-    /// The contact/outbox materialization retains the full consumed owner proof
+    /// Reviewed contact/outbox materializations retain the full consumed owner proof
     /// and signed terminal row, bound to this action, proposal, epoch and receipt.
+    /// Direct owner contacts retain their signed owner-session Aura fact instead.
     /// Only that committed projection may satisfy `committed_authority_state`
     /// in the `messaging.contact` and `messaging.outbox` namespaces. Outbox state
     /// binds the exact envelope prepared for the owner-approved recipient/text.
@@ -361,7 +364,8 @@ impl Messaging {
             return Err(refuse("page-limit"));
         }
         let mut statement = self.db.prepare(
-            "SELECT key FROM messaging_contacts WHERE (?1 IS NULL OR key>?1) ORDER BY key LIMIT ?2")
+            "SELECT key FROM (SELECT key FROM messaging_contacts UNION SELECT key FROM messaging_owner_contacts)
+             WHERE (?1 IS NULL OR key>?1) ORDER BY key LIMIT ?2")
             .map_err(|_| refuse("store-read"))?;
         let start = after.map(|key| key.as_bytes().to_vec());
         let rows = statement
@@ -376,6 +380,9 @@ impl Messaging {
     }
 
     pub(crate) fn stored_contact(&self, key: PublicKey) -> Result<Option<ApprovedContact>> {
+        if let Some(contact) = self.stored_owner_contact(key)? {
+            return Ok(Some(contact));
+        }
         let row = self.db.query_row(
             "SELECT action,epoch,sequence,previous_hash,proposal,consumed_card FROM messaging_contacts WHERE key=?1",
             params![key.as_bytes().as_slice()], |row| Ok((row.get::<_,Vec<u8>>(0)?,
@@ -407,7 +414,7 @@ impl Messaging {
         .map(Some)
     }
 
-    /// Refresh a contact projection from committed owner-consumed rows. Removal
+    /// Refresh a contact projection from committed owner-authorized rows. Removal
     /// also invalidates this process's queued capabilities for that recipient.
     pub fn synchronize_contact<T: AuthorityTxn + ?Sized>(
         &mut self,
@@ -423,18 +430,25 @@ impl Messaging {
             };
             let action = OwnerAction::Contact(ContactChange::Add(draft)).canonical_bytes()?;
             let authority = contact.authority();
-            self.db.execute("INSERT INTO messaging_contacts
+            if contact.proposal().is_none() {
+                self.cache_owner_contact(txn, key)?;
+            } else {
+                self.db.execute("INSERT INTO messaging_contacts
                 (key,action,epoch,sequence,previous_hash,proposal,consumed_card)
                 VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(key) DO UPDATE SET
                 action=excluded.action,epoch=excluded.epoch,sequence=excluded.sequence,
                 previous_hash=excluded.previous_hash,proposal=excluded.proposal,consumed_card=excluded.consumed_card",
                 params![key.as_bytes().as_slice(),action,authority.epoch as i64,authority.sequence as i64,
                     authority.previous_hash.map(|hash| hash.as_bytes().to_vec()),
-                    contact.proposal().as_bytes().as_slice(),contact.consumed_card().as_bytes().as_slice()])
+                    contact.proposal().ok_or(refuse("store-contact"))?.as_bytes().as_slice(),
+                    contact.authorization_receipt().as_bytes().as_slice()])
                 .map_err(|_| refuse("store-write"))?;
+                self.remove_owner_contact_cache(key)?;
+            }
             self.approved_outbox
                 .retain(|_, send| send.envelope.recipient != key || send.epoch == authority.epoch);
         } else {
+            self.remove_owner_contact_cache(key)?;
             self.db
                 .execute(
                     "DELETE FROM messaging_contacts WHERE key=?1",
@@ -627,8 +641,11 @@ fn check_proof_action<T: AuthorityTxn + ?Sized>(
 }
 
 /// Decode a projection already authenticated by the trusted host's ledger reader.
-/// This helper does not verify the retained owner proof or the signed Aura row.
+/// This helper does not verify the retained owner proof or signed owner-session Aura row.
 pub fn contact_from_state(state: &Value, key: PublicKey) -> Result<ApprovedContact> {
+    if state_text(state, "schema")? == owner_contacts::OWNER_CONTACT_STATE_SCHEMA {
+        return owner_contacts::contact_from_owner_state(state, key);
+    }
     exact_object(
         state,
         &[

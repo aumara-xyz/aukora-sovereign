@@ -118,14 +118,14 @@ fn permitted(face: &str, service: &str, method: &str) -> bool {
                 "messages",
                 "network",
                 "contacts.list" | "messages.list" | "refusals.counts" | "conversations.marks"
-                    | "contact.propose" | "send" | "conversation.mark"
+                    | "contact.propose" | "contact.remove" | "send" | "conversation.mark"
             )
             | (
                 "threads" | "sidebar" | "archived",
                 "body",
                 "session.list" | "session.open"
             )
-            | ("general", "body", "settings.general")
+            | ("general", "body", "settings.general" | "slider.get" | "slider.set")
             | ("models", "body", "settings.models")
             | ("models", "broker", "model.report")
             | ("plugins", "body", "settings.plugins")
@@ -237,7 +237,7 @@ mod messaging_tests {
     #[test]
     fn only_the_released_messages_face_is_authorized_to_send() {
         let with_messages = release(&["messages", "threads", "humangraph"]);
-        for method in ["send", "contact.propose", "conversation.mark"] {
+        for method in ["send", "contact.propose", "contact.remove", "conversation.mark"] {
             let read = authorize_data(&with_messages, &body("messages", method)).unwrap();
             assert_eq!((read.face(), read.service(), read.method()), ("messages", "network", method));
             // Any other face, even one the release carries, is denied the write.
@@ -254,6 +254,7 @@ mod messaging_tests {
     #[test]
     fn owner_shell_messages_has_writes_but_engine_origin_is_refused() {
         assert!(permitted("messages", "network", "contact.propose"));
+        assert!(permitted("messages", "network", "contact.remove"));
         assert!(permitted("messages", "network", "send"));
         assert!(permitted("messages", "network", "conversation.mark"));
         assert!(permitted("messages", "network", "conversations.marks"));
@@ -275,5 +276,19 @@ mod messaging_tests {
             peer: "127.0.0.1".parse().unwrap(), forwarded_proto: vec!["https".into()],
             host: vec!["engine.node.example".into()],
         }), Err(code) if code == canon::codes::FRONTDOOR_HOST_REFUSED));
+    }
+
+    #[test]
+    fn slider_is_only_available_to_the_released_general_face() {
+        let release = release(&["general", "messages"]);
+        for method in ["slider.get", "slider.set"] {
+            let request = canon::json::parse_strict(format!(
+                r#"{{"face":"general","method":"{method}","params":{{}},"schema":"aukora:face-service:v3","service":"body"}}"#
+            ).as_bytes()).unwrap();
+            assert!(authorize_data(&release, &request).is_ok());
+            assert!(!permitted("messages", "body", method));
+            assert!(!permitted("threads", "body", method));
+            assert!(!permitted("general", "network", method));
+        }
     }
 }

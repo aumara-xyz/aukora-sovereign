@@ -13,7 +13,9 @@
   "capabilities": {
     "body": {
       "methods": [
-        "settings.general"
+        "settings.general",
+        "slider.get",
+        "slider.set"
       ],
       "topics": []
     }

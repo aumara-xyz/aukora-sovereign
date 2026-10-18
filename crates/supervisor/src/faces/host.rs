@@ -8,7 +8,7 @@ use super::{
     settings::{self, SettingsRead},
     FaceServices,
 };
-use crate::adapters::{BrokerAdapter, HostLedger};
+use crate::adapters::{BrokerAdapter, GateAdapter, HostLedger};
 use canon::{codes, json::Value, Result};
 use frontdoor::{
     api::service_reads::AuthorizedRead,
@@ -30,6 +30,7 @@ pub struct HostFaces {
     sessions: Arc<dyn SessionStore>,
     health: Arc<dyn HealthRead>,
     broker: Arc<BrokerAdapter>,
+    gate: Option<Arc<GateAdapter>>,
     kira: Option<Arc<dyn KiraService>>,
     network: Option<Arc<dyn NetworkRead>>,
     identity: Option<Arc<Mutex<crate::identity::Identity>>>,
@@ -46,6 +47,7 @@ impl HostFaces {
             sessions,
             health,
             broker,
+            gate: None,
             kira: None,
             network: None,
             identity: None,
@@ -53,6 +55,10 @@ impl HostFaces {
     }
     pub fn with_kira(mut self, kira: Arc<dyn KiraService>) -> Self {
         self.kira = Some(kira);
+        self
+    }
+    pub fn with_gate(mut self, gate: Arc<GateAdapter>) -> Self {
+        self.gate = Some(gate);
         self
     }
     pub fn with_network(mut self, network: Arc<dyn NetworkRead>) -> Self {
@@ -103,7 +109,10 @@ impl HostFaces {
             return super::wire::bounded(value);
         }
         if read.service() == "network"
-            && matches!(read.method(), "contact.propose" | "send" | "conversation.mark")
+            && matches!(
+                read.method(),
+                "contact.propose" | "contact.remove" | "send" | "conversation.mark"
+            )
         {
             // Owner writes retain the shell session guard. They are dispatched
             // on this blocking host task, outside the async read future.
@@ -111,6 +120,16 @@ impl HostFaces {
                 self.network
                     .as_deref()
                     .ok_or(refuse("network-unavailable"))?,
+                scope,
+                read.method(),
+                read.params(),
+            )?;
+            self.recheck(scope)?;
+            return super::wire::bounded(value);
+        }
+        if read.service() == "body" && matches!(read.method(), "slider.get" | "slider.set") {
+            let value = super::slider_settings::call(
+                self.gate.as_deref().ok_or(refuse("settings-unavailable"))?,
                 scope,
                 read.method(),
                 read.params(),

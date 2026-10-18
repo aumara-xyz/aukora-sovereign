@@ -53,6 +53,9 @@ pub trait NetworkRead: Send + Sync {
     ) -> Result<Value> {
         Err(refuse("network-owner-actions-unavailable"))
     }
+    fn remove_contact(&self, _scope: PrincipalScope, _npub: &str) -> Result<Value> {
+        Err(refuse("network-owner-actions-unavailable"))
+    }
     fn send(&self, _scope: PrincipalScope, _npub: &str, _text: &str) -> Result<Value> {
         Err(refuse("network-owner-actions-unavailable"))
     }
@@ -91,6 +94,10 @@ pub fn call(
             .transpose()?
             .flatten();
         return source.propose_contact(scope, npub, label);
+    }
+    if method == "contact.remove" {
+        wire::exact(params, &["npub"])?;
+        return source.remove_contact(scope, wire::string(wire::field(params, "npub")?)?);
     }
     if method == "send" {
         wire::exact(params, &["npub", "text"])?;
@@ -305,7 +312,11 @@ mod contact_card_tests {
             assert!(card.model_note.is_empty());
             assert_eq!(card.risk, canon::authority::CardRisk::Critical);
             // The owner compares this npub with the other person; the card names it, not a hex form alone.
-            assert!(card.says.contains(key.to_npub().unwrap().as_str()), "{}", card.says);
+            assert!(
+                card.says.contains(key.to_npub().unwrap().as_str()),
+                "{}",
+                card.says
+            );
         }
         let add = OwnerAction::Contact(ContactChange::Add(ContactDraft {
             key,
@@ -313,7 +324,10 @@ mod contact_card_tests {
             pairing: None,
         }));
         let says = add.card().unwrap().says;
-        assert!(says.contains("This approves the ID, not the person."), "{says}");
+        assert!(
+            says.contains("This approves the ID, not the person."),
+            "{says}"
+        );
         assert!(says.contains("in person or on a call you trust"), "{says}");
         assert!(gate::messaging::contact_card(b"{}").is_err());
     }
@@ -366,7 +380,9 @@ mod conversation_mark_tests {
     #[test]
     fn a_conversation_mark_is_exact_booleans_for_one_npub_and_reads_back() {
         let scope = PrincipalScope {
-            subject: canon::ids::SubjectId::from_digest(canon::digest::Digest32::from_bytes([7; 32])),
+            subject: canon::ids::SubjectId::from_digest(canon::digest::Digest32::from_bytes(
+                [7; 32],
+            )),
             epoch: 1,
         };
         let npub = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";
@@ -384,7 +400,10 @@ mod conversation_mark_tests {
             format!(r#"{{"archived":0,"npub":"{npub}","pinned":true}}"#),
             r#"{"archived":false,"npub":"npub1nope","pinned":true}"#.to_owned(),
         ] {
-            assert!(call(&source, scope, "conversation.mark", &params(&bad)).is_err(), "{bad}");
+            assert!(
+                call(&source, scope, "conversation.mark", &params(&bad)).is_err(),
+                "{bad}"
+            );
         }
         let read = call(&source, scope, "conversations.marks", &params("{}")).unwrap();
         assert_eq!(

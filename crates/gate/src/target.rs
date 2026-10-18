@@ -362,7 +362,12 @@ impl TargetStore for ConfinedStore {
         if hash(&permit.bytes) != permit.new_digest {
             return Err(crate::refuse("post-write-hash"));
         }
-        if permit.base == BaseDigest::Present(permit.new_digest) {
+        // A fresh passkey may reinstate the slider's existing target bytes after
+        // an owner-session tightening. The scoped proposal route authenticates
+        // that tightening fact before it can issue this permit.
+        if permit.base == BaseDigest::Present(permit.new_digest)
+            && permit.target.as_str() != "door/slider-policy.json"
+        {
             return Err(crate::refuse("identical"));
         }
         if self.observe(&permit.target)?.digest != permit.base {

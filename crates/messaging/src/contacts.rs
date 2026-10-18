@@ -72,14 +72,14 @@ pub enum ContactChange {
 }
 
 /// Private fields prevent an incoming claimed contact record from granting access.
-/// Wave 1 creates this only from current, consumed owner-card state.
+/// The host rebuilds it from a consumed owner card or an authenticated owner-session Aura record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovedContact {
     key: PublicKey,
     label: String,
     authority: AuthorityVersion,
-    proposal: ProposalId,
-    consumed_card: Digest32,
+    proposal: Option<ProposalId>,
+    authorization_receipt: Digest32,
     pairing: Option<PairingEvidence>,
 }
 
@@ -91,6 +91,15 @@ impl ApprovedContact {
         authority: AuthorityVersion,
         proposal: ProposalId,
         consumed_card: Digest32,
+    ) -> Result<Self> {
+        Self::from_authorization(draft, authority, Some(proposal), consumed_card)
+    }
+
+    fn from_authorization(
+        draft: ContactDraft,
+        authority: AuthorityVersion,
+        proposal: Option<ProposalId>,
+        authorization_receipt: Digest32,
     ) -> Result<Self> {
         validate_contact(&draft)?;
         safe_number(authority.epoch)?;
@@ -104,7 +113,7 @@ impl ApprovedContact {
             label: draft.label,
             authority,
             proposal,
-            consumed_card,
+            authorization_receipt,
             pairing: draft.pairing,
         })
     }
@@ -121,12 +130,30 @@ impl ApprovedContact {
         self.authority
     }
 
-    pub const fn proposal(&self) -> ProposalId {
+    pub const fn proposal(&self) -> Option<ProposalId> {
         self.proposal
     }
 
-    pub const fn consumed_card(&self) -> Digest32 {
-        self.consumed_card
+    /// The consumed card receipt, when this contact required the owner's passkey.
+    pub const fn consumed_card(&self) -> Option<Digest32> {
+        if self.proposal.is_some() {
+            Some(self.authorization_receipt)
+        } else {
+            None
+        }
+    }
+
+    /// The consumed card receipt or the signed Aura hash of the direct owner action.
+    pub const fn authorization_receipt(&self) -> Digest32 {
+        self.authorization_receipt
+    }
+
+    pub(crate) fn from_owner_session(
+        draft: ContactDraft,
+        authority: AuthorityVersion,
+        record_hash: Digest32,
+    ) -> Result<Self> {
+        Self::from_authorization(draft, authority, None, record_hash)
     }
 
     pub fn pairing(&self) -> Option<&PairingEvidence> {

@@ -17,6 +17,7 @@ pub mod model_settings;
 pub mod network;
 pub mod preset_settings;
 pub mod settings;
+pub mod slider_settings;
 mod wire;
 
 pub const CONTRACT: &str = "aukora-face-services-v1";
@@ -75,16 +76,20 @@ impl FaceServices<'_> {
                 }
                 (
                     "network",
-                    "contacts.list" | "messages.list" | "refusals.counts" | "conversations.marks"
-                    | "contact.propose" | "send" | "conversation.mark",
-                ) => {
-                    network::call(
-                        self.network.ok_or(refuse("network-unavailable"))?,
-                        scope,
-                        method,
-                        &params,
-                    )?
-                }
+                    "contacts.list"
+                    | "messages.list"
+                    | "refusals.counts"
+                    | "conversations.marks"
+                    | "contact.propose"
+                    | "contact.remove"
+                    | "send"
+                    | "conversation.mark",
+                ) => network::call(
+                    self.network.ok_or(refuse("network-unavailable"))?,
+                    scope,
+                    method,
+                    &params,
+                )?,
                 (
                     "body",
                     "settings.general" | "settings.models" | "settings.plugins"

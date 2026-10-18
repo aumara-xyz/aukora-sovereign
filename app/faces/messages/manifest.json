@@ -19,6 +19,7 @@
         "refusals.counts",
         "conversations.marks",
         "contact.propose",
+        "contact.remove",
         "send",
         "conversation.mark"
       ],

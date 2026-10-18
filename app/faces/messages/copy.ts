@@ -5,13 +5,14 @@ import type { Message, PairingMethod, SendState } from "./model.js";
 export const COPY = {
   // Disclosures appear where the owner adds a contact or sends a message.
   mutual: "Share your Aukora ID with your friend, add theirs, and ask them to add yours. Messages arrive only after each of you has approved the other.",
-  contactKey: "The card approves this exact Aukora ID, not the person. Before you approve, compare it with them in person or on a call you trust.",
+  contactKey: "Adding a contact trusts this exact Aukora ID, not the person. Before you add it, compare it with them in person or on a call you trust.",
   contactReview: "Review the Add contact card with your passkey. It approves this exact Aukora ID, not the person: compare it with them first. The contact appears here after approval.",
+  contactRemoveReview: "Review the Remove contact card with your passkey. The contact is removed after approval.",
   sendSession: "Anyone using your signed-in session can send messages as you. Each send is recorded in Aura (not its text).",
   relaysSee: "Relays cannot read your text, but they see your node's IP address, the recipient's key, the message size, and when your node connects to them. The time written on a wrapped message is randomized, not the send time.",
   reading: "Reading…",
   emptyMessages: "No messages yet.",
-  emptyContacts: "No contacts yet. Share your Aukora ID (top right) with a friend, then add theirs with Add a contact. Each of you approves the other with a passkey.",
+  emptyContacts: "No contacts yet. Share your Aukora ID with a friend, then add theirs with Add a contact. Both of you need to add the other.",
   footnote: "Both owners add each other. Aura records each message and send (ids and times, never the text).",
   loadMore: "Load more",
   refresh: "Refresh",

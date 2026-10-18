@@ -14,7 +14,9 @@ const ana = npub('r');
 const jun = npub('s');
 const lee = npub('t');
 // ?contacts=none previews the first-run state: no approved contact and no message yet.
-const empty = new URLSearchParams(location.search).get('contacts') === 'none';
+const query = new URLSearchParams(location.search);
+const empty = query.get('contacts') === 'none';
+const askContacts = query.get('slider') === 'ask-everything';
 
 function freeze(value) {
   if (value && typeof value === 'object') {
@@ -38,7 +40,7 @@ const entries = freeze([
     provenance: { source: 'auma' }, role: 'auma', sequence: 2, session_id: sessionId, tool_call_id: null, tool_calls: [], v: 2,
   },
 ]);
-const contacts = freeze(empty ? [] : [
+let contacts = freeze(empty ? [] : [
   { npub: maya, label: 'Maya', pairing: { method: 'screen-to-screen', verified_at: date - 86_400_000 } },
   { npub: sam, label: 'Sam', pairing: { method: 'remote', verified_at: date - 172_800_000 } },
   { npub: ana, label: 'Anastasia Wolkenstein-Marchetti', pairing: { method: 'screen-to-screen', verified_at: date - 259_200_000 } },
@@ -104,9 +106,16 @@ const network = {
       status.textContent = 'Mark kept in this page only. Nothing saved.';
       return {};
     }
-    if (method === 'contact.propose') {
-      status.textContent = 'Contact approval simulated. Nothing saved; no passkey approval requested.';
-      return { proposal_id: '6'.repeat(32) };
+    if (method === 'contact.propose' || method === 'contact.remove') {
+      if (askContacts) {
+        status.textContent = 'Ask everything: owner card simulated. Nothing saved; no passkey requested.';
+        return { state: 'pending', proposal_id: '6'.repeat(32) };
+      }
+      contacts = freeze(method === 'contact.propose'
+        ? [...contacts.filter(contact => contact.npub !== params.npub), { npub: params.npub, label: params.label ?? 'New contact', pairing: null }]
+        : contacts.filter(contact => contact.npub !== params.npub));
+      status.textContent = 'Contact change kept in this page only. Nothing saved.';
+      return { state: 'applied' };
     }
     if (method === 'send') {
       status.textContent = 'Send simulated. Nothing saved; no relay contacted.';

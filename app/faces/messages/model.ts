@@ -47,6 +47,7 @@ export interface Conversation {
   readonly snippet: string;
   readonly unread: boolean;
 }
+export type ContactChange = { readonly state: "applied" } | { readonly state: "pending"; readonly proposalId: string };
 
 const PAGE_ITEMS = 100;
 const MAX_MESSAGE_BYTES = 16_384;
@@ -143,6 +144,14 @@ export function readMessagePage(value: JsonValue): Page<Message> {
 
 export function readContactPage(value: JsonValue): Page<Contact> {
   return readPage(value, readContact, contact => contact.npub);
+}
+
+// The result, rather than a face-side slider guess, decides whether the owner has an approval to review.
+export function readContactChange(value: JsonValue): ContactChange {
+  const row = object(value);
+  if (row.state === "applied" && Object.keys(row).length === 1) return { state: "applied" };
+  if (row.state === "pending" && Object.keys(row).length === 2) return { state: "pending", proposalId: handle(row.proposal_id) };
+  throw invalid();
 }
 
 // The total must equal the buckets; counts that disagree with themselves are not shown.

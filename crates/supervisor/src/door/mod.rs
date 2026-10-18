@@ -473,7 +473,7 @@ fn start(
     policy: Policy,
     socket: &Path,
     approver: Option<Arc<dyn Approver>>,
-    grants: Option<standing::GrantSource>,
+    sources: Option<(standing::GrantSource, standing::PolicySource)>,
 ) -> Result<(Arc<Door>, UnixListener)> {
     let by_uid = matches!(policy.peers, PeerRule::Uids(_));
     if by_uid && !peer::peercred_supported() {
@@ -483,8 +483,9 @@ fn start(
     policy.check_peer_uids(files::euid())?;
     files::parent_not_writable_by_others(socket, "door-socket")?;
     let mut door = Door::open_with(policy, approver)?;
-    if let (Some(grants), Some(standing)) = (grants, door.standing.as_mut()) {
+    if let (Some((grants, policy)), Some(standing)) = (sources, door.standing.as_mut()) {
         standing.grants_from(grants);
+        standing.policy_from(policy);
     }
     let door = Arc::new(door);
     // A door whose Kira token is the owner's would hand the engine owner powers: it does not start. A service that is
@@ -547,6 +548,15 @@ pub fn serve(policy: Policy, socket: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Initial migration source only. Once retained in Aura, Settings, contacts and
+/// the in-node door all follow the owner-controlled policy instead of this file.
+pub(crate) fn configured_slider(config: &crate::config::NodeConfig) -> laya::SliderPolicy {
+    match config.door_policy_text().and_then(|text| text.map(|text| Policy::parse(&text)).transpose()) {
+        Ok(policy) => standing::configured_policy(policy.as_ref().and_then(|policy| policy.standing.as_ref())),
+        Err(_) => laya::SliderPolicy { setting: laya::SliderSetting::AskEverything, classes: Vec::new() },
+    }
+}
+
 /// Run the door inside the node when the config directory holds `door-policy-v1.json` (absent: no door). The door's
 /// `ask` classes then raise real owner requests in this node's gate. A door that cannot start is logged and the node
 /// carries on without it; the engine's crossings are refused while it is down. Everything past reading the file runs
@@ -566,8 +576,10 @@ pub fn start_in_node(config: &crate::config::NodeConfig, ledger: Arc<crate::adap
             let source_gate = gate.clone();
             let grants: standing::GrantSource =
                 Box::new(move || approver::block_on(source_gate.approved_target(laya::grant::GRANT_TARGET)).ok().flatten());
+            let policy_gate = gate.clone();
+            let slider: standing::PolicySource = Box::new(move || approver::block_on(policy_gate.slider_policy()).ok());
             let terms = policy.starter.clone();
-            start(policy, &socket, Some(approver), Some(grants)).map(|(door, listener)| (door, listener, socket, terms))
+            start(policy, &socket, Some(approver), Some((grants, slider))).map(|(door, listener)| (door, listener, socket, terms))
         });
         match started {
             Ok((door, listener, socket, terms)) => {
