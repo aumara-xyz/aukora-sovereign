@@ -10,6 +10,11 @@ const sessionId = '1'.repeat(32);
 const npub = digit => `npub1${digit.repeat(58)}`;
 const maya = npub('q');
 const sam = npub('p');
+const ana = npub('r');
+const jun = npub('s');
+const lee = npub('t');
+// ?contacts=none previews the first-run state: no approved contact and no message yet.
+const empty = new URLSearchParams(location.search).get('contacts') === 'none';
 
 function freeze(value) {
   if (value && typeof value === 'object') {
@@ -33,16 +38,22 @@ const entries = freeze([
     provenance: { source: 'auma' }, role: 'auma', sequence: 2, session_id: sessionId, tool_call_id: null, tool_calls: [], v: 2,
   },
 ]);
-const contacts = freeze([
+const contacts = freeze(empty ? [] : [
   { npub: maya, label: 'Maya', pairing: { method: 'screen-to-screen', verified_at: date - 86_400_000 } },
   { npub: sam, label: 'Sam', pairing: { method: 'remote', verified_at: date - 172_800_000 } },
+  { npub: ana, label: 'Anastasia Wolkenstein-Marchetti', pairing: { method: 'screen-to-screen', verified_at: date - 259_200_000 } },
+  { npub: jun, label: 'Jun', pairing: null },
+  { npub: lee, label: 'Lee', pairing: { method: 'remote', verified_at: date - 3_600_000 } },
 ]);
-const messages = freeze([
+const messages = freeze(empty ? [] : [
   { id: 'maya-3', direction: 'in', contact: maya, at: date, text: 'See you by the water at five?', transport: 'nostr-relays', state: null, code: null },
   { id: 'maya-2', direction: 'out', contact: maya, at: date - 600_000, text: 'A walk sounds lovely. Where shall we meet?', transport: 'nostr-relays', state: 'published', code: null },
   { id: 'maya-1', direction: 'in', contact: maya, at: date - 900_000, text: 'Are you free for a walk later?', transport: 'nostr-relays', state: null, code: null },
   { id: 'sam-2', direction: 'out', contact: sam, at: date - 3_600_000, text: 'Thanks, Sam. I will bring the book tomorrow.', transport: 'nostr-relays', state: 'queued', code: null },
   { id: 'sam-1', direction: 'in', contact: sam, at: date - 4_000_000, text: 'I found the book we were talking about.', transport: 'nostr-relays', state: null, code: null },
+  { id: 'ana-2', direction: 'in', contact: ana, at: date - 90_000_000, text: 'The photos from the weekend are lovely. I will send the rest once I am home and have a proper connection again.', transport: 'nostr-relays', state: null, code: null },
+  { id: 'ana-1', direction: 'out', contact: ana, at: date - 95_000_000, text: 'How was the trip?', transport: 'nostr-relays', state: 'unconfirmed', code: null },
+  { id: 'jun-1', direction: 'out', contact: jun, at: date - 400_000_000, text: 'Happy birthday, Jun!', transport: 'nostr-relays', state: 'failed', code: 'messaging:transport-rejected' },
 ]);
 const identity = freeze({
   agent_npub: null, contact_code: null, label: 'Peter', node_key_bound: true, node_npub: npub('z'),

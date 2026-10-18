@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contact approval card — local fixture preview</title>
+  <link rel="stylesheet" href="../../app/release/ui/owner/tokens.css">
+  <link rel="stylesheet" href="../../app/release/ui/owner/owner.css">
+  <style>
+    /* The shell's owner stage (app/shell/owner-dialog.css): full-bleed and deep behind the owner page. */
+    html { background: var(--canvas-deep, #080910); }
+    .preview-data { position: fixed; z-index: 100; right: 16px; bottom: 16px; margin: 0; padding: 3px 10px; border: 1px solid var(--ak-gold, #e0b76a); border-radius: 999px; color: var(--ak-gold, #e0b76a); font: 10px/16px system-ui, sans-serif; text-align: center; }
+    .preview-data strong { font-weight: 600; letter-spacing: .08em; }
+    .preview-data span { display: block; color: var(--ak-muted, #8b9099); }
+  </style>
+  <script type="module" src="./contact-card-preview.mjs"></script>
+</head>
+<body>
+  <main id="owner-root" aria-label="Owner ceremony"><div class="owner-pane"><div id="pane"></div></div></main>
+  <p class="preview-data"><strong>PREVIEW DATA</strong><span>No passkey is asked and nothing is approved.</span></p>
+</body>
+</html>
