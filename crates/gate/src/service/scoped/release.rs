@@ -76,7 +76,8 @@ impl<S: TargetStore> ScopedGate<S> {
     /// Withdraw a pending release card the supervisor no longer offers (the operator took the offer back or offered
     /// another release). Recorded as an expiry with reason `withdrawn`: not the owner's decline, so the same step can
     /// be raised again if it is offered again (NODE.md O17, O19). A card the owner is reviewing right now is left
-    /// until that review lapses (`false`): the decision is the owner's to finish or drop.
+    /// until that review lapses (`false`): the decision is the owner's to finish or drop. Once it has lapsed, the
+    /// card is withdrawn on the next call.
     pub fn withdraw_release(&mut self, txn: &mut LedgerTxn<'_>, id: ProposalId) -> Result<bool> {
         let proposal = load(txn, id)?;
         validate_content(self.config.node, &proposal)?;
@@ -84,7 +85,9 @@ impl<S: TargetStore> ScopedGate<S> {
         if proposal.state != ProposalState::Pending {
             return Ok(true);
         }
-        if txn.read_live_review(id, OwnerOperation::Release)?.is_some() {
+        // A live review keeps the card; a review whose ceremony lapsed is removed (as Review does) and the card is
+        // withdrawn. An unreadable or spent review still refuses, so withdrawal never hides a broken record.
+        if txn.read_or_expire_release_review(id)?.is_some() {
             return Ok(false);
         }
         let at = now(txn)?;
