@@ -425,3 +425,39 @@ fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
         }
     }
 }
+
+// One event anyone can publish (the victim's p tag plus a second one: the relay filter matches it, the transport
+// envelope refuses it) must not refuse the page it is in, or the same page would be replayed on every poll.
+#[test]
+fn an_uncarriable_wrap_is_skipped_instead_of_refusing_its_page() {
+    let key = SecretKey::generate().unwrap();
+    let recipient = SecretKey::generate().unwrap().public_key().unwrap();
+    let hex = |k: nostr::PublicKey| k.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let other = SecretKey::generate().unwrap().public_key().unwrap();
+    let poison = Event::sign(
+        &key,
+        95,
+        nostr::nip59::GIFT_WRAP_KIND,
+        vec![vec!["p".into(), hex(recipient)], vec!["p".into(), hex(other)]],
+        "two recipients".into(),
+    )
+    .unwrap();
+    let good = event(&key, recipient, 90, "carried");
+    let stored = vec![poison, good.clone()];
+    let keys = [relay_key("wss://relay.example")];
+    let mut request = ReceiveRequest {
+        recipient,
+        cursor: None,
+        max_items: 128,
+        max_bytes: 1_048_576,
+        deadline_ms: 1,
+    };
+    let mut delivered = Vec::new();
+    for _ in 0..4 {
+        let batch = receive_page(&keys, &request, 100, |_, filter| Ok(query(&stored, filter))).unwrap();
+        assert_eq!(batch.deferred, None);
+        delivered.extend(batch.envelopes.iter().map(|e| e.id));
+        request.cursor = batch.next_cursor;
+    }
+    assert!(delivered.contains(&good.event().id), "the carriable wrap behind it is delivered");
+}

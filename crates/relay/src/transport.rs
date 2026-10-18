@@ -343,14 +343,24 @@ pub(crate) fn receive_page(
             {
                 continue;
             }
+            // A wrap this node cannot carry (say, a second `p` tag, which the relay filter still matches) is
+            // skipped and counted as consumed: refusing the page would replay it on every poll and freeze the
+            // relay's history (and its tail) behind one event anyone can publish.
+            let Ok(encoded) = event.encode() else {
+                resume = Some(marker);
+                continue;
+            };
             let envelope = TransportEnvelope {
                 v: nostr::transport::TRANSPORT_VERSION,
                 codec: nostr::EnvelopeCodec::Nip59V1,
                 recipient: request.recipient,
                 id: event.id,
-                bytes: event.encode()?,
+                bytes: encoded,
             };
-            envelope.validate()?;
+            if envelope.validate().is_err() {
+                resume = Some(marker);
+                continue;
+            }
             if envelope.bytes.len() > request.max_bytes as usize {
                 return Err(refusal("batch-limit"));
             }
