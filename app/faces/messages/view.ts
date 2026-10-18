@@ -5,7 +5,7 @@ import { clearServiceState, serviceState, showServiceState } from "../../core/se
 import { ago } from "../threads/time.js";
 import { COPY, sendOutcome } from "./copy.js";
 import { h, untrusted } from "./dom.js";
-import { conversationList, moment, readContactPage, readMessagePage, readRefusals, shortKey, threadMessages } from "./model.js";
+import { conversationList, moment, readContactPage, readMessagePage, readRefusals, threadMessages } from "./model.js";
 import type { Contact, Conversation, Message } from "./model.js";
 import { addContact, composer, copyId, ownIdentity } from "./actions.js";
 import { portal, portalIcon } from "./portal.js";
@@ -171,11 +171,10 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
   const rows = h("ul", { class: "rows conversations", "aria-label": "Conversations" });
   const info = h("p", { role: "status", class: "info" });
   const problem = h("p", { role: "alert", class: "problem", hidden: "" });
-  const copyStatus = h("p", { role: "status", class: "info", "aria-live": "polite" });
   const more = h("button", { type: "button", class: "ak-action", hidden: "" }, "More contacts");
   const refresh = h("button", { type: "button", class: "ak-action" }, COPY.refresh);
   const how = h("div", {},
-    h("p", { class: "aside" }, COPY.mutual), h("p", { class: "aside" }, COPY.contactKey),
+    h("p", { class: "aside" }, COPY.contactKey),
     h("p", { class: "aside" }, COPY.relaysSee + " A relay accepting a message does not prove your friend received it."),
     h("p", { class: "aside" }, "Unread marks track incoming messages loaded in this open view. Opening a conversation clears its mark here; this is not a read receipt to your friend."),
     h("p", { class: "aside" }, COPY.inbound), h("p", { class: "aside" }, COPY.footnote));
@@ -188,7 +187,7 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
   const stage = h("div", { class: "thread-stage", hidden: "" });
   const canvas = h("div", { class: "ak-canvas" },
     h("header", { class: "ak-header" }, h("div", { class: "ak-header__copy" },
-      h("p", { class: "ak-header__eyebrow" }, "Aukora"), h("h1", { class: "ak-header__title" }, "Messages"))), copyStatus, list, stage);
+      h("p", { class: "ak-header__eyebrow" }, "Aukora"), h("h1", { class: "ak-header__title" }, "Messages"))), list, stage);
   root.dataset.view = "list";
   root.append(canvas);
   let selected: string | null = null;
@@ -204,23 +203,20 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
   const create = (conversation: Conversation): ConversationCard => {
     const contact = conversation.contact;
     const title = untrusted("span", { class: "ak-portal__title" }, contact.label);
-    const snippet = h("span", { class: "conversation-snippet", dir: "auto" });
+    const snippet = h("span", { class: "ak-portal__summary conversation-snippet", dir: "auto" });
     const time = h("span", { class: "conversation-time" });
-    const summary = h("span", { class: "ak-portal__summary conversation-summary" }, snippet, time);
     const unread = h("span", { class: "unread", "aria-label": "Unread", title: "Unread in this view", hidden: "" }, "•");
     const mark = portalIcon("message");
     mark.append(unread);
     const expander = h("span", { class: "ak-expander", "aria-hidden": "true" }, "+");
+    // The same portal button as every other: icon, title and one-line summary, then the time as its badge and the
+    // expander. The contact's Aukora ID and its copy button live inside the open conversation.
     const head = h("button", { type: "button", class: "ak-portal__head", "aria-expanded": "false" }, mark,
-      h("span", { class: "ak-portal__copy" }, title, summary), expander);
-    const full = h("span", { class: "copy-source" }, contact.npub);
-    const copy = h("button", { type: "button", class: "ak-action conversation-copy", "aria-label": `Copy Aukora ID ${contact.npub}`, title: "Copy Aukora ID" },
-      h("code", {}, shortKey(contact.npub)), h("span", { "aria-hidden": "true" }, "⧉"));
-    copyId(copy, full, copyStatus, signal);
+      h("span", { class: "ak-portal__copy" }, title, snippet), h("span", { class: "ak-portal__end" }, time, expander));
     const panel = threadPanel(client, signal, contact, granted, seen);
     const body = h("div", { class: "ak-portal__body", hidden: "" }, panel.element);
     const element = h("section", { class: "ak-portal ak-tone-mint conversation", "data-open": "no", "data-contact": contact.npub },
-      h("div", { class: "conversation-heading" }, head, copy, full), body);
+      head, body);
     const holder = h("li", {}, element);
     head.addEventListener("click", () => {
       const open = selected !== contact.npub;

@@ -184,6 +184,10 @@ test('the same conversation portal opens a chronological thread and returns to t
   assert.equal(root.dataset.view, 'list');
   assert.equal(mark.hidden, false);
   assert.equal(byClass(card, 'conversation-snippet').textContent, 'See you at five?');
+  // The standard portal button: one head (icon, title, summary, then the time and the expander), nothing beside it.
+  assert.equal(card.children[0], head);
+  assert.equal(all(card, element => element.tagName === 'button').length, 1 + all(byClass(card, 'ak-portal__body'), element => element.tagName === 'button').length);
+  assert.ok(byClass(byClass(head, 'ak-portal__end'), 'conversation-time'));
   head.click();
   await settle();
   assert.equal(root.dataset.view, 'thread');
