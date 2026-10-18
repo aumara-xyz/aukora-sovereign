@@ -216,6 +216,7 @@ would `allow` or `ask` about is decided per call by Laya's slider (`laya::slider
 
 ## Not done, on purpose
 
+- PL-9: Consumed call IDs already rotate in bounded segments; the separate `approvals.jsonl` still needs rotation at 16 MiB (`approvals-full`), as described above.
 - Executors for `mcp`, `plugin`, `persist`, `delegate`: they can be `deny` or `ask` only. `web_search` has none yet,
   so the node's composition does not mount it (`build_plugins.py` sets dsh-tool-web's `search: false` in every preset
   that mounts the web tools; `web_fetch` stays). Wiring it later means a search executor here first, then the switch.
