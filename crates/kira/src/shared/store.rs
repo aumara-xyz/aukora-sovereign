@@ -100,7 +100,7 @@ pub struct StoredNote {
     /// The author is registered as an owner (read from the agents table, never from a tag).
     pub author_owner: bool,
     pub roots: Vec<String>,
-    /// The id of the supersede EVENT that retired this note (an audit pointer; `get` on it resolves to `current_id`).
+    /// The id of the supersede event or next slot snapshot that retired this note (an audit pointer).
     pub superseded_by: Option<String>,
     /// The id of the note that stands now: the replacement of the supersede, followed through any later supersede of
     /// the replacement itself. None for a live note, for a retraction (no replacement) and for a replacement cycle.
@@ -216,6 +216,7 @@ fn walk(db: &Connection, version: u8) -> Result<Vec<(i64, [u8; 32])>> {
 }
 
 mod upgrade;
+mod slots;
 use upgrade::{upgrade_capture, upgrade_chain, upgrade_citations, upgrade_lineage, upgrade_links};
 
 impl SharedStore {
@@ -406,7 +407,8 @@ impl SharedStore {
     /// What retired note `id_hex` (written by `author`): its latest authorized correction. Being named as another
     /// note's replacement grants no authority over this note, even when that other note is corrected again.
     fn retirement(&self, id_hex: &str, author: &str) -> Result<Option<Correction>> {
-        Ok(self.corrections_of(id_hex, author)?.0.pop())
+        let correction = self.corrections_of(id_hex, author)?.0.pop();
+        Ok(correction.into_iter().chain(self.slot_successor(id_hex)?).max_by_key(|c| c.at))
     }
 
     fn note_author(&self, id_hex: &str) -> Result<Option<String>> {

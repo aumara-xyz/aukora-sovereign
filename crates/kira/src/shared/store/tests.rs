@@ -421,10 +421,11 @@ fn slots_take_only_their_writers_and_read_the_newest_live_one() {
     d.text = "grok resumes at row 9".into();
     let second = s.append(sign(&a, &d, Review::Remembered, 3)).unwrap();
     assert_eq!(s.slot("resume:grok").unwrap().unwrap().event.id, second.event.id);
-    // The newest is superseded: the one before it is the head again.
+    assert_eq!(s.get(&hex32(first.event.id.as_bytes())).unwrap().unwrap().superseded_by, Some(hex32(second.event.id.as_bytes())));
+    // Retracting the newest snapshot leaves the slot empty; the retired predecessor never becomes its head again.
     let sup = Event::sign(&a, 4, SUPERSEDE_KIND, vec![vec!["supersedes".into(), hex32(second.event.id.as_bytes())]], String::new()).unwrap();
     s.record(sup).unwrap();
-    assert_eq!(s.slot("resume:grok").unwrap().unwrap().event.id, first.event.id);
+    assert!(s.slot("resume:grok").unwrap().is_none());
     // A slot note stored before append checked the writer (simulated: grok was briefly an owner) is never the head.
     let mine = s.append(sign(&owner, &{ let mut o = draft("I am Auma, the owner wrote this", "builders"); o.slot = Some(SELF_SLOT.into()); o }, Review::Remembered, 5)).unwrap();
     s.db.execute("UPDATE agents SET owner = 1 WHERE name = 'grok'", []).unwrap();
