@@ -409,10 +409,9 @@ impl SharedStore {
     /// snapshot with a later snapshot is retired by it, whatever corrections came after: otherwise a correction of the
     /// older snapshot would send its history walk away from the snapshot `slot()` serves (supersede refuses it too).
     fn retirement(&self, id_hex: &str, author: &str) -> Result<Option<Correction>> {
-        if let Some(successor) = self.slot_successor(id_hex)? {
-            return Ok(Some(successor));
-        }
-        Ok(self.corrections_of(id_hex, author)?.0.pop())
+        // The corrections are still read, so a malformed correction row refuses the read as before.
+        let corrected = self.corrections_of(id_hex, author)?.0.pop();
+        Ok(self.slot_successor(id_hex)?.or(corrected))
     }
 
     /// The later snapshot that retired slot snapshot `id_hex`, if any.

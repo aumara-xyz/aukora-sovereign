@@ -193,6 +193,13 @@ fn a_token_file_left_by_a_crash_before_the_save_is_replaced_on_retry() {
     write_private(&notes, b"not a token\n", true).unwrap();
     assert_eq!(owner_cli(&dir.0, &notes, Some(&token_file), &["token", "peter"]), Err(refuse("token-file-exists")));
     assert_eq!(fs::read(&notes).unwrap(), b"not a token\n");
+    // A symlink is never followed or removed, even to a file that looks like a leftover token.
+    let looks_unsaved = dir.0.join("elsewhere.tok");
+    write_private(&looks_unsaved, format!("{}\n", "a".repeat(64)).as_bytes(), true).unwrap();
+    let link = dir.0.join("link.tok");
+    std::os::unix::fs::symlink(&looks_unsaved, &link).unwrap();
+    assert_eq!(owner_cli(&dir.0, &link, Some(&token_file), &["token", "peter"]), Err(refuse("token-file-exists")));
+    assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink() && looks_unsaved.exists());
 }
 
 /// A saved token was delivered first: a leftover intent beside it never lets a retry rotate the owner without it.

@@ -66,26 +66,36 @@ impl Delivery for () {
 
 /// A token file left by a delivery whose save never happened (a crash between the two): a private regular file holding
 /// exactly one token whose hash is not saved. It authenticates nothing, so the retry may replace it. Returns whether
-/// the path is now free; anything else there (another file, a saved token) is left alone.
+/// the path is now free; anything else there (another file, a saved token, a symlink) is left alone. Every delivery
+/// writes and saves under the request lock, so the file is read, judged and removed under that lock too.
 pub(super) fn clear_unsaved_token_file(dir: &Path, file: &Path) -> Result<bool> {
     if !present(file)? {
         return Ok(true);
     }
-    if !fs::symlink_metadata(file).map_err(|_| refuse("state-read"))?.file_type().is_file() {
-        return Ok(false);
-    }
-    let Ok(bytes) = read_private(file, 256) else { return Ok(false) };
-    let token = match std::str::from_utf8(&bytes).ok().and_then(|text| text.strip_suffix('\n')) {
-        Some(token) if token.len() == 64 && token.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) => token,
-        _ => return Ok(false),
-    };
-    State::open(dir)?;
+    State::open(dir)?; // before the lock: opening takes it too
     let _authorization = request_guard(dir)?;
-    if load_tokens(dir)?.contains_key(&token_hash(token)) {
+    let Some(token) = lone_token(file)? else { return Ok(!present(file)?) };
+    if load_tokens(dir)?.contains_key(&token_hash(&token)) {
         return Ok(false);
     }
     fs::remove_file(file).map_err(|_| refuse("state-write"))?;
     Ok(true)
+}
+
+/// The one token a private regular file at `file` holds (never read through a symlink), or None.
+fn lone_token(file: &Path) -> Result<Option<String>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let opened = fs::OpenOptions::new().read(true).custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32).open(file);
+    let Ok(handle) = opened else { return Ok(None) };
+    let meta = handle.metadata().map_err(|_| refuse("state-read"))?;
+    if !meta.file_type().is_file() || meta.permissions().mode() & 0o077 != 0 {
+        return Ok(None);
+    }
+    let mut bytes = Zeroizing::new(Vec::new());
+    handle.take(130).read_to_end(&mut bytes).map_err(|_| refuse("state-read"))?;
+    Ok(std::str::from_utf8(&bytes).ok().and_then(|text| text.strip_suffix('\n')).filter(|token| {
+        token.len() == 64 && token.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    }).map(str::to_owned))
 }
 
 fn sync_dir(dir: &Path) -> Result<()> {
