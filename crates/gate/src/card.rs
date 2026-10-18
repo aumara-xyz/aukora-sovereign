@@ -389,29 +389,35 @@ fn hexdump(bytes: &[u8]) -> String {
     dump
 }
 
+/// The hidden, bidirectional, private-use, control and format characters the owner surface must never render as
+/// plain text, by category (shared with contact labels, `crate::messaging::label_char_refused`).
+pub(crate) fn hidden_category(c: char) -> Option<&'static str> {
+    match c as u32 {
+        0x200b..=0x200d | 0x2060 | 0xfeff => Some("zero_width"),
+        0x061c | 0x200e..=0x200f | 0x202a..=0x202e | 0x2066..=0x2069 => Some("bidi_control"),
+        0xe0000..=0xe007f => Some("tag_char"),
+        0xe000..=0xf8ff | 0xf0000..=0xffffd | 0x100000..=0x10fffd => Some("private_use"),
+        0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x7f..=0x9f => Some("control_char"),
+        0x00ad
+        | 0x034f
+        | 0x115f..=0x1160
+        | 0x180e
+        | 0x2061..=0x2065
+        | 0x206a..=0x206f
+        | 0x3164
+        | 0xfe00..=0xfe0f
+        | 0xffa0
+        | 0xfff9..=0xfffb
+        | 0xe0100..=0xe01ef => Some("format_char"),
+        _ => None,
+    }
+}
+
 fn authority_scan(raw: &str) -> Result<(Value, bool)> {
     let mut categories = std::collections::BTreeSet::new();
     let mut cleaned = String::with_capacity(raw.len());
     for c in raw.chars() {
-        let category = match c as u32 {
-            0x200b..=0x200d | 0x2060 | 0xfeff => Some("zero_width"),
-            0x061c | 0x200e..=0x200f | 0x202a..=0x202e | 0x2066..=0x2069 => Some("bidi_control"),
-            0xe0000..=0xe007f => Some("tag_char"),
-            0xe000..=0xf8ff | 0xf0000..=0xffffd | 0x100000..=0x10fffd => Some("private_use"),
-            0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x7f..=0x9f => Some("control_char"),
-            0x00ad
-            | 0x034f
-            | 0x115f..=0x1160
-            | 0x180e
-            | 0x2061..=0x2065
-            | 0x206a..=0x206f
-            | 0x3164
-            | 0xfe00..=0xfe0f
-            | 0xffa0
-            | 0xfff9..=0xfffb
-            | 0xe0100..=0xe01ef => Some("format_char"),
-            _ => None,
-        };
+        let category = hidden_category(c);
         if let Some(category) = category {
             categories.insert(category);
             cleaned.push(' ');

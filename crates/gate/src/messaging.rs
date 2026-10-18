@@ -16,8 +16,8 @@ pub const SEND_TARGET: &str = "messaging/send.json";
 /// could reorder or hide the npub printed beside the label on the owner's card. Shared with `messaging`.
 pub fn label_char_refused(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2028}' | '\u{2029}'
-            | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+        || crate::card::hidden_category(c).is_some()
+        || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2028}' | '\u{2029}' | '\u{2060}'..='\u{2069}')
 }
 
 pub fn contact_says(add: bool, key: [u8; 32]) -> String {
@@ -113,7 +113,8 @@ mod tests {
         // A label cannot reorder or hide the npub the owner compares (a plain non-ASCII label still passes).
         let good = format!(r#"{{"key":"{key}","label":"Mira 雪","op":"contact.add","pairing":null,"schema":"aukora:messaging-action:v1"}}"#);
         assert!(contact_card(good.as_bytes()).is_ok());
-        for bad in ["\u{202E}lim", "Mi\u{200F}ra", "a\u{2066}b", "\u{FEFF}x", "x\u{2028}y"] {
+        for bad in ["\u{202E}lim", "Mi\u{200F}ra", "a\u{2066}b", "\u{FEFF}x", "x\u{2028}y", "\u{061C}Mira", "Pay \u{FFF9}",
+            "a\u{00AD}b", "x\u{FE0F}", "t\u{E0041}g", "p\u{E000}u"] {
             let bytes = format!(r#"{{"key":"{key}","label":"{bad}","op":"contact.add","pairing":null,"schema":"aukora:messaging-action:v1"}}"#);
             assert!(contact_card(bytes.as_bytes()).is_err(), "{bad:?}");
         }

@@ -480,7 +480,7 @@ fn stranger_is_only_counted_and_owner_session_is_required() -> Result<()> {
 
 #[test]
 fn a_refusal_that_can_clear_is_retried_a_bounded_number_of_times() -> Result<()> {
-    use crate::ingress::{refused::settle_refused, RETRY_LIMIT};
+    use crate::ingress::{refused::settle_refused, REFUSED_ENVELOPE_CAP, RETRY_LIMIT};
     let (dir_a, dir_b) = (TestDirectory::new(), TestDirectory::new());
     let (key_a, key_b) = (key(41), key(42));
     let mut a = Messaging::open(&dir_a.0, NodeId::from_bytes([6; 16]))?;
@@ -494,33 +494,50 @@ fn a_refusal_that_can_clear_is_retried_a_bounded_number_of_times() -> Result<()>
     let mut relay = FakeRelay::default();
     a.transmit_owner(&mut host_a, &mut relay, send, 1000)?;
     let incoming = relay.0.remove(0);
-    // B's clock is ten days behind: the wrap is from its future. That can clear, so the same bytes stay retryable.
+    // B's clock is ten days behind: the wrap is from its future. That can clear, so the same bytes stay retryable, and
+    // each poll's refusal is counted, up to RETRY_LIMIT; then the wrap is seen and counted no more.
     let behind = NOW - 10 * 86_400_000;
-    assert!(matches!(
-        b.receive(&mut host_b, &incoming, &key_b, TransportKind::NostrRelays, behind)?,
-        IngressOutcome::Refused(_)
-    ));
-    assert!(!b.seen_envelope(incoming.id)?, "a skewed clock does not pin a contact's message");
-    // Once the clock is right, the very same wrap is admitted.
+    let total = |b: &Messaging| -> u64 { b.refusal_counts().unwrap().total };
+    for poll in 1..RETRY_LIMIT {
+        assert!(!b.seen_envelope(incoming.id)?, "a skewed clock does not pin a contact's message (poll {poll})");
+        assert!(matches!(
+            b.receive(&mut host_b, &incoming, &key_b, TransportKind::NostrRelays, behind)?,
+            IngressOutcome::Refused(_)
+        ));
+        assert_eq!(total(&b), poll as u64);
+    }
+    // Once the clock is right, the very same wrap is admitted, and its retry slot is released.
     match b.receive(&mut host_b, &incoming, &key_b, TransportKind::NostrRelays, NOW)? {
         IngressOutcome::Data(data) => assert_eq!(data.text(), "Skewed"),
         other => panic!("unexpected {other:?}"),
     }
-    // A retryable refusal that never clears becomes final after RETRY_LIMIT counts, so no wrap is counted for ever.
-    let id = [0xab; 32];
-    for _ in 1..RETRY_LIMIT {
+    let slots: i64 = b.db.query_row("SELECT count(*) FROM messaging_retry_envelope", [], |r| r.get(0)).unwrap();
+    assert_eq!(slots, 0);
+    // A second skewed wrap that never clears: counted RETRY_LIMIT times, then seen.
+    let again = a.queue_owner_send(&mut host_a, &draft(key_b.public_key()?, "Still skewed"), &key_a, NOW)?;
+    a.transmit_owner(&mut host_a, &mut relay, again, 1000)?;
+    let stuck = relay.0.remove(0);
+    let before = total(&b);
+    for _ in 0..RETRY_LIMIT + 3 {
+        if !b.seen_envelope(stuck.id)? {
+            b.receive(&mut host_b, &stuck, &key_b, TransportKind::NostrRelays, behind)?;
+        }
+    }
+    assert_eq!(total(&b) - before, RETRY_LIMIT as u64);
+    assert!(b.seen_envelope(stuck.id)?);
+    // With the retry table full, a retryable refusal is never pinned early: it is counted and stays retryable.
+    for n in 0..REFUSED_ENVELOPE_CAP {
+        let mut id = [0x11; 32];
+        id[..8].copy_from_slice(&n.to_be_bytes());
         settle_refused(&b.db, &id, true)?;
     }
-    let pinned = |b: &Messaging| -> bool {
-        b.db.query_row("SELECT EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)", [id.as_slice()], |r| r.get(0)).unwrap()
-    };
-    assert!(!pinned(&b));
-    settle_refused(&b.db, &id, true)?;
-    assert!(pinned(&b));
+    let fresh = [0x99; 32];
+    settle_refused(&b.db, &fresh, true)?;
+    assert!(!b.seen_envelope(nostr::EventId::from_bytes(fresh))?);
     // A final refusal is pinned at once.
     let other = [0xcd; 32];
     settle_refused(&b.db, &other, false)?;
-    assert!(b.db.query_row("SELECT EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)", [other.as_slice()], |r| r.get::<_, bool>(0)).unwrap());
+    assert!(b.seen_envelope(nostr::EventId::from_bytes(other))?);
     Ok(())
 }
 

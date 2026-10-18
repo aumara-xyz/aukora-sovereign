@@ -39,7 +39,8 @@ fn a_contact_label_cannot_hold_bidi_or_invisible_formatting() {
         OwnerAction::Contact(crate::ContactChange::Add(crate::ContactDraft { key, label: label.into(), pairing: None }))
     };
     assert!(add("Mira 雪").canonical_bytes().is_ok());
-    for bad in ["\u{202E}lim", "Mi\u{200F}ra", "a\u{2066}b", "\u{FEFF}x", "x\u{200B}y", "tab\there"] {
+    for bad in ["\u{202E}lim", "Mi\u{200F}ra", "a\u{2066}b", "\u{FEFF}x", "x\u{200B}y", "tab\there", "\u{061C}Mira",
+        "Pay \u{FFF9}", "a\u{00AD}b", "x\u{FE0F}", "t\u{E0041}g"] {
         assert!(add(bad).canonical_bytes().is_err(), "{bad:?}");
         assert!(add(bad).card().is_err(), "{bad:?}");
     }

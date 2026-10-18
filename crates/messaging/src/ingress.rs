@@ -323,8 +323,9 @@ impl Messaging {
     pub fn seen_envelope(&self, envelope: EventId) -> Result<bool> {
         self.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM messaging_seen WHERE envelope=?1)
-             OR EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)",
-            [envelope.as_bytes().as_slice()], |row| row.get(0),
+             OR EXISTS(SELECT 1 FROM messaging_refused_envelope WHERE envelope=?1)
+             OR EXISTS(SELECT 1 FROM messaging_retry_envelope WHERE envelope=?1 AND tries>=?2)",
+            params![envelope.as_bytes().as_slice(), refused::RETRY_LIMIT], |row| row.get(0),
         ).map_err(|_| refuse("store-read"))
     }
 
@@ -386,6 +387,7 @@ impl Messaging {
         let prior = self.refresh_refusal_counts(txn)?;
         match self.admit(txn, envelope, recipient_key, transport, received_at_ms) {
             Ok(data) => {
+                refused::forget_retry(&self.db, envelope.id.as_bytes())?;
                 self.audit_message(txn, Digest32::from_bytes(*data.event().as_bytes()))?;
                 Ok(IngressOutcome::Data(data))
             }

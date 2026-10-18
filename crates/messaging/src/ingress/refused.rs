@@ -22,28 +22,39 @@ pub(crate) fn remember_refused(db: &Connection, envelope: &[u8; 32]) -> Result<(
     .map_err(|_| refuse("store-write"))
 }
 
-/// After a counted refusal: a final one is remembered at once; a retryable one is remembered once it has been refused
-/// `RETRY_LIMIT` times, so no stored wrap is counted on every poll for ever, whatever its reason.
+/// After a counted refusal: a final one is remembered at once. A retryable one is retried; once it has been refused
+/// `RETRY_LIMIT` times its retry row itself marks it seen (`seen_envelope`), even if the refused table is full. A
+/// retryable refusal is never pinned early: with the retry table full it is simply counted again on a later poll.
 pub(crate) fn settle_refused(db: &Connection, envelope: &[u8; 32], retryable: bool) -> Result<()> {
-    if retryable {
-        let write = |_| refuse("store-write");
-        db.execute(
-            "INSERT INTO messaging_retry_envelope SELECT ?1,0
-             WHERE (SELECT count(*) FROM messaging_retry_envelope) < ?2
-             ON CONFLICT(envelope) DO NOTHING",
-            params![envelope.as_slice(), REFUSED_ENVELOPE_CAP],
-        )
-        .map_err(write)?;
-        db.execute("UPDATE messaging_retry_envelope SET tries=tries+1 WHERE envelope=?1", [envelope.as_slice()])
-            .map_err(write)?;
-        let tries: Option<i64> = db
-            .query_row("SELECT tries FROM messaging_retry_envelope WHERE envelope=?1", [envelope.as_slice()], |row| row.get(0))
-            .optional()
-            .map_err(|_| refuse("store-read"))?;
-        // Past the retry table's own cap there is no budget to track: treat it as final.
-        if tries.is_some_and(|tries| tries < RETRY_LIMIT) {
-            return Ok(());
-        }
+    if !retryable {
+        return remember_refused(db, envelope);
     }
-    remember_refused(db, envelope)
+    let write = |_| refuse("store-write");
+    db.execute(
+        "INSERT INTO messaging_retry_envelope SELECT ?1,0
+         WHERE (SELECT count(*) FROM messaging_retry_envelope) < ?2
+         ON CONFLICT(envelope) DO NOTHING",
+        params![envelope.as_slice(), REFUSED_ENVELOPE_CAP],
+    )
+    .map_err(write)?;
+    db.execute(
+        "UPDATE messaging_retry_envelope SET tries=min(tries+1,?2) WHERE envelope=?1",
+        params![envelope.as_slice(), RETRY_LIMIT],
+    )
+    .map_err(write)?;
+    let tries: Option<i64> = db
+        .query_row("SELECT tries FROM messaging_retry_envelope WHERE envelope=?1", [envelope.as_slice()], |row| row.get(0))
+        .optional()
+        .map_err(|_| refuse("store-read"))?;
+    if tries.is_some_and(|tries| tries >= RETRY_LIMIT) {
+        remember_refused(db, envelope)?;
+    }
+    Ok(())
+}
+
+/// An admitted wrap leaves the retry table, so retry slots are held only by wraps still being refused.
+pub(crate) fn forget_retry(db: &Connection, envelope: &[u8; 32]) -> Result<()> {
+    db.execute("DELETE FROM messaging_retry_envelope WHERE envelope=?1", [envelope.as_slice()])
+        .map(|_| ())
+        .map_err(|_| refuse("store-write"))
 }
