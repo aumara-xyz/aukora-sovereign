@@ -118,14 +118,26 @@ impl Access {
     /// Spend a ticket (once) for a session bearer that ends with its shell session at the latest. The oldest session
     /// is dropped when the store is full.
     pub fn redeem(&mut self, ticket: &str, now: u64, lifetime_ms: u64) -> Result<(String, Grant, u64)> {
+        self.redeem_with_secret(ticket, now, lifetime_ms, secret)
+    }
+
+    fn redeem_with_secret(
+        &mut self,
+        ticket: &str,
+        now: u64,
+        lifetime_ms: u64,
+        issue_secret: impl FnOnce() -> Result<String>,
+    ) -> Result<(String, Grant, u64)> {
         self.prune(now);
+        // Consume first, then issue the bearer; the proxy sets the cookie only after this returns. An issuance
+        // failure cannot restore the ticket. Both maps are volatile, so a crash also discards every pending ticket.
         let grant = key(ticket).and_then(|digest| self.tickets.remove(&digest)).ok_or_else(|| refuse("engine-ticket"))?;
         if self.sessions.len() >= MAX_SESSIONS {
             if let Some(oldest) = self.sessions.iter().min_by_key(|(_, grant)| grant.expires).map(|(digest, _)| *digest) {
                 self.sessions.remove(&oldest);
             }
         }
-        let bearer = secret()?;
+        let bearer = issue_secret()?;
         let digest = key(&bearer).ok_or_else(|| refuse("engine-random"))?;
         let expires = (now + lifetime_ms).min(grant.shell_end);
         let session = Grant { expires, ..grant };
@@ -205,6 +217,29 @@ mod tests {
         let (bearer, _, _) = access.redeem(&ended, 0, 1_000_000).unwrap();
         access.end(&bearer);
         assert_eq!(access.session(&bearer, 1), None);
+    }
+
+    #[test]
+    fn ticket_is_consumed_before_issuance_and_cannot_be_retried_after_restart() {
+        let mut access = Access::default();
+        let ticket = access.mint_ticket(scope(1), shell(1), FOREVER, 1_000).unwrap();
+        // Fail at bearer issuance, after ticket consumption and before any cookie can be returned.
+        let failed = access.redeem_with_secret(&ticket, 2_000, 3_600_000, || Err(refuse("engine-random")));
+        assert_eq!(failed.unwrap_err().reason, "engine-random");
+        assert!(access.sessions.is_empty());
+        assert_eq!(access.redeem(&ticket, 2_001, 3_600_000).unwrap_err().reason, "engine-ticket");
+
+        let pending = access.mint_ticket(scope(1), shell(1), FOREVER, 2_001).unwrap();
+        let issued = access.mint_ticket(scope(1), shell(1), FOREVER, 2_001).unwrap();
+        let (bearer, _, _) = access.redeem(&issued, 2_001, 3_600_000).unwrap();
+        // Engine::load starts with fresh volatile stores: neither tickets nor sessions survive a crash.
+        drop(access);
+        let mut restarted = Access::default();
+        for ticket in [&ticket, &pending, &issued] {
+            assert_eq!(restarted.redeem(ticket, 2_002, 3_600_000).unwrap_err().reason, "engine-ticket");
+        }
+        assert_eq!(restarted.lookup(&bearer, 2_002), Lookup::Unknown);
+        assert!(restarted.sessions.is_empty());
     }
 
     #[test]
