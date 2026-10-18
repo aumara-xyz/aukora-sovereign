@@ -4,6 +4,7 @@
 use super::*;
 mod locking;
 mod removed_contact;
+mod transport_failure;
 use aumlok::{
     ceremony::{
         possession_challenge, BeginCeremony, CeremonyConfig, CeremonyPurpose, CeremonyStore,

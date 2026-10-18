@@ -73,13 +73,18 @@ impl LiveNetwork {
                 .map_err(|_| refuse("network-store-unavailable"))?;
             synchronize_contacts(&mut store, txn)
         })?;
-        // Publish queued owner actions before a potentially slow relay query.
+        // Keep half the remaining cycle for ingress even when a send stalls.
+        let send_start = crate::relay_worker::monotonic_ms();
+        let send_deadline = send_start.saturating_add(deadline_ms.saturating_sub(send_start) / 2);
         let pending = self
             .store
             .lock()
             .map_err(|_| refuse("network-store-unavailable"))?
             .pending_owner_sends_due(now_ms, 20)?;
         for id in pending {
+            if crate::relay_worker::monotonic_ms() >= send_deadline {
+                break;
+            }
             let prepared = self.ledger.messaging(scope, false, |txn| {
                 self.store
                     .lock()
@@ -92,12 +97,14 @@ impl LiveNetwork {
                 Err(code) => return Err(code),
             };
             // Relay latency holds neither Aura's writer nor the local store.
-            let result = prepared.submit(transport, deadline_ms);
+            let result = prepared.submit(transport, send_deadline);
             self.store
                 .lock()
                 .map_err(|_| refuse("network-store-unavailable"))?
                 .record_owner_attempt(id, now_ms, result.as_ref().ok())?;
-            let receipt = result?;
+            let Ok(receipt) = result else {
+                continue;
+            };
             let recorded = self.ledger.messaging(scope, false, |txn| {
                 self.store
                     .lock()
@@ -133,7 +140,7 @@ impl LiveNetwork {
             if !attempted.insert(envelope.id) {
                 continue;
             }
-            // Skip a known wrap before taking the Aura writer lock (and its history scan) at all.
+            // Skip a known wrap before copying and verifying its Aura snapshot.
             if self
                 .store
                 .lock()
