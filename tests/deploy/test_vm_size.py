@@ -52,6 +52,7 @@ class VmSize(unittest.TestCase):
         self.assertEqual((values["AUKORA_VM_VCPU"], values["AUKORA_VM_MEMORY_GIB"], values["AUKORA_VM_DISK_GIB"]),
                          (4, 16, 80))
         self.assertEqual(values["labels"], [])
+        self.assertFalse(values["static_ip"])
 
     def test_a_named_size_is_taken_and_the_floors_hold(self):
         values = self.settings(AUKORA_VM_VCPU="2", AUKORA_VM_MEMORY_GIB="8", AUKORA_VM_DISK_GIB="80")
@@ -64,6 +65,11 @@ class VmSize(unittest.TestCase):
         self.assertEqual(self.settings(AUKORA_VM_LABELS="purpose=peter-node")["labels"], ["purpose=peter-node"])
         for bad in ("aukora-spawn-id=abc", "delete-after=2026-10-18", "Purpose=x", "purpose=", "a=b c", "a"):
             self.assertEqual(self.refused(AUKORA_VM_LABELS=bad), "spawn:nebius-settings", bad)
+
+    def test_a_static_address_is_asked_for_only_by_name(self):
+        self.assertTrue(self.settings(AUKORA_VM_STATIC_IP="1")["static_ip"])
+        self.assertFalse(self.settings(AUKORA_VM_STATIC_IP="0")["static_ip"])
+        self.assertEqual(self.refused(AUKORA_VM_STATIC_IP="yes"), "spawn:nebius-settings")
 
     def test_the_smallest_cpu_shape_at_the_named_size(self):
         with mock.patch.object(vm, "nebius", lambda *args, **kwargs: PLATFORMS):

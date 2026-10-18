@@ -85,6 +85,12 @@ def environment():
     if len(extra) > 8 or any(LABEL.match(item) is None or item.split("=", 1)[0] in RESERVED_LABELS for item in extra):
         core.refuse("spawn", "nebius-settings")
     values["labels"] = extra
+    # A static public address (AUKORA_VM_STATIC_IP=1) stays with the VM when it is stopped; a dynamic one returns to
+    # Nebius's range after an hour stopped, and the node's hosts (and the owner's passkey RP) are named after it.
+    static = os.environ.get("AUKORA_VM_STATIC_IP", "")
+    if static not in ("", "0", "1"):
+        core.refuse("spawn", "nebius-settings")
+    values["static_ip"] = static == "1"
     return values
 
 
@@ -232,7 +238,8 @@ def provision(plan, settings):
         print("Nebius VM: %s %s, %d GiB disk." % (platform, preset, settings["AUKORA_VM_DISK_GIB"]), file=sys.stderr)
         user_data = "#cloud-config\n" + json.dumps({"users": ["default"], "ssh_pwauth": False,
                                                     "ssh_authorized_keys": [settings["public_key"]]}, sort_keys=True) + "\n"
-        nic = {"name": "eth0", "subnet_id": settings["AUKORA_NEBIUS_SUBNET_ID"], "ip_address": {}, "public_ip_address": {}}
+        nic = {"name": "eth0", "subnet_id": settings["AUKORA_NEBIUS_SUBNET_ID"], "ip_address": {},
+               "public_ip_address": {"static": True} if settings["static_ip"] else {}}
         if settings["security_group"]:
             nic["security_groups"] = [{"id": settings["security_group"]}]
         interface = json.dumps([nic], separators=(",", ":"))
