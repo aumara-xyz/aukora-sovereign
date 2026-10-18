@@ -312,6 +312,8 @@ pub(crate) fn receive_page(
         limit: Some(limit),
         ..Filter::default()
     };
+    // The resume marker this pass starts from: a pass that delivers nothing past it has not walked its page.
+    let started_from = if tail { None } else { p.resume.clone() };
     let page = (|| {
         let mut events = query(index, &filter)?;
         // A relay exceeding the requested page or returning unrelated events cannot
@@ -395,6 +397,12 @@ pub(crate) fn receive_page(
     }
     if more {
         p.resume = resume;
+        return finish_batch(envelopes, &positions, index, keys.len(), false);
+    }
+    // A replay that returned only events at or before the marker (the relay picked another subset of a crowded
+    // second) consumed nothing: keep the marker and the boundary, so what the first page returned is still read.
+    if started_from.is_some() && resume.is_none() && count == usize::from(limit) && p.tie {
+        p.resume = started_from;
         return finish_batch(envelopes, &positions, index, keys.len(), false);
     }
     p.resume = None;

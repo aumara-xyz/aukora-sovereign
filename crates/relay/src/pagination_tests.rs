@@ -428,7 +428,7 @@ fn a_flooded_relay_never_refuses_the_clean_relays_batch() {
             .unwrap();
         if failure == "saturated" {
             // After a full 128-item page at that second, the walk steps past it instead of freezing there.
-            assert!(flooded[2].as_u64().unwrap() < 80 || flooded[6] == true, "{flooded}");
+            assert!(flooded[2].as_u64().unwrap() < 80, "{flooded}");
             assert_eq!(flooded[4], false);
         } else {
             assert_eq!(flooded[2], 100, "{failure}: the history cursor stays at its start");
@@ -453,6 +453,7 @@ fn an_uncarriable_wrap_is_skipped_instead_of_refusing_its_page() {
     )
     .unwrap();
     let good = event(&key, recipient, 90, "carried");
+    let poison_id = poison.event().id;
     let stored = vec![poison, good.clone()];
     let keys = [relay_key("wss://relay.example")];
     let mut request = ReceiveRequest {
@@ -470,4 +471,44 @@ fn an_uncarriable_wrap_is_skipped_instead_of_refusing_its_page() {
         request.cursor = batch.next_cursor;
     }
     assert!(delivered.contains(&good.event().id), "the carriable wrap behind it is delivered");
+    assert!(!delivered.contains(&poison_id), "the two-recipient wrap itself is not delivered");
+}
+
+// NIP-01 does not fix which 128 of a crowded second a relay returns. A page split by the delivery budget leaves a
+// resume marker; if the replay returns another subset that lies wholly at or before that marker, nothing was
+// consumed, and stepping past the second then would lose the rest of the first page. The marker is kept instead.
+#[test]
+fn a_replay_that_consumes_nothing_keeps_its_resume_marker() {
+    let key = SecretKey::generate().unwrap();
+    let recipient = key.public_key().unwrap();
+    let mut crowd: Vec<_> = (0..200)
+        .map(|n| event(&key, recipient, 80, &format!("{n:03}")))
+        .collect();
+    crowd.sort_by_key(|e| e.event().id);
+    let high: Vec<_> = crowd[72..].to_vec(); // the 128 highest ids
+    let low: Vec<_> = crowd[..128].to_vec(); // the 128 lowest ids
+    let size = |e: &VerifiedEvent| e.event().encode().unwrap().len() as u32;
+    // The budget delivers the first 60 of the high subset (overall rank 132, above every id in the low subset).
+    let budget: u32 = high[..60].iter().map(size).sum();
+    let relay = relay_key("wss://relay.example");
+    let position = serde_json::json!([relay, 0, 80, 100, true, 128, false, 0, false, null]);
+    let mut request = ReceiveRequest {
+        recipient,
+        cursor: Some(serde_json::json!([1, 0, [position]]).to_string()),
+        max_items: 128,
+        max_bytes: budget,
+        deadline_ms: 1,
+    };
+    let keys = [relay];
+    let mut delivered = BTreeSet::new();
+    for call in 0..8 {
+        let batch = receive_page(&keys, &request, 100, |_, _| {
+            Ok(if call == 2 { low.clone() } else { high.clone() })
+        })
+        .unwrap();
+        delivered.extend(batch.envelopes.iter().map(|e| e.id));
+        request.cursor = batch.next_cursor;
+    }
+    let missing = high.iter().filter(|e| !delivered.contains(&e.event().id)).count();
+    assert_eq!(missing, 0, "every wrap of the first page is delivered");
 }
