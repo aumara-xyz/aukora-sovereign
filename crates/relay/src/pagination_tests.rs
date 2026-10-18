@@ -525,4 +525,10 @@ fn a_replay_that_consumes_nothing_does_not_step_past_its_second() {
     // The relay switches to the other subset for good while a marker is outstanding: the walk still leaves the second.
     let (_, position) = run(16, &|call| call > 0);
     assert!(position[2].as_u64().unwrap() < 80 || position[6] == true, "{position}");
+    // The relay alternates the two subsets on every history turn: the first page is still finished and the walk
+    // leaves the second (clearing the marker on each miss would re-read the same first 60 forever).
+    let (delivered, position) = run(24, &|call| call % 4 == 2);
+    let missing = high.iter().filter(|e| !delivered.contains(&e.event().id)).count();
+    assert_eq!(missing, 0, "alternating subsets: the first page is delivered");
+    assert!(position[2].as_u64().unwrap() < 80 || position[6] == true, "{position}");
 }

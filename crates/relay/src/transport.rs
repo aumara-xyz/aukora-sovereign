@@ -109,6 +109,8 @@ struct Position {
     recent_sweeps: u8,
     next_tail: bool,
     resume: Option<(u64, String)>,
+    /// History passes in a row that consumed nothing past `resume` (at most 1; absent in older cursors).
+    misses: u8,
 }
 impl Position {
     fn new(key: String, now: u64) -> Self {
@@ -123,6 +125,7 @@ impl Position {
             recent_sweeps: 0,
             next_tail: false,
             resume: None,
+            misses: 0,
         }
     }
     fn encode(&self) -> Value {
@@ -136,13 +139,14 @@ impl Position {
             self.done,
             self.recent_sweeps,
             self.next_tail,
-            self.resume
+            self.resume,
+            self.misses
         ])
     }
     fn decode(v: &Value) -> canon::Result<Self> {
         let a = v
             .as_array()
-            .filter(|a| (8..=10).contains(&a.len()))
+            .filter(|a| (8..=11).contains(&a.len()))
             .ok_or(refusal("cursor-invalid"))?;
         let key = a[0]
             .as_str()
@@ -178,6 +182,10 @@ impl Position {
             },
             resume: serde_json::from_value(a.get(9).cloned().unwrap_or(Value::Null))
                 .map_err(|_| refusal("cursor-invalid"))?,
+            misses: match a.get(10) {
+                Some(v) => v.as_u64().filter(|n| *n <= 1).ok_or(refusal("cursor-invalid"))? as u8,
+                None => 0,
+            },
         };
         if p.until > p.head
             || (!p.done && p.since > p.until)
@@ -397,15 +405,24 @@ pub(crate) fn receive_page(
     }
     if more {
         p.resume = resume;
+        p.misses = 0;
         return finish_batch(envelopes, &positions, index, keys.len(), false);
     }
     // A replay that returned only events at or before the marker (the relay picked another subset of a crowded
-    // second) consumed nothing: do not step past the second on it. Walk the next page of that second from its start
-    // (already admitted wraps are skipped by ingress); the saturation rule applies once a pass has consumed a page.
+    // second) consumed nothing: never step past the second on it. The first such pass keeps the marker, so a page
+    // the relay returns again is resumed (an alternating relay still makes progress); a second one in a row clears
+    // it, so a relay that settled on the other subset is walked from its start (ingress skips admitted wraps).
     if started_from.is_some() && resume.is_none() && count == usize::from(limit) && p.tie {
-        p.resume = None;
+        if p.misses == 0 {
+            p.misses = 1;
+            p.resume = started_from;
+        } else {
+            p.misses = 0;
+            p.resume = None;
+        }
         return finish_batch(envelopes, &positions, index, keys.len(), false);
     }
+    p.misses = 0;
     p.resume = None;
     if count == usize::from(limit) {
         if p.tie {
