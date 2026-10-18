@@ -55,6 +55,31 @@ fn revocation_holds_the_guard_while_it_updates_the_store_and_saves_the_tokens() 
     assert_eq!(call(&f.state, &f.claude, "whoami", json!({}))["error"], "kira:token-refused");
 }
 
+/// Minting a token rewrites tokens.json under the same guard as revoke, so neither save can drop the other's change.
+#[test]
+fn register_and_token_save_the_token_file_under_the_guard() {
+    let f = fixture();
+    let path = f.dir.join("requests.lock");
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = seen.clone();
+    crate::shared::service::authorization::PROBE.with(|probe| {
+        *probe.borrow_mut() = Some(Box::new(move |stage| {
+            if stage == "token-issued" {
+                let other = fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+                log.borrow_mut().push(flock(&other, FlockOperation::NonBlockingLockExclusive));
+            }
+        }));
+    });
+    let minted = (reissue(&f.dir, "claude", false), register(&f.dir, "kimi", &["builders".to_owned()], false));
+    crate::shared::service::authorization::PROBE.with(|probe| *probe.borrow_mut() = None);
+    let (token, registered) = minted;
+    let blocked = Err(rustix::io::Errno::WOULDBLOCK);
+    assert_eq!(*seen.borrow(), [blocked, blocked]);
+    for token in [token.unwrap(), registered.unwrap()] {
+        assert_eq!(call(&f.state, &token, "whoami", json!({}))["ok"], true);
+    }
+}
+
 /// A lock file swapped in between a guard's open and its lock is not the guard: it retries on the file the path names.
 #[test]
 fn a_lock_file_replaced_before_locking_is_retried_and_a_symlink_is_refused() {

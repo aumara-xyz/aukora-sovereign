@@ -273,12 +273,15 @@ fn issue_token(dir: &Path, name: &str, rotate: bool) -> Result<String> {
     }
     tokens.insert(token_hash(&token), name.to_owned());
     save_tokens(dir, &tokens)?;
+    authorization::probe("token-issued");
     Ok(token)
 }
 
 /// Registers an agent: a fresh key in `keys/<name>.key`, its public key in the store, and a token returned ONCE.
 pub fn register(dir: &Path, name: &str, scopes: &[String], owner: bool) -> Result<String> {
     let state = State::open(dir)?;
+    // tokens.json is read, changed and saved under the guard revoke holds, so neither save can drop the other's.
+    let _authorization = request_guard(dir)?;
     create_agent(dir, &state.store, name, scopes, owner)?;
     issue_token(dir, name, false)
 }
@@ -287,6 +290,7 @@ pub fn register(dir: &Path, name: &str, scopes: &[String], owner: bool) -> Resul
 /// `rotate` is set, which replaces them. A revoked agent gets no token.
 pub fn reissue(dir: &Path, name: &str, rotate: bool) -> Result<String> {
     let mut state = State::open(dir)?;
+    let _authorization = request_guard(dir)?;
     if name == IMPORT_AGENT {
         return Err(refuse("agent-takes-no-token"));
     }
