@@ -17,6 +17,11 @@ class UnitAudit(unittest.TestCase):
                 "systemd-analyze": "#!/bin/sh\necho 'Overall exposure level for fixture: 0.0'\n",
                 "systemctl": '''#!/usr/bin/env python3
 import os, sys
+if sys.argv[1] == 'is-enabled':
+    unit = sys.argv[-1]
+    if unit.startswith('aukora-release-probe@'):
+        print('enabled' if os.environ.get('ENABLE_PROBE') else 'static')
+    sys.exit(0)
 if sys.argv[1] != 'show':
     sys.exit(0)
 prop = sys.argv[2].removeprefix('--property=')
@@ -52,6 +57,10 @@ else:
             # systemd 255.4 prints the deny set in either order; the same set passes.
             reversed_deny = subprocess.run(audit, env={**env, "REVERSE_DENY": "1"}, capture_output=True, text=True)
             self.assertEqual(reversed_deny.returncode, 0, reversed_deny.stdout + reversed_deny.stderr)
+            # A probe enabled for boot would start unapproved release code outside the supervisor.
+            enabled = subprocess.run(audit, env={**env, "ENABLE_PROBE": "1"}, capture_output=True, text=True)
+            self.assertEqual(enabled.returncode, 1, enabled.stdout + enabled.stderr)
+            self.assertIn("is not static", enabled.stdout)
             bad = subprocess.run(audit, env={**env, "WEAKEN_PROBE": "1"}, capture_output=True, text=True)
             self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
             self.assertIn("FAIL aukora-release-probe@000000000000-000000000000.service: PrivateNetwork", bad.stdout)

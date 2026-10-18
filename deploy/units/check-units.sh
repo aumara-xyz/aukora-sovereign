@@ -78,6 +78,9 @@ check_unit aukora-release-probe@000000000000-000000000000.service 3.0 DynamicUse
     RestrictSUIDSGID=yes LockPersonality=yes RemoveIPC=yes CapabilityBoundingSet= AmbientCapabilities= \
     RestrictAddressFamilies= "IPAddressDeny=::/0 0.0.0.0/0" TasksMax=64 MemoryHigh=402653184 MemoryMax=536870912 \
     OOMScoreAdjust=500 "RuntimeMaxUSec=1min 30s" TimeoutStopUSec=10s KillMode=control-group UMask=0077
+# Static, never enabled: unapproved release code starts only when the supervisor asks for this instance.
+probe=aukora-release-probe@000000000000-000000000000.service
+[ "$(systemctl is-enabled "$probe" 2>/dev/null)" = static ] || fail "$probe" "is not static (it must never start at boot)"
 for unit in aukora-sovereign.service aukora-egress.service aukora-egress-verify.timer systemd-time-wait-sync.service; do
     systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
 done
