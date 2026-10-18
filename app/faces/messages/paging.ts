@@ -3,6 +3,9 @@ import type { Page } from "./model.js";
 
 // A contact refresh is one complete snapshot. Later pages must arrive before the
 // caller can remove retained rows that are absent from the refreshed book.
+// A book this large is not one owner's contacts: stop instead of growing without bound.
+export const MAX_SNAPSHOT_PAGES = 400;
+
 export async function readAllPages<T>(
   read: (before: string | null) => Promise<Page<T>>, key: (item: T) => string,
 ): Promise<readonly T[]> {
@@ -10,7 +13,8 @@ export async function readAllPages<T>(
   const keys = new Set<string>();
   const cursors = new Set<string>();
   let before: string | null = null;
-  for (;;) {
+  for (let pages = 0; ; pages++) {
+    if (pages >= MAX_SNAPSHOT_PAGES) throw new Error("app:invalid-reply");
     const page = await read(before);
     for (const item of page.items) {
       const id = key(item);

@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const built = mkdtempSync(join(tmpdir(), 'messages-paging-'));
 writeFileSync(join(built, 'paging.js'), stripTypeScriptTypes(readFileSync(join(root, 'app/faces/messages/paging.ts'), 'utf8')));
-const { readAllPages } = await import(pathToFileURL(join(built, 'paging.js')).href);
+const { MAX_SNAPSHOT_PAGES, readAllPages } = await import(pathToFileURL(join(built, 'paging.js')).href);
 after(() => rmSync(built, { recursive: true, force: true }));
 
 function service(book, calls) {
@@ -53,4 +53,13 @@ test('a failed later page leaves the prior snapshot available and cursor cycles 
   let calls = 0;
   await assert.rejects(readAllPages(async () => ({ items: [{ npub: String(calls++) }], next: 'stuck' }), key), /app:invalid-reply/);
   assert.equal(calls, 2);
+});
+
+test('an endless run of fresh cursors stops at the page bound instead of growing the book', async () => {
+  let calls = 0;
+  await assert.rejects(readAllPages(async () => {
+    calls++;
+    return { items: [{ npub: `contact-${calls}` }], next: `cursor-${calls}` };
+  }, key), /app:invalid-reply/);
+  assert.equal(calls, MAX_SNAPSHOT_PAGES);
 });
