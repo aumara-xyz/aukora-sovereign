@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Every sentence this face shows.
-import type { PairingMethod, SendState } from "./model.js";
+import type { Message, PairingMethod, SendState } from "./model.js";
 
 export const COPY = {
   // Disclosures appear where the owner adds a contact or sends a message.
@@ -28,6 +28,10 @@ export const COPY = {
     unconfirmed: "Sent, but no relay confirmed it. Silence is not delivery.",
     failed: "No relay took it.",
   } satisfies Record<SendState, string>,
+  sendFailures: {
+    "messaging:contact-removed": "Sending stopped because this contact was removed.",
+    "messaging:contact-changed": "Sending stopped because this contact approval changed.",
+  },
   pairing: {
     "screen-to-screen": "Met in person: paired screen to screen.",
     remote: "Paired remotely. Not met in person.",
@@ -50,3 +54,12 @@ export const COPY = {
     ["staleContact", "Contact approval is out of date"],
   ] as const,
 } as const;
+
+export function sendOutcome(message: Pick<Message, "state" | "code">): string | null {
+  if (message.state === null) return null;
+  if (message.state === "failed"
+    && (message.code === "messaging:contact-removed" || message.code === "messaging:contact-changed")) {
+    return COPY.sendFailures[message.code];
+  }
+  return COPY.states[message.state];
+}

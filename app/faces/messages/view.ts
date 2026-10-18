@@ -2,7 +2,7 @@
 // Owner-shell messaging. Contact changes use the existing passkey card flow; sends use the bound owner session.
 import type { FaceClient, JsonValue } from "../../core/index.js";
 import { clearServiceState, serviceState, showServiceState } from "../../core/service-state.js";
-import { COPY } from "./copy.js";
+import { COPY, sendOutcome } from "./copy.js";
 import { h, untrusted } from "./dom.js";
 import { moment, readContactPage, readMessagePage, readRefusals, shortKey } from "./model.js";
 import type { Contact, Message, Page, Refusals } from "./model.js";
@@ -33,7 +33,7 @@ function stamp(ms: number): HTMLElement {
 function messageRow(message: Message, names: ReadonlyMap<string, string>): HTMLElement {
   const inbound = message.direction === "in";
   const name = names.get(message.contact);
-  const sentence = message.state === null ? null : COPY.states[message.state];
+  const sentence = sendOutcome(message);
   const outcome = sentence === null ? null : h("p", { class: `outcome ${message.state ?? ""}` }, sentence);
   if (outcome && message.code !== null) {
     const error = new Error(message.code);

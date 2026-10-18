@@ -15,7 +15,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const face = join(root, 'app/faces/messages');
 const built = mkdtempSync(join(tmpdir(), 'messages-copy-'));
 writeFileSync(join(built, 'copy.js'), stripTypeScriptTypes(readFileSync(join(face, 'copy.ts'), 'utf8')));
-const { COPY } = await import(pathToFileURL(join(built, 'copy.js')).href);
+const { COPY, sendOutcome } = await import(pathToFileURL(join(built, 'copy.js')).href);
 after(() => rmSync(built, { recursive: true, force: true }));
 const actions = readFileSync(join(face, 'actions.ts'), 'utf8');
 
@@ -65,4 +65,15 @@ test('nothing the face shows, and nothing the operator guide says, claims the se
   // The check itself catches a claim hidden behind an unrelated negation.
   const claim = 'The seven-word phrase does not derive a password, and you can restore the key from it.';
   assert.match(claim.replace(/\bdoes not (?:(?:derive|back up|restore|recover)(?:,\s*|\s+or\s+|\s+and\s+)?)+(?:it\b)?/i, ''), verbs);
+});
+
+test('contact revocation failures explain why submission stopped', () => {
+  assert.equal(sendOutcome({ state: 'failed', code: 'messaging:contact-removed' }),
+    'Sending stopped because this contact was removed.');
+  assert.equal(sendOutcome({ state: 'failed', code: 'messaging:contact-changed' }),
+    'Sending stopped because this contact approval changed.');
+  assert.equal(sendOutcome({ state: 'failed', code: 'messaging:transport-rejected' }), COPY.states.failed);
+  assert.equal(sendOutcome({ state: 'published', code: null }), COPY.states.published);
+  assert.equal(sendOutcome({ state: null, code: null }), null);
+  assert.match(readFileSync(join(face, 'view.ts'), 'utf8'), /sendOutcome\(message\)/);
 });
