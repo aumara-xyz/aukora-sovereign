@@ -58,12 +58,12 @@ pub(super) fn proposals_visible(store: &SharedStore, caller: &Caller, note: &Sto
 }
 
 /// Where a note stands in its life, computed from the relations the store holds, as far as this caller may read them:
-/// `corrected` (a correction in force retired it; `current_id` says what stands now), `disputed` (a correction is
-/// proposed against it, or a counterevidence note cites it), `resolved` (it stands where a corrected note once did),
+/// `corrected` (a correction in force retired it; `current_id` says what stands now), `disputed` (a counterevidence
+/// note cites it), `resolved` (it stands where a corrected note once did),
 /// `supported` (it stands on the owner's words or review, an owner-run import, or roots by two different authors) and
 /// `proposed` (a claim nobody has backed). It labels; it never changes what `found` means (a dispute is one note
 /// away for anyone who can write, so it must not be able to veto an owner's decision). A store error fails the read:
-/// it must not turn into "no dispute".
+/// it must not turn into "no dispute". Pending correction proposals are advisory metadata until accepted.
 pub(super) fn lifecycle(store: &SharedStore, caller: &Caller, note: &StoredNote, evidence: &str) -> Result<&'static str> {
     if note.superseded_by.is_some() {
         return Ok("corrected");
@@ -76,9 +76,7 @@ pub(super) fn lifecycle(store: &SharedStore, caller: &Caller, note: &StoredNote,
             return Ok("disputed");
         }
     }
-    Ok(if !proposals_visible(store, caller, note)?.is_empty() {
-        "disputed"
-    } else if store.replaces_something(&id)? {
+    Ok(if store.replaces_something(&id)? {
         "resolved"
     } else if evidence == "unverified" {
         "proposed"

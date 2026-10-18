@@ -7,6 +7,7 @@ mod argon_break1;
 mod argon_break2;
 mod recall_race;
 mod slot_capture;
+mod pending_proposals;
 
 struct Fixture {
     dir: PathBuf,
@@ -771,7 +772,7 @@ fn every_item_shows_its_lifecycle_state_computed_from_its_relations() {
     assert_eq!(state_of(&f, &owner, &typed), "disputed");
     // A dispute does not change what found means: the owner's decision is still an answer.
     assert_eq!(call(&f.state, &owner, "recall", json!({"query": "which port does the production relay listen on"}))["result"]["status"], "found");
-    // The claim is corrected by a proposal: disputed while pending, then corrected, and the replacement is resolved.
+    // Counterevidence keeps the claim disputed while a correction is pending; acceptance corrects it.
     let fixed = remember_id(&f, &grok, "The staging relay listens on port 7444");
     let proposal = call(&f.state, &grok, "supersede", json!({"target": claim, "replacement": fixed}))["result"]["event"].as_str().unwrap().to_owned();
     assert_eq!(state_of(&f, &claude, &claim), "disputed");
