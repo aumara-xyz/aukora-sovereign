@@ -117,7 +117,9 @@ const network = {
 };
 const aumlok = { call(method) { return method === 'identity' ? identity : unavailable(); } };
 
-// Optional ?auma=thread shows the saved Auma chat on the left through the real shell navigation protocol.
+// The default is the real arrangement: Auma's sessions (the thread sidebar) on the left, Messages in the centre, the
+// system menu on the right. Optional ?auma=thread opens the saved Auma chat in the left lane through the real shell
+// navigation protocol (what opening a session from the sidebar does), only to compare the two composers.
 let shell;
 window.addEventListener('message', event => {
   const frame = root.querySelector('iframe[title="Threads"]');

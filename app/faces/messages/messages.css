@@ -50,13 +50,17 @@ form .ak-label { margin-top: 4px; }
 .rows { grid-template-columns: minmax(0, 1fr); }
 .conversation-time { color: var(--ak-muted); font-size: 10.5px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .conversation-time:empty { display: none; }
-#face[data-view="thread"] { overflow: hidden; }
+/* The lane's top 74px is one band across the lanes (Peter, 2026-10-18): the Messages header and the open thread's
+   header both sit at the very top of the lane, 74px tall, and their divider lands exactly where Auma's chat bar
+   draws its own, in the same colour. Controls in that band stay inward of the hot corners (84px from each side). */
+#face.ak-app { --msg-band-line: color-mix(in srgb, var(--ak-blue) 38%, transparent); padding: 0 18px 18px; }
+#face[data-view="thread"] { overflow: hidden; padding: 0; }
 #face[data-view="thread"] > .ak-canvas { height: 100%; min-height: 0; }
 #face[data-view="thread"] .msg-top { display: none; }
 .thread-stage, .thread-stage > .conversation, .thread-stage .ak-portal__body, .thread-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 /* The open thread's header: Back, the name and this conversation's own pin, unread and archive, all inward of the
    lane's top hot corners (74px squares; the canvas is inset 18px, so 66px more on each side). */
-.thread-stage .conversation-line { flex: none; gap: 6px; min-height: 74px; padding: 0 66px; border-bottom: 1px solid var(--ak-hairline); }
+.thread-stage .conversation-line { flex: none; gap: 6px; box-sizing: border-box; height: 74px; padding: 0 84px; border-bottom: 1px solid var(--msg-band-line); }
 #face .thread-stage .conversation-line > .ak-portal__head { height: auto; min-height: 44px; padding: 0 4px; }
 #face .thread-stage .conversation-line :is(.ak-icon-tile, .ak-expander, .conversation-snippet, .conversation-time) { display: none; }
 #face .thread-stage .conversation-line .ak-portal__title { font-size: 15px; font-weight: 600; }
@@ -64,26 +68,30 @@ form .ak-label { margin-top: 4px; }
 .contact-info { flex: none; padding: 10px 2px 12px; border-bottom: 1px solid var(--ak-hairline); }
 .contact-info .ak-fields { margin: 0 0 8px; }
 /* The open thread has no frame of its own (Peter, 2026-10-18): its header row and the messages use the lane. */
-#face .thread-stage > .conversation { border-color: transparent; border-radius: 0; background: transparent; box-shadow: none; }
-#face .thread-stage .conversation .ak-portal__body { padding-inline: 0; }
+#face .thread-stage > .conversation { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+#face .thread-stage .conversation .ak-portal__body { padding: 0; }
 
 .thread-stage .ak-portal__body { gap: 0; }
-.thread-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 2px 2px 10px; }
-/* The Auma chat composer: one rounded box with the text and the round send arrow inside it. */
-.thread-panel .composer { flex: none; margin: 0; padding-top: 8px; gap: 4px; }
-.composer-card { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 16px; border: 1px solid var(--ak-hairline); border-radius: 22px; }
-.composer-card:focus-within { border-color: color-mix(in srgb, var(--ak-blue) 55%, transparent); }
-#face .composer-card .draft { flex: 1; min-height: 0; max-height: 12rem; margin: 0; padding: 7px 0; border: 0; border-radius: 0; background: transparent; font-size: 13.5px; line-height: 1.5; resize: none; field-sizing: content; }
+.thread-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 14px 16px 10px; }
+.contact-info { margin: 0 16px; }
+/* The Auma chat composer, measure for measure (app/faces/threads/threads.css .dock, .composer-card, .draft,
+   .composer-row, .send): the dock's 6px 12px 12px, a 22px-round card with 6px 8px 8px 14px padding and the control
+   border, the text on top at 14px (the face's own font shorthand leaves its line height normal), and a row under it whose right end holds the 34px round send arrow. */
+.thread-panel .composer { flex: none; display: block; margin: 0; padding: 6px 12px 12px; }
+.composer-card { padding: 6px 8px 8px 14px; border: 1px solid var(--msg-band-line); border-radius: 22px; background: transparent; }
+.composer-card:focus-within { border-color: color-mix(in srgb, var(--ak-blue) 70%, transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--ak-blue) 14%, transparent); }
+#face .composer-card .draft { display: block; width: 100%; min-height: 0; max-height: 12rem; margin: 0; padding: 6px 4px; border: 0; border-radius: 0; background: transparent; color: var(--ak-text); font: 14px var(--dsw-font-family); resize: none; field-sizing: content; }
 #face .composer-card .draft:focus-visible { outline: none; }
-.send { display: grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 1px solid color-mix(in srgb, var(--ak-blue) 38%, transparent); border-radius: 50%; background: transparent; color: var(--ak-blue); cursor: pointer; }
+.composer-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.send { display: grid; place-items: center; flex: none; width: 34px; height: 34px; margin-inline-start: auto; padding: 0; border: 1px solid var(--msg-band-line); border-radius: 50%; background: transparent; color: var(--ak-blue); cursor: pointer; }
 .send:hover { border-color: color-mix(in srgb, var(--ak-blue) 70%, transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--ak-blue) 14%, transparent); }
 .send:focus-visible { outline: 2px solid var(--ak-blue); outline-offset: 2px; }
-.composer-status { margin: 0 16px; }
+.composer-status { margin: 4px 14px 0; }
 
 /* Hot corners (Peter, 2026-10-18): each lane's top corners (74px squares) belong to the shell, so no control sits
    in them. Row 1 holds the title (not a control) on the left and its icon buttons right beside it, inward from the
    right corner; row 2 starts below the corners. */
-#face .msg-header { flex-direction: row; justify-content: flex-start; align-items: center; gap: 14px; min-height: 52px; padding-bottom: 12px; }
+#face .msg-header { flex-direction: row; justify-content: space-between; align-items: center; gap: 14px; box-sizing: border-box; height: 74px; margin: 0 -18px; padding: 0 84px 0 18px; border-bottom: 1px solid var(--msg-band-line); }
 .msg-header .ak-header__title { margin: 0; }
 .msg-top { display: flex; flex-direction: column; gap: 14px; }
 #face .msg-filters { gap: 4px; }

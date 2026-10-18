@@ -100,7 +100,7 @@ export function composer(client: FaceClient, signal: AbortSignal, npub: string, 
   const text = h("textarea", { name: "text", class: "draft", rows: "1", required: "", maxlength: String(MAX_TEXT_BYTES), placeholder: `Message ${name}`, "aria-label": `Message ${name}` });
   const submit = h("button", { type: "submit", class: "send", "aria-label": "Send", title: "Send" }, icon("send"));
   const status = h("p", { role: "status", class: "info composer-status", "aria-live": "polite" });
-  const form = h("form", { class: "composer" }, h("div", { class: "composer-card" }, text, submit), status);
+  const form = h("form", { class: "composer" }, h("div", { class: "composer-card" }, text, h("div", { class: "composer-row" }, submit)), status);
   const deliver = (value: string) => {
     if (submit.disabled) return;
     clearServiceState(status);
