@@ -140,7 +140,10 @@ export function mountOwner(root: HTMLElement, modules: OwnerModules): OwnerDispo
   window.addEventListener("pageshow", event => {
     if (event.persisted && initialized) {
       observeVisit();
-      if (currentRoute) void show(currentRoute);
+      // Sign-out is an action, not a view: a restored page never repeats it on whatever owner session the browser
+      // holds now (one signed in after it). The shell is told the pane closed.
+      if (currentRoute?.pane === "signout") post({ protocol: OWNER_PROTOCOL, kind: "closed", channel });
+      else if (currentRoute) void show(currentRoute);
     }
   }, { signal: lifetime.signal });
   window.addEventListener("pagehide", () => { witnessLifetime.abort(); stopPane(); }, { signal: lifetime.signal });

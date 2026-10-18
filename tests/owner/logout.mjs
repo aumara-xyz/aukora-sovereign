@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const dir = mkdtempSync(path.join(tmpdir(), 'owner-logout-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
-for (const module of ['ui/owner/session', 'ui/owner/transport', 'ui/owner/abort',
+for (const module of ['ui/owner/session', 'ui/owner/transport', 'ui/owner/abort', 'ui/owner/router', 'ui/owner/contracts',
   'ui/owner/passkey/codec', 'ui/owner/cards/codec', 'app/shell/approvals', 'app/core/data']) {
   const output = path.join(dir, `${module}.js`);
   mkdirSync(path.dirname(output), { recursive: true });
@@ -21,6 +21,8 @@ for (const module of ['ui/owner/session', 'ui/owner/transport', 'ui/owner/abort'
 const { endOwnerSession } = await import(pathToFileURL(path.join(dir, 'ui/owner/session.js')).href);
 const { ApprovalWatch } = await import(pathToFileURL(path.join(dir, 'app/shell/approvals.js')).href);
 const { encodeData } = await import(pathToFileURL(path.join(dir, 'app/core/data.js')).href);
+const { mountOwner } = await import(pathToFileURL(path.join(dir, 'ui/owner/router.js')).href);
+const { OWNER_PROTOCOL } = await import(pathToFileURL(path.join(dir, 'ui/owner/contracts.js')).href);
 const json = (value, status = 200) => new Response(encodeData(value), {
   status, headers: { 'Content-Type': 'application/json; charset=utf-8' },
 });
@@ -176,3 +178,41 @@ test('disposed approval polling ignores a late response and schedules no further
   assert.deepEqual(events, []);
   assert.equal(fetch.mock.callCount(), 1);
 });
+
+// A page restored from the back/forward cache re-shows its pane. Sign-out must not run again then: the owner cookie
+// in the jar may belong to a session signed in after it.
+for (const [route, mounts, last] of [['/signout', 1, 'closed'], ['/passkey', 2, 'ready']]) {
+  test(`a restored owner page ${route === '/signout' ? 'never repeats sign-out' : 're-shows a view pane'}`, async t => {
+    const saved = ['window', 'document', 'location'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
+    t.after(() => {
+      for (const [name, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name);
+      }
+    });
+    const element = () => ({ dataset: {}, className: '', title: '', textContent: '',
+      setAttribute() {}, replaceChildren() {}, append() {} });
+    const posted = [], listeners = {};
+    const parent = { postMessage(message, origin) { assert.equal(origin, 'https://shell.example'); posted.push(message); } };
+    const window = { parent, top: parent,
+      addEventListener(type, listener) { (listeners[type] ??= []).push(listener); } };
+    const set = (name, value) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+    set('window', window);
+    set('document', { createElement: element });
+    set('location', { origin: 'https://owner.example' });
+    let mounted = 0;
+    const pane = async () => { mounted++; return () => {}; };
+    mountOwner(element(), { shellOrigin: 'https://shell.example', panes: { signout: pane, passkey: pane },
+      witness: { observeVisit: async () => ({ state: 'first', treeSize: 1 }) } });
+    const channel = posted[0].channel;
+    for (const listener of listeners.message) {
+      listener({ source: parent, origin: 'https://shell.example', data: { protocol: OWNER_PROTOCOL, kind: 'init', channel, route } });
+    }
+    await setImmediate();
+    assert.equal(mounted, 1);
+    for (const listener of listeners.pagehide) listener({ persisted: true });
+    for (const listener of listeners.pageshow) listener({ persisted: true });
+    await setImmediate();
+    assert.equal(mounted, mounts);
+    assert.equal(posted.at(-1).kind, last);
+  });
+}
