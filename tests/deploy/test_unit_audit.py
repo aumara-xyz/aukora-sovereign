@@ -24,10 +24,17 @@ if sys.argv[1] == 'is-enabled':
     sys.exit(0)
 if sys.argv[1] == 'cat':
     print('# /etc/systemd/system/aukora-release-probe@.service')
+    print('[Service]')
     print('RestrictAddressFamilies=none')
-    if os.environ.get('RESET_FAMILIES'):
+    reset = os.environ.get('RESET_FAMILIES')
+    if reset:
         print('# /etc/systemd/system/aukora-release-probe@.service.d/override.conf')
-        print(' RestrictAddressFamilies = ' if os.environ['RESET_FAMILIES'] == 'spaced' else 'RestrictAddressFamilies=')
+        print('[Service]')
+        print(' RestrictAddressFamilies = ' if reset == 'spaced' else 'RestrictAddressFamilies=')
+        if reset == 'sectioned':
+            # systemd ignores this line outside [Service]; the audit must too.
+            print('[Install]')
+            print('RestrictAddressFamilies=none')
     sys.exit(0)
 if sys.argv[1] == 'list-unit-files':
     if os.environ.get('ENABLE_INSTANCE'):
@@ -73,7 +80,7 @@ else:
             self.assertEqual(enabled.returncode, 1, enabled.stdout + enabled.stderr)
             self.assertIn("is not static", enabled.stdout)
             # A drop-in that resets the address families reads back like "none" in systemctl show; the unit files tell.
-            for spelling in ("1", "spaced"):
+            for spelling in ("1", "spaced", "sectioned"):
                 reset = subprocess.run(audit, env={**env, "RESET_FAMILIES": spelling}, capture_output=True, text=True)
                 self.assertEqual(reset.returncode, 1, reset.stdout + reset.stderr)
                 self.assertIn("RestrictAddressFamilies is ''", reset.stdout)

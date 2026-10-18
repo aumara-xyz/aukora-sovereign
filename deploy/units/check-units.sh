@@ -84,9 +84,13 @@ probe=aukora-release-probe@000000000000-000000000000.service
 enabled=$(systemctl list-unit-files 'aukora-release-probe@*' --state=enabled --no-legend 2>/dev/null) || enabled=
 [ -z "$enabled" ] || fail aukora-release-probe@ "an instance is enabled for boot: $enabled"
 # systemctl show prints RestrictAddressFamilies=none and an unset (or reset) list alike, as nothing: read the unit
-# files instead; the last assignment, drop-ins included and spelled as systemd parses it, must be none.
-families=$(systemctl cat "$probe" 2>/dev/null |
-    sed -n 's/^[[:space:]]*RestrictAddressFamilies[[:space:]]*=[[:space:]]*//p' | sed 's/[[:space:]]*$//' | tail -n 1)
+# files instead; the last [Service] assignment, drop-ins included and spelled as systemd parses it, must be none.
+families=$(systemctl cat "$probe" 2>/dev/null | awk '
+    /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
+    section == "[Service]" && /^[[:space:]]*RestrictAddressFamilies[[:space:]]*=/ {
+        value = $0; sub(/^[^=]*=[[:space:]]*/, "", value); sub(/[[:space:]]*$/, "", value); last = value
+    }
+    END { print last }')
 [ "$families" = none ] || fail "$probe" "RestrictAddressFamilies is '$families' in its unit files, expected 'none'"
 for unit in aukora-sovereign.service aukora-egress.service aukora-egress-verify.timer systemd-time-wait-sync.service; do
     systemctl is-enabled --quiet "$unit" || fail "$unit" "not enabled for the next boot"
