@@ -9,7 +9,7 @@ use canon::{
     json::{SafeInteger, Value, MAX_SAFE_INTEGER},
     Result,
 };
-use nostr::{PublicKey, Transport, TransportEnvelope, TransportKind, TransportReceipt};
+use nostr::{PublicKey, Transport, TransportEnvelope, TransportReceipt};
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub const MESSAGE_SCHEMA: &str = "aukora:messaging-event:v1";
@@ -222,8 +222,8 @@ impl Messaging {
         .collect()
     }
 
-    /// Recheck current approved contact state immediately before network I/O.
-    /// A transport retry uses the same signed envelope and id, never fresh text.
+    /// Compatibility helper for callers already owning an authority transaction.
+    /// The supervisor uses prepare/submit/record to release Aura around relay I/O.
     pub fn transmit_owner<A: AuthorityTxn + ?Sized, T: Transport + ?Sized>(
         &mut self,
         txn: &mut A,
@@ -231,96 +231,13 @@ impl Messaging {
         id: OutboxId,
         deadline_ms: u64,
     ) -> Result<TransportReceipt> {
-        if deadline_ms == 0 || transport.kind() != TransportKind::NostrRelays {
-            return Err(refuse("transport-unavailable"));
-        }
-        let (contact, bytes, body, state, sequence): (Vec<u8>, Vec<u8>, Vec<u8>, i64, Option<i64>) =
-            self.db
-                .query_row(
-                    "SELECT contact,envelope,audit_body,state,aura_sequence FROM messaging_messages
-             WHERE id=?1 AND direction='outgoing'",
-                    [id.0.as_bytes().as_slice()],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                        ))
-                    },
-                )
-                .map_err(|_| refuse("outbox-missing"))?;
-        let body = canon::json::parse_strict(&body)?;
-        let fact = txn
-            .committed_observation_state("messaging.message", &id.0.to_string())?
-            .ok_or(refuse("committed-send-required"))?;
-        if sequence.is_none()
-            || fact.get("body") != Some(&body)
-            || Some(state_number(&fact, "sequence")? as i64) != sequence
-        {
-            return Err(refuse("committed-send-required"));
-        }
-        let contact_key = PublicKey::from_bytes(fixed(contact)?)?;
-        let Some(contact) = self.current_contact(txn, contact_key)? else {
-            self.fail_owner_send(id)?;
-            return Err(refuse("stranger"));
-        };
-        let context = txn.observation_context()?;
-        if contact.authority().epoch != context.authority.epoch
-            || contact.consumed_card().to_string() != state_text(&body, "contact_receipt")?
-        {
-            self.fail_owner_send(id)?;
-            return Err(refuse("stale-contact"));
-        }
-        let envelope = TransportEnvelope {
-            v: nostr::transport::TRANSPORT_VERSION,
-            codec: nostr::transport::EnvelopeCodec::Nip59V1,
-            recipient: contact_key,
-            id: nostr::EventId::from_bytes(
-                *Digest32::from_hex(state_text(&body, "envelope_id")?)?.as_bytes(),
-            ),
-            bytes,
-        };
-        envelope.validate()?;
-        if state == 3 {
-            return Err(refuse("transport-rejected"));
-        }
-        if state == 1 {
-            return Ok(TransportReceipt {
-                envelope_id: envelope.id,
-                transport: TransportKind::NostrRelays,
-                status: nostr::transport::SubmissionStatus::Accepted,
-            });
-        }
-        self.db
-            .execute(
-                "UPDATE messaging_messages SET state=2 WHERE id=?1",
-                [id.0.as_bytes().as_slice()],
-            )
-            .map_err(|_| refuse("store-write"))?;
-        let receipt = transport
-            .send(&envelope, deadline_ms)
-            .map_err(|_| refuse("submission-unconfirmed"))?;
-        if receipt.envelope_id != envelope.id || receipt.transport != transport.kind() {
-            return Err(refuse("receipt-mismatch"));
-        }
-        use nostr::transport::SubmissionStatus;
-        let state = match receipt.status {
-            SubmissionStatus::Accepted => 1,
-            SubmissionStatus::Unknown => 2,
-            SubmissionStatus::Rejected => 3,
-        };
-        self.db
-            .execute(
-                "UPDATE messaging_messages SET state=?2 WHERE id=?1",
-                params![id.0.as_bytes().as_slice(), state],
-            )
-            .map_err(|_| refuse("store-write"))?;
+        let prepared = self.prepare_owner_send(txn, id)?;
+        let receipt = prepared.submit(transport, deadline_ms)?;
+        self.record_owner_send(txn, &prepared, &receipt)?;
         Ok(receipt)
     }
 
-    fn fail_owner_send(&self, id: OutboxId) -> Result<()> {
+    pub(crate) fn fail_owner_send(&self, id: OutboxId) -> Result<()> {
         self.db
             .execute(
                 "UPDATE messaging_messages SET state=3 WHERE id=?1 AND state IN(0,2)",

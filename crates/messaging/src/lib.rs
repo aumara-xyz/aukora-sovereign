@@ -6,6 +6,8 @@ pub mod contacts;
 pub mod ingress;
 mod history;
 mod retry;
+mod owner_transport;
+pub use owner_transport::PreparedOwnerSend;
 mod store;
 #[cfg(test)]
 mod history_tests;

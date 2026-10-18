@@ -41,7 +41,7 @@ impl LiveNetwork {
         now_seconds: u64,
         deadline_ms: u64,
     ) -> Result<()> {
-        let BindingState::Bound(scope) = self.ledger.binding()? else {
+        let BindingState::Bound(scope) = self.ledger.messaging_binding()? else {
             return Ok(());
         };
         let now_ms = now_seconds
@@ -80,17 +80,25 @@ impl LiveNetwork {
             .map_err(|_| refuse("network-store-unavailable"))?
             .pending_owner_sends_due(now_ms, 20)?;
         for id in pending {
-            let result = self.ledger.messaging(scope, false, |txn| {
+            let prepared = self.ledger.messaging(scope, false, |txn| {
                 self.store
                     .lock()
                     .map_err(|_| refuse("network-store-unavailable"))?
-                    .transmit_owner(txn, transport, id, deadline_ms)
-            });
+                    .prepare_owner_send(txn, id)
+            })?;
+            // Relay latency holds neither Aura's writer nor the local store.
+            let result = prepared.submit(transport, deadline_ms);
             self.store
                 .lock()
                 .map_err(|_| refuse("network-store-unavailable"))?
                 .record_owner_attempt(id, now_ms, result.as_ref().ok())?;
-            result?;
+            let receipt = result?;
+            self.ledger.messaging(scope, false, |txn| {
+                self.store
+                    .lock()
+                    .map_err(|_| refuse("network-store-unavailable"))?
+                    .record_owner_send(txn, &prepared, &receipt)
+            })?;
         }
         let batch = transport.receive(&nostr::transport::ReceiveRequest {
             recipient: self.identity.public_key(),
@@ -255,7 +263,7 @@ impl NetworkRead for LiveNetwork {
     }
 
     fn refusals(&self, scope: PrincipalScope) -> Result<messaging::RefusalCounts> {
-        self.ledger.scoped(scope, |txn| {
+        self.ledger.messaging(scope, false, |txn| {
             self.store
                 .lock()
                 .map_err(|_| refuse("network-store-unavailable"))?

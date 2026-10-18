@@ -32,6 +32,7 @@ impl aura::TrustedClock for HostClock {
 
 pub struct HostLedger {
     ledger: Mutex<aura::Ledger>,
+    pub(super) path: std::path::PathBuf,
     pub(super) release_approval: Mutex<Option<crate::release::ReleaseApproval>>,
     pub signer: Arc<dyn aura::RecordSigner + Send + Sync>,
     pub clock: Arc<dyn aura::TrustedClock + Send + Sync>,
@@ -70,6 +71,7 @@ impl HostLedger {
     ) -> Result<Self> {
         Ok(Self {
             ledger: Mutex::new(aura::Ledger::open(path)?),
+            path: path.to_owned(),
             release_approval: Mutex::new(None),
             signer,
             clock,
@@ -94,6 +96,27 @@ impl HostLedger {
     ) -> Result<T> {
         self.with_transaction(false, operation)
     }
+    /// Adopt an authenticated detached read only if neither this connection nor
+    /// another writer changed any table since its generation was captured.
+    pub(super) fn transition_verified<T>(
+        &self,
+        generation: aura::ledger::ReadGeneration,
+        verified: aura::ledger::VerifiedRead,
+        operation: impl FnOnce(&mut aura::LedgerTxn<'_>) -> Result<T>,
+    ) -> Result<Option<T>> {
+        struct TransactionClock(i64);
+        impl aura::TrustedClock for TransactionClock {
+            fn now_ms(&self) -> Result<i64> { Ok(self.0) }
+        }
+        let mut ledger = self.ledger.lock().map_err(|_| codes::SUPERVISOR_NOT_READY)?;
+        let clock = TransactionClock(self.clock.now_ms()?);
+        let services = aura::TransactionServices { signer: &*self.signer, clock: &clock };
+        let Some(mut txn) = ledger.begin_verified(services, generation, verified)? else {
+            return Ok(None);
+        };
+        operation(&mut txn).map(Some)
+    }
+
     fn with_transaction<T>(
         &self,
         commit: bool,

@@ -2,6 +2,7 @@
 //! Real passkey registration, Aura records and gate contact-card consumption.
 
 use super::*;
+mod locking;
 use aumlok::{
     ceremony::{
         possession_challenge, BeginCeremony, CeremonyConfig, CeremonyPurpose, CeremonyStore,

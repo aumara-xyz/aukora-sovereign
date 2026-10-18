@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Messaging projections authenticate Aura's retained gate proof under its writer lock.
+//! Messaging projections authenticate independent reads, then recheck the live writer.
 use super::HostLedger;
 use canon::{
     alg::{AlgorithmId, PublicKey as SigningKey, Signature},
     authority::{
-        AuthorityAppendContext, AuthorityRecord, AuthorityTxn, FactRecord, Kind, LifecycleRecord,
-        ObservationContext, OwnerAuthorization, OwnerBinding, OwnerOperation,
+        AuthorityAppendContext, AuthorityRecord, AuthorityTxn, AuthorityVersion, FactRecord, Kind,
+        LifecycleRecord, ObservationContext, OwnerAuthorization, OwnerBinding, OwnerOperation,
         PendingAuthorityRecord, Phase, StandingUseContext, VerifiedProof, VerifiedStandingUse,
     },
     digest::Digest32,
@@ -29,45 +29,86 @@ pub struct NetworkTxn<'a, 'db> {
     contacts: BTreeMap<String, Value>,
     messages: BTreeMap<String, Value>,
     pending_messages: BTreeMap<String, Value>,
+    observations: aura::ledger::ObservationProjection,
+    pending_refusals: Vec<AuthorityRecord>,
 }
 
 impl HostLedger {
+    /// Polling only needs an authenticated read; scope is checked again against
+    /// the detached projection before each effect is admitted by the writer.
+    pub fn messaging_binding(&self) -> Result<supervisor::ingress::BindingState> {
+        aura::Ledger::read_snapshot(&self.path, self.services(), |snapshot| {
+            let version = snapshot.current_version()?;
+            Ok(if version.epoch == 0 {
+                supervisor::ingress::BindingState::Unbound
+            } else {
+                supervisor::ingress::BindingState::Bound(PrincipalScope {
+                    subject: snapshot.owner_subject()?, epoch: version.epoch,
+                })
+            })
+        })
+    }
+
     pub fn messaging<T>(
         &self,
         scope: PrincipalScope,
         owner_session: bool,
         operation: impl FnOnce(&mut NetworkTxn<'_, '_>) -> Result<T>,
     ) -> Result<T> {
-        self.transition(|txn| {
-            let mut network = NetworkTxn::new(txn, scope, owner_session)?;
-            let result = operation(&mut network)?;
-            // Messaging's observation methods may already have durably committed.
-            // A plain read has no changes; dropping its transaction rolls it back.
-            Ok(result)
-        })
+        // Full verification and projection use a separate SQLite read snapshot.
+        // A concurrent approval can advance the head; retry before invoking the
+        // operation, so stale contacts and epochs never authorize an effect.
+        let mut operation = Some(operation);
+        for _ in 0..3 {
+            let generation = self.with_read_ledger(|ledger| ledger.read_generation())?;
+            let (projection, verified) =
+                aura::Ledger::read_snapshot(&self.path, self.services(), |snapshot| {
+                    Ok((NetworkProjection::read(snapshot, scope)?, snapshot.verified()))
+                })?;
+            if let Some(result) = self.transition_verified(generation, verified, |txn| {
+                if txn.current_version()? != projection.version {
+                    return Err(refuse("snapshot-head"));
+                }
+                let mut network = NetworkTxn {
+                    inner: txn,
+                    scope,
+                    owner_session,
+                    contacts: projection.contacts,
+                    messages: projection.messages,
+                    pending_messages: BTreeMap::new(),
+                    observations: projection.observations,
+                    pending_refusals: Vec::new(),
+                };
+                operation.take().expect("operation runs once")(&mut network)
+            })? {
+                return Ok(result);
+            }
+        }
+        Err(refuse("history-changed"))
     }
 }
 
-impl<'a, 'db> NetworkTxn<'a, 'db> {
-    fn new(
-        inner: &'a mut aura::LedgerTxn<'db>,
-        scope: PrincipalScope,
-        owner_session: bool,
-    ) -> Result<Self> {
-        HostLedger::require_scope(inner, scope)?;
-        let end = inner.current_version()?.sequence;
+struct NetworkProjection {
+    version: AuthorityVersion,
+    contacts: BTreeMap<String, Value>,
+    messages: BTreeMap<String, Value>,
+    observations: aura::ledger::ObservationProjection,
+}
+impl NetworkProjection {
+    fn read(snapshot: &aura::ledger::ReadSnapshot<'_>, scope: PrincipalScope) -> Result<Self> {
+        let version = snapshot.current_version()?;
+        if version.epoch != scope.epoch || snapshot.owner_subject()? != scope.subject {
+            return Err(canon::codes::AUMLOK_BINDING_REQUIRED);
+        }
         let mut result = Self {
-            inner,
-            scope,
-            owner_session,
+            version,
             contacts: BTreeMap::new(),
             messages: BTreeMap::new(),
-            pending_messages: BTreeMap::new(),
+            observations: snapshot.observations()?,
         };
-        for sequence in 1..end {
-            let row = result
-                .inner
-                .floor_record_at_sequence(sequence)?
+        for sequence in 1..version.sequence {
+            let row = snapshot
+                .record_at_sequence(sequence)?
                 .ok_or(refuse("history-gap"))?;
             if row.authority.epoch != scope.epoch {
                 continue;
@@ -78,7 +119,7 @@ impl<'a, 'db> NetworkTxn<'a, 'db> {
                 && string(&body, "target").ok() == Some(messaging::CONTACT_TARGET)
                 && string(&body, "state").ok() == Some("applied")
             {
-                result.project_contact(&row, &body)?;
+                result.project_contact(snapshot, &row, &body)?;
             } else if row.kind == Kind::BootFacts
                 && row.phase == Phase::Fact
                 && row.operation.is_none()
@@ -99,11 +140,16 @@ impl<'a, 'db> NetworkTxn<'a, 'db> {
         Ok(result)
     }
 
-    fn project_contact(&mut self, row: &AuthorityRecord, body: &Value) -> Result<()> {
+    fn project_contact(
+        &mut self,
+        snapshot: &aura::ledger::ReadSnapshot<'_>,
+        row: &AuthorityRecord,
+        body: &Value,
+    ) -> Result<()> {
         let proposal = ProposalId::from_hex(string(body, "proposal")?)?;
         let receipt = Digest32::from_hex(string(body, "consumed_approval")?)?;
-        let stored = self.inner.proposal(&proposal)?;
-        let consumed = self.inner.check_target_consumption(proposal, receipt)?;
+        let stored = snapshot.proposal(&proposal)?;
+        let consumed = snapshot.check_target_consumption(proposal, receipt)?;
         if stored.status != aura::storage::ProposalStatus::Applied
             || stored.target != messaging::CONTACT_TARGET
             || row.operation != Some(stored.operation)
@@ -151,7 +197,9 @@ impl<'a, 'db> NetworkTxn<'a, 'db> {
         }
         Ok(())
     }
+}
 
+impl NetworkTxn<'_, '_> {
     pub fn contact_keys(&self) -> Result<Vec<nostr::PublicKey>> {
         self.contacts
             .keys()
@@ -244,13 +292,18 @@ impl AuthorityTxn for NetworkTxn<'_, '_> {
             Digest32::from_hex(key)?;
             Ok(self.messages.get(key).cloned())
         } else {
-            self.inner.committed_observation_state(namespace, key)
+            self.observations.get(namespace, key)
         }
     }
     fn append_fact(&mut self, fact: FactRecord) -> Result<AuthorityRecord> {
         let message = fact.actor == "messaging"
             && string(&fact.body, "schema").ok() == Some("aukora:messaging-event:v1");
+        let refusal = fact.actor == "messaging"
+            && string(&fact.body, "schema").ok() == Some("aukora:messaging-refusal:v1");
         let row = self.inner.append_fact(fact)?;
+        if refusal {
+            self.pending_refusals.push(row.clone());
+        }
         if message {
             let body = aura::record::AuthorityBodyV1::parse(&row.body)?.payload;
             let id = string(&body, "id")?;
@@ -268,6 +321,9 @@ impl AuthorityTxn for NetworkTxn<'_, '_> {
     fn commit_observations(&mut self) -> Result<()> {
         self.inner.commit_observations()?;
         self.messages.append(&mut self.pending_messages);
+        for row in self.pending_refusals.drain(..) {
+            self.observations.append_committed(&row)?;
+        }
         Ok(())
     }
 }
@@ -348,7 +404,10 @@ impl messaging::OwnerSessionTxn for NetworkTxn<'_, '_> {
         if !self.owner_session {
             return Err(refuse("owner-shell-session-required"));
         }
-        HostLedger::require_scope(self.inner, self.scope)
+        if self.inner.current_version()?.epoch != self.scope.epoch {
+            return Err(canon::codes::AUMLOK_BINDING_REQUIRED);
+        }
+        Ok(())
     }
 }
 

@@ -140,7 +140,14 @@ pub(super) fn record_at(
     )
 }
 
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static VERIFY_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 pub(super) fn verify(connection: &rusqlite::Connection) -> Result<Snapshot> {
+    #[cfg(test)]
+    VERIFY_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut state = Snapshot::default();
     let mut statement = connection.prepare("SELECT a.seq,a.prev,a.hash,a.sig,a.at,a.kind,a.actor,a.op,a.phase,a.body,w.epoch,w.algorithm,w.signatures,w.public_keys,w.root FROM aura a LEFT JOIN aura_record_wrappers w ON w.seq=a.seq ORDER BY a.seq").map_err(sql)?;
     let mut cursor = statement.query([]).map_err(sql)?;

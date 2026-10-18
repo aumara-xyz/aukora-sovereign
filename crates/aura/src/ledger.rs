@@ -20,9 +20,12 @@ mod epochs;
 mod floor;
 mod io;
 mod observations;
+pub use observations::ObservationProjection;
 mod proposals;
 pub use proposals::DAY_MS;
 mod recovery;
+mod read_snapshot;
+pub use read_snapshot::{ReadGeneration, ReadSnapshot, VerifiedRead};
 
 /// Signing keys remain with the supervisor's signing service.
 pub trait RecordSigner {
@@ -45,6 +48,7 @@ pub struct Ledger {
     connection: rusqlite::Connection,
     verified: io::Snapshot,
     data_version: i64,
+    snapshot_nonce: Digest32,
 }
 
 impl Ledger {
@@ -76,7 +80,7 @@ impl Ledger {
             .query_row("PRAGMA data_version", [], |row| row.get(0))
             .map_err(sql)?;
         transaction.rollback().map_err(sql)?;
-        Ok(Self { connection, verified, data_version })
+        Ok(Self { connection, verified, data_version, snapshot_nonce: read_snapshot::nonce()? })
     }
 
     pub fn open(path: &Path) -> Result<Self> {
@@ -109,10 +113,30 @@ impl Ledger {
             connection,
             verified,
             data_version,
+            snapshot_nonce: read_snapshot::nonce()?,
         })
     }
 
     pub fn begin<'a>(&'a mut self, services: TransactionServices<'a>) -> Result<LedgerTxn<'a>> {
+        self.begin_checked(services, None)?.ok_or(refusal("snapshot-stale"))
+    }
+
+    /// Enter the writer using a detached verified snapshot, without scanning
+    /// history. A stale generation returns None before granting a transaction.
+    pub fn begin_verified<'a>(
+        &'a mut self,
+        services: TransactionServices<'a>,
+        generation: ReadGeneration,
+        verified: VerifiedRead,
+    ) -> Result<Option<LedgerTxn<'a>>> {
+        self.begin_checked(services, Some((generation, verified)))
+    }
+
+    fn begin_checked<'a>(
+        &'a mut self,
+        services: TransactionServices<'a>,
+        snapshot: Option<(ReadGeneration, VerifiedRead)>,
+    ) -> Result<Option<LedgerTxn<'a>>> {
         let mut random = [0; 32];
         getrandom::fill(&mut random).map_err(|_| refusal("randomness"))?;
         let transaction = self
@@ -122,7 +146,42 @@ impl Ledger {
         let version: i64 = transaction
             .query_row("PRAGMA data_version", [], |r| r.get(0))
             .map_err(sql)?;
-        if version != self.data_version {
+        if let Some((generation, verified)) = snapshot {
+            if generation.nonce != self.snapshot_nonce
+                || generation.data_version != version
+                || generation.changes != transaction.total_changes()
+                || generation.retained != self.verified.next()?
+            {
+                return Ok(None);
+            }
+            let observed = verified.state;
+            let last: Option<(i64, String)> = {
+                use rusqlite::OptionalExtension;
+                transaction.query_row("SELECT seq,hash FROM aura ORDER BY seq DESC LIMIT 1", [],
+                    |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(sql)?
+            };
+            let expected = observed.hash.map(|hash| (observed.frontier.size() as i64, hash.to_string()));
+            if last != expected {
+                return Ok(None);
+            }
+            if observed.frontier.size() < self.verified.frontier.size()
+                || observed.epoch < self.verified.epoch
+            {
+                return Err(refusal("retained-state-rollback"));
+            }
+            if let Some(hash) = self.verified.hash {
+                let retained = io::record_at(&transaction, self.verified.frontier.size())?;
+                if retained.hash != hash {
+                    return Err(refusal("retained-prefix-rewritten"));
+                }
+            }
+            // Both the connection's external generation and own-write count
+            // are unchanged since BEFORE the copy. Matching only the signed
+            // head would miss changes to proposal/identity side tables.
+            crate::schema::validate(&transaction)?;
+            self.verified = observed;
+            self.data_version = version;
+        } else if version != self.data_version {
             crate::schema::validate(&transaction)?;
             let observed = io::verify(&transaction)?;
             if observed.frontier.size() < self.verified.frontier.size()
@@ -145,7 +204,7 @@ impl Ledger {
         }
         let state = self.verified.clone();
         let observation_start_changes = transaction.total_changes();
-        Ok(LedgerTxn {
+        Ok(Some(LedgerTxn {
             observation_start_changes,
             transaction,
             services,
@@ -157,7 +216,7 @@ impl Ledger {
             consumptions: BTreeSet::new(),
             floor_obligation: None,
             target_observation: None,
-        })
+        }))
     }
 
     pub fn export_cold_proof(&self, limits: ExportLimits) -> Result<ColdProofV1> {
