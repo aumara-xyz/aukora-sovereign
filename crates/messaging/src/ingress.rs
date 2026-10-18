@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Sender admission precedes message opening; refusal facts carry no authority.
 
-mod refusal_audit;
+pub(crate) mod refusal_audit;
 
 use canon::{
     alg::AlgorithmId,
@@ -303,6 +303,15 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
 }
 
 impl Messaging {
+    /// The relay worker can skip an already admitted envelope in repeated relay
+    /// snapshots. Explicit ingress attempts still pass through the replay fence.
+    pub fn seen_envelope(&self, envelope: EventId) -> Result<bool> {
+        self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messaging_seen WHERE envelope=?1)",
+            [envelope.as_bytes().as_slice()], |row| row.get(0),
+        ).map_err(|_| refuse("store-read"))
+    }
+
     /// Reads committed Aura state before admission; a missing adapter refuses.
     /// A restart leaves the local count cache dirty until it is reconciled.
     pub fn refresh_refusal_counts<T: AuthorityTxn + ?Sized>(
@@ -360,7 +369,10 @@ impl Messaging {
     ) -> Result<IngressOutcome> {
         let prior = self.refresh_refusal_counts(txn)?;
         match self.admit(txn, envelope, recipient_key, transport, received_at_ms) {
-            Ok(data) => Ok(IngressOutcome::Data(data)),
+            Ok(data) => {
+                self.audit_message(txn, Digest32::from_bytes(*data.event().as_bytes()))?;
+                Ok(IngressOutcome::Data(data))
+            }
             Err(reason) => {
                 let context = txn.observation_context()?;
                 let observed_at_ms =
@@ -493,7 +505,14 @@ impl Messaging {
         let rumor = nostr::nip59::open_message(&seal, recipient_key, now)
             .map_err(|error| classify(error, R::Payload))?;
         let recipient = hex::encode(local.as_bytes());
-        if rumor.tags.len() != 1 || rumor.tags[0] != ["p", recipient.as_str()] {
+        let nonce_valid = rumor.tags.len() == 1
+            || (rumor.tags.len() == 2
+                && rumor.tags[1].len() == 2
+                && rumor.tags[1][0] == "nonce"
+                && rumor.tags[1][1].len() == 32
+                && rumor.tags[1][1].bytes().all(|byte|
+                    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+        if !nonce_valid || rumor.tags[0] != ["p", recipient.as_str()] {
             return Err(R::Recipient);
         }
         if rumor.content.is_empty() || rumor.content.len() > MAX_MESSAGE_BYTES {
@@ -517,6 +536,17 @@ impl Messaging {
                 envelope.id.as_bytes().as_slice(), sender.as_bytes().as_slice(),
                 contact.consumed_card().to_string(), contact.authority().epoch as i64,
                 contact.authority().sequence as i64, Sha256::digest(rumor.content.as_bytes()).as_slice()],
+        ).map_err(|_| R::Payload)?;
+        crate::history::stage(
+            &transaction,
+            Digest32::from_bytes(*rumor.id.as_bytes()),
+            "incoming",
+            sender,
+            &rumor.content,
+            rumor.created_at.checked_mul(1000).ok_or(R::Payload)?,
+            received_at_ms,
+            envelope,
+            contact.consumed_card(),
         ).map_err(|_| R::Payload)?;
         transaction.commit().map_err(|_| R::Payload)?;
         Ok(ContactData {

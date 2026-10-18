@@ -4,6 +4,12 @@
 
 pub mod contacts;
 pub mod ingress;
+mod history;
+mod store;
+#[cfg(test)]
+mod history_tests;
+
+pub use history::{MessageDirection, MessageRecord, MessageState, OwnerSessionTxn, MESSAGE_SCHEMA};
 
 use canon::json::{Value, ValueView};
 use canon::{
@@ -315,7 +321,7 @@ impl Messaging {
         let database = File::from(descriptor);
         check_private_file(&database)?;
         let path = directory.join("messaging.sqlite3");
-        let db = Connection::open_with_flags(
+        let mut db = Connection::open_with_flags(
             &path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )
@@ -323,40 +329,7 @@ impl Messaging {
         check_path_identity(&path, &database)?;
         db.busy_timeout(std::time::Duration::from_millis(500))
             .map_err(|_| refuse("store-busy"))?;
-        db.execute_batch(
-            "PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON;
-            PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
-            CREATE TABLE IF NOT EXISTS messaging_meta(
-                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-                schema_version INTEGER NOT NULL CHECK(schema_version=1), node BLOB NOT NULL);
-            CREATE TABLE IF NOT EXISTS messaging_contacts(
-                key BLOB PRIMARY KEY CHECK(length(key)=32), action BLOB NOT NULL,
-                epoch INTEGER NOT NULL CHECK(epoch>=0), sequence INTEGER NOT NULL CHECK(sequence>0),
-                previous_hash BLOB, proposal BLOB NOT NULL CHECK(length(proposal)=16),
-                consumed_card BLOB NOT NULL CHECK(length(consumed_card)=32));
-            CREATE TABLE IF NOT EXISTS messaging_outbox(
-                id BLOB PRIMARY KEY CHECK(length(id)=32), proposal BLOB NOT NULL UNIQUE,
-                authorization_receipt BLOB NOT NULL CHECK(length(authorization_receipt)=32),
-                recipient BLOB NOT NULL CHECK(length(recipient)=32), envelope_id BLOB NOT NULL,
-                envelope BLOB NOT NULL, state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 3),
-                failure TEXT);",
-        )
-        .map_err(|_| refuse("store-schema"))?;
-        db.execute(
-            "INSERT OR IGNORE INTO messaging_meta VALUES(1,1,?1)",
-            params![node.as_bytes().as_slice()],
-        )
-        .map_err(|_| refuse("store-write"))?;
-        let saved: (i64, Vec<u8>) = db
-            .query_row(
-                "SELECT schema_version,node FROM messaging_meta WHERE singleton=1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|_| refuse("store-schema"))?;
-        if saved.0 != 1 || saved.1 != node.as_bytes() {
-            return Err(refuse("store-node"));
-        }
+        store::initialize(&mut db, node)?;
         ingress::initialize(&db)?;
         Ok(Self {
             node,
@@ -472,7 +445,7 @@ impl Messaging {
         else {
             return Ok(None);
         };
-        let contact = contact_state(&state, key)?;
+        let contact = contact_from_state(&state, key)?;
         if let Some(cached) = self.stored_contact(key)? {
             if cached.authority().epoch > contact.authority().epoch
                 || cached.authority().sequence > contact.authority().sequence
@@ -641,7 +614,9 @@ fn check_proof_action<T: AuthorityTxn + ?Sized>(
     Ok(())
 }
 
-fn contact_state(state: &Value, key: PublicKey) -> Result<ApprovedContact> {
+/// Decode a projection already authenticated by the trusted host's ledger reader.
+/// This helper does not verify the retained owner proof or the signed Aura row.
+pub fn contact_from_state(state: &Value, key: PublicKey) -> Result<ApprovedContact> {
     exact_object(
         state,
         &[

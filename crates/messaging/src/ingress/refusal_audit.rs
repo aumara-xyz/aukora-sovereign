@@ -5,7 +5,7 @@ use super::*;
 
 /// Aura's versioned body wrapper binds the observation to the returned record.
 /// Historical bare bodies retain the same exact observation comparison.
-pub(super) fn record_body_matches(
+pub(crate) fn record_body_matches(
     record: &canon::authority::AuthorityRecord,
     observation: &Value,
 ) -> Result<bool> {
