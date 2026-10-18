@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 [hidden] { display: none !important; }
 #face > [role="status"]:empty { display: none; }
-/* The Messages header (rule 10 AppHeader, no kicker): caps title left, its action right, a hairline under both. */
-.identity-header { container-type: inline-size; display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 640px; padding-bottom: 14px; border-bottom: 1px solid var(--spatial-border); }
+/* The Messages header (no kicker): caps title left, its action right beside it, clear of the hot corners (the
+   lane's top 74px corners belong to the shell), and a hairline under both. */
+.identity-header { container-type: inline-size; display: flex; align-items: center; justify-content: flex-start; gap: 14px; min-height: 52px; max-width: 640px; padding-bottom: 14px; border-bottom: 1px solid var(--spatial-border); }
 .identity-header h1 { margin: 0; font-size: clamp(22px, 4.4cqi, 30px); font-weight: 480; line-height: 1.1; letter-spacing: .08em; text-transform: uppercase; }
 :root body #face .identity-refresh { --spatial-accent: var(--spatial-mint); display: inline-flex; align-items: center; min-height: 28px; padding: 3px 12px; border: 1px solid color-mix(in srgb, var(--spatial-mint) 38%, transparent); border-radius: 999px; background: transparent; color: var(--spatial-mint); font-size: 12px; cursor: pointer; }
 .card, .code, .safety { --spatial-accent: var(--spatial-mint); max-width: 640px; margin-block-start: 20px; padding: 16px 18px 20px; border: 1px solid var(--spatial-control-border); border-radius: var(--spatial-radius); background: var(--spatial-surface); }
