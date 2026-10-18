@@ -85,12 +85,12 @@ def environment():
     if len(extra) > 8 or any(LABEL.match(item) is None or item.split("=", 1)[0] in RESERVED_LABELS for item in extra):
         core.refuse("spawn", "nebius-settings")
     values["labels"] = extra
-    # A static public address (AUKORA_VM_STATIC_IP=1) stays with the VM when it is stopped; a dynamic one returns to
-    # Nebius's range after an hour stopped, and the node's hosts (and the owner's passkey RP) are named after it.
+    # Default to a static address: the generated hosts and owner's passkey RP contain it and must survive a stop.
+    # AUKORA_VM_STATIC_IP=0 opts out for throwaway VMs; a dynamic address returns after an hour stopped.
     static = os.environ.get("AUKORA_VM_STATIC_IP", "")
     if static not in ("", "0", "1"):
         core.refuse("spawn", "nebius-settings")
-    values["static_ip"] = static == "1"
+    values["static_ip"] = static != "0"
     return values
 
 
