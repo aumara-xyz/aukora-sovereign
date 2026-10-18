@@ -14,6 +14,7 @@ import type { Contact, Conversation, Mark, Message } from "./model.js";
 import { addContact, composer, copyId, ownIdentity, removeContact } from "./actions.js";
 import type { Composer } from "./actions.js";
 import { glyph, portal, portalIcon } from "./portal.js";
+import { readAllPages } from "./paging.js";
 
 const PAGE = 50;
 const MAX_ROWS = 1_000;
@@ -532,12 +533,16 @@ export function mountMessages(root: HTMLElement, client: FaceClient, signal: Abo
     if (contacts.size === 0 && first) info.textContent = COPY.reading;
     const before = restart ? null : next;
     try {
-      const page = readContactPage(await client.call("network", "contacts.list", { before, limit: PAGE }, { signal }));
+      // A refresh is one complete snapshot of the book (all pages) before it replaces the rows shown; a failed later
+      // page keeps the previous book. "More contacts" pages only a book that was not refreshed.
+      const fetch = async (cursor: string | null) =>
+        readContactPage(await client.call("network", "contacts.list", { before: cursor, limit: PAGE }, { signal }));
+      const page = restart ? { items: await readAllPages(fetch, contact => contact.npub), next: null } : await fetch(before);
       if (signal.aborted) return false;
       if (restart) contacts.clear();
       let added = 0;
       for (const contact of page.items) {
-        if (!contacts.has(contact.npub) && contacts.size >= MAX_ROWS) continue;
+        if (!restart && !contacts.has(contact.npub) && contacts.size >= MAX_ROWS) continue;
         if (!contacts.has(contact.npub)) added++;
         contacts.set(contact.npub, contact);
       }

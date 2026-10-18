@@ -16,7 +16,7 @@ try {
   for (const path of [
     'faces/messages/view', 'faces/messages/actions', 'faces/messages/portal', 'faces/messages/dom',
     'faces/messages/copy', 'faces/messages/model', 'faces/identity/card', 'faces/identity/qr', 'faces/threads/time', 'core/service-state',
-    'core/session-state',
+    'core/session-state', 'faces/messages/paging',
     'faces/threads/spatial-icons', 'faces/threads/dom',
   ]) {
     const destination = join(compiled, `${path}.js`);
@@ -158,7 +158,12 @@ function mount(t, options = {}) {
       calls.push({ service, method, params: structuredClone(params) });
       if (service === 'aumlok' && method === 'identity') return identity;
       assert.equal(service, 'network');
-      if (method === 'contacts.list') return { items: contacts, next: null };
+      if (method === 'contacts.list') {
+        if (!options.contactPage) return { items: contacts, next: null };
+        const start = params.before === null ? 0 : contacts.findIndex(contact => contact.npub === params.before) + 1;
+        const items = contacts.slice(start, start + params.limit);
+        return { items, next: start + params.limit < contacts.length ? items.at(-1).npub : null };
+      }
       if (method === 'messages.list') {
         if (options.page && params.npub === maya && params.limit !== 1) return options.page(params);
         const scoped = messages.filter(item => !params.npub || item.contact === params.npub);
@@ -593,3 +598,26 @@ test('a failed send shows one red retry, which sends the same text again', async
   retry.click(); await settle();
   assert.deepEqual(calls.filter(call => call.method === 'send').map(call => call.params), [{ npub: maya, text: 'Did this arrive?' }]);
 });
+
+test('a refresh reads the whole contact book before replacing it; nothing beyond the first page drops out', async t => {
+  const charset = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  const id = n => `npub1${charset[Math.floor(n / 32)]}${charset[n % 32]}${'q'.repeat(56)}`;
+  const book = Array.from({ length: 120 }, (_, n) => ({ npub: id(n), label: `Friend ${n}`, pairing: null }));
+  const { root, calls } = mount(t, {
+    contacts: book, contactPage: true,
+    contactAdd: (params, contacts) => { contacts.push({ npub: params.npub, label: params.label, pairing: null }); return { state: 'applied' }; },
+  });
+  for (let turn = 0; turn < 10; turn++) await settle();
+  const listed = () => calls.filter(call => call.method === 'contacts.list').map(call => call.params.before);
+  assert.deepEqual(listed(), [null, book[49].npub, book[99].npub], 'the opening read pages through the book');
+  for (const contact of [book[0], book[60], book[119]]) assert.ok(conversation(root, contact.npub), contact.label);
+  assert.equal(button(root, 'More contacts').hidden, true);
+  const form = byClass(root, 'contact-form');
+  find(form, element => element.name === 'npub').value = `npub1${'z'.repeat(58)}`;
+  find(form, element => element.name === 'label').value = 'New friend';
+  form.dispatch('submit');
+  for (let turn = 0; turn < 10; turn++) await settle();
+  for (const contact of [book[0], book[60], book[119]]) assert.ok(conversation(root, contact.npub), `${contact.label} after refresh`);
+  assert.ok(conversation(root, `npub1${'z'.repeat(58)}`), 'the added contact');
+});
+
