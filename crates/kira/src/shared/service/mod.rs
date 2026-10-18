@@ -375,7 +375,7 @@ pub struct State {
     /// Wakes the background indexer after a write.
     wake: Option<Sender<()>>,
     /// Signing times per agent name, for the rate limit.
-    writes: BTreeMap<String, Vec<u64>>,
+    writes: rate::Budget,
 }
 
 #[derive(Deserialize)]
@@ -485,7 +485,7 @@ impl State {
             embedder: None,
             reranker: None,
             wake: None,
-            writes: BTreeMap::new(),
+            writes: rate::Budget::open(dir, now())?,
         })
     }
 
@@ -526,14 +526,7 @@ impl State {
 
     /// The signing-oracle rate (spec v0.3 §5): at most RATE_WRITES signatures per agent per RATE_WINDOW seconds.
     fn rate(&mut self, caller: &Caller) -> Result<()> {
-        let at = now();
-        let recent = self.writes.entry(caller.name.clone()).or_default();
-        recent.retain(|t| at.saturating_sub(*t) < RATE_WINDOW);
-        if recent.len() >= RATE_WRITES {
-            return Err(refuse("rate-limited"));
-        }
-        recent.push(at);
-        Ok(())
+        self.writes.reserve(&self.dir, &caller.name, now())
     }
 
     fn whoami(caller: &Caller) -> Value {
@@ -965,6 +958,7 @@ mod cli;
 mod import;
 mod mcp;
 mod peer;
+mod rate;
 mod server;
 mod wire;
 
