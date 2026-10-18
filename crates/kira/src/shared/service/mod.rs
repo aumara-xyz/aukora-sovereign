@@ -621,8 +621,7 @@ impl State {
     /// empty), checked against the slot's live head under the same lock the append runs under. A write that omits it
     /// is refused (`expected-head-required`), so a session that went stale can never replace a newer handoff by
     /// simply not saying what it read. A caller who may not write the slot is refused before the head is looked at
-    /// (`slot-refused`), and a head the caller may not read counts as no head: neither the refusals nor any id tell it
-    /// that a note it cannot read is there.
+    /// (`slot-refused`). An unreadable head still occupies the slot: refuse it as stale without returning its id or text.
     fn check_head(&self, caller: &Caller, p: &RememberParams) -> Result<()> {
         let Some(slot) = p.slot.as_deref() else {
             return if p.expected_head.is_some() { Err(refuse("expected-head-needs-slot")) } else { Ok(()) };
@@ -634,7 +633,11 @@ impl State {
         if expected != "none" && !is_hex64(expected) {
             return Err(refuse("id-invalid"));
         }
-        let head = self.store.slot(slot)?.filter(|n| visible(caller, n)).map(|n| hex(n.event.id.as_bytes()));
+        let current = self.store.slot(slot)?;
+        if current.as_ref().is_some_and(|n| !visible(caller, n)) {
+            return Err(refuse("resume-stale"));
+        }
+        let head = current.map(|n| hex(n.event.id.as_bytes()));
         match head.as_deref() {
             None if expected == "none" => Ok(()),
             Some(head) if head == expected => Ok(()),

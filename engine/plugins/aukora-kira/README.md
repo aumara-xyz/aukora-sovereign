@@ -44,6 +44,8 @@ itself signs as the token's agent and never lets an agent claim more than `model
    The slots are read again at `step === 1` of every turn, so a self file the owner has since superseded or
    quarantined, or a newer resume brief, reaches the next turn. Each slot refreshes independently: if its read fails,
    its text and cached head are withheld and retried next step; a successful read applies even if the other fails.
+   The head used for `expected_head` stays at the session's first verified read, including an empty slot. Refreshing
+   prompt text or retrying a failed read never advances it, so a concurrent handoff still refuses a stale write.
 
 ## Honest limits
 

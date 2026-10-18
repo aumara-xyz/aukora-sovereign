@@ -604,13 +604,13 @@ fn a_stale_resume_is_refused_when_it_names_the_head_it_read() {
     assert_eq!(call(&f.state, &owner, "remember", own)["error"], "kira:resume-stale");
 }
 
-/// Grok review part 3: a slot head the caller cannot read must be indistinguishable from no head, and no id of it comes back.
+/// An unreadable head still occupies its slot; a refusal reveals neither its id nor its text.
 #[test]
-fn a_hidden_slot_head_is_neither_distinguishable_nor_returned() {
+fn a_hidden_slot_head_cannot_be_overwritten_or_returned() {
     let f = fixture();
     let (owner, grok) = (f.owner.clone(), f.grok.clone());
     // The owner writes grok's handoff slot, so grok cannot read its head (a handoff is its author's and the owner's).
-    let mut owners = note("the owner's note in grok's slot", "builders");
+    let mut owners = note("the owner's note in grok's slot", "local");
     (owners["slot"], owners["lane"], owners["capture"], owners["expected_head"]) =
         (json!("resume:grok"), json!("resume"), json!("owner-typed"), json!("none"));
     let hidden = call(&f.state, &owner, "remember", owners)["result"]["id"].as_str().unwrap().to_owned();
@@ -620,11 +620,14 @@ fn a_hidden_slot_head_is_neither_distinguishable_nor_returned() {
         (n["slot"], n["lane"], n["form"], n["expected_head"]) = (json!(slot), json!("experience"), json!("snapshot"), expected);
         call(&f.state, token, "remember", n)
     };
-    // Grok's own slot holds a head it cannot read: "none" is accepted exactly as for an empty slot, and nothing returns
-    // the hidden id.
-    let accepted = write(&grok, "resume:grok", json!("none"));
-    assert_eq!(accepted["ok"], true, "{accepted}");
-    assert!(!accepted.to_string().contains(&hidden), "the hidden head's id must not come back: {accepted}");
+    // Even knowing the hidden head's id does not authorize replacing a handoff the session could not read.
+    for expected in [json!("none"), json!("0".repeat(64)), json!(hidden)] {
+        let refused = write(&grok, "resume:grok", expected);
+        assert_eq!(refused, json!({"ok": false, "error": "kira:resume-stale"}), "{refused}");
+        assert!(!refused.to_string().contains(&hidden));
+        assert!(!refused.to_string().contains("the owner's note"));
+    }
+    assert_eq!(call(&f.state, &owner, "get", json!({"id": "resume:grok"}))["result"]["id"], hidden.as_str());
     // A slot the caller may not write is refused the same way whether it is empty or occupied.
     let occupied = write(&grok, "aukora:self", json!("none"));
     let empty = write(&grok, "aukora:resume", json!("none"));

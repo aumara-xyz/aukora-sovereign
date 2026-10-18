@@ -392,7 +392,7 @@ test('slot refresh withholds a failed slot, applies the other withdrawal, and re
             }
             return { isError: false, value: sampleNote({ slot, superseded_by: '2'.repeat(64) }), content: [] }
           }
-          return { isError: false, value: sampleNote({ slot, content: `${phase} ${slot}` }), content: [] }
+          return { isError: false, value: sampleNote({ id: (phase === 'retry' ? '3' : 'a').repeat(64), slot, content: `${phase} ${slot}` }), content: [] }
         })
         await controller.ensureSlotsLoaded()
         assert.equal(controller.slotHead(failedSlot), 'a'.repeat(64))
@@ -408,6 +408,8 @@ test('slot refresh withholds a failed slot, applies the other withdrawal, and re
         assert.deepEqual(asked, [failedSlot], 'the successful withdrawal was already applied')
         assert.equal(controller.selfText(), failedSlot === 'aukora:self' ? `retry ${failedSlot}` : '')
         assert.equal(controller.resumeText(), failedSlot === 'aukora:resume' ? `retry ${failedSlot}` : '')
+        assert.equal(controller.slotHead(failedSlot), 'a'.repeat(64), 'a successful retry cannot advance the session head')
+        assert.equal(controller.slotHead(failedSlot === 'aukora:self' ? 'aukora:resume' : 'aukora:self'), undefined, 'the withdrawn note cannot supply a head')
       })
     }
   }
@@ -458,6 +460,57 @@ test('the plugin remembers the head of each slot it loaded, and a handoff can ca
   const args = buildRememberArgs({ text: 'step 12', subject: 'resume', expected_head: controller.slotHead('aukora:resume') })
   assert.equal(args.expected_head, head)
   assert.equal('expected_head' in buildRememberArgs({ text: 'x', subject: 'y' }), false, 'absent unless asked for')
+})
+
+test('turn-start prompt refresh keeps the session handoff head, so a concurrent handoff refuses a stale write', async () => {
+  const handlers = new Map<string, (...args: never[]) => Promise<unknown> | unknown>()
+  const h1 = '1'.repeat(64)
+  const h2 = '2'.repeat(64)
+  let head = h1
+  const ctx = {
+    on: (event: string, handler: (...args: never[]) => Promise<unknown> | unknown) => handlers.set(event, handler),
+    tools: {
+      register: () => undefined,
+      execute: async ({ name, arguments: args }: { name: string; arguments: Record<string, unknown> }) => {
+        if (name === 'kira_remember') {
+          return args.expected_head === head
+            ? { isError: false, value: { id: '3'.repeat(64) }, content: [] }
+            : { isError: true, error: { message: 'newer handoff', info: { name: 'AukoraDoorRefusal', code: 'kira:resume-stale' } }, content: [] }
+        }
+        return args.id === 'aukora:resume'
+          ? { isError: false, value: sampleNote({ id: head, slot: args.id, lane: 'resume', content: head === h1 ? 'H1' : 'H2' }), content: [] }
+          : { isError: true, error: { message: 'empty', info: { name: 'AukoraDoorRefusal', code: 'kira:not-found' } }, content: [] }
+      },
+    },
+    systemPrompt: { section: () => undefined },
+  }
+  const controller = apply(ctx as never)
+  const preStep = handlers.get('agent/pre-step') as (payload: { step: number }, next: () => Promise<void>) => Promise<unknown>
+  await preStep({ step: 1 }, async () => {})
+  assert.equal(controller.slotHead('aukora:resume'), h1)
+  head = h2
+  await preStep({ step: 1 }, async () => {})
+  assert.equal(controller.resumeText(), 'H2', 'the displayed prompt still refreshes')
+  assert.equal(controller.slotHead('aukora:resume'), h1, 'refreshing prompt text must not rebase the session write')
+  const result = await ctx.tools.execute({
+    name: 'kira_remember',
+    arguments: buildRememberArgs({ text: 'stale session handoff', subject: 'resume', expected_head: controller.slotHead('aukora:resume') }),
+  })
+  assert.equal(result.isError, true)
+  if (result.isError) assert.equal(result.error!.info!.code, 'kira:resume-stale')
+})
+
+test('an initially empty slot keeps its empty expected_head when a newer handoff appears', async () => {
+  let empty = true
+  const controller = createKiraController({}, async (_name, args) => empty
+    ? { isError: true, error: { message: 'empty', info: { name: 'AukoraDoorRefusal', code: 'kira:not-found' } }, content: [] }
+    : { isError: false, value: sampleNote({ id: '2'.repeat(64), slot: args.id as string, content: 'new handoff' }), content: [] })
+  await controller.ensureSlotsLoaded()
+  assert.equal(controller.slotHead('aukora:resume'), 'none')
+  empty = false
+  await controller.ensureSlotsLoaded(true)
+  assert.equal(controller.resumeText(), 'new handoff')
+  assert.equal(controller.slotHead('aukora:resume'), 'none')
 })
 
 test('the slots are read again at step 1 of every turn: a superseded self file stops being injected', async () => {

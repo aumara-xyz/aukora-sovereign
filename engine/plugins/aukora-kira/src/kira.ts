@@ -138,9 +138,9 @@ export interface KiraController {
   /** Current cached text for the `aukora:resume` section (<= maxResumeBytes UTF-8 bytes). */
   resumeText(): string
   /**
-   * The id of the live note a slot held when it was loaded (`'none'` for an empty slot), or undefined when the slot
-   * has not been loaded (or held a note that was not injected). A handoff written afterwards passes this as
-   * `expected_head` so a newer handoff is never overwritten by a session that went stale.
+   * The id of the live note a slot held on its first verified read (`'none'` for an empty slot). Prompt refreshes
+   * never advance this session's `expected_head`. Undefined while a slot is unverified or withheld; a later retry
+   * restores the original head so it cannot rebase a stale session onto a newer handoff.
    */
   slotHead(slot: string): string | undefined
   /** DSH SystemPrompt section descriptor for `aukora:self` (`interpolate: false`). */
@@ -173,6 +173,7 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
   let cachedResumeText = ''
   const loadedSlots = new Set<string>()
   const heads = new Map<string, string>()
+  const readableHeads = new Set<string>()
   let inflightLoad: Promise<{ selfText: string; resumeText: string; loaded: boolean }> | null = null
 
   const isTurnTainted = (_agent?: object): boolean => sessionTainted
@@ -194,18 +195,20 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     const result = await executeTool('kira_get', { id: slot })
     if (result.isError) {
       if (result.error.info?.code === 'kira:not-found') {
-        heads.set(slot, 'none')
+        if (!heads.has(slot)) heads.set(slot, 'none')
+        readableHeads.add(slot)
         return ''
       }
       return undefined
     }
     const note = result.value as KiraNote
     if (typeof note !== 'object' || note === null || note.slot !== slot || !isLiveVerifiedNote(note)) {
-      heads.delete(slot)
       return ''
     }
-    if (typeof note.id === 'string' && /^[0-9a-f]{64}$/.test(note.id)) heads.set(slot, note.id)
-    else heads.delete(slot)
+    if (typeof note.id === 'string' && /^[0-9a-f]{64}$/.test(note.id)) {
+      if (!heads.has(slot)) heads.set(slot, note.id)
+      readableHeads.add(slot)
+    }
     return truncateUtf8(noteText(note), maxBytes).text
   }
 
@@ -217,7 +220,7 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
       // Withhold each slot before reading it. A failed read leaves only that slot empty and retry-needed;
       // the other read can still apply a verified note or withdrawal, independently.
       loadedSlots.delete(slot)
-      heads.delete(slot)
+      readableHeads.delete(slot)
       cache('')
       try {
         const text = await loadSlot(slot, maxBytes)
@@ -305,7 +308,7 @@ export function createKiraController(rawConfig: KiraPluginConfig, executeTool: T
     ensureSlotsLoaded,
     selfText: () => cachedSelfText,
     resumeText: () => cachedResumeText,
-    slotHead: slot => heads.get(slot),
+    slotHead: slot => readableHeads.has(slot) ? heads.get(slot) : undefined,
 
     selfSection(): PromptSectionLike {
       return {
